@@ -41,9 +41,9 @@ Arrow/Parquet may support this target internally, but they do not define the pub
 
 Before `lithos` should claim fuller canonical-schema conformance, it should first stabilize:
 
-1. canonical metadata shapes
-2. package schema and version guarantees
-3. Tauri/backend DTO and query contracts
-4. nullability, index, and curve descriptor rules
+1. package schema and version guarantees
+2. Tauri/backend DTO and query contracts
+3. nullability, index, and curve descriptor rules
+4. editable-session loading behavior where it materially improves the desktop workflow
 
 Only after those settle should the project tighten runtime and package behavior toward the stricter canonical sample-table target.

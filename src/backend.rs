@@ -1,9 +1,10 @@
 use crate::{
-    AssetSummaryDto, CloseSessionResultDto, CurveCatalogEntryDto, CurveEditRequest, CurveWindowDto,
-    CurveWindowRequest, DTO_CONTRACT_VERSION, DirtyStateDto, LasError, MetadataDto,
-    MetadataUpdateRequest, PackageSessionStore, Result, SaveSessionResponseDto, SessionId,
-    SessionSummaryDto, ValidationReportDto, close_session_result_dto, open_package_metadata,
-    open_package_summary, validate_package,
+    AssetSummaryDto, CloseSessionResultDto, CurveCatalogDto, CurveEditRequest, CurveWindowRequest,
+    DTO_CONTRACT_VERSION, DirtyStateDto, LasError, MetadataDto, MetadataUpdateRequest,
+    PackageSessionStore, Result, SaveSessionResponseDto, SessionId, SessionMetadataDto,
+    SessionSummaryDto, SessionWindowDto, ValidationReportDto, close_session_result_dto,
+    curve_catalog_result_dto, open_package_metadata, open_package_summary, session_metadata_dto,
+    session_window_dto, validate_package,
 };
 use std::path::Path;
 
@@ -38,26 +39,38 @@ impl PackageBackend {
         Ok(session.session_summary())
     }
 
-    pub fn session_metadata(&self, session_id: &SessionId) -> Result<MetadataDto> {
+    pub fn session_metadata(&self, session_id: &SessionId) -> Result<SessionMetadataDto> {
         let session = self.session(session_id)?;
-        Ok(session.metadata_dto())
+        Ok(session_metadata_dto(
+            session.package_id().clone(),
+            session.session_id().clone(),
+            session.revision().clone(),
+            session.metadata_dto(),
+        ))
     }
 
-    pub fn session_curve_catalog(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<Vec<CurveCatalogEntryDto>> {
+    pub fn session_curve_catalog(&self, session_id: &SessionId) -> Result<CurveCatalogDto> {
         let session = self.session(session_id)?;
-        Ok(session.curve_catalog())
+        Ok(curve_catalog_result_dto(
+            session.package_id().clone(),
+            session.session_id().clone(),
+            session.revision().clone(),
+            session.curve_catalog(),
+        ))
     }
 
     pub fn read_curve_window(
         &self,
         session_id: &SessionId,
         request: &CurveWindowRequest,
-    ) -> Result<CurveWindowDto> {
+    ) -> Result<SessionWindowDto> {
         let session = self.session(session_id)?;
-        session.read_window(request)
+        Ok(session_window_dto(
+            session.package_id().clone(),
+            session.session_id().clone(),
+            session.revision().clone(),
+            session.read_window(request)?,
+        ))
     }
 
     pub fn dirty_state(&self, session_id: &SessionId) -> Result<DirtyStateDto> {

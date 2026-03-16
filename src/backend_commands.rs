@@ -1,8 +1,8 @@
 use crate::{
-    AssetSummaryDto, CloseSessionResultDto, CurveCatalogEntryDto, CurveWindowDto, DirtyStateDto,
-    LasError, MetadataDto, PackageBackend, PackagePathRequest, Result, SaveSessionResponseDto,
-    SessionCurveEditRequest, SessionMetadataEditRequest, SessionRequest, SessionSummaryDto,
-    SessionWindowRequest, ValidationReportDto,
+    AssetSummaryDto, CloseSessionResultDto, CurveCatalogDto, DirtyStateDto, LasError, MetadataDto,
+    PackageBackend, PackagePathRequest, Result, SaveSessionResponseDto, SessionCurveEditRequest,
+    SessionMetadataDto, SessionMetadataEditRequest, SessionRequest, SessionSummaryDto,
+    SessionWindowDto, SessionWindowRequest, ValidationReportDto,
 };
 use std::sync::{Arc, Mutex};
 
@@ -36,18 +36,15 @@ impl PackageBackendState {
         self.with_backend(|backend| backend.session_summary(&request.session_id))
     }
 
-    pub fn session_metadata(&self, request: &SessionRequest) -> Result<MetadataDto> {
+    pub fn session_metadata(&self, request: &SessionRequest) -> Result<SessionMetadataDto> {
         self.with_backend(|backend| backend.session_metadata(&request.session_id))
     }
 
-    pub fn session_curve_catalog(
-        &self,
-        request: &SessionRequest,
-    ) -> Result<Vec<CurveCatalogEntryDto>> {
+    pub fn session_curve_catalog(&self, request: &SessionRequest) -> Result<CurveCatalogDto> {
         self.with_backend(|backend| backend.session_curve_catalog(&request.session_id))
     }
 
-    pub fn read_curve_window(&self, request: &SessionWindowRequest) -> Result<CurveWindowDto> {
+    pub fn read_curve_window(&self, request: &SessionWindowRequest) -> Result<SessionWindowDto> {
         self.with_backend(|backend| backend.read_curve_window(&request.session_id, &request.window))
     }
 

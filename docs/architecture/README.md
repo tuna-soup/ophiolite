@@ -29,9 +29,11 @@ Current properties:
 - `LasFile` is the canonical public domain object
 - `PackageSession` is the backend-owned editable package session model
 - `PackageBackend` and `PackageBackendState` are the current Tauri-ready backend adapter layer
+- `PackageCommandService` is the app-boundary transport layer above the shared backend state
 - `CurveTable` is the app-facing in-memory table abstraction
 - DTOs are the intended frontend/backend transfer boundary
 - package storage uses `metadata.json + curves.parquet`
+- `metadata.json` now groups package identity, document metadata, storage descriptors, raw preserved sections, and diagnostics explicitly
 - Arrow/Parquet are internal storage/package details, not the dominant public API
 - non-v3 `lasio` read/model parity is the main compatibility baseline
 
@@ -80,6 +82,15 @@ Current DTO families:
 - read DTOs: package summary, metadata, curve catalog, curve windows, session summary
 - edit DTOs: metadata edits, curve edits, dirty-state, validation reports, save results, save conflicts
 - `PackageBackendState` is the shared-state wrapper intended for future Tauri command registration
+- `PackageCommandService` is the thin, transport-focused service that converts command calls into structured transport responses
+- session-backed metadata, catalog, and window reads now carry explicit session context and DTO contract versions
+- app-boundary command rules:
+  - inspect commands do not require a session
+  - session commands require or produce a valid `SessionId`
+  - edit/persist commands operate on an existing session
+- transport envelope rule:
+  - `CommandResponse<T> = Ok(T) | Err(CommandErrorDto)`
+  - public error kinds stay small and caller-actionable
 
 Current validation layers:
 
@@ -108,11 +119,11 @@ Current staged compromise:
 
 | Area | Current implementation | Target direction |
 | --- | --- | --- |
-| Domain model | `LasFile` with section-oriented metadata | tighter typed canonical metadata model |
+| Domain model | `LasFile` plus typed canonical metadata and explicit index/curve descriptors | further canonical tightening around index/null semantics |
 | In-memory samples | `CurveTable` backed by current in-memory values | potentially more formal Arrow-backed runtime contract later |
-| Package format | `metadata.json + curves.parquet` with mixed-column preservation | stricter canonical schema and package guarantees |
+| Package format | grouped `metadata.json + curves.parquet` with mixed-column preservation and legacy metadata read-compat | stricter canonical schema and package guarantees |
 | Canonical schema | partially aligned | `ADR-0007-canonical-schema-target.md` is the target-state reference |
-| Frontend/backend boundary | CLI, Rust API, and session-oriented DTOs | fuller Tauri command/query contract |
+| Frontend/backend boundary | CLI, Rust API, shared backend state, and structured command wrapper | fuller Tauri app integration later |
 
 ## Roadmap Placement of Arrow/Parquet
 
@@ -120,10 +131,10 @@ Arrow/Parquet is already in use for package persistence, but it is not yet the f
 
 Before deepening Arrow/Parquet integration, `lithos` should first stabilize:
 
-1. canonical metadata shapes
-2. package schema/version guarantees
-3. Tauri/backend DTOs and query semantics
-4. nullability/index/curve descriptor rules
+1. Tauri/backend DTOs and query semantics
+2. package-session lifecycle and save semantics
+3. nullability/index/curve descriptor rules
+4. editable-session loading behavior where it materially helps the desktop workflow
 
 Only after those are stable should the project tighten runtime/package behavior toward the full canonical schema target.
 

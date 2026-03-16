@@ -9,8 +9,8 @@ use lithos_core::{
     SectionItems, SessionId, SessionSummaryDto, ValidationReportDto, apply_curve_edit,
     apply_metadata_update, asset_summary_dto, curve_catalog_dto, curve_window_dto, dirty_state_dto,
     metadata_dto, package_id_for_path, package_metadata_for, package_validation_report,
-    revision_token_for_bytes, save_conflict_dto, session_summary_dto, validate_edit_state,
-    validation_report_dto,
+    parse_package_metadata, revision_token_for_bytes, save_conflict_dto, session_summary_dto,
+    validate_edit_state, validate_package_metadata, validation_report_dto,
 };
 use lithos_table::CurveColumnDescriptor;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -280,8 +280,9 @@ pub fn open_package(path: impl AsRef<Path>) -> Result<PackageSession> {
     let metadata = read_package_metadata(&root)?;
     let revision = package_revision(&root)?;
 
-    let batch = read_parquet_batch(curves_path(&root), metadata.summary.row_count)?;
+    let batch = read_parquet_batch(curves_path(&root), metadata.document.summary.row_count)?;
     let descriptors = metadata
+        .storage
         .curve_columns
         .iter()
         .map(|curve| CurveColumnDescriptor {
@@ -290,7 +291,7 @@ pub fn open_package(path: impl AsRef<Path>) -> Result<PackageSession> {
         })
         .collect::<Vec<_>>();
     let table = table_from_record_batch(&batch, &descriptors)?;
-    let curves = materialize_curves(&metadata.curve_columns, &table)?;
+    let curves = materialize_curves(&metadata.storage.curve_columns, &table)?;
 
     let root_key = package_path_key(&root);
     Ok(PackageSession {
@@ -300,18 +301,18 @@ pub fn open_package(path: impl AsRef<Path>) -> Result<PackageSession> {
         dirty: false,
         root,
         file: LasFile {
-            summary: metadata.summary,
-            provenance: metadata.provenance,
-            encoding: metadata.encoding,
-            index: metadata.index,
-            version: metadata.raw_sections.version,
-            well: metadata.raw_sections.well,
-            params: metadata.raw_sections.params,
-            curves: SectionItems::from_items(curves, metadata.raw_sections.curve_mnemonic_case),
-            other: metadata.raw_sections.other,
-            extra_sections: metadata.raw_sections.extra_sections,
-            issues: metadata.issues,
-            index_unit: metadata.index_unit,
+            summary: metadata.document.summary,
+            provenance: metadata.document.provenance,
+            encoding: metadata.document.encoding,
+            index: metadata.storage.index,
+            version: metadata.raw.version,
+            well: metadata.raw.well,
+            params: metadata.raw.params,
+            curves: SectionItems::from_items(curves, metadata.raw.curve_mnemonic_case),
+            other: metadata.raw.other,
+            extra_sections: metadata.raw.extra_sections,
+            issues: metadata.diagnostics.issues,
+            index_unit: metadata.storage.index_unit,
         },
         table,
     })
@@ -321,8 +322,8 @@ pub fn open_package_summary(path: impl AsRef<Path>) -> Result<AssetSummaryDto> {
     let metadata = read_package_metadata(path.as_ref())?;
     Ok(AssetSummaryDto {
         dto_contract_version: String::from(DTO_CONTRACT_VERSION),
-        summary: metadata.summary,
-        encoding: metadata.encoding,
+        summary: metadata.document.summary,
+        encoding: metadata.document.encoding,
         index: metadata.canonical.index,
     })
 }
@@ -330,9 +331,10 @@ pub fn open_package_summary(path: impl AsRef<Path>) -> Result<AssetSummaryDto> {
 pub fn open_package_metadata(path: impl AsRef<Path>) -> Result<MetadataDto> {
     let metadata = read_package_metadata(path.as_ref())?;
     Ok(MetadataDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
         metadata: metadata.canonical,
-        issues: metadata.issues,
-        extra_sections: metadata.raw_sections.extra_sections,
+        issues: metadata.diagnostics.issues,
+        extra_sections: metadata.raw.extra_sections,
     })
 }
 
@@ -399,13 +401,15 @@ fn curves_path(root: &Path) -> PathBuf {
 
 fn read_package_metadata(root: &Path) -> Result<PackageMetadata> {
     let metadata_text = fs::read_to_string(metadata_path(root))?;
-    let metadata: PackageMetadata = serde_json::from_str(&metadata_text)?;
-    if metadata.package_version != PACKAGE_VERSION {
+    let metadata = parse_package_metadata(&metadata_text)?;
+    if metadata.package_version() != PACKAGE_VERSION {
         return Err(LasError::Storage(format!(
             "unsupported package version {}",
-            metadata.package_version
+            metadata.package_version()
         )));
     }
+    validate_package_metadata(&metadata)
+        .map_err(|err| LasError::Storage(format!("invalid package metadata: {err}")))?;
     Ok(metadata)
 }
 

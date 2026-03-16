@@ -2,11 +2,11 @@ use crate::asset::{
     CanonicalAlias, HeaderItem, IngestIssue, LasFile, LasFileSummary, LasValue, Provenance,
     SectionItems, derive_canonical_alias,
 };
-use crate::{CurveStorageKind, IndexDescriptor, IndexKind, MnemonicCase};
+use crate::{CurveStorageKind, IndexDescriptor, IndexKind, LasError, MnemonicCase, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const PACKAGE_METADATA_SCHEMA_VERSION: &str = "0.1.0";
+pub const PACKAGE_METADATA_SCHEMA_VERSION: &str = "0.2.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VersionInfo {
@@ -39,6 +39,10 @@ pub struct IndexInfo {
     pub canonical_name: String,
     pub unit: Option<String>,
     pub kind: IndexKind,
+    pub row_count: usize,
+    pub nullable: bool,
+    pub storage_kind: CurveStorageKind,
+    pub alias: CanonicalAlias,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,17 +55,23 @@ pub struct CurveInfo {
     pub header_value: Option<String>,
     pub nullable: bool,
     pub storage_kind: CurveStorageKind,
+    pub row_count: usize,
     pub alias: CanonicalAlias,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurveColumnMetadata {
     pub name: String,
+    pub canonical_name: String,
     pub original_mnemonic: String,
     pub unit: String,
     pub header_value: LasValue,
     pub description: String,
     pub storage_kind: CurveStorageKind,
+    pub row_count: usize,
+    pub nullable: bool,
+    pub alias: CanonicalAlias,
+    pub is_index: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,7 +105,42 @@ pub struct RawMetadataSections {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageIdentityMetadata {
+    pub package_version: u32,
+    pub metadata_schema_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageDocumentMetadata {
+    pub summary: LasFileSummary,
+    pub provenance: Provenance,
+    pub encoding: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageStorageMetadata {
+    pub index: IndexDescriptor,
+    pub index_unit: Option<String>,
+    pub curve_columns: Vec<CurveColumnMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackageDiagnosticsMetadata {
+    pub issues: Vec<IngestIssue>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageMetadata {
+    pub package: PackageIdentityMetadata,
+    pub document: PackageDocumentMetadata,
+    pub canonical: CanonicalMetadata,
+    pub storage: PackageStorageMetadata,
+    pub raw: RawMetadataSections,
+    pub diagnostics: PackageDiagnosticsMetadata,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct LegacyPackageMetadata {
     pub package_version: u32,
     pub metadata_schema_version: String,
     pub summary: LasFileSummary,
@@ -107,6 +152,38 @@ pub struct PackageMetadata {
     pub raw_sections: RawMetadataSections,
     pub issues: Vec<IngestIssue>,
     pub index_unit: Option<String>,
+}
+
+impl From<LegacyPackageMetadata> for PackageMetadata {
+    fn from(value: LegacyPackageMetadata) -> Self {
+        Self {
+            package: PackageIdentityMetadata {
+                package_version: value.package_version,
+                metadata_schema_version: value.metadata_schema_version,
+            },
+            document: PackageDocumentMetadata {
+                summary: value.summary,
+                provenance: value.provenance,
+                encoding: value.encoding,
+            },
+            canonical: value.canonical,
+            storage: PackageStorageMetadata {
+                index: value.index,
+                index_unit: value.index_unit,
+                curve_columns: value.curve_columns,
+            },
+            raw: value.raw_sections,
+            diagnostics: PackageDiagnosticsMetadata {
+                issues: value.issues,
+            },
+        }
+    }
+}
+
+impl PackageMetadata {
+    pub fn package_version(&self) -> u32 {
+        self.package.package_version
+    }
 }
 
 impl LasFile {
@@ -130,6 +207,7 @@ impl LasFile {
                         .iter()
                         .any(|value| value.is_empty() || value.is_nan()),
                     storage_kind: detect_storage_kind(&curve.data),
+                    row_count: curve.data.len(),
                     alias: derive_canonical_alias(&curve.original_mnemonic, &curve.unit),
                 })
                 .collect(),
@@ -166,12 +244,29 @@ impl LasFile {
     }
 
     pub fn index_info(&self) -> IndexInfo {
+        let curve = self.curves.get(&self.index.curve_id);
+        let row_count = curve.map(|value| value.data.len()).unwrap_or(0);
+        let nullable = curve
+            .map(|value| {
+                value
+                    .data
+                    .iter()
+                    .any(|item| item.is_empty() || item.is_nan())
+            })
+            .unwrap_or(false);
+        let storage_kind = curve
+            .map(|value| detect_storage_kind(&value.data))
+            .unwrap_or(CurveStorageKind::Numeric);
         IndexInfo {
             name: self.index.curve_id.clone(),
             original_mnemonic: self.index.raw_mnemonic.clone(),
             canonical_name: String::from("index"),
             unit: non_empty_string(&self.index.unit),
             kind: self.index.kind.clone(),
+            row_count,
+            nullable,
+            storage_kind,
+            alias: derive_canonical_alias(&self.index.raw_mnemonic, &self.index.unit),
         }
     }
 
@@ -200,26 +295,45 @@ pub fn package_metadata_for(file: &LasFile, package_version: u32) -> PackageMeta
     summary.issue_count = file.issues.len();
 
     PackageMetadata {
-        package_version,
-        metadata_schema_version: String::from(PACKAGE_METADATA_SCHEMA_VERSION),
-        summary,
-        provenance: file.provenance.clone(),
-        encoding: file.encoding.clone(),
-        index: file.index.clone(),
+        package: PackageIdentityMetadata {
+            package_version,
+            metadata_schema_version: String::from(PACKAGE_METADATA_SCHEMA_VERSION),
+        },
+        document: PackageDocumentMetadata {
+            summary,
+            provenance: file.provenance.clone(),
+            encoding: file.encoding.clone(),
+        },
         canonical: file.metadata(),
-        curve_columns: file
-            .curves
-            .iter()
-            .map(|curve| CurveColumnMetadata {
-                name: curve.mnemonic.clone(),
-                original_mnemonic: curve.original_mnemonic.clone(),
-                unit: curve.unit.clone(),
-                header_value: curve.value.clone(),
-                description: curve.description.clone(),
-                storage_kind: detect_storage_kind(&curve.data),
-            })
-            .collect(),
-        raw_sections: RawMetadataSections {
+        storage: PackageStorageMetadata {
+            index: file.index.clone(),
+            index_unit: file.index_unit.clone(),
+            curve_columns: file
+                .curves
+                .iter()
+                .map(|curve| CurveColumnMetadata {
+                    name: curve.mnemonic.clone(),
+                    canonical_name: if curve.mnemonic == file.index.curve_id {
+                        String::from("index")
+                    } else {
+                        curve.mnemonic.clone()
+                    },
+                    original_mnemonic: curve.original_mnemonic.clone(),
+                    unit: curve.unit.clone(),
+                    header_value: curve.value.clone(),
+                    description: curve.description.clone(),
+                    storage_kind: detect_storage_kind(&curve.data),
+                    row_count: curve.data.len(),
+                    nullable: curve
+                        .data
+                        .iter()
+                        .any(|value| value.is_empty() || value.is_nan()),
+                    alias: derive_canonical_alias(&curve.original_mnemonic, &curve.unit),
+                    is_index: curve.mnemonic == file.index.curve_id,
+                })
+                .collect(),
+        },
+        raw: RawMetadataSections {
             version: file.version.clone(),
             well: file.well.clone(),
             params: file.params.clone(),
@@ -227,9 +341,155 @@ pub fn package_metadata_for(file: &LasFile, package_version: u32) -> PackageMeta
             extra_sections: file.extra_sections.clone(),
             curve_mnemonic_case: file.curves.mnemonic_case,
         },
-        issues: file.issues.clone(),
-        index_unit: file.index_unit.clone(),
+        diagnostics: PackageDiagnosticsMetadata {
+            issues: file.issues.clone(),
+        },
     }
+}
+
+pub fn parse_package_metadata(
+    text: &str,
+) -> std::result::Result<PackageMetadata, serde_json::Error> {
+    serde_json::from_str(text)
+        .or_else(|_| serde_json::from_str::<LegacyPackageMetadata>(text).map(Into::into))
+}
+
+pub fn validate_canonical_metadata(file: &LasFile) -> Result<()> {
+    if file.index.curve_id.trim().is_empty() {
+        return Err(LasError::Validation(String::from(
+            "index descriptor must reference a curve id",
+        )));
+    }
+    if file.index.raw_mnemonic.trim().is_empty() {
+        return Err(LasError::Validation(String::from(
+            "index descriptor must preserve the original mnemonic",
+        )));
+    }
+
+    let index_curve = file.curves.get(&file.index.curve_id).ok_or_else(|| {
+        LasError::Validation(format!(
+            "index curve '{}' is missing from LAS curves",
+            file.index.curve_id
+        ))
+    })?;
+
+    if detect_storage_kind(&index_curve.data) != CurveStorageKind::Numeric {
+        return Err(LasError::Validation(format!(
+            "index curve '{}' must remain numeric",
+            file.index.curve_id
+        )));
+    }
+
+    for curve in file.curves.iter() {
+        if curve.mnemonic.trim().is_empty() {
+            return Err(LasError::Validation(String::from(
+                "curve mnemonics must not be empty",
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+pub fn validate_package_metadata(metadata: &PackageMetadata) -> Result<()> {
+    if metadata.package.metadata_schema_version.trim().is_empty() {
+        return Err(LasError::Validation(String::from(
+            "package metadata schema version must not be empty",
+        )));
+    }
+
+    let summary = &metadata.document.summary;
+    let index = &metadata.storage.index;
+    let canonical = &metadata.canonical;
+    let curve_columns = &metadata.storage.curve_columns;
+
+    if canonical.index.name != index.curve_id {
+        return Err(LasError::Validation(format!(
+            "canonical index '{}' does not match storage index '{}'",
+            canonical.index.name, index.curve_id
+        )));
+    }
+
+    if canonical.index.original_mnemonic != index.raw_mnemonic {
+        return Err(LasError::Validation(format!(
+            "canonical index mnemonic '{}' does not match storage index mnemonic '{}'",
+            canonical.index.original_mnemonic, index.raw_mnemonic
+        )));
+    }
+
+    if curve_columns.len() != summary.curve_count {
+        return Err(LasError::Validation(format!(
+            "package metadata declares {} curve columns but summary expects {}",
+            curve_columns.len(),
+            summary.curve_count
+        )));
+    }
+
+    if canonical.curves.len() != summary.curve_count {
+        return Err(LasError::Validation(format!(
+            "canonical metadata declares {} curves but summary expects {}",
+            canonical.curves.len(),
+            summary.curve_count
+        )));
+    }
+
+    if canonical.index.row_count != summary.row_count {
+        return Err(LasError::Validation(format!(
+            "canonical index row count {} does not match summary row count {}",
+            canonical.index.row_count, summary.row_count
+        )));
+    }
+
+    let index_column = curve_columns.iter().find(|column| column.is_index);
+    let Some(index_column) = index_column else {
+        return Err(LasError::Validation(String::from(
+            "package storage metadata must mark exactly one index column",
+        )));
+    };
+
+    if index_column.name != index.curve_id {
+        return Err(LasError::Validation(format!(
+            "index column '{}' does not match storage index '{}'",
+            index_column.name, index.curve_id
+        )));
+    }
+
+    if curve_columns
+        .iter()
+        .filter(|column| column.is_index)
+        .count()
+        != 1
+    {
+        return Err(LasError::Validation(String::from(
+            "package storage metadata must contain exactly one index column",
+        )));
+    }
+
+    for column in curve_columns {
+        if column.row_count != summary.row_count {
+            return Err(LasError::Validation(format!(
+                "curve column '{}' has {} rows but summary expects {}",
+                column.name, column.row_count, summary.row_count
+            )));
+        }
+    }
+
+    for curve in &canonical.curves {
+        if curve.row_count != summary.row_count {
+            return Err(LasError::Validation(format!(
+                "canonical curve '{}' has {} rows but summary expects {}",
+                curve.name, curve.row_count, summary.row_count
+            )));
+        }
+        if !curve_columns.iter().any(|column| column.name == curve.name) {
+            return Err(LasError::Validation(format!(
+                "canonical curve '{}' is missing from storage columns",
+                curve.name
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn item_display_string(item: Option<&HeaderItem>) -> Option<String> {

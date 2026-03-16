@@ -1,12 +1,12 @@
 use crate::asset::{CurveItem, HeaderItem, LasFile, LasFileSummary, LasValue};
-use crate::metadata::{CanonicalMetadata, CurveInfo, IndexInfo};
+use crate::metadata::{CanonicalMetadata, CurveInfo, IndexInfo, validate_canonical_metadata};
 use crate::{CanonicalAlias, CurveStorageKind, IngestIssue, LasError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-pub const DTO_CONTRACT_VERSION: &str = "0.1.0";
+pub const DTO_CONTRACT_VERSION: &str = "0.2.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PackageId(pub String);
@@ -39,6 +39,7 @@ pub struct SavePackageResultDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataDto {
+    pub dto_contract_version: String,
     pub metadata: CanonicalMetadata,
     pub issues: Vec<IngestIssue>,
     pub extra_sections: BTreeMap<String, String>,
@@ -63,6 +64,7 @@ pub struct ValidationReportDto {
 pub struct CurveCatalogEntryDto {
     pub curve_id: String,
     pub name: String,
+    pub canonical_name: String,
     pub original_mnemonic: String,
     pub unit: Option<String>,
     pub description: Option<String>,
@@ -70,6 +72,7 @@ pub struct CurveCatalogEntryDto {
     pub nullable: bool,
     pub storage_kind: CurveStorageKind,
     pub alias: CanonicalAlias,
+    pub is_index: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +95,28 @@ pub struct SessionSummaryDto {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionContextDto {
+    pub dto_contract_version: String,
+    pub package_id: PackageId,
+    pub session_id: SessionId,
+    pub revision: RevisionToken,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionMetadataDto {
+    pub dto_contract_version: String,
+    pub session: SessionContextDto,
+    pub metadata: MetadataDto,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CurveCatalogDto {
+    pub dto_contract_version: String,
+    pub session: SessionContextDto,
+    pub curves: Vec<CurveCatalogEntryDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveConflictDto {
     pub dto_contract_version: String,
     pub package_id: PackageId,
@@ -99,6 +124,39 @@ pub struct SaveConflictDto {
     pub expected_revision: RevisionToken,
     pub actual_revision: RevisionToken,
     pub path: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CommandGroup {
+    Inspect,
+    Session,
+    EditPersist,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CommandErrorKind {
+    OpenFailed,
+    ValidationFailed,
+    SaveConflict,
+    SessionNotFound,
+    Internal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandErrorDto {
+    pub dto_contract_version: String,
+    pub group: CommandGroup,
+    pub kind: CommandErrorKind,
+    pub message: String,
+    pub session_id: Option<SessionId>,
+    pub validation: Option<ValidationReportDto>,
+    pub save_conflict: Option<SaveConflictDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum CommandResponse<T> {
+    Ok(T),
+    Err(CommandErrorDto),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,16 +216,27 @@ pub struct CurveWindowRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurveWindowColumnDto {
+    pub curve_id: String,
     pub name: String,
+    pub canonical_name: String,
+    pub is_index: bool,
     pub storage_kind: CurveStorageKind,
     pub values: Vec<LasValue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CurveWindowDto {
+    pub dto_contract_version: String,
     pub start_row: usize,
     pub row_count: usize,
     pub columns: Vec<CurveWindowColumnDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionWindowDto {
+    pub dto_contract_version: String,
+    pub session: SessionContextDto,
+    pub window: CurveWindowDto,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -219,6 +288,7 @@ pub fn asset_summary_dto(file: &LasFile) -> AssetSummaryDto {
 
 pub fn metadata_dto(file: &LasFile) -> MetadataDto {
     MetadataDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
         metadata: file.metadata(),
         issues: file.issues.clone(),
         extra_sections: file.extra_sections.clone(),
@@ -259,7 +329,10 @@ pub fn curve_window_dto(file: &LasFile, request: &CurveWindowRequest) -> Result<
                     ))
                 })?;
             Ok(CurveWindowColumnDto {
+                curve_id: stable_curve_id(&curve.mnemonic),
                 name: curve.mnemonic.clone(),
+                canonical_name: descriptor.canonical_name.clone(),
+                is_index: descriptor.canonical_name == "index",
                 storage_kind: descriptor.storage_kind,
                 values: curve
                     .data
@@ -277,6 +350,7 @@ pub fn curve_window_dto(file: &LasFile, request: &CurveWindowRequest) -> Result<
         .map(|column| column.values.len())
         .unwrap_or(0);
     Ok(CurveWindowDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
         start_row: request.start_row,
         row_count: actual_row_count,
         columns,
@@ -303,6 +377,7 @@ pub fn apply_metadata_update(file: &mut LasFile, request: &MetadataUpdateRequest
         candidate.other = other.clone();
     }
 
+    validate_edit_state(&candidate)?;
     refresh_summary(&mut candidate);
     *file = candidate;
     Ok(())
@@ -382,6 +457,7 @@ pub fn validate_edit_state(file: &LasFile) -> Result<()> {
         }
     }
 
+    validate_canonical_metadata(file)?;
     Ok(())
 }
 
@@ -412,6 +488,7 @@ fn catalog_entry(curve: &CurveInfo, item: &CurveItem) -> CurveCatalogEntryDto {
     CurveCatalogEntryDto {
         curve_id: stable_curve_id(&curve.name),
         name: curve.name.clone(),
+        canonical_name: curve.canonical_name.clone(),
         original_mnemonic: curve.original_mnemonic.clone(),
         unit: curve.unit.clone(),
         description: curve.description.clone(),
@@ -419,6 +496,7 @@ fn catalog_entry(curve: &CurveInfo, item: &CurveItem) -> CurveCatalogEntryDto {
         nullable: curve.nullable,
         storage_kind: curve.storage_kind,
         alias: curve.alias.clone(),
+        is_index: curve.canonical_name == "index",
     }
 }
 
@@ -480,6 +558,58 @@ pub fn session_summary_dto(
     }
 }
 
+pub fn session_context_dto(
+    package_id: PackageId,
+    session_id: SessionId,
+    revision: RevisionToken,
+) -> SessionContextDto {
+    SessionContextDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+        package_id,
+        session_id,
+        revision,
+    }
+}
+
+pub fn session_metadata_dto(
+    package_id: PackageId,
+    session_id: SessionId,
+    revision: RevisionToken,
+    metadata: MetadataDto,
+) -> SessionMetadataDto {
+    SessionMetadataDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+        session: session_context_dto(package_id, session_id, revision),
+        metadata,
+    }
+}
+
+pub fn curve_catalog_result_dto(
+    package_id: PackageId,
+    session_id: SessionId,
+    revision: RevisionToken,
+    curves: Vec<CurveCatalogEntryDto>,
+) -> CurveCatalogDto {
+    CurveCatalogDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+        session: session_context_dto(package_id, session_id, revision),
+        curves,
+    }
+}
+
+pub fn session_window_dto(
+    package_id: PackageId,
+    session_id: SessionId,
+    revision: RevisionToken,
+    window: CurveWindowDto,
+) -> SessionWindowDto {
+    SessionWindowDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+        session: session_context_dto(package_id, session_id, revision),
+        window,
+    }
+}
+
 pub fn save_conflict_dto(
     package_id: PackageId,
     session_id: SessionId,
@@ -525,6 +655,22 @@ pub fn close_session_result_dto(
         package_id,
         session_id,
         closed,
+    }
+}
+
+pub fn command_error_dto(
+    group: CommandGroup,
+    kind: CommandErrorKind,
+    message: impl Into<String>,
+) -> CommandErrorDto {
+    CommandErrorDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+        group,
+        kind,
+        message: message.into(),
+        session_id: None,
+        validation: None,
+        save_conflict: None,
     }
 }
 

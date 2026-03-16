@@ -38,9 +38,10 @@ fn command_state_supports_shared_session_open_and_query() {
         })
         .unwrap();
 
-    assert_eq!(catalog.len(), 8);
-    assert_eq!(window.columns.len(), 1);
-    assert_eq!(window.columns[0].values.len(), 2);
+    assert_eq!(catalog.curves.len(), 8);
+    assert_eq!(catalog.session.session_id, first.session_id);
+    assert_eq!(window.window.columns.len(), 1);
+    assert_eq!(window.window.columns[0].values.len(), 2);
 }
 
 #[test]

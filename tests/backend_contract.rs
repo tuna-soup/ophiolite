@@ -38,9 +38,11 @@ fn backend_supports_read_inspection_and_shared_session_queries() {
         )
         .unwrap();
 
-    assert_eq!(catalog.len(), 8);
-    assert_eq!(window.columns.len(), 2);
-    assert_eq!(window.columns[0].name, "DT");
+    assert_eq!(catalog.curves.len(), 8);
+    assert_eq!(catalog.session.session_id, first.session_id);
+    assert_eq!(window.window.columns.len(), 2);
+    assert_eq!(window.session.session_id, first.session_id);
+    assert_eq!(window.window.columns[0].name, "DT");
 }
 
 #[test]
@@ -92,7 +94,10 @@ fn backend_rejected_curve_edits_are_atomic() {
         )
         .unwrap();
 
-    assert_eq!(before.columns[0].values, after.columns[0].values);
+    assert_eq!(
+        before.window.columns[0].values,
+        after.window.columns[0].values
+    );
     assert!(
         !backend
             .dirty_state(&session.session_id)

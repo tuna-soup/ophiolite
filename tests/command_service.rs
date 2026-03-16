@@ -1,0 +1,182 @@
+use lithos_las::{
+    CommandErrorKind, CommandResponse, CurveEditRequest, CurveUpdateRequest, HeaderItemUpdate,
+    LasValue, MetadataSectionDto, MetadataUpdateRequest, PackageCommandService, PackagePathRequest,
+    SessionCurveEditRequest, SessionMetadataEditRequest, SessionRequest, examples, open_package,
+    write_package,
+};
+use std::fs;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[test]
+fn command_service_reuses_shared_session_by_default() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("adapter-shared");
+    write_package(&las, &package_dir).unwrap();
+
+    let service = PackageCommandService::new();
+    let request = PackagePathRequest {
+        path: package_dir.display().to_string(),
+    };
+
+    let first = unwrap_ok(service.open_package_session(&request));
+    let second = unwrap_ok(service.open_package_session(&request));
+
+    assert_eq!(first.session_id, second.session_id);
+    let metadata = unwrap_ok(service.session_metadata(&SessionRequest {
+        session_id: first.session_id.clone(),
+    }));
+    assert_eq!(metadata.session.session_id, first.session_id);
+}
+
+#[test]
+fn command_service_reports_closed_session_errors_structurally() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("adapter-close");
+    write_package(&las, &package_dir).unwrap();
+
+    let service = PackageCommandService::new();
+    let request = PackagePathRequest {
+        path: package_dir.display().to_string(),
+    };
+    let session = unwrap_ok(service.open_package_session(&request));
+
+    let closed = unwrap_ok(service.close_session(&SessionRequest {
+        session_id: session.session_id.clone(),
+    }));
+    assert!(closed.closed);
+
+    let after_close = service.session_summary(&SessionRequest {
+        session_id: session.session_id.clone(),
+    });
+    let error = unwrap_err(after_close);
+    assert_eq!(error.kind, CommandErrorKind::SessionNotFound);
+    assert_eq!(error.session_id, Some(session.session_id));
+}
+
+#[test]
+fn command_service_preserves_validation_errors() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("adapter-validation");
+    write_package(&las, &package_dir).unwrap();
+
+    let service = PackageCommandService::new();
+    let session = unwrap_ok(service.open_package_session(&PackagePathRequest {
+        path: package_dir.display().to_string(),
+    }));
+
+    let response = service.apply_curve_edit(&SessionCurveEditRequest {
+        session_id: session.session_id.clone(),
+        edit: CurveEditRequest::Upsert(CurveUpdateRequest {
+            mnemonic: String::from("DT"),
+            original_mnemonic: Some(String::from("DT")),
+            unit: String::from("US/M"),
+            header_value: LasValue::Empty,
+            description: String::from("invalid"),
+            data: vec![LasValue::Number(1.0)],
+        }),
+    });
+    let error = unwrap_err(response);
+
+    assert_eq!(error.kind, CommandErrorKind::ValidationFailed);
+    assert_eq!(error.session_id, Some(session.session_id));
+    assert!(error.validation.is_some());
+    assert!(error.message.contains("expects 3"));
+}
+
+#[test]
+fn command_service_preserves_save_conflicts() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("adapter-conflict");
+    write_package(&las, &package_dir).unwrap();
+
+    let service = PackageCommandService::new();
+    let session = unwrap_ok(service.open_package_session(&PackagePathRequest {
+        path: package_dir.display().to_string(),
+    }));
+
+    let _edited = unwrap_ok(service.apply_metadata_edit(&SessionMetadataEditRequest {
+        session_id: session.session_id.clone(),
+        update: MetadataUpdateRequest {
+            items: vec![HeaderItemUpdate {
+                section: MetadataSectionDto::Well,
+                mnemonic: String::from("COMP"),
+                unit: String::new(),
+                value: LasValue::Text(String::from("ADAPTER EDIT")),
+                description: String::from("COMPANY"),
+            }],
+            other: None,
+        },
+    }));
+
+    let mut external = open_package(&package_dir).unwrap();
+    external
+        .apply_metadata_update(&MetadataUpdateRequest {
+            items: vec![HeaderItemUpdate {
+                section: MetadataSectionDto::Well,
+                mnemonic: String::from("COMP"),
+                unit: String::new(),
+                value: LasValue::Text(String::from("EXTERNAL EDIT")),
+                description: String::from("COMPANY"),
+            }],
+            other: None,
+        })
+        .unwrap();
+    external.save_with_result().unwrap();
+
+    let conflict = service.save_session(&SessionRequest {
+        session_id: session.session_id.clone(),
+    });
+    let error = unwrap_err(conflict);
+
+    assert_eq!(error.kind, CommandErrorKind::SaveConflict);
+    assert_eq!(error.session_id, Some(session.session_id));
+    assert!(error.save_conflict.is_some());
+}
+
+#[test]
+fn command_service_supports_metadata_only_inspection_without_parquet() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("adapter-metadata-only");
+    write_package(&las, &package_dir).unwrap();
+    fs::remove_file(package_dir.join("curves.parquet")).unwrap();
+
+    let service = PackageCommandService::new();
+    let request = PackagePathRequest {
+        path: package_dir.display().to_string(),
+    };
+
+    let summary = unwrap_ok(service.inspect_package_summary(&request));
+    let metadata = unwrap_ok(service.inspect_package_metadata(&request));
+    let session_error = unwrap_err(service.open_package_session(&request));
+
+    assert_eq!(summary.summary.las_version, "1.2");
+    assert_eq!(metadata.metadata.curves.len(), 8);
+    assert_eq!(session_error.kind, CommandErrorKind::OpenFailed);
+}
+
+fn unwrap_ok<T>(response: CommandResponse<T>) -> T {
+    match response {
+        CommandResponse::Ok(value) => value,
+        CommandResponse::Err(error) => panic!("expected ok response, got {}", error.message),
+    }
+}
+
+fn unwrap_err<T>(response: CommandResponse<T>) -> lithos_las::CommandErrorDto {
+    match response {
+        CommandResponse::Ok(_) => panic!("expected error response"),
+        CommandResponse::Err(error) => error,
+    }
+}
+
+fn temp_package_dir(prefix: &str) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!("lithos-{prefix}-{unique}"));
+    if path.exists() {
+        fs::remove_dir_all(&path).unwrap();
+    }
+    path
+}

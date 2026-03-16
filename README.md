@@ -92,7 +92,9 @@ Core components:
 - explicit editable package session model: `PackageSession`
 - Tauri/backend adapter surface: `PackageBackend`
 - Tauri-ready shared backend state wrapper: `PackageBackendState`
+- app-boundary command service: `PackageCommandService`
 - typed canonical metadata view: `CanonicalMetadata`, `VersionInfo`, `WellInfo`, `IndexInfo`, `CurveInfo`
+- explicit grouped package metadata schema: `package`, `document`, `storage`, `raw`, and `diagnostics`
 - in-memory app/query layer: `CurveTable`
 - DTO/query layer for package-backed applications
 - optimized package format: `metadata.json + curves.parquet`
@@ -133,9 +135,10 @@ Key behaviors implemented:
 - structured section and header access
 - typed canonical metadata derivation and explicit package metadata schema versioning
 - package-backed edit/save and save-as flows
-- curve window DTOs for frontend-safe access
+- versioned DTO/query contract for frontend-safe access
 - package session dirty-state, identity, and optimistic save-conflict detection
 - Tauri-oriented backend session/query adapter
+- separate command-boundary transport service with structured command errors
 - metadata-only package opens without loading sample data
 - package write/read round-trip
 - mixed numeric/text curve column support
@@ -154,10 +157,11 @@ well_123.laspkg/
 
 `metadata.json` contains:
 
-- version, well, parameter, and other LAS metadata
-- canonical metadata and curve descriptors
-- provenance and import information
-- diagnostics and package/schema version metadata
+- package identity and metadata schema version
+- document summary, provenance, and encoding
+- canonical metadata and storage-facing column descriptors
+- raw preserved LAS sections
+- diagnostics and import issues
 
 `curves.parquet` stores the sampled curve matrix. Today it preserves the imported curve mnemonics, including the index curve name.
 
@@ -193,9 +197,14 @@ The current backend contract distinguishes:
 
 - read-only flows: package summary, metadata views, curve catalog, and windowed curve reads
 - editable flows: metadata edits, curve edits, dirty-state inspection, save, and save-as
+- app-boundary command groups:
+  - inspect commands do not require a session
+  - session commands require or produce a valid `SessionId`
+  - edit/persist commands operate on an existing session
 
 `PackageBackend` provides the current Tauri-oriented backend adapter on top of shared package sessions.
 `PackageBackendState` wraps it in shared mutable state suitable for future Tauri command handlers.
+`PackageCommandService` is the separate app-boundary transport layer that maps command requests into structured success/error envelopes.
 
 `PackageSession` owns:
 
@@ -220,7 +229,10 @@ Current session semantics:
 
 DTOs are boundary and transport shapes. They are not the canonical domain model. `LasFile` remains the authoritative in-memory LAS representation inside the backend.
 
-The DTO contract is versioned with a lightweight `dto_contract_version` field. It should evolve additively where possible while the Tauri contract stabilizes.
+The DTO contract is versioned with a lightweight `dto_contract_version` field. Session-backed metadata, curve-catalog, and curve-window reads now carry explicit session context so desktop clients do not need to infer package/session/revision state from unrelated calls.
+The command service is intentionally thin and transport-focused. It should not become a second place where domain or save semantics live.
+At the app boundary, commands use `CommandResponse<T> = Ok(T) | Err(CommandErrorDto)`.
+The public command error kinds are intentionally small and caller-actionable: `OpenFailed`, `ValidationFailed`, `SaveConflict`, `SessionNotFound`, and `Internal`.
 
 ## Interoperability
 
@@ -307,6 +319,7 @@ Lithos currently does not aim to be:
 - a cloud data platform
 - a replacement for Python LAS analytics libraries
 - a collaborative or multi-user editing system
+- a crate with a hard `tauri` dependency at this stage
 
 Instead, Lithos focuses on:
 
@@ -321,23 +334,25 @@ Instead, Lithos focuses on:
 
 - canonical `LasFile` model and tolerant LAS parser
 - typed canonical metadata layer and explicit package metadata contract
+- grouped package metadata schema with compatibility reads for the legacy flat shape
 - `CurveTable` runtime table abstraction
 - package-backed edit/save primitives
 - explicit package session model with dirty-state and revision tracking
 - `PackageBackend` adapter for Tauri-style inspection and edit flows
 - `PackageBackendState` wrapper for command-style shared backend state
+- `PackageCommandService` app-boundary transport service with structured command errors
 - DTO layer for summaries, metadata, curve catalog, windowed reads, and edit flows
+- explicit session-context DTOs for session metadata, curve catalogs, and curve-window queries
 - `metadata.json + curves.parquet` package format
 - non-v3 `lasio` parity coverage
 - package round-trip tests including mixed-type columns
 
 ### Next
 
-- tighten the canonical metadata model
-- stabilize DTO/query contracts for Tauri and other desktop frontends
 - deepen package-session lifecycle behavior, including clearer save conflict handling
 - improve validation and diagnostics around package validity, edit validity, and save validity
-- make package overwrite semantics and validation rules more explicit
+- keep the command service thin and transport-focused while the app boundary settles
+- optimize editable-session materialization only where it does not complicate edit semantics too much
 - keep consolidating architecture guidance under `docs/architecture/` rather than root-level notes
 
 ### After That

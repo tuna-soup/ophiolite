@@ -1,26 +1,32 @@
 mod backend;
 mod backend_commands;
+mod command_service;
 
 pub use backend::{PackageBackend, dto_contract_version};
 pub use backend_commands::PackageBackendState;
+pub use command_service::PackageCommandService;
 pub use lithos_core::{
-    AssetSummaryDto, CanonicalAlias, CanonicalMetadata, CloseSessionResultDto,
-    CurveCatalogEntryDto, CurveColumn, CurveColumnDescriptor, CurveColumnMetadata,
-    CurveEditRequest, CurveInfo, CurveItem, CurveSelector, CurveStorageKind, CurveTable,
-    CurveUpdateRequest, CurveWindowColumnDto, CurveWindowDto, CurveWindowRequest,
-    DTO_CONTRACT_VERSION, DirtyStateDto, HeaderItem, HeaderItemUpdate, IndexDescriptor, IndexInfo,
-    IndexKind, IngestIssue, IssueSeverity, LasError, LasFile, LasFileSummary, LasValue,
-    MetadataDto, MetadataSectionDto, MetadataUpdateRequest, MnemonicCase,
-    PACKAGE_METADATA_SCHEMA_VERSION, PackageId, PackageMetadata, PackagePathRequest, ParameterInfo,
-    Provenance, RawMetadataSections, Result, RevisionToken, SaveConflictDto, SavePackageResultDto,
-    SaveSessionResponseDto, SectionItems, SessionCurveEditRequest, SessionId,
-    SessionMetadataEditRequest, SessionRequest, SessionSaveAsRequest, SessionSummaryDto,
-    SessionWindowRequest, ValidationKind, ValidationReportDto, VersionInfo, WellInfo,
-    apply_curve_edit, apply_metadata_update, asset_summary_dto, close_session_result_dto,
-    curve_catalog_dto, curve_window_dto, dirty_state_dto, metadata_dto, package_id_for_path,
-    package_metadata_for, package_validation_report, revision_token_for_bytes, save_conflict_dto,
-    save_validation_report, session_id_for_path, session_summary_dto, validate_edit_state,
-    validation_report_dto,
+    AssetSummaryDto, CanonicalAlias, CanonicalMetadata, CloseSessionResultDto, CommandErrorDto,
+    CommandErrorKind, CommandGroup, CommandResponse, CurveCatalogDto, CurveCatalogEntryDto,
+    CurveColumn, CurveColumnDescriptor, CurveColumnMetadata, CurveEditRequest, CurveInfo,
+    CurveItem, CurveSelector, CurveStorageKind, CurveTable, CurveUpdateRequest,
+    CurveWindowColumnDto, CurveWindowDto, CurveWindowRequest, DTO_CONTRACT_VERSION, DirtyStateDto,
+    HeaderItem, HeaderItemUpdate, IndexDescriptor, IndexInfo, IndexKind, IngestIssue,
+    IssueSeverity, LasError, LasFile, LasFileSummary, LasValue, MetadataDto, MetadataSectionDto,
+    MetadataUpdateRequest, MnemonicCase, PACKAGE_METADATA_SCHEMA_VERSION,
+    PackageDiagnosticsMetadata, PackageDocumentMetadata, PackageId, PackageIdentityMetadata,
+    PackageMetadata, PackagePathRequest, PackageStorageMetadata, ParameterInfo, Provenance,
+    RawMetadataSections, Result, RevisionToken, SaveConflictDto, SavePackageResultDto,
+    SaveSessionResponseDto, SectionItems, SessionContextDto, SessionCurveEditRequest, SessionId,
+    SessionMetadataDto, SessionMetadataEditRequest, SessionRequest, SessionSaveAsRequest,
+    SessionSummaryDto, SessionWindowDto, SessionWindowRequest, ValidationKind, ValidationReportDto,
+    VersionInfo, WellInfo, apply_curve_edit, apply_metadata_update, asset_summary_dto,
+    close_session_result_dto, command_error_dto, curve_catalog_dto, curve_catalog_result_dto,
+    curve_window_dto, dirty_state_dto, metadata_dto, package_id_for_path, package_metadata_for,
+    package_validation_report, parse_package_metadata, revision_token_for_bytes, save_conflict_dto,
+    save_validation_report, session_context_dto, session_id_for_path, session_metadata_dto,
+    session_summary_dto, session_window_dto, validate_canonical_metadata, validate_edit_state,
+    validate_package_metadata, validation_report_dto,
 };
 pub use lithos_package::{
     PackageSession, PackageSessionStore, StoredLasFile, open_package, open_package_metadata,

@@ -46,13 +46,21 @@ The package contract is split conceptually into:
   - save/save-as results
   - save conflict results
 
+At the app boundary, commands follow a single envelope pattern:
+
+- `CommandResponse<T> = Ok(T) | Err(CommandErrorDto)`
+
+Inspect commands do not require a session. Session commands require or produce a valid `SessionId`. Edit/persist commands operate on an existing session.
+
 DTOs are transport shapes only. They do not replace the canonical domain model. `LasFile` remains the authoritative in-memory LAS representation inside the backend.
 
 The DTO contract is versioned with a lightweight `dto_contract_version` field.
+Session-backed metadata, catalog, and window reads should carry explicit session context rather than forcing desktop clients to reconstruct it from separate calls.
 
-The current Tauri-ready adapter layer is `PackageBackend`, with `PackageBackendState` as the shared-state wrapper a future Tauri app can mount behind thin command handlers.
+The current Tauri-ready adapter layer is `PackageBackend`, with `PackageBackendState` as the shared-state wrapper and `PackageCommandService` as the thin, transport-focused app-boundary service above it.
 
 DTO evolution should remain additive where possible. Formal compatibility guarantees can harden later once the Tauri contract stops moving quickly.
+Public command error kinds should remain small and caller-actionable rather than implementation-shaped.
 
 ## Why
 
@@ -70,6 +78,7 @@ DTO evolution should remain additive where possible. Formal compatibility guaran
 - metadata-only opens are an explicit architectural behavior, not an accidental implementation detail
 - windowed reads are part of the frontend contract even though full lazy sample-table loading is still an evolving internal concern
 - future Tauri command handlers should be built on top of this session model rather than reaching directly into storage internals
+- the app-boundary command layer should preserve structured backend errors rather than collapsing them into ad hoc strings
 - edit requests must be atomic at the request level; rejected edits must not partially mutate session state
 
 ## Session Lifecycle
@@ -101,6 +110,7 @@ This ADR does not imply:
 - full undo/redo support
 - a final stable Tauri command surface
 - collaborative or multi-user editing semantics
+- a hard `tauri` dependency in this repo yet
 
 Revision tokens are used for persistence conflict checks, not live distributed synchronization.
 

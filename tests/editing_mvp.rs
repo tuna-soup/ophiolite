@@ -129,6 +129,35 @@ fn curve_edits_reject_inconsistent_row_counts() {
 }
 
 #[test]
+fn index_curve_edits_reject_non_numeric_samples() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("invalid-index-edit");
+    let mut stored = write_package(&las, &package_dir).unwrap();
+
+    let err = stored
+        .apply_curve_edit(&CurveEditRequest::Upsert(CurveUpdateRequest {
+            mnemonic: String::from("DEPT"),
+            original_mnemonic: Some(String::from("DEPT")),
+            unit: String::from("M"),
+            header_value: LasValue::Empty,
+            description: String::from("invalid index"),
+            data: vec![
+                LasValue::Text(String::from("A")),
+                LasValue::Text(String::from("B")),
+                LasValue::Text(String::from("C")),
+            ],
+        }))
+        .unwrap_err();
+
+    match err {
+        LasError::Validation(message) => {
+            assert!(message.contains("must remain numeric"));
+        }
+        other => panic!("expected validation error, got {other}"),
+    }
+}
+
+#[test]
 fn dto_views_reflect_current_package_state() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("dto-state");

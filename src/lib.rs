@@ -1,51 +1,39 @@
 mod asset;
+pub mod examples;
 mod parser;
 mod storage;
+mod table;
 
 pub use asset::{
-    CanonicalAlias, Curve, CurveDescriptor, CurveWindow, HeaderItem, HeaderSection,
-    IndexDescriptor, IndexKind, IngestIssue, IssueSeverity, LasAsset, LasAssetSummary, Provenance,
+    CanonicalAlias, CurveItem, CurveSelector, HeaderItem, IndexDescriptor, IndexKind, IngestIssue,
+    IssueSeverity, LasFile, LasFileSummary, LasValue, MnemonicCase, Provenance, SectionItems,
 };
-pub use parser::import_las_file;
-pub use storage::{StoredLasAsset, write_bundle};
+pub use parser::{
+    DType, DTypeSpec, DecodedText, NullPolicy, NullRule, ParsedHeaderLine, ReadOptions, ReadPolicy,
+    decode_bytes, import_las_file, parse_header_line, read_path, read_reader, read_string,
+};
+pub use storage::{StoredLasFile, open_package, write_bundle, write_package};
+pub use table::{CurveColumn, CurveColumnDescriptor, CurveStorageKind, CurveTable};
 
-use std::error::Error;
-use std::fmt::{Display, Formatter};
 use std::io;
+use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, LasError>;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum LasError {
-    Io(io::Error),
+    #[error("I/O error: {0}")]
+    Io(#[from] io::Error),
+    #[error("Parse error: {0}")]
     Parse(String),
+    #[error("Unsupported LAS input: {0}")]
     Unsupported(String),
+    #[error("Storage error: {0}")]
     Storage(String),
-    Serialization(serde_json::Error),
-}
-
-impl Display for LasError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(err) => write!(f, "I/O error: {err}"),
-            Self::Parse(err) => write!(f, "Parse error: {err}"),
-            Self::Unsupported(err) => write!(f, "Unsupported LAS input: {err}"),
-            Self::Storage(err) => write!(f, "Storage error: {err}"),
-            Self::Serialization(err) => write!(f, "Serialization error: {err}"),
-        }
-    }
-}
-
-impl Error for LasError {}
-
-impl From<io::Error> for LasError {
-    fn from(value: io::Error) -> Self {
-        Self::Io(value)
-    }
-}
-
-impl From<serde_json::Error> for LasError {
-    fn from(value: serde_json::Error) -> Self {
-        Self::Serialization(value)
-    }
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+    #[error("Arrow error: {0}")]
+    Arrow(#[from] arrow_schema::ArrowError),
+    #[error("Parquet error: {0}")]
+    Parquet(#[from] parquet::errors::ParquetError),
 }

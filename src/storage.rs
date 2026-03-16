@@ -1,186 +1,307 @@
-use crate::asset::{
-    CurveDescriptor, CurveWindow, HeaderSection, IngestIssue, LasAsset, LasAssetSummary,
-    Provenance, bundle_manifest_path, slice_samples,
-};
-use crate::{LasError, Result};
+use crate::asset::{CurveItem, HeaderItem, IndexDescriptor, IngestIssue, LasFile, LasFileSummary};
+use crate::table::{CurveColumnDescriptor, CurveStorageKind, CurveTable};
+use crate::{LasError, LasValue, Provenance, Result};
+use arrow_array::Array;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::arrow_writer::ArrowWriter;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{Read, Write};
+use std::fs::File;
 use std::path::{Path, PathBuf};
+use tracing::debug;
 
-const BUNDLE_VERSION: u32 = 1;
+const PACKAGE_VERSION: u32 = 1;
+const METADATA_FILENAME: &str = "metadata.json";
+const CURVES_FILENAME: &str = "curves.parquet";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct BundleManifest {
-    bundle_version: u32,
-    summary: LasAssetSummary,
-    provenance: Provenance,
-    index_curve_id: String,
-    headers: Vec<HeaderSection>,
-    curves: Vec<StoredCurve>,
-    issues: Vec<IngestIssue>,
+struct StoredCurveMetadata {
+    mnemonic: String,
+    original_mnemonic: String,
+    unit: String,
+    value: LasValue,
+    description: String,
+    storage_kind: CurveStorageKind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredCurve {
-    descriptor: CurveDescriptor,
-    binary_path: String,
+struct PackageMetadata {
+    package_version: u32,
+    summary: LasFileSummary,
+    provenance: Provenance,
+    encoding: Option<String>,
+    index: IndexDescriptor,
+    version: crate::SectionItems<HeaderItem>,
+    well: crate::SectionItems<HeaderItem>,
+    params: crate::SectionItems<HeaderItem>,
+    curve_mnemonic_case: crate::MnemonicCase,
+    curves: Vec<StoredCurveMetadata>,
+    other: String,
+    extra_sections: std::collections::BTreeMap<String, String>,
+    issues: Vec<IngestIssue>,
+    index_unit: Option<String>,
 }
 
 #[derive(Debug, Clone)]
-pub struct StoredLasAsset {
+pub struct StoredLasFile {
     root: PathBuf,
-    manifest: BundleManifest,
+    file: LasFile,
+    table: CurveTable,
 }
 
-impl StoredLasAsset {
+impl StoredLasFile {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let root = path.as_ref().to_path_buf();
-        let manifest_path = bundle_manifest_path(&root);
-        let manifest_text = fs::read_to_string(&manifest_path)?;
-        let manifest: BundleManifest = serde_json::from_str(&manifest_text)?;
-        if manifest.bundle_version != BUNDLE_VERSION {
-            return Err(LasError::Storage(format!(
-                "Unsupported bundle version {}.",
-                manifest.bundle_version
-            )));
-        }
-        Ok(Self { root, manifest })
+        open_package(path)
     }
 
-    pub fn summary(&self) -> &LasAssetSummary {
-        &self.manifest.summary
+    pub fn file(&self) -> &LasFile {
+        &self.file
     }
 
-    pub fn list_curves(&self) -> Vec<CurveDescriptor> {
-        self.manifest
-            .curves
-            .iter()
-            .map(|curve| curve.descriptor.clone())
-            .collect()
+    pub fn summary(&self) -> &LasFileSummary {
+        &self.file.summary
     }
 
-    pub fn get_curve_metadata(&self, curve_id: &str) -> Option<CurveDescriptor> {
-        self.manifest
-            .curves
-            .iter()
-            .find(|curve| curve.descriptor.id == curve_id)
-            .map(|curve| curve.descriptor.clone())
+    pub fn read_curve(&self, mnemonic: &str) -> Option<&[LasValue]> {
+        self.file.curve_data(mnemonic)
     }
 
-    pub fn read_curve(&self, curve_id: &str, window: Option<CurveWindow>) -> Result<Vec<f64>> {
-        let curve = self
-            .manifest
-            .curves
-            .iter()
-            .find(|curve| curve.descriptor.id == curve_id)
-            .ok_or_else(|| {
-                LasError::Storage(format!("Curve '{curve_id}' was not found in the bundle."))
-            })?;
-
-        let samples = read_curve_binary(self.root.join(&curve.binary_path))?;
-        Ok(slice_samples(&samples, window))
+    pub fn data(&self) -> &CurveTable {
+        &self.table
     }
 
-    pub fn read_curves(
-        &self,
-        curve_ids: &[String],
-        window: Option<CurveWindow>,
-    ) -> Result<Vec<(String, Vec<f64>)>> {
-        let mut results = Vec::with_capacity(curve_ids.len());
-        for curve_id in curve_ids {
-            results.push((curve_id.clone(), self.read_curve(curve_id, window)?));
-        }
-        Ok(results)
-    }
-
-    pub fn read_index(&self, window: Option<CurveWindow>) -> Result<Vec<f64>> {
-        self.read_curve(&self.manifest.index_curve_id, window)
-    }
-
-    pub fn get_ingest_issues(&self) -> &[IngestIssue] {
-        &self.manifest.issues
+    pub fn root(&self) -> &Path {
+        &self.root
     }
 }
 
-pub fn write_bundle(asset: &LasAsset, output_dir: impl AsRef<Path>) -> Result<StoredLasAsset> {
+pub fn open_package(path: impl AsRef<Path>) -> Result<StoredLasFile> {
+    let root = path.as_ref().to_path_buf();
+    debug!(package = %root.display(), "opening LAS package");
+
+    let metadata_text = fs::read_to_string(metadata_path(&root))?;
+    let metadata: PackageMetadata = serde_json::from_str(&metadata_text)?;
+    if metadata.package_version != PACKAGE_VERSION {
+        return Err(LasError::Storage(format!(
+            "unsupported package version {}",
+            metadata.package_version
+        )));
+    }
+
+    let batch = read_parquet_batch(curves_path(&root), metadata.summary.row_count)?;
+    let descriptors = metadata
+        .curves
+        .iter()
+        .map(|curve| CurveColumnDescriptor {
+            name: curve.mnemonic.clone(),
+            storage_kind: curve.storage_kind,
+        })
+        .collect::<Vec<_>>();
+    let table = CurveTable::from_record_batch(&batch, &descriptors)?;
+    let curves = materialize_curves(&metadata.curves, &table)?;
+
+    Ok(StoredLasFile {
+        root,
+        file: LasFile {
+            summary: metadata.summary,
+            provenance: metadata.provenance,
+            encoding: metadata.encoding,
+            index: metadata.index,
+            version: metadata.version,
+            well: metadata.well,
+            params: metadata.params,
+            curves: crate::SectionItems::from_items(curves, metadata.curve_mnemonic_case),
+            other: metadata.other,
+            extra_sections: metadata.extra_sections,
+            issues: metadata.issues,
+            index_unit: metadata.index_unit,
+        },
+        table,
+    })
+}
+
+pub fn write_package(file: &LasFile, output_dir: impl AsRef<Path>) -> Result<StoredLasFile> {
     let output_dir = output_dir.as_ref();
     if output_dir.exists() {
         return Err(LasError::Storage(format!(
-            "Output directory '{}' already exists.",
+            "output directory '{}' already exists",
             output_dir.display()
         )));
     }
 
+    debug!(package = %output_dir.display(), "writing LAS package");
     fs::create_dir_all(output_dir)?;
-    let curves_dir = output_dir.join("curves");
-    fs::create_dir_all(&curves_dir)?;
 
-    let mut stored_curves = Vec::with_capacity(asset.curves.len());
-    for curve in &asset.curves {
-        let binary_name = format!("{}.bin", sanitize_curve_id(&curve.descriptor.id));
-        let binary_path = Path::new("curves").join(&binary_name);
-        write_curve_binary(output_dir.join(&binary_path), &curve.samples)?;
-
-        let mut descriptor = curve.descriptor.clone();
-        descriptor.sample_count = curve.samples.len();
-        stored_curves.push(StoredCurve {
-            descriptor,
-            binary_path: binary_path.to_string_lossy().into_owned(),
-        });
-    }
-
-    let manifest = BundleManifest {
-        bundle_version: BUNDLE_VERSION,
-        summary: asset.summary.clone(),
-        provenance: asset.provenance.clone(),
-        index_curve_id: asset.index.curve_id.clone(),
-        headers: asset.headers.clone(),
-        curves: stored_curves,
-        issues: asset.issues.clone(),
+    let table = file.data();
+    let metadata = PackageMetadata {
+        package_version: PACKAGE_VERSION,
+        summary: file.summary.clone(),
+        provenance: file.provenance.clone(),
+        encoding: file.encoding.clone(),
+        index: file.index.clone(),
+        version: file.version.clone(),
+        well: file.well.clone(),
+        params: file.params.clone(),
+        curve_mnemonic_case: file.curves.mnemonic_case,
+        curves: file
+            .curves
+            .iter()
+            .zip(table.descriptors())
+            .map(|(curve, descriptor)| StoredCurveMetadata {
+                mnemonic: curve.mnemonic.clone(),
+                original_mnemonic: curve.original_mnemonic.clone(),
+                unit: curve.unit.clone(),
+                value: curve.value.clone(),
+                description: curve.description.clone(),
+                storage_kind: descriptor.storage_kind,
+            })
+            .collect(),
+        other: file.other.clone(),
+        extra_sections: file.extra_sections.clone(),
+        issues: file.issues.clone(),
+        index_unit: file.index_unit.clone(),
     };
 
-    let manifest_path = bundle_manifest_path(output_dir);
-    let manifest_text = serde_json::to_string_pretty(&manifest)?;
-    fs::write(&manifest_path, manifest_text)?;
+    fs::write(
+        metadata_path(output_dir),
+        serde_json::to_string_pretty(&metadata)?,
+    )?;
+    write_parquet_batch(curves_path(output_dir), &table)?;
 
-    StoredLasAsset::open(output_dir)
+    open_package(output_dir)
 }
 
-fn sanitize_curve_id(curve_id: &str) -> String {
-    curve_id
-        .chars()
-        .map(|ch| match ch {
-            ':' | '/' | '\\' | ' ' => '_',
-            other => other,
-        })
-        .collect()
+pub fn write_bundle(file: &LasFile, output_dir: impl AsRef<Path>) -> Result<StoredLasFile> {
+    write_package(file, output_dir)
 }
 
-fn write_curve_binary(path: PathBuf, samples: &[f64]) -> Result<()> {
-    let mut file = fs::File::create(path)?;
-    for sample in samples {
-        file.write_all(&sample.to_le_bytes())?;
-    }
+fn metadata_path(root: &Path) -> PathBuf {
+    root.join(METADATA_FILENAME)
+}
+
+fn curves_path(root: &Path) -> PathBuf {
+    root.join(CURVES_FILENAME)
+}
+
+fn write_parquet_batch(path: PathBuf, table: &CurveTable) -> Result<()> {
+    let batch = table.to_record_batch()?;
+    let file = File::create(path)?;
+    let mut writer = ArrowWriter::try_new(file, batch.schema(), None)?;
+    writer.write(&batch)?;
+    writer.close()?;
     Ok(())
 }
 
-fn read_curve_binary(path: PathBuf) -> Result<Vec<f64>> {
-    let mut file = fs::File::open(path)?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
+fn read_parquet_batch(path: PathBuf, row_count: usize) -> Result<arrow_array::RecordBatch> {
+    let file = File::open(path)?;
+    let reader = ParquetRecordBatchReaderBuilder::try_new(file)?
+        .with_batch_size(row_count.max(1))
+        .build()?;
+    let mut batches = reader.collect::<std::result::Result<Vec<_>, _>>()?;
+    match batches.len() {
+        0 => {
+            return Err(LasError::Storage(String::from(
+                "package parquet data did not contain any record batches",
+            )));
+        }
+        1 => Ok(batches.remove(0)),
+        _ => merge_batches(batches),
+    }
+}
 
-    if bytes.len() % 8 != 0 {
-        return Err(LasError::Storage(String::from(
-            "Curve binary payload length is not divisible by 8.",
-        )));
+fn merge_batches(batches: Vec<arrow_array::RecordBatch>) -> Result<arrow_array::RecordBatch> {
+    let first = batches
+        .first()
+        .ok_or_else(|| LasError::Storage(String::from("no batches to merge")))?;
+    let schema = first.schema();
+    let mut merged = Vec::with_capacity(schema.fields().len());
+
+    for column_index in 0..schema.fields().len() {
+        match schema.field(column_index).data_type() {
+            arrow_schema::DataType::Float64 => {
+                let mut values = Vec::new();
+                for batch in &batches {
+                    let array = batch
+                        .column(column_index)
+                        .as_any()
+                        .downcast_ref::<arrow_array::Float64Array>()
+                        .ok_or_else(|| {
+                            LasError::Storage(String::from(
+                                "expected Float64Array while merging parquet batches",
+                            ))
+                        })?;
+                    values.extend((0..array.len()).map(|row| {
+                        if array.is_null(row) {
+                            None
+                        } else {
+                            Some(array.value(row))
+                        }
+                    }));
+                }
+                merged.push(std::sync::Arc::new(arrow_array::Float64Array::from(values))
+                    as arrow_array::ArrayRef);
+            }
+            arrow_schema::DataType::Utf8 => {
+                let mut values = Vec::new();
+                for batch in &batches {
+                    let array = batch
+                        .column(column_index)
+                        .as_any()
+                        .downcast_ref::<arrow_array::StringArray>()
+                        .ok_or_else(|| {
+                            LasError::Storage(String::from(
+                                "expected StringArray while merging parquet batches",
+                            ))
+                        })?;
+                    values.extend((0..array.len()).map(|row| {
+                        if array.is_null(row) {
+                            None
+                        } else {
+                            Some(array.value(row).to_string())
+                        }
+                    }));
+                }
+                merged.push(
+                    std::sync::Arc::new(arrow_array::StringArray::from_iter(values))
+                        as arrow_array::ArrayRef,
+                );
+            }
+            other => {
+                return Err(LasError::Storage(format!(
+                    "unsupported parquet column type during merge: {other:?}"
+                )));
+            }
+        }
     }
 
-    let mut samples = Vec::with_capacity(bytes.len() / 8);
-    for chunk in bytes.chunks_exact(8) {
-        let mut buffer = [0u8; 8];
-        buffer.copy_from_slice(chunk);
-        samples.push(f64::from_le_bytes(buffer));
-    }
-    Ok(samples)
+    Ok(arrow_array::RecordBatch::try_new(schema, merged)?)
+}
+
+fn materialize_curves(
+    curves: &[StoredCurveMetadata],
+    table: &CurveTable,
+) -> Result<Vec<CurveItem>> {
+    curves
+        .iter()
+        .map(|curve| {
+            let values = table
+                .column(&curve.mnemonic)
+                .ok_or_else(|| {
+                    LasError::Storage(format!(
+                        "column '{}' missing from package table",
+                        curve.mnemonic
+                    ))
+                })?
+                .values()
+                .to_vec();
+            Ok(CurveItem {
+                mnemonic: curve.mnemonic.clone(),
+                original_mnemonic: curve.original_mnemonic.clone(),
+                unit: curve.unit.clone(),
+                value: curve.value.clone(),
+                description: curve.description.clone(),
+                data: values,
+            })
+        })
+        .collect()
 }

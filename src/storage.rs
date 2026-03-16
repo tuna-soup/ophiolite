@@ -3,19 +3,24 @@ use arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use lithos_core::{
     AssetSummaryDto, CurveCatalogEntryDto, CurveColumnMetadata, CurveEditRequest, CurveItem,
-    CurveStorageKind, CurveTable, CurveWindowDto, CurveWindowRequest, LasError, LasFile,
-    LasFileSummary, LasValue, MetadataDto, MetadataUpdateRequest, PackageMetadata, Result,
-    SavePackageResultDto, SectionItems, ValidationReportDto, apply_curve_edit,
-    apply_metadata_update, asset_summary_dto, curve_catalog_dto, curve_window_dto, metadata_dto,
-    package_metadata_for, validate_edit_state, validation_report_dto,
+    CurveStorageKind, CurveTable, CurveWindowDto, CurveWindowRequest, DTO_CONTRACT_VERSION,
+    DirtyStateDto, LasError, LasFile, LasFileSummary, LasValue, MetadataDto, MetadataUpdateRequest,
+    PackageId, PackageMetadata, Result, RevisionToken, SaveConflictDto, SavePackageResultDto,
+    SectionItems, SessionId, SessionSummaryDto, ValidationReportDto, apply_curve_edit,
+    apply_metadata_update, asset_summary_dto, curve_catalog_dto, curve_window_dto, dirty_state_dto,
+    metadata_dto, package_id_for_path, package_metadata_for, package_validation_report,
+    revision_token_for_bytes, save_conflict_dto, session_summary_dto, validate_edit_state,
+    validation_report_dto,
 };
 use lithos_table::CurveColumnDescriptor;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::arrow_writer::ArrowWriter;
+use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::debug;
 
 const PACKAGE_VERSION: u32 = 1;
@@ -23,15 +28,79 @@ const METADATA_FILENAME: &str = "metadata.json";
 const CURVES_FILENAME: &str = "curves.parquet";
 
 #[derive(Debug, Clone)]
-pub struct StoredLasFile {
+pub struct PackageSession {
+    package_id: PackageId,
+    session_id: SessionId,
+    revision: RevisionToken,
+    dirty: bool,
     root: PathBuf,
     file: LasFile,
     table: CurveTable,
 }
 
-impl StoredLasFile {
+pub type StoredLasFile = PackageSession;
+
+#[derive(Debug, Default)]
+pub struct PackageSessionStore {
+    sessions: BTreeMap<String, PackageSession>,
+    package_sessions: BTreeMap<String, String>,
+}
+
+impl PackageSessionStore {
+    pub fn open_shared(&mut self, path: impl AsRef<Path>) -> Result<SessionSummaryDto> {
+        let key = package_path_key(path.as_ref());
+        if let Some(session_id) = self.package_sessions.get(&key) {
+            if let Some(session) = self.sessions.get(session_id) {
+                return Ok(session.session_summary());
+            }
+        }
+
+        let session = open_package(path)?;
+        let session_id = session.session_id.0.clone();
+        self.package_sessions.insert(key, session_id.clone());
+        let summary = session.session_summary();
+        self.sessions.insert(session_id, session);
+        Ok(summary)
+    }
+
+    pub fn get(&self, session_id: &SessionId) -> Option<&PackageSession> {
+        self.sessions.get(&session_id.0)
+    }
+
+    pub fn get_mut(&mut self, session_id: &SessionId) -> Option<&mut PackageSession> {
+        self.sessions.get_mut(&session_id.0)
+    }
+
+    pub fn close(&mut self, session_id: &SessionId) -> Option<PackageSession> {
+        let session = self.sessions.remove(&session_id.0)?;
+        self.package_sessions
+            .retain(|_, existing| existing != &session_id.0);
+        Some(session)
+    }
+
+    pub fn rebind_path(&mut self, session_id: &SessionId, old_root: &Path, new_root: &Path) {
+        let old_key = package_path_key(old_root);
+        let new_key = package_path_key(new_root);
+        self.package_sessions.remove(&old_key);
+        self.package_sessions.insert(new_key, session_id.0.clone());
+    }
+}
+
+impl PackageSession {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         open_package(path)
+    }
+
+    pub fn package_id(&self) -> &PackageId {
+        &self.package_id
+    }
+
+    pub fn session_id(&self) -> &SessionId {
+        &self.session_id
+    }
+
+    pub fn revision(&self) -> &RevisionToken {
+        &self.revision
     }
 
     pub fn file(&self) -> &LasFile {
@@ -54,6 +123,25 @@ impl StoredLasFile {
         asset_summary_dto(&self.file)
     }
 
+    pub fn session_summary(&self) -> SessionSummaryDto {
+        session_summary_dto(
+            self.package_id.clone(),
+            self.session_id.clone(),
+            self.revision.clone(),
+            self.dirty,
+            self.summary_dto(),
+        )
+    }
+
+    pub fn dirty_state(&self) -> DirtyStateDto {
+        dirty_state_dto(
+            self.package_id.clone(),
+            self.session_id.clone(),
+            self.revision.clone(),
+            self.dirty,
+        )
+    }
+
     pub fn metadata_dto(&self) -> MetadataDto {
         metadata_dto(&self.file)
     }
@@ -73,34 +161,88 @@ impl StoredLasFile {
     pub fn apply_metadata_update(&mut self, request: &MetadataUpdateRequest) -> Result<()> {
         apply_metadata_update(&mut self.file, request)?;
         self.table = self.file.data();
+        self.dirty = true;
         Ok(())
     }
 
     pub fn apply_curve_edit(&mut self, request: &CurveEditRequest) -> Result<()> {
         apply_curve_edit(&mut self.file, request)?;
         self.table = self.file.data();
+        self.dirty = true;
         Ok(())
     }
 
     pub fn save(&mut self) -> Result<()> {
+        match self.save_checked()? {
+            Ok(_) => Ok(()),
+            Err(conflict) => Err(LasError::Validation(format!(
+                "save conflict for session '{}': expected {}, found {}",
+                conflict.session_id.0, conflict.expected_revision.0, conflict.actual_revision.0
+            ))),
+        }
+    }
+
+    pub fn save_checked(
+        &mut self,
+    ) -> Result<std::result::Result<SavePackageResultDto, SaveConflictDto>> {
+        let current_revision = package_revision(&self.root)?;
+        if current_revision != self.revision {
+            return Ok(Err(save_conflict_dto(
+                self.package_id.clone(),
+                self.session_id.clone(),
+                self.revision.clone(),
+                current_revision,
+                self.root.display().to_string(),
+            )));
+        }
+
+        let session_id = self.session_id.clone();
         let reopened = write_package_internal(&self.file, &self.root, true)?;
-        *self = reopened;
-        Ok(())
+        self.replace_from_saved(reopened, session_id.clone());
+        let result = SavePackageResultDto {
+            dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+            package_id: self.package_id.clone(),
+            session_id,
+            revision: self.revision.clone(),
+            root: self.root.display().to_string(),
+            overwritten: true,
+            dirty_cleared: true,
+            summary: self.summary_dto(),
+        };
+        Ok(Ok(result))
     }
 
     pub fn save_with_result(&mut self) -> Result<SavePackageResultDto> {
-        let reopened = write_package_internal(&self.file, &self.root, true)?;
-        let result = SavePackageResultDto {
-            root: reopened.root.display().to_string(),
-            overwritten: true,
-            summary: reopened.summary_dto(),
-        };
-        *self = reopened;
-        Ok(result)
+        match self.save_checked()? {
+            Ok(result) => Ok(result),
+            Err(conflict) => Err(LasError::Validation(format!(
+                "save conflict for session '{}': expected {}, found {}",
+                conflict.session_id.0, conflict.expected_revision.0, conflict.actual_revision.0
+            ))),
+        }
     }
 
-    pub fn save_as(&self, output_dir: impl AsRef<Path>) -> Result<StoredLasFile> {
+    pub fn save_as(&self, output_dir: impl AsRef<Path>) -> Result<PackageSession> {
         write_package_internal(&self.file, output_dir.as_ref(), false)
+    }
+
+    pub fn save_as_in_place(
+        &mut self,
+        output_dir: impl AsRef<Path>,
+    ) -> Result<SavePackageResultDto> {
+        let session_id = self.session_id.clone();
+        let reopened = write_package_internal(&self.file, output_dir.as_ref(), false)?;
+        self.replace_from_saved(reopened, session_id.clone());
+        Ok(SavePackageResultDto {
+            dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+            package_id: self.package_id.clone(),
+            session_id,
+            revision: self.revision.clone(),
+            root: self.root.display().to_string(),
+            overwritten: false,
+            dirty_cleared: true,
+            summary: self.summary_dto(),
+        })
     }
 
     pub fn save_as_with_result(
@@ -109,8 +251,13 @@ impl StoredLasFile {
     ) -> Result<SavePackageResultDto> {
         let reopened = write_package_internal(&self.file, output_dir.as_ref(), false)?;
         Ok(SavePackageResultDto {
+            dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+            package_id: reopened.package_id.clone(),
+            session_id: reopened.session_id.clone(),
+            revision: reopened.revision.clone(),
             root: reopened.root.display().to_string(),
             overwritten: false,
+            dirty_cleared: true,
             summary: reopened.summary_dto(),
         })
     }
@@ -118,13 +265,20 @@ impl StoredLasFile {
     pub fn root(&self) -> &Path {
         &self.root
     }
+
+    fn replace_from_saved(&mut self, mut reopened: PackageSession, session_id: SessionId) {
+        reopened.session_id = session_id;
+        reopened.dirty = false;
+        *self = reopened;
+    }
 }
 
-pub fn open_package(path: impl AsRef<Path>) -> Result<StoredLasFile> {
+pub fn open_package(path: impl AsRef<Path>) -> Result<PackageSession> {
     let root = path.as_ref().to_path_buf();
     debug!(package = %root.display(), "opening LAS package");
 
     let metadata = read_package_metadata(&root)?;
+    let revision = package_revision(&root)?;
 
     let batch = read_parquet_batch(curves_path(&root), metadata.summary.row_count)?;
     let descriptors = metadata
@@ -138,7 +292,12 @@ pub fn open_package(path: impl AsRef<Path>) -> Result<StoredLasFile> {
     let table = table_from_record_batch(&batch, &descriptors)?;
     let curves = materialize_curves(&metadata.curve_columns, &table)?;
 
-    Ok(StoredLasFile {
+    let root_key = package_path_key(&root);
+    Ok(PackageSession {
+        package_id: package_id_for_path(&root_key),
+        session_id: new_session_id(&root),
+        revision,
+        dirty: false,
         root,
         file: LasFile {
             summary: metadata.summary,
@@ -161,6 +320,7 @@ pub fn open_package(path: impl AsRef<Path>) -> Result<StoredLasFile> {
 pub fn open_package_summary(path: impl AsRef<Path>) -> Result<AssetSummaryDto> {
     let metadata = read_package_metadata(path.as_ref())?;
     Ok(AssetSummaryDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
         summary: metadata.summary,
         encoding: metadata.encoding,
         index: metadata.canonical.index,
@@ -178,21 +338,22 @@ pub fn open_package_metadata(path: impl AsRef<Path>) -> Result<MetadataDto> {
 
 pub fn validate_package(path: impl AsRef<Path>) -> Result<ValidationReportDto> {
     let package = open_package(path)?;
-    Ok(package.validation_report())
+    let base = package.validation_report();
+    Ok(package_validation_report(base.errors))
 }
 
-pub fn write_package(file: &LasFile, output_dir: impl AsRef<Path>) -> Result<StoredLasFile> {
+pub fn write_package(file: &LasFile, output_dir: impl AsRef<Path>) -> Result<PackageSession> {
     write_package_internal(file, output_dir.as_ref(), false)
 }
 
 pub fn write_package_overwrite(
     file: &LasFile,
     output_dir: impl AsRef<Path>,
-) -> Result<StoredLasFile> {
+) -> Result<PackageSession> {
     write_package_internal(file, output_dir.as_ref(), true)
 }
 
-pub fn write_bundle(file: &LasFile, output_dir: impl AsRef<Path>) -> Result<StoredLasFile> {
+pub fn write_bundle(file: &LasFile, output_dir: impl AsRef<Path>) -> Result<PackageSession> {
     write_package(file, output_dir)
 }
 
@@ -200,7 +361,7 @@ fn write_package_internal(
     file: &LasFile,
     output_dir: &Path,
     overwrite: bool,
-) -> Result<StoredLasFile> {
+) -> Result<PackageSession> {
     validate_edit_state(file)?;
     if output_dir.exists() {
         if overwrite {
@@ -246,6 +407,36 @@ fn read_package_metadata(root: &Path) -> Result<PackageMetadata> {
         )));
     }
     Ok(metadata)
+}
+
+fn package_revision(root: &Path) -> Result<RevisionToken> {
+    let metadata_text = fs::read_to_string(metadata_path(root))?;
+    let parquet = fs::metadata(curves_path(root))?;
+    let modified = parquet
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|value| value.as_nanos().to_string())
+        .unwrap_or_else(|| String::from("0"));
+    let payload = format!("{}:{}:{}", metadata_text, parquet.len(), modified);
+    Ok(revision_token_for_bytes("package-revision", &payload))
+}
+
+fn new_session_id(root: &Path) -> SessionId {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos().to_string())
+        .unwrap_or_else(|_| String::from("0"));
+    let RevisionToken(token) =
+        revision_token_for_bytes("session", &format!("{}:{now}", root.display()));
+    SessionId(token)
+}
+
+fn package_path_key(root: &Path) -> String {
+    root.canonicalize()
+        .unwrap_or_else(|_| root.to_path_buf())
+        .display()
+        .to_string()
 }
 
 fn write_parquet_batch(path: PathBuf, table: &CurveTable) -> Result<()> {

@@ -43,11 +43,17 @@ pub use asset::{
     natural_sort_key, normalized_depth_unit, useful_mnemonic,
 };
 pub use dto::{
-    AssetSummaryDto, CurveCatalogEntryDto, CurveEditRequest, CurveUpdateRequest,
-    CurveWindowColumnDto, CurveWindowDto, CurveWindowRequest, HeaderItemUpdate, MetadataDto,
-    MetadataSectionDto, MetadataUpdateRequest, SavePackageResultDto, ValidationReportDto,
-    apply_curve_edit, apply_metadata_update, asset_summary_dto, curve_catalog_dto,
-    curve_window_dto, metadata_dto, validate_edit_state, validation_report_dto,
+    AssetSummaryDto, CloseSessionResultDto, CurveCatalogEntryDto, CurveEditRequest,
+    CurveUpdateRequest, CurveWindowColumnDto, CurveWindowDto, CurveWindowRequest,
+    DTO_CONTRACT_VERSION, DirtyStateDto, HeaderItemUpdate, MetadataDto, MetadataSectionDto,
+    MetadataUpdateRequest, PackageId, PackagePathRequest, RevisionToken, SaveConflictDto,
+    SavePackageResultDto, SaveSessionResponseDto, SessionCurveEditRequest, SessionId,
+    SessionMetadataEditRequest, SessionRequest, SessionSaveAsRequest, SessionSummaryDto,
+    SessionWindowRequest, ValidationKind, ValidationReportDto, apply_curve_edit,
+    apply_metadata_update, asset_summary_dto, close_session_result_dto, curve_catalog_dto,
+    curve_window_dto, dirty_state_dto, metadata_dto, package_id_for_path,
+    package_validation_report, revision_token_for_bytes, save_conflict_dto, save_validation_report,
+    session_id_for_path, session_summary_dto, validate_edit_state, validation_report_dto,
 };
 pub use metadata::{
     CanonicalMetadata, CurveColumnMetadata, CurveInfo, IndexInfo, PACKAGE_METADATA_SCHEMA_VERSION,

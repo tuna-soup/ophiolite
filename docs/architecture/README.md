@@ -27,6 +27,8 @@ Current properties:
 - the repo now uses a staged workspace split with `lithos-core`, `lithos-parser`, `lithos-table`, `lithos-package`, and `lithos-cli`
 - the root `lithos_las` crate is a compatibility facade over those workspace crates
 - `LasFile` is the canonical public domain object
+- `PackageSession` is the backend-owned editable package session model
+- `PackageBackend` and `PackageBackendState` are the current Tauri-ready backend adapter layer
 - `CurveTable` is the app-facing in-memory table abstraction
 - DTOs are the intended frontend/backend transfer boundary
 - package storage uses `metadata.json + curves.parquet`
@@ -54,6 +56,37 @@ Current properties:
 
 This separation is intentional: the SDK owns LAS semantics, DTOs own transfer shapes, and storage formats remain replaceable implementation details.
 
+## Package Session Contract
+
+Package-backed editing and inspection now use an explicit backend session model.
+
+Current session properties:
+
+- a package can be opened through metadata-only read paths or through an editable `PackageSession`
+- editable session open reuses one shared backend session per package path by default
+- `PackageSession` owns package identity, session identity, current in-memory `LasFile` state, dirty-state, and a revision token
+- edits are applied to the session snapshot in memory
+- `save` persists the current session snapshot back to the same package using optimistic revision checks
+- `save_as` persists the current session snapshot to a new package root and updates the session baseline
+- sessions remain alive until explicitly closed in the current desktop MVP
+- metadata-only opens do not require loading sample data
+- windowed reads are part of the frontend contract and avoid forcing full frontend materialization
+- rejected edit requests must not partially mutate session state
+
+DTOs are transport shapes for this contract. They do not replace the canonical domain model.
+
+Current DTO families:
+
+- read DTOs: package summary, metadata, curve catalog, curve windows, session summary
+- edit DTOs: metadata edits, curve edits, dirty-state, validation reports, save results, save conflicts
+- `PackageBackendState` is the shared-state wrapper intended for future Tauri command registration
+
+Current validation layers:
+
+- package validity: is the package structurally readable and coherent
+- edit validity: is the requested mutation allowed against the current in-memory snapshot
+- save validity/conflict: can the current snapshot be persisted safely now
+
 ## Workspace Layout
 
 ```text
@@ -78,8 +111,8 @@ Current staged compromise:
 | Domain model | `LasFile` with section-oriented metadata | tighter typed canonical metadata model |
 | In-memory samples | `CurveTable` backed by current in-memory values | potentially more formal Arrow-backed runtime contract later |
 | Package format | `metadata.json + curves.parquet` with mixed-column preservation | stricter canonical schema and package guarantees |
-| Canonical schema | partially aligned | `las_canonical_schema.md` is the target-state reference |
-| Frontend/backend boundary | CLI and Rust API | explicit Tauri DTO/query contract |
+| Canonical schema | partially aligned | `ADR-0007-canonical-schema-target.md` is the target-state reference |
+| Frontend/backend boundary | CLI, Rust API, and session-oriented DTOs | fuller Tauri command/query contract |
 
 ## Roadmap Placement of Arrow/Parquet
 
@@ -101,11 +134,10 @@ Only after those are stable should the project tighten runtime/package behavior 
 - `ADR-0003-package-format-metadata-json-plus-curves-parquet.md`
 - `ADR-0004-lasio-parity-and-scope.md`
 - `ADR-0005-staged-workspace-split-and-table-boundary.md`
+- `ADR-0006-package-session-and-dto-boundary.md`
+- `ADR-0007-canonical-schema-target.md`
 
 ## Related Docs
 
 - `../lasio_non_v3_parity.md`
-- `../../las_canonical_schema.md`
 - `../../lasio-basic-example.md`
-
-`../../las_canonical_schema.md` remains a target-state schema note. It should not be deleted until its remaining unique content is either implemented or moved into durable ADRs.

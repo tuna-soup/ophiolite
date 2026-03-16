@@ -1,7 +1,7 @@
 use lithos_las::{
     CurveEditRequest, CurveUpdateRequest, CurveWindowRequest, HeaderItemUpdate, LasError, LasValue,
-    MetadataSectionDto, MetadataUpdateRequest, examples, open_package, open_package_metadata,
-    open_package_summary, validate_package, write_package,
+    MetadataSectionDto, MetadataUpdateRequest, PackageSessionStore, ValidationKind, examples,
+    open_package, open_package_metadata, open_package_summary, validate_package, write_package,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -161,6 +161,92 @@ fn package_supports_metadata_only_open_and_validation_views() {
     assert_eq!(metadata.metadata.index.canonical_name, "index");
     assert!(validation.valid);
     assert!(validation.errors.is_empty());
+    assert_eq!(validation.kind, ValidationKind::Package);
+}
+
+#[test]
+fn package_session_tracks_dirty_state_and_conflicts() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("session-conflict");
+    let mut first = write_package(&las, &package_dir).unwrap();
+    let mut second = open_package(&package_dir).unwrap();
+
+    assert!(!first.dirty_state().has_unsaved_changes);
+    let first_revision = first.revision().clone();
+
+    first
+        .apply_metadata_update(&MetadataUpdateRequest {
+            items: vec![HeaderItemUpdate {
+                section: MetadataSectionDto::Well,
+                mnemonic: String::from("COMP"),
+                unit: String::new(),
+                value: LasValue::Text(String::from("FIRST EDIT")),
+                description: String::from("COMPANY"),
+            }],
+            other: None,
+        })
+        .unwrap();
+    assert!(first.dirty_state().has_unsaved_changes);
+
+    second
+        .apply_metadata_update(&MetadataUpdateRequest {
+            items: vec![HeaderItemUpdate {
+                section: MetadataSectionDto::Well,
+                mnemonic: String::from("COMP"),
+                unit: String::new(),
+                value: LasValue::Text(String::from("SECOND EDIT")),
+                description: String::from("COMPANY"),
+            }],
+            other: None,
+        })
+        .unwrap();
+
+    let second_save = second.save_with_result().unwrap();
+    assert!(second_save.dirty_cleared);
+    assert_ne!(second_save.revision, first_revision);
+
+    let conflict = first.save_checked().unwrap().unwrap_err();
+    assert_eq!(conflict.expected_revision, first_revision);
+    assert_eq!(conflict.actual_revision, second_save.revision);
+    assert_eq!(conflict.package_id, first.package_id().clone());
+    assert_eq!(conflict.session_id, first.session_id().clone());
+}
+
+#[test]
+fn package_session_store_reuses_shared_session_identity() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("shared-session");
+    write_package(&las, &package_dir).unwrap();
+
+    let mut store = PackageSessionStore::default();
+    let first = store.open_shared(&package_dir).unwrap();
+    let second = store.open_shared(&package_dir).unwrap();
+
+    assert_eq!(first.package_id, second.package_id);
+    assert_eq!(first.session_id, second.session_id);
+    assert!(!first.dirty.has_unsaved_changes);
+    assert!(store.get(&first.session_id).is_some());
+    assert!(store.close(&first.session_id).is_some());
+    assert!(store.get(&first.session_id).is_none());
+}
+
+#[test]
+fn metadata_only_open_does_not_require_parquet_samples() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("metadata-no-parquet");
+    write_package(&las, &package_dir).unwrap();
+    fs::remove_file(package_dir.join("curves.parquet")).unwrap();
+
+    let summary = open_package_summary(&package_dir).unwrap();
+    let metadata = open_package_metadata(&package_dir).unwrap();
+    let err = open_package(&package_dir).unwrap_err();
+
+    assert_eq!(summary.summary.las_version, "1.2");
+    assert_eq!(metadata.metadata.curves.len(), 8);
+    match err {
+        LasError::Io(_) => {}
+        other => panic!("expected io error when parquet data is missing, got {other}"),
+    }
 }
 
 fn temp_package_dir(prefix: &str) -> PathBuf {

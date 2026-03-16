@@ -45,6 +45,7 @@ impl PackageBackend {
             session.package_id().clone(),
             session.session_id().clone(),
             session.revision().clone(),
+            session.root().display().to_string(),
             session.metadata_dto(),
         ))
     }
@@ -55,6 +56,7 @@ impl PackageBackend {
             session.package_id().clone(),
             session.session_id().clone(),
             session.revision().clone(),
+            session.root().display().to_string(),
             session.curve_catalog(),
         ))
     }
@@ -69,6 +71,7 @@ impl PackageBackend {
             session.package_id().clone(),
             session.session_id().clone(),
             session.revision().clone(),
+            session.root().display().to_string(),
             session.read_window(request)?,
         ))
     }

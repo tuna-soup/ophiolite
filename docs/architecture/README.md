@@ -70,10 +70,21 @@ Current session properties:
 - edits are applied to the session snapshot in memory
 - `save` persists the current session snapshot back to the same package using optimistic revision checks
 - `save_as` persists the current session snapshot to a new package root and updates the session baseline
+- session summaries and session-context DTOs expose the currently bound package root
 - sessions remain alive until explicitly closed in the current desktop MVP
 - metadata-only opens do not require loading sample data
 - windowed reads are part of the frontend contract and avoid forcing full frontend materialization
 - rejected edit requests must not partially mutate session state
+- save/save-as verifies enough to confirm the written package is readable and internally coherent before treating the write as successful
+
+Session invariants:
+
+- same package path returns the same shared session while it remains open
+- close invalidates the current `SessionId`
+- reopen after close creates a new `SessionId`
+- `save` preserves session identity and bound package root on success
+- `save_as` preserves session identity and rebinds the currently bound package root on success
+- failed `save` and `save_as` leave the session open with unchanged identity, dirty-state, bound root, and in-memory document snapshot
 
 DTOs are transport shapes for this contract. They do not replace the canonical domain model.
 
@@ -97,6 +108,9 @@ Current validation layers:
 - package validity: is the package structurally readable and coherent
 - edit validity: is the requested mutation allowed against the current in-memory snapshot
 - save validity/conflict: can the current snapshot be persisted safely now
+- save conflict detection is against the currently bound package baseline/root and its revision fingerprint
+
+At the command boundary, save and save-as validation failures are reported as save-scoped validation rather than generic edit validation.
 
 ## Workspace Layout
 

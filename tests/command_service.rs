@@ -1,8 +1,8 @@
 use lithos_las::{
     CommandErrorKind, CommandResponse, CurveEditRequest, CurveUpdateRequest, HeaderItemUpdate,
     LasValue, MetadataSectionDto, MetadataUpdateRequest, PackageCommandService, PackagePathRequest,
-    SessionCurveEditRequest, SessionMetadataEditRequest, SessionRequest, examples, open_package,
-    write_package,
+    SessionCurveEditRequest, SessionMetadataEditRequest, SessionRequest, SessionSaveAsRequest,
+    ValidationKind, examples, open_package, write_package,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -23,10 +23,12 @@ fn command_service_reuses_shared_session_by_default() {
     let second = unwrap_ok(service.open_package_session(&request));
 
     assert_eq!(first.session_id, second.session_id);
+    assert_eq!(first.root, package_dir.display().to_string());
     let metadata = unwrap_ok(service.session_metadata(&SessionRequest {
         session_id: first.session_id.clone(),
     }));
     assert_eq!(metadata.session.session_id, first.session_id);
+    assert_eq!(metadata.session.root, package_dir.display().to_string());
 }
 
 #[test]
@@ -132,6 +134,65 @@ fn command_service_preserves_save_conflicts() {
     assert_eq!(error.kind, CommandErrorKind::SaveConflict);
     assert_eq!(error.session_id, Some(session.session_id));
     assert!(error.save_conflict.is_some());
+}
+
+#[test]
+fn command_service_reports_save_as_validation_failures_as_save_errors() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("adapter-save-as-fail");
+    let existing_dir = temp_package_dir("adapter-save-as-existing");
+    write_package(&las, &package_dir).unwrap();
+    fs::create_dir_all(&existing_dir).unwrap();
+
+    let service = PackageCommandService::new();
+    let session = unwrap_ok(service.open_package_session(&PackagePathRequest {
+        path: package_dir.display().to_string(),
+    }));
+    let edited = unwrap_ok(service.apply_metadata_edit(&SessionMetadataEditRequest {
+        session_id: session.session_id.clone(),
+        update: MetadataUpdateRequest {
+            items: vec![HeaderItemUpdate {
+                section: MetadataSectionDto::Well,
+                mnemonic: String::from("COMP"),
+                unit: String::new(),
+                value: LasValue::Text(String::from("COMMAND FAILURE EDIT")),
+                description: String::from("COMPANY"),
+            }],
+            other: None,
+        },
+    }));
+    let before_metadata = unwrap_ok(service.session_metadata(&SessionRequest {
+        session_id: session.session_id.clone(),
+    }));
+
+    let error = unwrap_err(service.save_session_as(&SessionSaveAsRequest {
+        session_id: session.session_id.clone(),
+        output_dir: existing_dir.display().to_string(),
+    }));
+
+    assert_eq!(error.kind, CommandErrorKind::ValidationFailed);
+    assert_eq!(error.session_id, Some(session.session_id.clone()));
+    assert_eq!(error.validation.unwrap().kind, ValidationKind::Save);
+
+    let summary = unwrap_ok(service.session_summary(&SessionRequest {
+        session_id: session.session_id.clone(),
+    }));
+    assert_eq!(summary.root, package_dir.display().to_string());
+    assert_eq!(
+        summary.dirty.has_unsaved_changes,
+        edited.dirty.has_unsaved_changes
+    );
+    let after_metadata = unwrap_ok(service.session_metadata(&SessionRequest {
+        session_id: session.session_id.clone(),
+    }));
+    assert_eq!(
+        after_metadata.metadata.metadata.well.company,
+        before_metadata.metadata.metadata.well.company
+    );
+    assert_eq!(
+        after_metadata.metadata.metadata.well.company.as_deref(),
+        Some("COMMAND FAILURE EDIT")
+    );
 }
 
 #[test]

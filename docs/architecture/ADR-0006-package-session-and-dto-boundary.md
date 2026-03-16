@@ -58,6 +58,7 @@ The DTO contract is versioned with a lightweight `dto_contract_version` field.
 Session-backed metadata, catalog, and window reads should carry explicit session context rather than forcing desktop clients to reconstruct it from separate calls.
 
 The current Tauri-ready adapter layer is `PackageBackend`, with `PackageBackendState` as the shared-state wrapper and `PackageCommandService` as the thin, transport-focused app-boundary service above it.
+Session-backed DTOs should expose the currently bound package root so clients can observe rebinding after `save_as`.
 
 DTO evolution should remain additive where possible. Formal compatibility guarantees can harden later once the Tauri contract stops moving quickly.
 Public command error kinds should remain small and caller-actionable rather than implementation-shaped.
@@ -80,6 +81,7 @@ Public command error kinds should remain small and caller-actionable rather than
 - future Tauri command handlers should be built on top of this session model rather than reaching directly into storage internals
 - the app-boundary command layer should preserve structured backend errors rather than collapsing them into ad hoc strings
 - edit requests must be atomic at the request level; rejected edits must not partially mutate session state
+- save/save-as failure behavior should preserve session usability and identity rather than partially mutating session state
 
 ## Session Lifecycle
 
@@ -92,6 +94,17 @@ For the current desktop MVP:
 
 This keeps lifecycle rules simple while the Tauri contract is still being defined.
 
+Session invariants for the current model:
+
+- same package path returns the same shared session while it remains open
+- close invalidates the current `SessionId`
+- reopen after close returns a new `SessionId`
+- `save` preserves session identity and bound package root on success
+- `save_as` preserves session identity and rebinds the currently bound package root on success
+- failed `save` and `save_as` leave the session open with unchanged identity, dirty-state, bound root, and in-memory document snapshot
+
+`save_as` should be understood as: the user remains in the same editing session, but that session is now editing the newly written package.
+
 ## Validation Boundaries
 
 `lithos` now recognizes three separate validation concerns:
@@ -101,6 +114,9 @@ This keeps lifecycle rules simple while the Tauri contract is still being define
 3. save validity or save conflict
 
 These concerns should remain distinct in result shapes and error reporting.
+In particular, save/save-as validation failures should not be reported as generic edit validation.
+Post-write validation should remain bounded to confirming that the written package is readable and internally coherent.
+Save conflict detection is against the currently bound package baseline/root and its revision fingerprint.
 
 ## Deferred Work
 
@@ -110,8 +126,13 @@ This ADR does not imply:
 - full undo/redo support
 - a final stable Tauri command surface
 - collaborative or multi-user editing semantics
+- duplicate or forked live-session semantics
 - a hard `tauri` dependency in this repo yet
 
 Revision tokens are used for persistence conflict checks, not live distributed synchronization.
 
 Those remain future layers on top of the current session contract.
+
+## Success Criteria
+
+This lifecycle milestone is considered complete when session lifecycle behavior, save/save-as rebinding semantics, and structured failure cases are encoded in tests and reflected consistently across the backend, command-service, and durable docs.

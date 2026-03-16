@@ -153,11 +153,7 @@ impl PackageCommandService {
             Ok(SaveSessionResponseDto::Conflict(conflict)) => {
                 CommandResponse::Err(self.save_conflict_error(CommandGroup::EditPersist, conflict))
             }
-            Err(error) => self.map_error(
-                CommandGroup::EditPersist,
-                Some(request.session_id.clone()),
-                error,
-            ),
+            Err(error) => self.map_save_error(Some(request.session_id.clone()), error),
         }
     }
 
@@ -170,11 +166,7 @@ impl PackageCommandService {
             Ok(SaveSessionResponseDto::Conflict(conflict)) => {
                 CommandResponse::Err(self.save_conflict_error(CommandGroup::EditPersist, conflict))
             }
-            Err(error) => self.map_error(
-                CommandGroup::EditPersist,
-                Some(request.session_id.clone()),
-                error,
-            ),
+            Err(error) => self.map_save_error(Some(request.session_id.clone()), error),
         }
     }
 
@@ -197,6 +189,14 @@ impl PackageCommandService {
         error: LasError,
     ) -> CommandResponse<T> {
         CommandResponse::Err(command_error_for(group, session_id, error))
+    }
+
+    fn map_save_error<T>(
+        &self,
+        session_id: Option<SessionId>,
+        error: LasError,
+    ) -> CommandResponse<T> {
+        CommandResponse::Err(command_error_for_save(session_id, error))
     }
 
     fn save_conflict_error(
@@ -259,11 +259,83 @@ fn validation_error_report(group: CommandGroup, message: String) -> ValidationRe
         CommandGroup::EditPersist => ValidationKind::Edit,
     };
 
+    validation_error_report_for_kind(kind, message)
+}
+
+fn validation_error_report_for_kind(kind: ValidationKind, message: String) -> ValidationReportDto {
     ValidationReportDto {
         dto_contract_version: String::from(crate::DTO_CONTRACT_VERSION),
         kind,
         valid: false,
         errors: vec![message],
+    }
+}
+
+fn command_error_for_save(session_id: Option<SessionId>, error: LasError) -> CommandErrorDto {
+    match error {
+        LasError::Validation(message) if is_backend_state_error(&message) => {
+            let mut dto = command_error_dto(
+                CommandGroup::EditPersist,
+                CommandErrorKind::Internal,
+                message,
+            );
+            dto.session_id = session_id;
+            dto
+        }
+        LasError::Validation(message) if is_missing_session(&message) => {
+            let mut dto = command_error_dto(
+                CommandGroup::EditPersist,
+                CommandErrorKind::SessionNotFound,
+                message,
+            );
+            dto.session_id = session_id;
+            dto
+        }
+        LasError::Validation(message) | LasError::Storage(message) => {
+            let mut dto = command_error_dto(
+                CommandGroup::EditPersist,
+                CommandErrorKind::ValidationFailed,
+                &message,
+            );
+            dto.session_id = session_id;
+            dto.validation = Some(validation_error_report_for_kind(
+                ValidationKind::Save,
+                message,
+            ));
+            dto
+        }
+        LasError::Io(err) => {
+            let message = err.to_string();
+            let mut dto = command_error_dto(
+                CommandGroup::EditPersist,
+                CommandErrorKind::ValidationFailed,
+                &message,
+            );
+            dto.session_id = session_id;
+            dto.validation = Some(validation_error_report_for_kind(
+                ValidationKind::Save,
+                message,
+            ));
+            dto
+        }
+        LasError::Parse(message) | LasError::Unsupported(message) => {
+            let mut dto = command_error_dto(
+                CommandGroup::EditPersist,
+                CommandErrorKind::Internal,
+                message,
+            );
+            dto.session_id = session_id;
+            dto
+        }
+        LasError::Serialization(err) => {
+            let mut dto = command_error_dto(
+                CommandGroup::EditPersist,
+                CommandErrorKind::Internal,
+                err.to_string(),
+            );
+            dto.session_id = session_id;
+            dto
+        }
     }
 }
 

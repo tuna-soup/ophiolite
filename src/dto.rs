@@ -90,6 +90,7 @@ pub struct SessionSummaryDto {
     pub package_id: PackageId,
     pub session_id: SessionId,
     pub revision: RevisionToken,
+    pub root: String,
     pub dirty: DirtyStateDto,
     pub summary: AssetSummaryDto,
 }
@@ -100,6 +101,7 @@ pub struct SessionContextDto {
     pub package_id: PackageId,
     pub session_id: SessionId,
     pub revision: RevisionToken,
+    pub root: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -545,6 +547,7 @@ pub fn session_summary_dto(
     package_id: PackageId,
     session_id: SessionId,
     revision: RevisionToken,
+    root: String,
     has_unsaved_changes: bool,
     summary: AssetSummaryDto,
 ) -> SessionSummaryDto {
@@ -553,6 +556,7 @@ pub fn session_summary_dto(
         package_id: package_id.clone(),
         session_id: session_id.clone(),
         revision: revision.clone(),
+        root,
         dirty: dirty_state_dto(package_id, session_id, revision, has_unsaved_changes),
         summary,
     }
@@ -562,12 +566,14 @@ pub fn session_context_dto(
     package_id: PackageId,
     session_id: SessionId,
     revision: RevisionToken,
+    root: String,
 ) -> SessionContextDto {
     SessionContextDto {
         dto_contract_version: String::from(DTO_CONTRACT_VERSION),
         package_id,
         session_id,
         revision,
+        root,
     }
 }
 
@@ -575,11 +581,12 @@ pub fn session_metadata_dto(
     package_id: PackageId,
     session_id: SessionId,
     revision: RevisionToken,
+    root: String,
     metadata: MetadataDto,
 ) -> SessionMetadataDto {
     SessionMetadataDto {
         dto_contract_version: String::from(DTO_CONTRACT_VERSION),
-        session: session_context_dto(package_id, session_id, revision),
+        session: session_context_dto(package_id, session_id, revision, root),
         metadata,
     }
 }
@@ -588,11 +595,12 @@ pub fn curve_catalog_result_dto(
     package_id: PackageId,
     session_id: SessionId,
     revision: RevisionToken,
+    root: String,
     curves: Vec<CurveCatalogEntryDto>,
 ) -> CurveCatalogDto {
     CurveCatalogDto {
         dto_contract_version: String::from(DTO_CONTRACT_VERSION),
-        session: session_context_dto(package_id, session_id, revision),
+        session: session_context_dto(package_id, session_id, revision, root),
         curves,
     }
 }
@@ -601,11 +609,12 @@ pub fn session_window_dto(
     package_id: PackageId,
     session_id: SessionId,
     revision: RevisionToken,
+    root: String,
     window: CurveWindowDto,
 ) -> SessionWindowDto {
     SessionWindowDto {
         dto_contract_version: String::from(DTO_CONTRACT_VERSION),
-        session: session_context_dto(package_id, session_id, revision),
+        session: session_context_dto(package_id, session_id, revision, root),
         window,
     }
 }

@@ -128,6 +128,7 @@ impl PackageSession {
             self.package_id.clone(),
             self.session_id.clone(),
             self.revision.clone(),
+            self.root.display().to_string(),
             self.dirty,
             self.summary_dto(),
         )
@@ -197,6 +198,8 @@ impl PackageSession {
         }
 
         let session_id = self.session_id.clone();
+        // Only replace the in-memory session once the rewritten package can be reopened
+        // coherently; failed writes must not partially mutate the current session state.
         let reopened = write_package_internal(&self.file, &self.root, true)?;
         self.replace_from_saved(reopened, session_id.clone());
         let result = SavePackageResultDto {
@@ -231,6 +234,7 @@ impl PackageSession {
         output_dir: impl AsRef<Path>,
     ) -> Result<SavePackageResultDto> {
         let session_id = self.session_id.clone();
+        // Rebind the current session only after the newly written package reopens cleanly.
         let reopened = write_package_internal(&self.file, output_dir.as_ref(), false)?;
         self.replace_from_saved(reopened, session_id.clone());
         Ok(SavePackageResultDto {

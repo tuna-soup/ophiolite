@@ -116,6 +116,7 @@ fn backend_save_flows_preserve_session_identity_and_rebind_save_as() {
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
     let session_id = session.session_id.clone();
+    assert_eq!(session.root, package_dir.display().to_string());
 
     let edited = backend
         .apply_metadata_edit(
@@ -142,6 +143,7 @@ fn backend_save_flows_preserve_session_identity_and_rebind_save_as() {
         }
     };
     assert_eq!(save_result.session_id, session_id);
+    assert_eq!(save_result.root, package_dir.display().to_string());
     assert!(
         !backend
             .dirty_state(&session_id)
@@ -160,6 +162,7 @@ fn backend_save_flows_preserve_session_identity_and_rebind_save_as() {
         }
     };
     assert_eq!(save_as_result.session_id, session_id);
+    assert_eq!(save_as_result.root, copy_dir.display().to_string());
     assert_eq!(
         backend.open_package_session(&copy_dir).unwrap().session_id,
         session_id
@@ -182,6 +185,61 @@ fn backend_save_flows_preserve_session_identity_and_rebind_save_as() {
             .value
             .display_string(),
         "BACKEND EDIT"
+    );
+}
+
+#[test]
+fn backend_failed_save_as_keeps_existing_session_binding() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("backend-save-as-fail");
+    let existing_dir = temp_package_dir("backend-save-as-existing");
+    lithos_las::write_package(&las, &package_dir).unwrap();
+    fs::create_dir_all(&existing_dir).unwrap();
+
+    let mut backend = PackageBackend::new();
+    let session = backend.open_package_session(&package_dir).unwrap();
+    let session_id = session.session_id.clone();
+    backend
+        .apply_metadata_edit(
+            &session_id,
+            &MetadataUpdateRequest {
+                items: vec![HeaderItemUpdate {
+                    section: MetadataSectionDto::Well,
+                    mnemonic: String::from("COMP"),
+                    unit: String::new(),
+                    value: LasValue::Text(String::from("UNCHANGED AFTER FAILURE")),
+                    description: String::from("COMPANY"),
+                }],
+                other: None,
+            },
+        )
+        .unwrap();
+    let before = backend.session_summary(&session_id).unwrap();
+    let before_metadata = backend.session_metadata(&session_id).unwrap();
+
+    let err = backend
+        .save_session_as(&session_id, &existing_dir)
+        .unwrap_err();
+    match err {
+        LasError::Storage(message) => assert!(message.contains("already exists")),
+        other => panic!("expected storage error, got {other}"),
+    }
+
+    let after = backend.session_summary(&session_id).unwrap();
+    let after_metadata = backend.session_metadata(&session_id).unwrap();
+    assert_eq!(after.root, package_dir.display().to_string());
+    assert_eq!(after.session_id, session_id);
+    assert_eq!(
+        after.dirty.has_unsaved_changes,
+        before.dirty.has_unsaved_changes
+    );
+    assert_eq!(
+        after_metadata.metadata.metadata.well.company,
+        before_metadata.metadata.metadata.well.company
+    );
+    assert_eq!(
+        after_metadata.metadata.metadata.well.company.as_deref(),
+        Some("UNCHANGED AFTER FAILURE")
     );
 }
 

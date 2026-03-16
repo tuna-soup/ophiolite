@@ -137,6 +137,7 @@ Key behaviors implemented:
 - package-backed edit/save and save-as flows
 - versioned DTO/query contract for frontend-safe access
 - package session dirty-state, identity, and optimistic save-conflict detection
+- session summaries and session-backed DTOs report the current bound package root
 - Tauri-oriented backend session/query adapter
 - separate command-boundary transport service with structured command errors
 - metadata-only package opens without loading sample data
@@ -221,11 +222,21 @@ Current session semantics:
 - edit requests are atomic at the request level
 - `save` writes the current snapshot back to the original package if the revision still matches
 - `save_as` writes the current snapshot to a new package path and updates the current session baseline
+- session-backed DTOs carry the current bound package root so clients can observe rebinding after `save_as`
 - successful save clears dirty-state
 - sessions remain alive until explicitly closed in the current desktop MVP
 - metadata-only package opens do not require loading `curves.parquet`
 - window queries are designed to support partial reads rather than forcing full frontend materialization
-- revision tokens are for persistence conflict detection, not collaborative synchronization
+- revision tokens are for persistence conflict detection against the currently bound package baseline/root, not collaborative synchronization
+
+Session invariants:
+
+- same package path returns the same shared session while it remains open
+- close invalidates the current `SessionId`
+- reopen after close returns a new `SessionId`
+- `save` preserves session identity and package root on success
+- `save_as` keeps the same session identity, but that session is now editing the newly written package
+- failed `save` and `save_as` leave the session open with the same session id, dirty-state, package root, and in-memory document snapshot
 
 DTOs are boundary and transport shapes. They are not the canonical domain model. `LasFile` remains the authoritative in-memory LAS representation inside the backend.
 
@@ -233,6 +244,8 @@ The DTO contract is versioned with a lightweight `dto_contract_version` field. S
 The command service is intentionally thin and transport-focused. It should not become a second place where domain or save semantics live.
 At the app boundary, commands use `CommandResponse<T> = Ok(T) | Err(CommandErrorDto)`.
 The public command error kinds are intentionally small and caller-actionable: `OpenFailed`, `ValidationFailed`, `SaveConflict`, `SessionNotFound`, and `Internal`.
+Save and save-as validation failures now report as save-scoped validation rather than generic edit failures.
+Post-write validation is bounded: save/save-as verifies enough to confirm the written package is readable and internally coherent, rather than promising an arbitrary full roundtrip guarantee.
 
 ## Interoperability
 
@@ -319,6 +332,7 @@ Lithos currently does not aim to be:
 - a cloud data platform
 - a replacement for Python LAS analytics libraries
 - a collaborative or multi-user editing system
+- duplicate or forked live-session semantics
 - a crate with a hard `tauri` dependency at this stage
 
 Instead, Lithos focuses on:
@@ -349,7 +363,6 @@ Instead, Lithos focuses on:
 
 ### Next
 
-- deepen package-session lifecycle behavior, including clearer save conflict handling
 - improve validation and diagnostics around package validity, edit validity, and save validity
 - keep the command service thin and transport-focused while the app boundary settles
 - optimize editable-session materialization only where it does not complicate edit semantics too much

@@ -1,10 +1,10 @@
-use crate::asset::{CurveItem, HeaderItem, IndexDescriptor, IngestIssue, LasFile, LasFileSummary};
-use crate::table::{CurveColumnDescriptor, CurveStorageKind, CurveTable};
-use crate::{LasError, LasValue, Provenance, Result};
+use crate::asset::{CurveItem, LasFile, LasFileSummary};
+use crate::metadata::{CurveColumnMetadata, PackageMetadata, package_metadata_for};
+use crate::table::{CurveColumnDescriptor, CurveTable};
+use crate::{LasError, LasValue, Result};
 use arrow_array::Array;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::arrow::arrow_writer::ArrowWriter;
-use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -13,34 +13,6 @@ use tracing::debug;
 const PACKAGE_VERSION: u32 = 1;
 const METADATA_FILENAME: &str = "metadata.json";
 const CURVES_FILENAME: &str = "curves.parquet";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct StoredCurveMetadata {
-    mnemonic: String,
-    original_mnemonic: String,
-    unit: String,
-    value: LasValue,
-    description: String,
-    storage_kind: CurveStorageKind,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct PackageMetadata {
-    package_version: u32,
-    summary: LasFileSummary,
-    provenance: Provenance,
-    encoding: Option<String>,
-    index: IndexDescriptor,
-    version: crate::SectionItems<HeaderItem>,
-    well: crate::SectionItems<HeaderItem>,
-    params: crate::SectionItems<HeaderItem>,
-    curve_mnemonic_case: crate::MnemonicCase,
-    curves: Vec<StoredCurveMetadata>,
-    other: String,
-    extra_sections: std::collections::BTreeMap<String, String>,
-    issues: Vec<IngestIssue>,
-    index_unit: Option<String>,
-}
 
 #[derive(Debug, Clone)]
 pub struct StoredLasFile {
@@ -90,15 +62,15 @@ pub fn open_package(path: impl AsRef<Path>) -> Result<StoredLasFile> {
 
     let batch = read_parquet_batch(curves_path(&root), metadata.summary.row_count)?;
     let descriptors = metadata
-        .curves
+        .curve_columns
         .iter()
         .map(|curve| CurveColumnDescriptor {
-            name: curve.mnemonic.clone(),
+            name: curve.name.clone(),
             storage_kind: curve.storage_kind,
         })
         .collect::<Vec<_>>();
     let table = CurveTable::from_record_batch(&batch, &descriptors)?;
-    let curves = materialize_curves(&metadata.curves, &table)?;
+    let curves = materialize_curves(&metadata.curve_columns, &table)?;
 
     Ok(StoredLasFile {
         root,
@@ -107,12 +79,15 @@ pub fn open_package(path: impl AsRef<Path>) -> Result<StoredLasFile> {
             provenance: metadata.provenance,
             encoding: metadata.encoding,
             index: metadata.index,
-            version: metadata.version,
-            well: metadata.well,
-            params: metadata.params,
-            curves: crate::SectionItems::from_items(curves, metadata.curve_mnemonic_case),
-            other: metadata.other,
-            extra_sections: metadata.extra_sections,
+            version: metadata.raw_sections.version,
+            well: metadata.raw_sections.well,
+            params: metadata.raw_sections.params,
+            curves: crate::SectionItems::from_items(
+                curves,
+                metadata.raw_sections.curve_mnemonic_case,
+            ),
+            other: metadata.raw_sections.other,
+            extra_sections: metadata.raw_sections.extra_sections,
             issues: metadata.issues,
             index_unit: metadata.index_unit,
         },
@@ -133,34 +108,7 @@ pub fn write_package(file: &LasFile, output_dir: impl AsRef<Path>) -> Result<Sto
     fs::create_dir_all(output_dir)?;
 
     let table = file.data();
-    let metadata = PackageMetadata {
-        package_version: PACKAGE_VERSION,
-        summary: file.summary.clone(),
-        provenance: file.provenance.clone(),
-        encoding: file.encoding.clone(),
-        index: file.index.clone(),
-        version: file.version.clone(),
-        well: file.well.clone(),
-        params: file.params.clone(),
-        curve_mnemonic_case: file.curves.mnemonic_case,
-        curves: file
-            .curves
-            .iter()
-            .zip(table.descriptors())
-            .map(|(curve, descriptor)| StoredCurveMetadata {
-                mnemonic: curve.mnemonic.clone(),
-                original_mnemonic: curve.original_mnemonic.clone(),
-                unit: curve.unit.clone(),
-                value: curve.value.clone(),
-                description: curve.description.clone(),
-                storage_kind: descriptor.storage_kind,
-            })
-            .collect(),
-        other: file.other.clone(),
-        extra_sections: file.extra_sections.clone(),
-        issues: file.issues.clone(),
-        index_unit: file.index_unit.clone(),
-    };
+    let metadata = package_metadata_for(file, PACKAGE_VERSION);
 
     fs::write(
         metadata_path(output_dir),
@@ -278,27 +226,27 @@ fn merge_batches(batches: Vec<arrow_array::RecordBatch>) -> Result<arrow_array::
 }
 
 fn materialize_curves(
-    curves: &[StoredCurveMetadata],
+    curves: &[CurveColumnMetadata],
     table: &CurveTable,
 ) -> Result<Vec<CurveItem>> {
     curves
         .iter()
         .map(|curve| {
             let values = table
-                .column(&curve.mnemonic)
+                .column(&curve.name)
                 .ok_or_else(|| {
                     LasError::Storage(format!(
                         "column '{}' missing from package table",
-                        curve.mnemonic
+                        curve.name
                     ))
                 })?
                 .values()
                 .to_vec();
             Ok(CurveItem {
-                mnemonic: curve.mnemonic.clone(),
+                mnemonic: curve.name.clone(),
                 original_mnemonic: curve.original_mnemonic.clone(),
                 unit: curve.unit.clone(),
-                value: curve.value.clone(),
+                value: curve.header_value.clone(),
                 description: curve.description.clone(),
                 data: values,
             })

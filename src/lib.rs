@@ -1,5 +1,6 @@
 mod asset;
 pub mod examples;
+mod metadata;
 mod parser;
 mod storage;
 mod table;
@@ -7,6 +8,10 @@ mod table;
 pub use asset::{
     CanonicalAlias, CurveItem, CurveSelector, HeaderItem, IndexDescriptor, IndexKind, IngestIssue,
     IssueSeverity, LasFile, LasFileSummary, LasValue, MnemonicCase, Provenance, SectionItems,
+};
+pub use metadata::{
+    CanonicalMetadata, CurveColumnMetadata, CurveInfo, IndexInfo, PACKAGE_METADATA_SCHEMA_VERSION,
+    PackageMetadata, ParameterInfo, RawMetadataSections, VersionInfo, WellInfo,
 };
 pub use parser::{
     DType, DTypeSpec, DecodedText, NullPolicy, NullRule, ParsedHeaderLine, ReadOptions, ReadPolicy,

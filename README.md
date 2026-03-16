@@ -7,6 +7,7 @@
 The current implementation is centered on non-v3 LAS read/model parity and a staged package/runtime architecture:
 
 - Canonical domain object: `LasFile`
+- Typed canonical metadata view: `CanonicalMetadata`, `VersionInfo`, `WellInfo`, `IndexInfo`, `CurveInfo`
 - In-memory app/query layer: `CurveTable`
 - Optimized package format: `metadata.json + curves.parquet`
 - CLI for import and inspection
@@ -33,6 +34,7 @@ Key behaviors currently implemented:
 - null-policy handling and encoding support
 - mnemonic normalization/case handling and duplicate suffixing
 - structured section/header access
+- typed canonical metadata derivation and explicit package metadata schema versioning
 - stacked curve access and curve mutation helpers
 - package write/read round-trip, including mixed numeric/text curve columns
 
@@ -61,6 +63,7 @@ cargo run -- list-curves <package_dir>
 ### Done
 
 - Canonical `LasFile` model and tolerant LAS parser
+- Typed canonical metadata layer and explicit package metadata contract
 - `CurveTable` as the app-facing in-memory table abstraction
 - `metadata.json + curves.parquet` package support
 - non-v3 `lasio` parity coverage for read/model behavior
@@ -68,10 +71,10 @@ cargo run -- list-curves <package_dir>
 
 ### Next
 
-- Stabilize the canonical metadata model:
-  - promote the current section-centric structures toward a minimal typed canonical model
-  - define explicit package schema/version guarantees
+- Tighten the canonical metadata model:
+  - refine the current typed metadata layer into a stable long-term contract
   - tighten curve/index descriptors and nullability metadata
+  - decide which fields are canonical contract versus raw-fidelity carry-through
 - Shape the backend/query API for Tauri:
   - metadata DTOs
   - curve window/query DTOs

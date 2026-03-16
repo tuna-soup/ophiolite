@@ -1,0 +1,530 @@
+{
+	"table_of_contents": [
+		{
+			"title": "LAS Version 2.0 Updated: July 2009",
+			"heading_level": null,
+			"page_id": 0,
+			"polygon": [
+				[188.16000366210938, 98.89376682043076],
+				[425.41415548324585, 98.89376682043076],
+				[424.21884298324585, 116.3377057313919],
+				[187.94193398952484, 116.3377057313919]
+			]
+		},
+		{
+			"title": "A Digital Standard for Logs",
+			"heading_level": null,
+			"page_id": 0,
+			"polygon": [
+				[217.52108502388, 130.04209864139557],
+				[396.4288122653961, 130.04209864139557],
+				[395.2334997653961, 147.95965826511383],
+				[216.32577252388, 147.95965826511383]
+			]
+		},
+		{
+			"title": "1.0 Abstract:",
+			"heading_level": null,
+			"page_id": 0,
+			"polygon": [
+				[72.0, 300.95652651786804],
+				[174.00788712501526, 300.95652651786804],
+				[172.81257462501526, 318.061767578125],
+				[70.96644508838654, 318.061767578125]
+			]
+		},
+		{
+			"title": "2.0 Introduction:",
+			"heading_level": null,
+			"page_id": 0,
+			"polygon": [
+				[71.95996561646461, 527.4617919921875],
+				[201.40897071361542, 526.0645809173584],
+				[200.21365821361542, 543.5907011032104],
+				[70.76465311646461, 545.1375761032104]
+			]
+		},
+		{
+			"title": "3.0 LAS 2.0 Overview:",
+			"heading_level": null,
+			"page_id": 1,
+			"polygon": [
+				[71.499562561512, 98.91566491127014],
+				[236.30366563796997, 98.91566491127014],
+				[235.10835313796997, 115.7052161693573],
+				[70.304250061512, 115.7052161693573]
+			]
+		},
+		{
+			"title": "4.0 Software:",
+			"heading_level": null,
+			"page_id": 2,
+			"polygon": [
+				[71.83002170920372, 180.96576368808746],
+				[177.60564351081848, 180.96576368808746],
+				[176.41033101081848, 198.0351927280426],
+				[70.63470920920372, 198.0351927280426]
+			]
+		},
+		{
+			"title": "5.0 Details:",
+			"heading_level": null,
+			"page_id": 2,
+			"polygon": [
+				[71.36711078882217, 524.0493664741516],
+				[152.19265884160995, 524.0493664741516],
+				[152.19265884160995, 542.1756749153137],
+				[71.36711078882217, 542.1756749153137]
+			]
+		},
+		{
+			"title": "5.1 Flags",
+			"heading_level": null,
+			"page_id": 2,
+			"polygon": [
+				[71.11848556995392, 626.7127618789673],
+				[116.64539909362793, 626.7127618789673],
+				[116.64539909362793, 640.4891452789307],
+				[71.11848556995392, 640.4891452789307]
+			]
+		},
+		{
+			"title": "5.2 Line Delimiters",
+			"heading_level": null,
+			"page_id": 3,
+			"polygon": [
+				[71.94108366966248, 221.0169174671173],
+				[160.81934201717377, 221.0169174671173],
+				[159.62402951717377, 233.74110674858093],
+				[70.74577116966248, 233.74110674858093]
+			]
+		},
+		{
+			"title": "5.3 ~V (Version Information)",
+			"heading_level": null,
+			"page_id": 4,
+			"polygon": [
+				[71.65664613246918, 72.18010228872299],
+				[211.66599440574646, 72.18010228872299],
+				[210.47068190574646, 86.3792724609375],
+				[70.46133363246918, 86.3792724609375]
+			]
+		},
+		{
+			"title": "5.4 ~W (Well Information)",
+			"heading_level": null,
+			"page_id": 4,
+			"polygon": [
+				[70.29381734132767, 473.412766456604],
+				[195.90416049957275, 473.412766456604],
+				[195.90416049957275, 487.89923095703125],
+				[70.29381734132767, 487.89923095703125]
+			]
+		},
+		{
+			"title": "STRT.M nnn.nn : START DEPTH",
+			"heading_level": null,
+			"page_id": 4,
+			"polygon": [
+				[128.668212890625, 583.0777916908264],
+				[416.32171154022217, 581.5309166908264],
+				[415.12639904022217, 596.6336822509766],
+				[128.668212890625, 596.6336822509766]
+			]
+		},
+		{
+			"title": "STOP.M nnn.n : STOP DEPTH",
+			"heading_level": null,
+			"page_id": 5,
+			"polygon": [
+				[128.63858032226562, 114.13166928291321],
+				[401.31836557388306, 114.13166928291321],
+				[400.12305307388306, 125.36962890625],
+				[128.63858032226562, 125.36962890625]
+			]
+		},
+		{
+			"title": "STEP.M nnn.nn : STEP",
+			"heading_level": null,
+			"page_id": 5,
+			"polygon": [
+				[128.62750244140625, 166.3022804260254],
+				[366.4749405384064, 166.3022804260254],
+				[366.30767822265625, 178.05255126953125],
+				[128.62750244140625, 178.05255126953125]
+			]
+		},
+		{
+			"title": "API . aaaaaaaaaaaaaaaaaaaaa : API NUMBER",
+			"heading_level": null,
+			"page_id": 6,
+			"polygon": [
+				[128.63864135742188, 98.6991918683052],
+				[446.147362947464, 98.6991918683052],
+				[446.147362947464, 111.9339599609375],
+				[128.63864135742188, 111.9339599609375]
+			]
+		},
+		{
+			"title": "5.5 ~C (Curve Information)",
+			"heading_level": null,
+			"page_id": 6,
+			"polygon": [
+				[72.0, 485.9557285308838],
+				[200.29494953155518, 484.4088535308838],
+				[200.29494953155518, 498.7149658203125],
+				[72.0, 498.9458341598511]
+			]
+		},
+		{
+			"title": "5.6 ~P (Parameter Information)",
+			"heading_level": null,
+			"page_id": 7,
+			"polygon": [
+				[72.0, 328.98617720603943],
+				[226.36923551559448, 328.98617720603943],
+				[225.17392301559448, 341.893812417984],
+				[71.16890734434128, 341.893812417984]
+			]
+		},
+		{
+			"title": "5.7 ~O (Other Information)",
+			"heading_level": null,
+			"page_id": 8,
+			"polygon": [
+				[71.74485915899277, 100.0289306640625],
+				[204.40934443473816, 98.54144418239594],
+				[203.21403193473816, 112.19500732421875],
+				[70.54954665899277, 112.93028962612152]
+			]
+		},
+		{
+			"title": "------------------------------------------------------------------------------------------------------------\n~Other Information Section",
+			"heading_level": null,
+			"page_id": 8,
+			"polygon": [
+				[70.88444244861603, 182.9547119140625],
+				[435.09393310546875, 182.9547119140625],
+				[435.09393310546875, 208.30694580078125],
+				[69.68912994861603, 208.30694580078125]
+			]
+		},
+		{
+			"title": "5.8 ~A (ASCII Log Data)",
+			"heading_level": null,
+			"page_id": 8,
+			"polygon": [
+				[72.0, 312.27496576309204],
+				[186.3928027153015, 310.72809076309204],
+				[185.1974902153015, 324.4748840332031],
+				[71.4394102692604, 325.92804479599]
+			]
+		},
+		{
+			"title": "6.0 References",
+			"heading_level": null,
+			"page_id": 8,
+			"polygon": [
+				[71.78622525930405, 517.8688049316406],
+				[141.45248347520828, 516.7548651695251],
+				[140.25717097520828, 529.5146956443787],
+				[70.59091275930405, 531.0615706443787]
+			]
+		},
+		{
+			"title": "Example #1 - LAS 2.0 in Unwrapped Mode",
+			"heading_level": null,
+			"page_id": 9,
+			"polygon": [
+				[71.98356235027313, 73.86175537109375],
+				[344.1658935546875, 73.86175537109375],
+				[344.1658935546875, 90.01687914133072],
+				[71.98356235027313, 90.01687914133072]
+			]
+		},
+		{
+			"title": "Example #2 - LAS 2.0 With Minimal Header Information in Unwrapped \nMode.",
+			"heading_level": null,
+			"page_id": 10,
+			"polygon": [
+				[70.94605386257172, 73.86175537109375],
+				[543.5700073242188, 73.86175537109375],
+				[543.5700073242188, 109.38873291015625],
+				[70.94605386257172, 109.38873291015625]
+			]
+		},
+		{
+			"title": "Example #3 \u2013 LAS 2.0 Wrapped Version",
+			"heading_level": null,
+			"page_id": 11,
+			"polygon": [
+				[72.0, 85.86175537109375],
+				[335.4228973388672, 85.86175537109375],
+				[335.0686950683594, 102.16904497146606],
+				[71.10341101884842, 102.16904497146606]
+			]
+		},
+		{
+			"title": "Example # 4 LAS 2.0 Time Based Data",
+			"heading_level": null,
+			"page_id": 13,
+			"polygon": [
+				[72.0, 85.86175537109375],
+				[322.46633434295654, 85.86175537109375],
+				[322.4283447265625, 102.0996744632721],
+				[71.0866219997406, 102.0996744632721]
+			]
+		}
+	],
+	"page_stats": [
+		{
+			"page_id": 0,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["Span", 113],
+				["Line", 33],
+				["Text", 9],
+				["ListItem", 5],
+				["SectionHeader", 4],
+				["PageFooter", 1],
+				["ListGroup", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 1,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["Span", 163],
+				["Line", 43],
+				["ListItem", 14],
+				["SectionHeader", 1],
+				["PageFooter", 1],
+				["ListGroup", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 2,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["Span", 126],
+				["Line", 34],
+				["ListItem", 11],
+				["Text", 6],
+				["SectionHeader", 3],
+				["ListGroup", 2],
+				["PageFooter", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 3,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["Span", 129],
+				["Line", 33],
+				["Text", 9],
+				["ListItem", 3],
+				["SectionHeader", 1],
+				["Figure", 1],
+				["PageFooter", 1],
+				["ListGroup", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 4,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["Span", 173],
+				["Line", 42],
+				["TableCell", 12],
+				["ListItem", 11],
+				["Text", 7],
+				["SectionHeader", 3],
+				["ListGroup", 3],
+				["Code", 1],
+				["Table", 1],
+				["PageFooter", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 5,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["Span", 79],
+				["Line", 36],
+				["Text", 13],
+				["SectionHeader", 2],
+				["PageFooter", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 6,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["Span", 114],
+				["TableCell", 51],
+				["Line", 36],
+				["ListItem", 9],
+				["Text", 2],
+				["SectionHeader", 2],
+				["Table", 1],
+				["PageFooter", 1],
+				["ListGroup", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 7,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["TableCell", 197],
+				["Span", 127],
+				["Line", 45],
+				["ListItem", 6],
+				["Table", 2],
+				["SectionHeader", 1],
+				["PageFooter", 1],
+				["ListGroup", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 8,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["Span", 117],
+				["Line", 30],
+				["ListItem", 12],
+				["SectionHeader", 4],
+				["Text", 3],
+				["ListGroup", 2],
+				["PageFooter", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 9,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["TableCell", 303],
+				["Span", 111],
+				["Line", 50],
+				["SectionHeader", 1],
+				["Table", 1],
+				["PageFooter", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 10,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["TableCell", 270],
+				["Span", 71],
+				["Line", 32],
+				["SectionHeader", 1],
+				["Table", 1],
+				["PageFooter", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 11,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["TableCell", 343],
+				["Span", 105],
+				["Line", 50],
+				["SectionHeader", 1],
+				["Table", 1],
+				["PageFooter", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 12,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["Span", 91],
+				["Line", 43],
+				["Text", 1],
+				["PageFooter", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		},
+		{
+			"page_id": 13,
+			"text_extraction_method": "pdftext",
+			"block_counts": [
+				["Span", 75],
+				["Line", 37],
+				["SectionHeader", 1],
+				["Text", 1],
+				["PageFooter", 1]
+			],
+			"block_metadata": {
+				"llm_request_count": 0,
+				"llm_error_count": 0,
+				"llm_tokens_used": 0
+			}
+		}
+	],
+	"debug_data_path": "debug_data\\las_20_updated_july2009"
+}

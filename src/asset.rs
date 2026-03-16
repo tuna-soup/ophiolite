@@ -202,6 +202,14 @@ impl CurveItem {
     pub fn numeric_data(&self) -> Option<Vec<f64>> {
         self.data.iter().map(LasValue::as_f64).collect()
     }
+
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
 }
 
 pub trait SectionItem: Clone {
@@ -529,6 +537,10 @@ impl LasFile {
         self.curves.keys()
     }
 
+    pub fn curve_names(&self) -> Vec<String> {
+        self.keys()
+    }
+
     pub fn curve_data(&self, mnemonic: &str) -> Option<&[LasValue]> {
         self.curves.get(mnemonic).map(|curve| curve.data.as_slice())
     }
@@ -541,6 +553,11 @@ impl LasFile {
 
     pub fn get_curve(&self, mnemonic: &str) -> Option<&CurveItem> {
         self.curves.get(mnemonic)
+    }
+
+    pub fn curve(&self, mnemonic: &str) -> crate::Result<&CurveItem> {
+        self.get_curve(mnemonic)
+            .ok_or_else(|| crate::LasError::Validation(format!("curve '{mnemonic}' not found")))
     }
 
     pub fn data_matrix(&self) -> Option<Vec<Vec<f64>>> {

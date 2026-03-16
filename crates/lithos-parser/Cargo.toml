@@ -1,0 +1,10 @@
+[package]
+name = "lithos-parser"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lithos-core = { path = "../lithos-core" }
+encoding_rs = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }

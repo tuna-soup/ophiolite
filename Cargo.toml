@@ -1,9 +1,15 @@
-[package]
-name = "lithos_las"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    ".",
+    "crates/lithos-core",
+    "crates/lithos-parser",
+    "crates/lithos-table",
+    "crates/lithos-package",
+    "crates/lithos-cli",
+]
+resolver = "2"
 
-[dependencies]
+[workspace.dependencies]
 arrow-array = "58.0.0"
 arrow-schema = "58.0.0"
 encoding_rs = "0.8"
@@ -13,3 +19,18 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0.18"
 tracing = "0.1.44"
+
+[package]
+name = "lithos_las"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lithos-core = { path = "crates/lithos-core" }
+lithos-parser = { path = "crates/lithos-parser" }
+lithos-table = { path = "crates/lithos-table" }
+lithos-package = { path = "crates/lithos-package" }
+lithos-cli = { path = "crates/lithos-cli" }
+
+[dev-dependencies]
+serde_json = { workspace = true }

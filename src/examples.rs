@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 pub fn path(relative: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
         .join("examples")
         .join(relative)
 }

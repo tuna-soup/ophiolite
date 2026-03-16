@@ -2,8 +2,7 @@ use crate::asset::{
     CanonicalAlias, HeaderItem, IngestIssue, LasFile, LasFileSummary, LasValue, Provenance,
     SectionItems, derive_canonical_alias,
 };
-use crate::table::CurveStorageKind;
-use crate::{IndexDescriptor, IndexKind, MnemonicCase};
+use crate::{CurveStorageKind, IndexDescriptor, IndexKind, MnemonicCase};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -112,7 +111,6 @@ pub struct PackageMetadata {
 
 impl LasFile {
     pub fn metadata(&self) -> CanonicalMetadata {
-        let curve_descriptors = self.data().descriptors();
         CanonicalMetadata {
             version: self.version_info(),
             well: self.well_info(),
@@ -120,8 +118,7 @@ impl LasFile {
             curves: self
                 .curves
                 .iter()
-                .zip(curve_descriptors)
-                .map(|(curve, descriptor)| CurveInfo {
+                .map(|curve| CurveInfo {
                     name: curve.mnemonic.clone(),
                     original_mnemonic: curve.original_mnemonic.clone(),
                     canonical_name: curve.mnemonic.clone(),
@@ -132,7 +129,7 @@ impl LasFile {
                         .data
                         .iter()
                         .any(|value| value.is_empty() || value.is_nan()),
-                    storage_kind: descriptor.storage_kind,
+                    storage_kind: detect_storage_kind(&curve.data),
                     alias: derive_canonical_alias(&curve.original_mnemonic, &curve.unit),
                 })
                 .collect(),
@@ -197,10 +194,15 @@ impl LasFile {
 }
 
 pub fn package_metadata_for(file: &LasFile, package_version: u32) -> PackageMetadata {
+    let mut summary = file.summary.clone();
+    summary.row_count = file.row_count();
+    summary.curve_count = file.curves.len();
+    summary.issue_count = file.issues.len();
+
     PackageMetadata {
         package_version,
         metadata_schema_version: String::from(PACKAGE_METADATA_SCHEMA_VERSION),
-        summary: file.summary.clone(),
+        summary,
         provenance: file.provenance.clone(),
         encoding: file.encoding.clone(),
         index: file.index.clone(),
@@ -208,14 +210,13 @@ pub fn package_metadata_for(file: &LasFile, package_version: u32) -> PackageMeta
         curve_columns: file
             .curves
             .iter()
-            .zip(file.data().descriptors())
-            .map(|(curve, descriptor)| CurveColumnMetadata {
+            .map(|curve| CurveColumnMetadata {
                 name: curve.mnemonic.clone(),
                 original_mnemonic: curve.original_mnemonic.clone(),
                 unit: curve.unit.clone(),
                 header_value: curve.value.clone(),
                 description: curve.description.clone(),
-                storage_kind: descriptor.storage_kind,
+                storage_kind: detect_storage_kind(&curve.data),
             })
             .collect(),
         raw_sections: RawMetadataSections {
@@ -252,5 +253,20 @@ fn non_empty_string(value: &str) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+fn detect_storage_kind(values: &[LasValue]) -> CurveStorageKind {
+    let has_numbers = values
+        .iter()
+        .any(|value| matches!(value, LasValue::Number(_)));
+    let has_text = values
+        .iter()
+        .any(|value| matches!(value, LasValue::Text(_)));
+    match (has_numbers, has_text) {
+        (true, true) => CurveStorageKind::Mixed,
+        (true, false) => CurveStorageKind::Numeric,
+        (false, true) => CurveStorageKind::Text,
+        (false, false) => CurveStorageKind::Numeric,
     }
 }

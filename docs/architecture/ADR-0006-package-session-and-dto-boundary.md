@@ -60,6 +60,7 @@ Validation reports should expose structured diagnostic issues with stable codes,
 
 The current Tauri-ready adapter layer is `PackageBackend`, with `PackageBackendState` as the shared-state wrapper and `PackageCommandService` as the thin, transport-focused app-boundary service above it.
 Session-backed DTOs should expose the currently bound package root so clients can observe rebinding after `save_as`.
+In the current phase, backend session read paths may stay lazy internally, while the public eager `PackageSession` and direct `open_package(...)` APIs remain unchanged.
 
 DTO evolution should remain additive where possible. Formal compatibility guarantees can harden later once the Tauri contract stops moving quickly.
 Public command error kinds should remain small and caller-actionable rather than implementation-shaped.
@@ -79,6 +80,7 @@ Public command error kinds should remain small and caller-actionable rather than
 - dirty-state and revision handling are now part of the supported backend contract
 - metadata-only opens are an explicit architectural behavior, not an accidental implementation detail
 - windowed reads are part of the frontend contract even though full lazy sample-table loading is still an evolving internal concern
+- backend session reads may reuse Arrow/Parquet projection and row-selection internally without changing the public runtime abstraction
 - future Tauri command handlers should be built on top of this session model rather than reaching directly into storage internals
 - the app-boundary command layer should preserve structured backend errors rather than collapsing them into ad hoc strings
 - edit requests must be atomic at the request level; rejected edits must not partially mutate session state

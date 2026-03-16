@@ -264,6 +264,83 @@ fn backend_metadata_inspection_does_not_require_parquet_samples() {
 }
 
 #[test]
+fn backend_session_open_keeps_metadata_queries_available_without_preloading_samples() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("backend-lazy-open");
+    lithos_las::write_package(&las, &package_dir).unwrap();
+
+    let mut backend = PackageBackend::new();
+    let session = backend.open_package_session(&package_dir).unwrap();
+    fs::remove_file(package_dir.join("curves.parquet")).unwrap();
+
+    let summary = backend.session_summary(&session.session_id).unwrap();
+    let metadata = backend.session_metadata(&session.session_id).unwrap();
+    let catalog = backend.session_curve_catalog(&session.session_id).unwrap();
+    let err = backend
+        .read_curve_window(
+            &session.session_id,
+            &CurveWindowRequest {
+                curve_names: vec![String::from("DT")],
+                start_row: 0,
+                row_count: 1,
+            },
+        )
+        .unwrap_err();
+
+    assert_eq!(summary.session_id, session.session_id);
+    assert_eq!(metadata.session.session_id, session.session_id);
+    assert_eq!(catalog.session.session_id, session.session_id);
+    assert_eq!(catalog.curves.len(), 8);
+    match err {
+        LasError::Io(_) => {}
+        other => panic!("expected io error when lazy window read cannot open parquet, got {other}"),
+    }
+}
+
+#[test]
+fn backend_lazy_window_reads_reject_stale_sessions_after_external_change() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("backend-stale-lazy");
+    lithos_las::write_package(&las, &package_dir).unwrap();
+
+    let mut backend = PackageBackend::new();
+    let session = backend.open_package_session(&package_dir).unwrap();
+
+    let mut external = open_package(&package_dir).unwrap();
+    external
+        .apply_metadata_update(&MetadataUpdateRequest {
+            items: vec![HeaderItemUpdate {
+                section: MetadataSectionDto::Well,
+                mnemonic: String::from("COMP"),
+                unit: String::new(),
+                value: LasValue::Text(String::from("EXTERNAL CHANGE")),
+                description: String::from("COMPANY"),
+            }],
+            other: None,
+        })
+        .unwrap();
+    external.save_with_result().unwrap();
+
+    let err = backend
+        .read_curve_window(
+            &session.session_id,
+            &CurveWindowRequest {
+                curve_names: vec![String::from("DT")],
+                start_row: 0,
+                row_count: 1,
+            },
+        )
+        .unwrap_err();
+
+    match err {
+        LasError::Validation(message) => {
+            assert!(message.contains("changed since session"));
+        }
+        other => panic!("expected stale-session validation error, got {other}"),
+    }
+}
+
+#[test]
 fn backend_requires_explicit_close_for_session_cleanup() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-close");

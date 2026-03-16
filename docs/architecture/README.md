@@ -34,7 +34,7 @@ Current properties:
 - DTOs are the intended frontend/backend transfer boundary
 - package storage uses `metadata.json + curves.parquet`
 - `metadata.json` now groups package identity, document metadata, storage descriptors, raw preserved sections, and diagnostics explicitly
-- Arrow/Parquet are internal storage/package details, not the dominant public API
+- Arrow/Parquet are internal storage/package details, and now also power backend-session lazy window reads
 - non-v3 `lasio` read/model parity is the main compatibility baseline
 
 ## Project Architecture
@@ -67,6 +67,10 @@ Current session properties:
 - a package can be opened through metadata-only read paths or through an editable `PackageSession`
 - editable session open reuses one shared backend session per package path by default
 - `PackageSession` owns package identity, session identity, current in-memory `LasFile` state, dirty-state, and a revision token
+- backend session open validates package metadata and parquet footer without eagerly decoding all sample rows
+- session summary, metadata, and curve catalog reads are served from cached package metadata while the session remains clean
+- backend window reads use projected parquet scans and row selections instead of preloading a full sample table
+- the first edit or save path that needs the canonical snapshot materializes a real eager `PackageSession`
 - edits are applied to the session snapshot in memory
 - `save` persists the current session snapshot back to the same package using optimistic revision checks
 - `save_as` persists the current session snapshot to a new package root and updates the session baseline
@@ -130,6 +134,7 @@ Current staged compromise:
 - parser, package, and CLI are split into their own crates
 - the runtime table boundary has its own crate, but `CurveTable` still originates from the core layer in this phase to preserve the current `LasFile::data()` API
 - Arrow/Parquet conversion now lives in the package crate rather than the runtime table type
+- direct SDK package opens remain eager; only backend session reads are lazy in this phase
 
 ## Current vs Target
 

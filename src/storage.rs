@@ -2,22 +2,28 @@ use arrow_array::Array;
 use arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use lithos_core::{
-    AssetSummaryDto, CurveCatalogEntryDto, CurveColumnMetadata, CurveEditRequest, CurveItem,
-    CurveStorageKind, CurveTable, CurveWindowDto, CurveWindowRequest, DTO_CONTRACT_VERSION,
-    DirtyStateDto, LasError, LasFile, LasFileSummary, LasValue, MetadataDto, MetadataUpdateRequest,
-    PackageId, PackageMetadata, Result, RevisionToken, SaveConflictDto, SavePackageResultDto,
-    SectionItems, SessionId, SessionSummaryDto, ValidationReportDto, apply_curve_edit,
-    apply_metadata_update, asset_summary_dto, curve_catalog_dto, curve_window_dto, dirty_state_dto,
-    metadata_dto, package_id_for_path, package_metadata_for, package_validation_report,
-    parse_package_metadata, revision_token_for_bytes, save_conflict_dto, session_summary_dto,
-    validate_edit_state, validate_package_metadata, validation_report_dto,
+    AssetSummaryDto, CurveCatalogDto, CurveCatalogEntryDto, CurveColumnMetadata, CurveEditRequest,
+    CurveItem, CurveStorageKind, CurveTable, CurveWindowColumnDto, CurveWindowDto,
+    CurveWindowRequest, DTO_CONTRACT_VERSION, DirtyStateDto, LasError, LasFile, LasFileSummary,
+    LasValue, MetadataDto, MetadataUpdateRequest, PackageId, PackageMetadata, Result,
+    RevisionToken, SaveConflictDto, SavePackageResultDto, SaveSessionResponseDto, SectionItems,
+    SessionId, SessionMetadataDto, SessionSummaryDto, SessionWindowDto, ValidationReportDto,
+    apply_curve_edit, apply_metadata_update, asset_summary_dto, curve_catalog_dto,
+    curve_catalog_result_dto, curve_window_dto, dirty_state_dto, metadata_dto, package_id_for_path,
+    package_metadata_for, package_validation_report, parse_package_metadata,
+    revision_token_for_bytes, save_conflict_dto, session_metadata_dto, session_summary_dto,
+    session_window_dto, validate_edit_state, validate_package_metadata, validation_report_dto,
 };
 use lithos_table::CurveColumnDescriptor;
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::ProjectionMask;
+use parquet::arrow::arrow_reader::{
+    ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder, RowSelection,
+};
 use parquet::arrow::arrow_writer::ArrowWriter;
 use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
+use std::iter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -43,6 +49,29 @@ pub type StoredLasFile = PackageSession;
 #[derive(Debug, Default)]
 pub struct PackageSessionStore {
     sessions: BTreeMap<String, PackageSession>,
+    package_sessions: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+struct LazyPackageSession {
+    package_id: PackageId,
+    session_id: SessionId,
+    revision: RevisionToken,
+    dirty: bool,
+    root: PathBuf,
+    metadata: PackageMetadata,
+    reader_metadata: ArrowReaderMetadata,
+}
+
+#[derive(Debug, Clone)]
+enum BackendPackageSession {
+    Lazy(LazyPackageSession),
+    Materialized(PackageSession),
+}
+
+#[derive(Debug, Default)]
+pub struct PackageBackendSessionStore {
+    sessions: BTreeMap<String, BackendPackageSession>,
     package_sessions: BTreeMap<String, String>,
 }
 
@@ -83,6 +112,285 @@ impl PackageSessionStore {
         let new_key = package_path_key(new_root);
         self.package_sessions.remove(&old_key);
         self.package_sessions.insert(new_key, session_id.0.clone());
+    }
+}
+
+impl PackageBackendSessionStore {
+    pub fn open_shared(&mut self, path: impl AsRef<Path>) -> Result<SessionSummaryDto> {
+        let key = package_path_key(path.as_ref());
+        if let Some(session_id) = self.package_sessions.get(&key) {
+            if let Some(session) = self.sessions.get(session_id) {
+                return Ok(session.session_summary());
+            }
+        }
+
+        let session = open_backend_session(path)?;
+        let session_id = session.session_id().0.clone();
+        self.package_sessions.insert(key, session_id.clone());
+        let summary = session.session_summary();
+        self.sessions.insert(session_id, session);
+        Ok(summary)
+    }
+
+    pub fn session_summary(&self, session_id: &SessionId) -> Result<SessionSummaryDto> {
+        Ok(self.session(session_id)?.session_summary())
+    }
+
+    pub fn session_metadata(&self, session_id: &SessionId) -> Result<SessionMetadataDto> {
+        Ok(self.session(session_id)?.session_metadata())
+    }
+
+    pub fn session_curve_catalog(&self, session_id: &SessionId) -> Result<CurveCatalogDto> {
+        Ok(self.session(session_id)?.curve_catalog())
+    }
+
+    pub fn read_curve_window(
+        &self,
+        session_id: &SessionId,
+        request: &CurveWindowRequest,
+    ) -> Result<SessionWindowDto> {
+        self.session(session_id)?.read_window(request)
+    }
+
+    pub fn dirty_state(&self, session_id: &SessionId) -> Result<DirtyStateDto> {
+        Ok(self.session(session_id)?.dirty_state())
+    }
+
+    pub fn apply_metadata_edit(
+        &mut self,
+        session_id: &SessionId,
+        request: &MetadataUpdateRequest,
+    ) -> Result<SessionSummaryDto> {
+        let session = self.session_mut(session_id)?;
+        session.apply_metadata_update(request)?;
+        Ok(session.session_summary())
+    }
+
+    pub fn apply_curve_edit(
+        &mut self,
+        session_id: &SessionId,
+        request: &CurveEditRequest,
+    ) -> Result<SessionSummaryDto> {
+        let session = self.session_mut(session_id)?;
+        session.apply_curve_edit(request)?;
+        Ok(session.session_summary())
+    }
+
+    pub fn save_session(&mut self, session_id: &SessionId) -> Result<SaveSessionResponseDto> {
+        self.session_mut(session_id)?.save_checked()
+    }
+
+    pub fn save_session_as(
+        &mut self,
+        session_id: &SessionId,
+        output_dir: impl AsRef<Path>,
+    ) -> Result<SaveSessionResponseDto> {
+        let old_root = self.session(session_id)?.root().to_path_buf();
+        let response = self
+            .session_mut(session_id)?
+            .save_as_checked_in_place(output_dir.as_ref())?;
+        if let SaveSessionResponseDto::Saved(saved) = &response {
+            self.rebind_path(session_id, &old_root, Path::new(&saved.root));
+        }
+        Ok(response)
+    }
+
+    pub fn close(&mut self, session_id: &SessionId) -> Option<PackageId> {
+        let session = self.sessions.remove(&session_id.0)?;
+        self.package_sessions
+            .retain(|_, existing| existing != &session_id.0);
+        Some(session.package_id().clone())
+    }
+
+    pub fn rebind_path(&mut self, session_id: &SessionId, old_root: &Path, new_root: &Path) {
+        let old_key = package_path_key(old_root);
+        let new_key = package_path_key(new_root);
+        self.package_sessions.remove(&old_key);
+        self.package_sessions.insert(new_key, session_id.0.clone());
+    }
+
+    fn session(&self, session_id: &SessionId) -> Result<&BackendPackageSession> {
+        self.sessions
+            .get(&session_id.0)
+            .ok_or_else(|| LasError::Validation(format!("session '{}' not found", session_id.0)))
+    }
+
+    fn session_mut(&mut self, session_id: &SessionId) -> Result<&mut BackendPackageSession> {
+        self.sessions
+            .get_mut(&session_id.0)
+            .ok_or_else(|| LasError::Validation(format!("session '{}' not found", session_id.0)))
+    }
+}
+
+impl BackendPackageSession {
+    fn session_id(&self) -> &SessionId {
+        match self {
+            Self::Lazy(session) => &session.session_id,
+            Self::Materialized(session) => session.session_id(),
+        }
+    }
+
+    fn package_id(&self) -> &PackageId {
+        match self {
+            Self::Lazy(session) => &session.package_id,
+            Self::Materialized(session) => session.package_id(),
+        }
+    }
+
+    fn root(&self) -> &Path {
+        match self {
+            Self::Lazy(session) => &session.root,
+            Self::Materialized(session) => session.root(),
+        }
+    }
+
+    fn session_summary(&self) -> SessionSummaryDto {
+        match self {
+            Self::Lazy(session) => session_summary_dto(
+                session.package_id.clone(),
+                session.session_id.clone(),
+                session.revision.clone(),
+                session.root.display().to_string(),
+                session.dirty,
+                asset_summary_from_package_metadata(&session.metadata),
+            ),
+            Self::Materialized(session) => session.session_summary(),
+        }
+    }
+
+    fn session_metadata(&self) -> SessionMetadataDto {
+        match self {
+            Self::Lazy(session) => session_metadata_dto(
+                session.package_id.clone(),
+                session.session_id.clone(),
+                session.revision.clone(),
+                session.root.display().to_string(),
+                metadata_dto_from_package_metadata(&session.metadata),
+            ),
+            Self::Materialized(session) => session_metadata_dto(
+                session.package_id().clone(),
+                session.session_id().clone(),
+                session.revision().clone(),
+                session.root().display().to_string(),
+                session.metadata_dto(),
+            ),
+        }
+    }
+
+    fn curve_catalog(&self) -> CurveCatalogDto {
+        match self {
+            Self::Lazy(session) => curve_catalog_result_dto(
+                session.package_id.clone(),
+                session.session_id.clone(),
+                session.revision.clone(),
+                session.root.display().to_string(),
+                curve_catalog_from_package_metadata(&session.metadata),
+            ),
+            Self::Materialized(session) => curve_catalog_result_dto(
+                session.package_id().clone(),
+                session.session_id().clone(),
+                session.revision().clone(),
+                session.root().display().to_string(),
+                session.curve_catalog(),
+            ),
+        }
+    }
+
+    fn read_window(&self, request: &CurveWindowRequest) -> Result<SessionWindowDto> {
+        match self {
+            Self::Lazy(session) => {
+                ensure_lazy_session_current(session)?;
+                Ok(session_window_dto(
+                    session.package_id.clone(),
+                    session.session_id.clone(),
+                    session.revision.clone(),
+                    session.root.display().to_string(),
+                    read_lazy_curve_window(session, request)?,
+                ))
+            }
+            Self::Materialized(session) => Ok(session_window_dto(
+                session.package_id().clone(),
+                session.session_id().clone(),
+                session.revision().clone(),
+                session.root().display().to_string(),
+                session.read_window(request)?,
+            )),
+        }
+    }
+
+    fn dirty_state(&self) -> DirtyStateDto {
+        match self {
+            Self::Lazy(session) => dirty_state_dto(
+                session.package_id.clone(),
+                session.session_id.clone(),
+                session.revision.clone(),
+                session.dirty,
+            ),
+            Self::Materialized(session) => session.dirty_state(),
+        }
+    }
+
+    fn apply_metadata_update(&mut self, request: &MetadataUpdateRequest) -> Result<()> {
+        self.materialize_for_edit()?.apply_metadata_update(request)
+    }
+
+    fn apply_curve_edit(&mut self, request: &CurveEditRequest) -> Result<()> {
+        self.materialize_for_edit()?.apply_curve_edit(request)
+    }
+
+    fn save_checked(&mut self) -> Result<SaveSessionResponseDto> {
+        if let Self::Lazy(session) = self {
+            let current_revision = package_revision(&session.root)?;
+            if current_revision != session.revision {
+                return Ok(SaveSessionResponseDto::Conflict(save_conflict_dto(
+                    session.package_id.clone(),
+                    session.session_id.clone(),
+                    session.revision.clone(),
+                    current_revision,
+                    session.root.display().to_string(),
+                )));
+            }
+        }
+
+        match self.materialize_for_edit()?.save_checked()? {
+            Ok(saved) => Ok(SaveSessionResponseDto::Saved(saved)),
+            Err(conflict) => Ok(SaveSessionResponseDto::Conflict(conflict)),
+        }
+    }
+
+    fn save_as_checked_in_place(&mut self, output_dir: &Path) -> Result<SaveSessionResponseDto> {
+        if let Self::Lazy(session) = self {
+            let current_revision = package_revision(&session.root)?;
+            if current_revision != session.revision {
+                return Ok(SaveSessionResponseDto::Conflict(save_conflict_dto(
+                    session.package_id.clone(),
+                    session.session_id.clone(),
+                    session.revision.clone(),
+                    current_revision,
+                    session.root.display().to_string(),
+                )));
+            }
+        }
+
+        let saved = self.materialize_for_edit()?.save_as_in_place(output_dir)?;
+        Ok(SaveSessionResponseDto::Saved(saved))
+    }
+
+    fn materialize_for_edit(&mut self) -> Result<&mut PackageSession> {
+        if let Self::Lazy(session) = self {
+            ensure_lazy_session_current(session)?;
+            let mut materialized = open_package(&session.root)?;
+            materialized.package_id = session.package_id.clone();
+            materialized.session_id = session.session_id.clone();
+            materialized.revision = session.revision.clone();
+            materialized.dirty = session.dirty;
+            *self = Self::Materialized(materialized);
+        }
+
+        match self {
+            Self::Materialized(session) => Ok(session),
+            Self::Lazy(_) => unreachable!("lazy session must materialize before edit"),
+        }
     }
 }
 
@@ -277,6 +585,26 @@ impl PackageSession {
     }
 }
 
+fn open_backend_session(path: impl AsRef<Path>) -> Result<BackendPackageSession> {
+    let root = path.as_ref().to_path_buf();
+    debug!(package = %root.display(), "opening lazy LAS backend session");
+
+    let metadata = read_package_metadata(&root)?;
+    let revision = package_revision(&root)?;
+    let reader_metadata = load_parquet_reader_metadata(curves_path(&root))?;
+    let root_key = package_path_key(&root);
+
+    Ok(BackendPackageSession::Lazy(LazyPackageSession {
+        package_id: package_id_for_path(&root_key),
+        session_id: new_session_id(&root),
+        revision,
+        dirty: false,
+        root,
+        metadata,
+        reader_metadata,
+    }))
+}
+
 pub fn open_package(path: impl AsRef<Path>) -> Result<PackageSession> {
     let root = path.as_ref().to_path_buf();
     debug!(package = %root.display(), "opening LAS package");
@@ -324,22 +652,12 @@ pub fn open_package(path: impl AsRef<Path>) -> Result<PackageSession> {
 
 pub fn open_package_summary(path: impl AsRef<Path>) -> Result<AssetSummaryDto> {
     let metadata = read_package_metadata(path.as_ref())?;
-    Ok(AssetSummaryDto {
-        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
-        summary: metadata.document.summary,
-        encoding: metadata.document.encoding,
-        index: metadata.canonical.index,
-    })
+    Ok(asset_summary_from_package_metadata(&metadata))
 }
 
 pub fn open_package_metadata(path: impl AsRef<Path>) -> Result<MetadataDto> {
     let metadata = read_package_metadata(path.as_ref())?;
-    Ok(MetadataDto {
-        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
-        metadata: metadata.canonical,
-        issues: metadata.diagnostics.issues,
-        extra_sections: metadata.raw.extra_sections,
-    })
+    Ok(metadata_dto_from_package_metadata(&metadata))
 }
 
 pub fn validate_package(path: impl AsRef<Path>) -> Result<ValidationReportDto> {
@@ -417,6 +735,164 @@ fn read_package_metadata(root: &Path) -> Result<PackageMetadata> {
     Ok(metadata)
 }
 
+fn load_parquet_reader_metadata(path: PathBuf) -> Result<ArrowReaderMetadata> {
+    let file = File::open(path)?;
+    ArrowReaderMetadata::load(&file, ArrowReaderOptions::new())
+        .map_err(|err| LasError::Storage(err.to_string()))
+}
+
+fn ensure_lazy_session_current(session: &LazyPackageSession) -> Result<()> {
+    let current_revision = package_revision(&session.root)?;
+    if current_revision != session.revision {
+        return Err(LasError::Validation(format!(
+            "package '{}' changed since session '{}' was opened; reopen the session",
+            session.root.display(),
+            session.session_id.0
+        )));
+    }
+    Ok(())
+}
+
+fn asset_summary_from_package_metadata(metadata: &PackageMetadata) -> AssetSummaryDto {
+    AssetSummaryDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+        summary: metadata.document.summary.clone(),
+        encoding: metadata.document.encoding.clone(),
+        index: metadata.canonical.index.clone(),
+    }
+}
+
+fn metadata_dto_from_package_metadata(metadata: &PackageMetadata) -> MetadataDto {
+    MetadataDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+        metadata: metadata.canonical.clone(),
+        issues: metadata.diagnostics.issues.clone(),
+        extra_sections: metadata.raw.extra_sections.clone(),
+    }
+}
+
+fn curve_catalog_from_package_metadata(metadata: &PackageMetadata) -> Vec<CurveCatalogEntryDto> {
+    metadata
+        .storage
+        .curve_columns
+        .iter()
+        .map(|curve| CurveCatalogEntryDto {
+            curve_id: revision_token_for_bytes("curve", &curve.name).0,
+            name: curve.name.clone(),
+            canonical_name: curve.canonical_name.clone(),
+            original_mnemonic: curve.original_mnemonic.clone(),
+            unit: optional_string(&curve.unit),
+            description: optional_string(&curve.description),
+            row_count: curve.row_count,
+            nullable: curve.nullable,
+            storage_kind: curve.storage_kind,
+            alias: curve.alias.clone(),
+            is_index: curve.is_index,
+        })
+        .collect()
+}
+
+fn read_lazy_curve_window(
+    session: &LazyPackageSession,
+    request: &CurveWindowRequest,
+) -> Result<CurveWindowDto> {
+    if request.curve_names.is_empty() {
+        return Err(LasError::Validation(String::from(
+            "curve window request must include at least one curve",
+        )));
+    }
+
+    let total_rows = session.metadata.document.summary.row_count;
+    let safe_start = request.start_row.min(total_rows);
+    let safe_end = request
+        .start_row
+        .saturating_add(request.row_count)
+        .min(total_rows);
+    let selected_columns = request
+        .curve_names
+        .iter()
+        .map(|name| {
+            session
+                .metadata
+                .storage
+                .curve_columns
+                .iter()
+                .find(|curve| curve.name == *name)
+                .cloned()
+                .ok_or_else(|| {
+                    LasError::Validation(format!("curve '{name}' not found in LAS file"))
+                })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    if safe_start >= safe_end {
+        return Ok(CurveWindowDto {
+            dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+            start_row: request.start_row,
+            row_count: 0,
+            columns: selected_columns
+                .iter()
+                .map(|curve| empty_curve_window_column(curve))
+                .collect(),
+        });
+    }
+
+    let projected_indices = selected_columns
+        .iter()
+        .map(|curve| {
+            session
+                .metadata
+                .storage
+                .curve_columns
+                .iter()
+                .position(|column| column.name == curve.name)
+                .ok_or_else(|| {
+                    LasError::Storage(format!(
+                        "column '{}' missing from package storage descriptors",
+                        curve.name
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let selection =
+        RowSelection::from_consecutive_ranges(iter::once(safe_start..safe_end), total_rows);
+    let batch = read_projected_parquet_batch(
+        curves_path(&session.root),
+        session.reader_metadata.clone(),
+        projected_indices,
+        selection,
+        request.row_count.max(1),
+    )?;
+    let descriptors = selected_columns
+        .iter()
+        .map(|curve| CurveColumnDescriptor {
+            name: curve.name.clone(),
+            storage_kind: curve.storage_kind,
+        })
+        .collect::<Vec<_>>();
+    let table = table_from_record_batch(&batch, &descriptors)?;
+
+    Ok(CurveWindowDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+        start_row: request.start_row,
+        row_count: table.row_count(),
+        columns: selected_columns
+            .iter()
+            .map(|curve| CurveWindowColumnDto {
+                curve_id: revision_token_for_bytes("curve", &curve.name).0,
+                name: curve.name.clone(),
+                canonical_name: curve.canonical_name.clone(),
+                is_index: curve.is_index,
+                storage_kind: curve.storage_kind,
+                values: table
+                    .column(&curve.name)
+                    .map(|column| column.values().to_vec())
+                    .unwrap_or_default(),
+            })
+            .collect(),
+    })
+}
+
 fn package_revision(root: &Path) -> Result<RevisionToken> {
     let metadata_text = fs::read_to_string(metadata_path(root))?;
     let parquet = fs::metadata(curves_path(root))?;
@@ -474,6 +950,34 @@ fn read_parquet_batch(path: PathBuf, row_count: usize) -> Result<RecordBatch> {
     match batches.len() {
         0 => Err(LasError::Storage(String::from(
             "package parquet data did not contain any record batches",
+        ))),
+        1 => Ok(batches.remove(0)),
+        _ => merge_batches(batches),
+    }
+}
+
+fn read_projected_parquet_batch(
+    path: PathBuf,
+    reader_metadata: ArrowReaderMetadata,
+    projected_indices: Vec<usize>,
+    selection: RowSelection,
+    batch_size: usize,
+) -> Result<RecordBatch> {
+    let file = File::open(path)?;
+    let builder = ParquetRecordBatchReaderBuilder::new_with_metadata(file, reader_metadata);
+    let mask = ProjectionMask::roots(builder.parquet_schema(), projected_indices);
+    let reader = builder
+        .with_projection(mask)
+        .with_row_selection(selection)
+        .with_batch_size(batch_size.max(1))
+        .build()
+        .map_err(|err| LasError::Storage(err.to_string()))?;
+    let mut batches = reader
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|err| LasError::Storage(err.to_string()))?;
+    match batches.len() {
+        0 => Err(LasError::Storage(String::from(
+            "projected parquet read did not return any record batches",
         ))),
         1 => Ok(batches.remove(0)),
         _ => merge_batches(batches),
@@ -699,5 +1203,25 @@ fn values_from_array(array: &dyn Array, storage_kind: CurveStorageKind) -> Resul
                 })
                 .collect())
         }
+    }
+}
+
+fn empty_curve_window_column(curve: &CurveColumnMetadata) -> CurveWindowColumnDto {
+    CurveWindowColumnDto {
+        curve_id: revision_token_for_bytes("curve", &curve.name).0,
+        name: curve.name.clone(),
+        canonical_name: curve.canonical_name.clone(),
+        is_index: curve.is_index,
+        storage_kind: curve.storage_kind,
+        values: Vec::new(),
+    }
+}
+
+fn optional_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
     }
 }

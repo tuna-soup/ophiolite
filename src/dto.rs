@@ -924,6 +924,13 @@ pub fn validation_issue_for_message(
                 "metadata.json",
             )),
         ),
+        other if other.contains("changed since session '") && other.contains("' was opened") => (
+            "package.changed_since_session_open",
+            Some(diagnostic_target_dto(
+                DiagnosticTargetKind::Session,
+                "session",
+            )),
+        ),
         other => (
             default_validation_code(kind),
             default_validation_target(kind, other),

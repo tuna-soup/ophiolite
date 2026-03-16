@@ -1,16 +1,16 @@
 use crate::{
     AssetSummaryDto, CloseSessionResultDto, CurveCatalogDto, CurveEditRequest, CurveWindowRequest,
-    DTO_CONTRACT_VERSION, DirtyStateDto, LasError, MetadataDto, MetadataUpdateRequest,
-    PackageSessionStore, Result, SaveSessionResponseDto, SessionId, SessionMetadataDto,
-    SessionSummaryDto, SessionWindowDto, ValidationReportDto, close_session_result_dto,
-    curve_catalog_result_dto, open_package_metadata, open_package_summary, session_metadata_dto,
-    session_window_dto, validate_package,
+    DTO_CONTRACT_VERSION, DirtyStateDto, MetadataDto, MetadataUpdateRequest, Result,
+    SaveSessionResponseDto, SessionId, SessionMetadataDto, SessionSummaryDto, SessionWindowDto,
+    ValidationReportDto, close_session_result_dto, open_package_metadata, open_package_summary,
+    validate_package,
 };
+use lithos_package::PackageBackendSessionStore;
 use std::path::Path;
 
 #[derive(Debug, Default)]
 pub struct PackageBackend {
-    sessions: PackageSessionStore,
+    sessions: PackageBackendSessionStore,
 }
 
 impl PackageBackend {
@@ -35,30 +35,15 @@ impl PackageBackend {
     }
 
     pub fn session_summary(&self, session_id: &SessionId) -> Result<SessionSummaryDto> {
-        let session = self.session(session_id)?;
-        Ok(session.session_summary())
+        self.sessions.session_summary(session_id)
     }
 
     pub fn session_metadata(&self, session_id: &SessionId) -> Result<SessionMetadataDto> {
-        let session = self.session(session_id)?;
-        Ok(session_metadata_dto(
-            session.package_id().clone(),
-            session.session_id().clone(),
-            session.revision().clone(),
-            session.root().display().to_string(),
-            session.metadata_dto(),
-        ))
+        self.sessions.session_metadata(session_id)
     }
 
     pub fn session_curve_catalog(&self, session_id: &SessionId) -> Result<CurveCatalogDto> {
-        let session = self.session(session_id)?;
-        Ok(curve_catalog_result_dto(
-            session.package_id().clone(),
-            session.session_id().clone(),
-            session.revision().clone(),
-            session.root().display().to_string(),
-            session.curve_catalog(),
-        ))
+        self.sessions.session_curve_catalog(session_id)
     }
 
     pub fn read_curve_window(
@@ -66,19 +51,11 @@ impl PackageBackend {
         session_id: &SessionId,
         request: &CurveWindowRequest,
     ) -> Result<SessionWindowDto> {
-        let session = self.session(session_id)?;
-        Ok(session_window_dto(
-            session.package_id().clone(),
-            session.session_id().clone(),
-            session.revision().clone(),
-            session.root().display().to_string(),
-            session.read_window(request)?,
-        ))
+        self.sessions.read_curve_window(session_id, request)
     }
 
     pub fn dirty_state(&self, session_id: &SessionId) -> Result<DirtyStateDto> {
-        let session = self.session(session_id)?;
-        Ok(session.dirty_state())
+        self.sessions.dirty_state(session_id)
     }
 
     pub fn apply_metadata_edit(
@@ -86,9 +63,7 @@ impl PackageBackend {
         session_id: &SessionId,
         request: &MetadataUpdateRequest,
     ) -> Result<SessionSummaryDto> {
-        let session = self.session_mut(session_id)?;
-        session.apply_metadata_update(request)?;
-        Ok(session.session_summary())
+        self.sessions.apply_metadata_edit(session_id, request)
     }
 
     pub fn apply_curve_edit(
@@ -96,17 +71,11 @@ impl PackageBackend {
         session_id: &SessionId,
         request: &CurveEditRequest,
     ) -> Result<SessionSummaryDto> {
-        let session = self.session_mut(session_id)?;
-        session.apply_curve_edit(request)?;
-        Ok(session.session_summary())
+        self.sessions.apply_curve_edit(session_id, request)
     }
 
     pub fn save_session(&mut self, session_id: &SessionId) -> Result<SaveSessionResponseDto> {
-        let session = self.session_mut(session_id)?;
-        match session.save_checked()? {
-            Ok(saved) => Ok(SaveSessionResponseDto::Saved(saved)),
-            Err(conflict) => Ok(SaveSessionResponseDto::Conflict(conflict)),
-        }
+        self.sessions.save_session(session_id)
     }
 
     pub fn save_session_as(
@@ -114,44 +83,18 @@ impl PackageBackend {
         session_id: &SessionId,
         output_dir: impl AsRef<Path>,
     ) -> Result<SaveSessionResponseDto> {
-        let old_root = {
-            let session = self.session(session_id)?;
-            session.root().to_path_buf()
-        };
-        let save_result = {
-            let session = self.session_mut(session_id)?;
-            session.save_as_in_place(output_dir.as_ref())?
-        };
-        let new_root = {
-            let session = self.session(session_id)?;
-            session.root().to_path_buf()
-        };
-        self.sessions.rebind_path(session_id, &old_root, &new_root);
-        Ok(SaveSessionResponseDto::Saved(save_result))
+        self.sessions.save_session_as(session_id, output_dir)
     }
 
     pub fn close_session(&mut self, session_id: &SessionId) -> Result<CloseSessionResultDto> {
-        let closed = self
-            .sessions
-            .close(session_id)
-            .ok_or_else(|| LasError::Validation(format!("session '{}' not found", session_id.0)))?;
+        let package_id = self.sessions.close(session_id).ok_or_else(|| {
+            crate::LasError::Validation(format!("session '{}' not found", session_id.0))
+        })?;
         Ok(close_session_result_dto(
-            closed.package_id().clone(),
+            package_id,
             session_id.clone(),
             true,
         ))
-    }
-
-    fn session(&self, session_id: &SessionId) -> Result<&crate::PackageSession> {
-        self.sessions
-            .get(session_id)
-            .ok_or_else(|| LasError::Validation(format!("session '{}' not found", session_id.0)))
-    }
-
-    fn session_mut(&mut self, session_id: &SessionId) -> Result<&mut crate::PackageSession> {
-        self.sessions
-            .get_mut(session_id)
-            .ok_or_else(|| LasError::Validation(format!("session '{}' not found", session_id.0)))
     }
 }
 

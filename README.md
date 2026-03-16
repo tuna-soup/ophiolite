@@ -101,7 +101,7 @@ Core components:
 - CLI for import and inspection
 - local example corpus and parity tests against `lasio` non-v3 behavior
 
-Arrow/Parquet currently exist at the storage boundary. The runtime API remains domain-first rather than Arrow-first.
+Arrow/Parquet currently exist at the storage boundary and now also back backend-session window reads internally. The runtime API remains domain-first rather than Arrow-first.
 
 ## Current Architecture
 
@@ -142,6 +142,7 @@ Key behaviors implemented:
 - separate command-boundary transport service with structured command errors
 - structured diagnostic issues for package, edit, and save validation flows
 - metadata-only package opens without loading sample data
+- backend session open avoids eager sample materialization for metadata, catalog, and window read paths
 - package write/read round-trip
 - mixed numeric/text curve column support
 
@@ -190,6 +191,7 @@ Capabilities include:
 - package window/query support through DTOs
 
 Internally this abstraction may evolve toward a more Arrow-backed runtime, but the public API remains storage-agnostic.
+Direct `open_package(...)` and public `PackageSession` access remain eager/materialized in the current phase. The new lazy path is currently backend-session-only.
 
 ## Package Sessions and DTOs
 
@@ -227,7 +229,10 @@ Current session semantics:
 - successful save clears dirty-state
 - sessions remain alive until explicitly closed in the current desktop MVP
 - metadata-only package opens do not require loading `curves.parquet`
-- window queries are designed to support partial reads rather than forcing full frontend materialization
+- backend session open validates package metadata and parquet footer without eagerly decoding all samples
+- session metadata, session summaries, and curve catalogs are served from cached package metadata
+- window queries use projected parquet reads rather than forcing full frontend materialization
+- the first edit or save path that needs a canonical snapshot materializes the eager in-memory `PackageSession`
 - revision tokens are for persistence conflict detection against the currently bound package baseline/root, not collaborative synchronization
 
 Session invariants:
@@ -360,6 +365,7 @@ Instead, Lithos focuses on:
 - DTO layer for summaries, metadata, curve catalog, windowed reads, and edit flows
 - explicit session-context DTOs for session metadata, curve catalogs, and curve-window queries
 - structured diagnostic DTOs for package, edit, and save validation
+- backend-only lazy session reads on top of Arrow/Parquet projection and row selection
 - `metadata.json + curves.parquet` package format
 - non-v3 `lasio` parity coverage
 - package round-trip tests including mixed-type columns
@@ -368,7 +374,7 @@ Instead, Lithos focuses on:
 
 - deepen validation coverage and diagnostic rules now that structured reports exist
 - keep the command service thin and transport-focused while the app boundary settles
-- optimize editable-session materialization only where it does not complicate edit semantics too much
+- extend lazy backend-session reads only where they do not complicate edit semantics or stale-session correctness
 - keep consolidating architecture guidance under `docs/architecture/` rather than root-level notes
 
 ### After That

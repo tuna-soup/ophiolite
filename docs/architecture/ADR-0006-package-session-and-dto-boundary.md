@@ -56,6 +56,7 @@ DTOs are transport shapes only. They do not replace the canonical domain model. 
 
 The DTO contract is versioned with a lightweight `dto_contract_version` field.
 Session-backed metadata, catalog, and window reads should carry explicit session context rather than forcing desktop clients to reconstruct it from separate calls.
+Validation reports should expose structured diagnostic issues with stable codes, severity, human-readable messages, and optional target context.
 
 The current Tauri-ready adapter layer is `PackageBackend`, with `PackageBackendState` as the shared-state wrapper and `PackageCommandService` as the thin, transport-focused app-boundary service above it.
 Session-backed DTOs should expose the currently bound package root so clients can observe rebinding after `save_as`.
@@ -117,6 +118,7 @@ These concerns should remain distinct in result shapes and error reporting.
 In particular, save/save-as validation failures should not be reported as generic edit validation.
 Post-write validation should remain bounded to confirming that the written package is readable and internally coherent.
 Save conflict detection is against the currently bound package baseline/root and its revision fingerprint.
+Validation DTOs should be structured enough that desktop clients can render diagnostics without string matching.
 
 ## Deferred Work
 

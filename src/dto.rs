@@ -1,12 +1,12 @@
 use crate::asset::{CurveItem, HeaderItem, LasFile, LasFileSummary, LasValue};
 use crate::metadata::{CanonicalMetadata, CurveInfo, IndexInfo, validate_canonical_metadata};
-use crate::{CanonicalAlias, CurveStorageKind, IngestIssue, LasError, Result};
+use crate::{CanonicalAlias, CurveStorageKind, IngestIssue, IssueSeverity, LasError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-pub const DTO_CONTRACT_VERSION: &str = "0.2.0";
+pub const DTO_CONTRACT_VERSION: &str = "0.3.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PackageId(pub String);
@@ -52,12 +52,36 @@ pub enum ValidationKind {
     Save,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum DiagnosticTargetKind {
+    Package,
+    Session,
+    Curve,
+    Field,
+    Path,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiagnosticTargetDto {
+    pub kind: DiagnosticTargetKind,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DiagnosticIssueDto {
+    pub code: String,
+    pub severity: IssueSeverity,
+    pub message: String,
+    pub target: Option<DiagnosticTargetDto>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationReportDto {
     pub dto_contract_version: String,
     pub kind: ValidationKind,
     pub valid: bool,
     pub errors: Vec<String>,
+    pub issues: Vec<DiagnosticIssueDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -465,24 +489,13 @@ pub fn validate_edit_state(file: &LasFile) -> Result<()> {
 
 pub fn validation_report_dto(file: &LasFile) -> ValidationReportDto {
     match validate_edit_state(file) {
-        Ok(()) => ValidationReportDto {
-            dto_contract_version: String::from(DTO_CONTRACT_VERSION),
-            kind: ValidationKind::Edit,
-            valid: true,
-            errors: Vec::new(),
-        },
-        Err(LasError::Validation(message)) => ValidationReportDto {
-            dto_contract_version: String::from(DTO_CONTRACT_VERSION),
-            kind: ValidationKind::Edit,
-            valid: false,
-            errors: vec![message],
-        },
-        Err(other) => ValidationReportDto {
-            dto_contract_version: String::from(DTO_CONTRACT_VERSION),
-            kind: ValidationKind::Edit,
-            valid: false,
-            errors: vec![other.to_string()],
-        },
+        Ok(()) => empty_validation_report(ValidationKind::Edit),
+        Err(LasError::Validation(message)) => {
+            validation_report_from_messages(ValidationKind::Edit, vec![message])
+        }
+        Err(other) => {
+            validation_report_from_messages(ValidationKind::Edit, vec![other.to_string()])
+        }
     }
 }
 
@@ -637,21 +650,287 @@ pub fn save_conflict_dto(
 }
 
 pub fn package_validation_report(errors: Vec<String>) -> ValidationReportDto {
-    ValidationReportDto {
-        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
-        kind: ValidationKind::Package,
-        valid: errors.is_empty(),
-        errors,
-    }
+    validation_report_from_messages(ValidationKind::Package, errors)
 }
 
 pub fn save_validation_report(errors: Vec<String>) -> ValidationReportDto {
+    validation_report_from_messages(ValidationKind::Save, errors)
+}
+
+pub fn empty_validation_report(kind: ValidationKind) -> ValidationReportDto {
     ValidationReportDto {
         dto_contract_version: String::from(DTO_CONTRACT_VERSION),
-        kind: ValidationKind::Save,
+        kind,
+        valid: true,
+        errors: Vec::new(),
+        issues: Vec::new(),
+    }
+}
+
+pub fn validation_report_from_messages(
+    kind: ValidationKind,
+    messages: Vec<String>,
+) -> ValidationReportDto {
+    let issues = messages
+        .into_iter()
+        .map(|message| validation_issue_for_message(kind, message))
+        .collect::<Vec<_>>();
+    validation_report_from_issues(kind, issues)
+}
+
+pub fn validation_report_from_issues(
+    kind: ValidationKind,
+    issues: Vec<DiagnosticIssueDto>,
+) -> ValidationReportDto {
+    let errors = issues
+        .iter()
+        .filter(|issue| issue.severity == IssueSeverity::Error)
+        .map(|issue| issue.message.clone())
+        .collect::<Vec<_>>();
+    ValidationReportDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+        kind,
         valid: errors.is_empty(),
         errors,
+        issues,
     }
+}
+
+pub fn diagnostic_target_dto(
+    kind: DiagnosticTargetKind,
+    value: impl Into<String>,
+) -> DiagnosticTargetDto {
+    DiagnosticTargetDto {
+        kind,
+        value: value.into(),
+    }
+}
+
+pub fn diagnostic_issue_dto(
+    code: impl Into<String>,
+    severity: IssueSeverity,
+    message: impl Into<String>,
+    target: Option<DiagnosticTargetDto>,
+) -> DiagnosticIssueDto {
+    DiagnosticIssueDto {
+        code: code.into(),
+        severity,
+        message: message.into(),
+        target,
+    }
+}
+
+pub fn validation_issue_for_message(
+    kind: ValidationKind,
+    message: impl Into<String>,
+) -> DiagnosticIssueDto {
+    let message = message.into();
+    let (code, target) = match message.as_str() {
+        "LAS file must contain at least one curve" => (
+            "curve.missing_any",
+            Some(diagnostic_target_dto(
+                DiagnosticTargetKind::Package,
+                "las-file",
+            )),
+        ),
+        "curve mnemonics must not be empty" => (
+            "curve.mnemonic.empty",
+            Some(diagnostic_target_dto(
+                DiagnosticTargetKind::Field,
+                "curve.mnemonic",
+            )),
+        ),
+        "index descriptor must reference a curve id" => (
+            "index.curve_id.missing",
+            Some(diagnostic_target_dto(
+                DiagnosticTargetKind::Field,
+                "index.curve_id",
+            )),
+        ),
+        "index descriptor must preserve the original mnemonic" => (
+            "index.original_mnemonic.missing",
+            Some(diagnostic_target_dto(
+                DiagnosticTargetKind::Field,
+                "index.raw_mnemonic",
+            )),
+        ),
+        "package metadata schema version must not be empty" => (
+            "package.schema_version.empty",
+            Some(diagnostic_target_dto(
+                DiagnosticTargetKind::Field,
+                "package.metadata_schema_version",
+            )),
+        ),
+        "package storage metadata must mark exactly one index column" => (
+            "package.index_column.missing",
+            Some(diagnostic_target_dto(
+                DiagnosticTargetKind::Field,
+                "storage.curve_columns",
+            )),
+        ),
+        "package storage metadata must contain exactly one index column" => (
+            "package.index_column.invalid",
+            Some(diagnostic_target_dto(
+                DiagnosticTargetKind::Field,
+                "storage.curve_columns",
+            )),
+        ),
+        other if other.starts_with("curve '") && other.contains("' not found in LAS file") => (
+            "curve.not_found",
+            extract_quoted_target(other, "curve '", DiagnosticTargetKind::Curve),
+        ),
+        other
+            if other.starts_with("curve '")
+                && (other.contains("rows but LAS file expects")
+                    || other.contains("rows but expected")) =>
+        {
+            (
+                "curve.row_count_mismatch",
+                extract_quoted_target(other, "curve '", DiagnosticTargetKind::Curve),
+            )
+        }
+        other
+            if other.starts_with("curve column '")
+                && other.contains("rows but summary expects") =>
+        {
+            (
+                "storage.curve_row_count_mismatch",
+                extract_quoted_target(other, "curve column '", DiagnosticTargetKind::Curve),
+            )
+        }
+        other
+            if other.starts_with("canonical curve '")
+                && other.contains("rows but summary expects") =>
+        {
+            (
+                "canonical.curve_row_count_mismatch",
+                extract_quoted_target(other, "canonical curve '", DiagnosticTargetKind::Curve),
+            )
+        }
+        other
+            if other.starts_with("canonical curve '")
+                && other.contains("is missing from storage columns") =>
+        {
+            (
+                "canonical.curve_missing_from_storage",
+                extract_quoted_target(other, "canonical curve '", DiagnosticTargetKind::Curve),
+            )
+        }
+        other
+            if other.starts_with("index curve '")
+                && other.contains("is missing from LAS curves") =>
+        {
+            (
+                "index.missing_curve",
+                extract_quoted_target(other, "index curve '", DiagnosticTargetKind::Curve),
+            )
+        }
+        other if other.starts_with("index curve '") && other.contains("must remain numeric") => (
+            "index.must_be_numeric",
+            extract_quoted_target(other, "index curve '", DiagnosticTargetKind::Curve),
+        ),
+        other if other.starts_with("cannot remove index curve '") => (
+            "index.remove_forbidden",
+            extract_quoted_target(
+                other,
+                "cannot remove index curve '",
+                DiagnosticTargetKind::Curve,
+            ),
+        ),
+        other
+            if other.starts_with("canonical index '")
+                && other.contains("does not match storage index") =>
+        {
+            (
+                "package.index.mismatch",
+                Some(diagnostic_target_dto(
+                    DiagnosticTargetKind::Field,
+                    "storage.index",
+                )),
+            )
+        }
+        other
+            if other.starts_with("canonical index mnemonic '")
+                && other.contains("does not match storage index mnemonic") =>
+        {
+            (
+                "package.index_mnemonic.mismatch",
+                Some(diagnostic_target_dto(
+                    DiagnosticTargetKind::Field,
+                    "storage.index.raw_mnemonic",
+                )),
+            )
+        }
+        other
+            if other.starts_with("package metadata declares")
+                && other.contains("curve columns but summary expects") =>
+        {
+            (
+                "package.curve_count.mismatch",
+                Some(diagnostic_target_dto(
+                    DiagnosticTargetKind::Field,
+                    "storage.curve_columns",
+                )),
+            )
+        }
+        other
+            if other.starts_with("canonical metadata declares")
+                && other.contains("curves but summary expects") =>
+        {
+            (
+                "canonical.curve_count.mismatch",
+                Some(diagnostic_target_dto(
+                    DiagnosticTargetKind::Field,
+                    "canonical.curves",
+                )),
+            )
+        }
+        other
+            if other.starts_with("canonical index row count")
+                && other.contains("does not match summary row count") =>
+        {
+            (
+                "canonical.index_row_count.mismatch",
+                Some(diagnostic_target_dto(
+                    DiagnosticTargetKind::Field,
+                    "canonical.index.row_count",
+                )),
+            )
+        }
+        other
+            if other.starts_with("index column '")
+                && other.contains("does not match storage index") =>
+        {
+            (
+                "package.index_column.mismatch",
+                extract_quoted_target(other, "index column '", DiagnosticTargetKind::Curve),
+            )
+        }
+        other if other.starts_with("output directory '") && other.contains("already exists") => (
+            "save.output_dir.exists",
+            extract_quoted_target(other, "output directory '", DiagnosticTargetKind::Path),
+        ),
+        other if other.starts_with("unsupported package version ") => (
+            "package.version.unsupported",
+            Some(diagnostic_target_dto(
+                DiagnosticTargetKind::Field,
+                "package.package_version",
+            )),
+        ),
+        other if other.starts_with("invalid package metadata: ") => (
+            "package.metadata.invalid",
+            Some(diagnostic_target_dto(
+                DiagnosticTargetKind::Package,
+                "metadata.json",
+            )),
+        ),
+        other => (
+            default_validation_code(kind),
+            default_validation_target(kind, other),
+        ),
+    };
+
+    diagnostic_issue_dto(code, IssueSeverity::Error, message, target)
 }
 
 pub fn close_session_result_dto(
@@ -685,6 +964,41 @@ pub fn command_error_dto(
 
 fn stable_curve_id(name: &str) -> String {
     stable_id("curve", name)
+}
+
+fn extract_quoted_target(
+    message: &str,
+    prefix: &str,
+    kind: DiagnosticTargetKind,
+) -> Option<DiagnosticTargetDto> {
+    let suffix = message.strip_prefix(prefix)?;
+    let value = suffix.split_once('\'')?.0;
+    Some(diagnostic_target_dto(kind, value))
+}
+
+fn default_validation_code(kind: ValidationKind) -> &'static str {
+    match kind {
+        ValidationKind::Package => "package.invalid",
+        ValidationKind::Edit => "edit.invalid",
+        ValidationKind::Save => "save.invalid",
+    }
+}
+
+fn default_validation_target(kind: ValidationKind, _message: &str) -> Option<DiagnosticTargetDto> {
+    match kind {
+        ValidationKind::Package => Some(diagnostic_target_dto(
+            DiagnosticTargetKind::Package,
+            "package",
+        )),
+        ValidationKind::Edit => Some(diagnostic_target_dto(
+            DiagnosticTargetKind::Session,
+            "session",
+        )),
+        ValidationKind::Save => Some(diagnostic_target_dto(
+            DiagnosticTargetKind::Path,
+            "package-root",
+        )),
+    }
 }
 
 fn stable_id(scope: &str, value: &str) -> String {

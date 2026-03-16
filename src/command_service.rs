@@ -4,7 +4,7 @@ use crate::{
     PackagePathRequest, SavePackageResultDto, SaveSessionResponseDto, SessionCurveEditRequest,
     SessionId, SessionMetadataDto, SessionMetadataEditRequest, SessionRequest,
     SessionSaveAsRequest, SessionSummaryDto, SessionWindowDto, SessionWindowRequest,
-    ValidationKind, ValidationReportDto, command_error_dto,
+    ValidationKind, ValidationReportDto, command_error_dto, validation_report_from_messages,
 };
 
 #[derive(Clone, Default)]
@@ -263,12 +263,7 @@ fn validation_error_report(group: CommandGroup, message: String) -> ValidationRe
 }
 
 fn validation_error_report_for_kind(kind: ValidationKind, message: String) -> ValidationReportDto {
-    ValidationReportDto {
-        dto_contract_version: String::from(crate::DTO_CONTRACT_VERSION),
-        kind,
-        valid: false,
-        errors: vec![message],
-    }
+    validation_report_from_messages(kind, vec![message])
 }
 
 fn command_error_for_save(session_id: Option<SessionId>, error: LasError) -> CommandErrorDto {

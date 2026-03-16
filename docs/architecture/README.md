@@ -95,6 +95,7 @@ Current DTO families:
 - `PackageBackendState` is the shared-state wrapper intended for future Tauri command registration
 - `PackageCommandService` is the thin, transport-focused service that converts command calls into structured transport responses
 - session-backed metadata, catalog, and window reads now carry explicit session context and DTO contract versions
+- validation reports now carry structured diagnostic issues with code, severity, message, and optional target context
 - app-boundary command rules:
   - inspect commands do not require a session
   - session commands require or produce a valid `SessionId`
@@ -109,6 +110,7 @@ Current validation layers:
 - edit validity: is the requested mutation allowed against the current in-memory snapshot
 - save validity/conflict: can the current snapshot be persisted safely now
 - save conflict detection is against the currently bound package baseline/root and its revision fingerprint
+- validation reports are structured for app consumers rather than only exposing raw message lists
 
 At the command boundary, save and save-as validation failures are reported as save-scoped validation rather than generic edit validation.
 

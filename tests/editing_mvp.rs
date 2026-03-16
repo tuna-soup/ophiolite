@@ -190,6 +190,7 @@ fn package_supports_metadata_only_open_and_validation_views() {
     assert_eq!(metadata.metadata.index.canonical_name, "index");
     assert!(validation.valid);
     assert!(validation.errors.is_empty());
+    assert!(validation.issues.is_empty());
     assert_eq!(validation.kind, ValidationKind::Package);
 }
 

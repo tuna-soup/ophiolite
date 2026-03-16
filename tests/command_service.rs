@@ -82,7 +82,10 @@ fn command_service_preserves_validation_errors() {
 
     assert_eq!(error.kind, CommandErrorKind::ValidationFailed);
     assert_eq!(error.session_id, Some(session.session_id));
-    assert!(error.validation.is_some());
+    let validation = error.validation.expect("validation report");
+    assert_eq!(validation.kind, ValidationKind::Edit);
+    assert_eq!(validation.issues.len(), 1);
+    assert_eq!(validation.issues[0].code, "curve.row_count_mismatch");
     assert!(error.message.contains("expects 3"));
 }
 
@@ -172,7 +175,10 @@ fn command_service_reports_save_as_validation_failures_as_save_errors() {
 
     assert_eq!(error.kind, CommandErrorKind::ValidationFailed);
     assert_eq!(error.session_id, Some(session.session_id.clone()));
-    assert_eq!(error.validation.unwrap().kind, ValidationKind::Save);
+    let validation = error.validation.expect("save validation report");
+    assert_eq!(validation.kind, ValidationKind::Save);
+    assert_eq!(validation.issues.len(), 1);
+    assert_eq!(validation.issues[0].code, "save.output_dir.exists");
 
     let summary = unwrap_ok(service.session_summary(&SessionRequest {
         session_id: session.session_id.clone(),
@@ -214,6 +220,23 @@ fn command_service_supports_metadata_only_inspection_without_parquet() {
     assert_eq!(summary.summary.las_version, "1.2");
     assert_eq!(metadata.metadata.curves.len(), 8);
     assert_eq!(session_error.kind, CommandErrorKind::OpenFailed);
+}
+
+#[test]
+fn command_service_validate_package_returns_structured_diagnostics() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("adapter-validate");
+    write_package(&las, &package_dir).unwrap();
+
+    let service = PackageCommandService::new();
+    let validation = unwrap_ok(service.validate_package(&PackagePathRequest {
+        path: package_dir.display().to_string(),
+    }));
+
+    assert!(validation.valid);
+    assert!(validation.errors.is_empty());
+    assert!(validation.issues.is_empty());
+    assert_eq!(validation.kind, ValidationKind::Package);
 }
 
 fn unwrap_ok<T>(response: CommandResponse<T>) -> T {

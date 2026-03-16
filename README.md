@@ -140,6 +140,7 @@ Key behaviors implemented:
 - session summaries and session-backed DTOs report the current bound package root
 - Tauri-oriented backend session/query adapter
 - separate command-boundary transport service with structured command errors
+- structured diagnostic issues for package, edit, and save validation flows
 - metadata-only package opens without loading sample data
 - package write/read round-trip
 - mixed numeric/text curve column support
@@ -244,7 +245,8 @@ The DTO contract is versioned with a lightweight `dto_contract_version` field. S
 The command service is intentionally thin and transport-focused. It should not become a second place where domain or save semantics live.
 At the app boundary, commands use `CommandResponse<T> = Ok(T) | Err(CommandErrorDto)`.
 The public command error kinds are intentionally small and caller-actionable: `OpenFailed`, `ValidationFailed`, `SaveConflict`, `SessionNotFound`, and `Internal`.
-Save and save-as validation failures now report as save-scoped validation rather than generic edit failures.
+Validation reports now carry structured diagnostic issues with code, severity, message, and optional target context.
+Save and save-as validation failures report as save-scoped validation rather than generic edit failures.
 Post-write validation is bounded: save/save-as verifies enough to confirm the written package is readable and internally coherent, rather than promising an arbitrary full roundtrip guarantee.
 
 ## Interoperability
@@ -357,13 +359,14 @@ Instead, Lithos focuses on:
 - `PackageCommandService` app-boundary transport service with structured command errors
 - DTO layer for summaries, metadata, curve catalog, windowed reads, and edit flows
 - explicit session-context DTOs for session metadata, curve catalogs, and curve-window queries
+- structured diagnostic DTOs for package, edit, and save validation
 - `metadata.json + curves.parquet` package format
 - non-v3 `lasio` parity coverage
 - package round-trip tests including mixed-type columns
 
 ### Next
 
-- improve validation and diagnostics around package validity, edit validity, and save validity
+- deepen validation coverage and diagnostic rules now that structured reports exist
 - keep the command service thin and transport-focused while the app boundary settles
 - optimize editable-session materialization only where it does not complicate edit semantics too much
 - keep consolidating architecture guidance under `docs/architecture/` rather than root-level notes

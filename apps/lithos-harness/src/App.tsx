@@ -1,37 +1,11 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useMemo, useState } from "react";
-
-type CommandErrorDto = {
-  kind: string;
-  message: string;
-  session_id?: string | null;
-  validation?: unknown;
-  save_conflict?: unknown;
-};
-
-type CommandResponse<T> = { Ok: T } | { Err: CommandErrorDto };
-
-type SessionSummaryDto = {
-  session_id: string;
-  root: string;
-  revision: string;
-  dirty: { has_unsaved_changes: boolean };
-};
-
-type SessionMetadataDto = {
-  session: {
-    session_id: string;
-    root: string;
-    revision: string;
-  };
-  metadata: {
-    metadata: {
-      well: {
-        company?: string | null;
-      };
-    };
-  };
-};
+import {
+  type CommandErrorDto,
+  type CommandResponse,
+  type SessionMetadataDto,
+  type SessionSummaryDto,
+  invokeCommand
+} from "./api";
 
 const defaultCurveEdit = JSON.stringify(
   {
@@ -47,13 +21,6 @@ const defaultCurveEdit = JSON.stringify(
   null,
   2
 );
-
-async function invokeCommand<T>(
-  command: string,
-  request: unknown
-): Promise<CommandResponse<T>> {
-  return invoke(command, { request });
-}
 
 function prettyJson(value: unknown): string {
   return JSON.stringify(value, null, 2);
@@ -398,6 +365,7 @@ export default function App() {
             template below.
           </p>
           <textarea
+            aria-label="Curve edit payload"
             className="code-area"
             value={curveEditJson}
             onChange={(event) => setCurveEditJson(event.target.value)}
@@ -456,23 +424,27 @@ export default function App() {
       <section className="grid output-grid">
         <article className="panel output-panel">
           <h2>Session Summary</h2>
-          <pre>{prettyJson(sessionSummary)}</pre>
+          <pre data-testid="session-summary-output">{prettyJson(sessionSummary)}</pre>
         </article>
         <article className="panel output-panel">
           <h2>Session Metadata</h2>
-          <pre>{prettyJson(sessionMetadata)}</pre>
+          <pre data-testid="session-metadata-output">{prettyJson(sessionMetadata)}</pre>
         </article>
         <article className="panel output-panel">
           <h2>Curve Catalog / Dirty State / Validation</h2>
-          <pre>{prettyJson({ catalog, dirtyState, validation })}</pre>
+          <pre data-testid="diagnostics-output">
+            {prettyJson({ catalog, dirtyState, validation })}
+          </pre>
         </article>
         <article className="panel output-panel">
           <h2>Window Result</h2>
-          <pre>{prettyJson(windowResult)}</pre>
+          <pre data-testid="window-output">{prettyJson(windowResult)}</pre>
         </article>
         <article className="panel output-panel">
           <h2>Last Command</h2>
-          <pre>{prettyJson({ lastCommand, lastResponse, lastError })}</pre>
+          <pre data-testid="last-command-output">
+            {prettyJson({ lastCommand, lastResponse, lastError })}
+          </pre>
         </article>
       </section>
     </main>

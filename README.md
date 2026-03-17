@@ -273,6 +273,17 @@ The DTO contract is versioned with a lightweight `dto_contract_version` field. S
 - structured validation and conflict rendering
 
 This means Lithos is no longer far from a usable test desktop app. The backend contract and a thin desktop shell already exist in-repo. The main remaining gap is not SDK wiring; it is frontend install/build automation and then iterating on UI polish, acceptance coverage, and product-specific workflow design.
+
+Harness verification commands:
+
+```powershell
+cd apps/lithos-harness
+bun install
+bun run test
+bun run build
+cargo test --manifest-path src-tauri/Cargo.toml
+bun tauri dev
+```
 The command service is intentionally thin and transport-focused. It should not become a second place where domain or save semantics live.
 At the app boundary, commands use `CommandResponse<T> = Ok(T) | Err(CommandErrorDto)`.
 The public command error kinds are intentionally small and caller-actionable: `OpenFailed`, `ValidationFailed`, `SaveConflict`, `SessionNotFound`, and `Internal`.

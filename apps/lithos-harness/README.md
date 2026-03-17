@@ -23,6 +23,20 @@ Rust-side harness tests:
 cargo test --manifest-path apps/lithos-harness/src-tauri/Cargo.toml
 ```
 
+Frontend smoke tests:
+
+```powershell
+cd apps/lithos-harness
+bun run test
+```
+
+Frontend production build:
+
+```powershell
+cd apps/lithos-harness
+bun run build
+```
+
 Interactive app:
 
 ```powershell
@@ -32,6 +46,14 @@ bun tauri dev
 ```
 
 The frontend is intentionally utilitarian. Its job is to exercise the SDK contract end to end, not to act as the final desktop UI.
+
+## Short Acceptance Workflow
+
+1. Run `bun install` in `apps/lithos-harness`.
+2. Run `bun run test` to verify the mocked app-boundary smoke tests.
+3. Run `cargo test --manifest-path apps/lithos-harness/src-tauri/Cargo.toml` to verify the Rust command layer.
+4. Run `bun tauri dev`.
+5. Open a known `.laspkg` directory and walk the checklist below.
 
 ## Manual Acceptance Checklist
 

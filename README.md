@@ -93,6 +93,7 @@ Core components:
 - Tauri/backend adapter surface: `PackageBackend`
 - Tauri-ready shared backend state wrapper: `PackageBackendState`
 - app-boundary command service: `PackageCommandService`
+- internal Tauri capability harness: `apps/lithos-harness`
 - typed canonical metadata view: `CanonicalMetadata`, `VersionInfo`, `WellInfo`, `IndexInfo`, `CurveInfo`
 - explicit grouped package metadata schema: `package`, `document`, `storage`, `raw`, and `diagnostics`
 - in-memory app/query layer: `CurveTable`
@@ -143,6 +144,8 @@ Key behaviors implemented:
 - structured diagnostic issues for package, edit, and save validation flows
 - metadata-only package opens without loading sample data
 - backend session open avoids eager sample materialization for metadata, catalog, and window read paths
+- metadata-only lazy package edits and save/save-as flows
+- first curve edits materialize directly from lazy backend session state rather than reopening through the eager SDK path
 - package write/read round-trip
 - mixed numeric/text curve column support
 
@@ -207,7 +210,7 @@ The current backend contract distinguishes:
   - edit/persist commands operate on an existing session
 
 `PackageBackend` provides the current Tauri-oriented backend adapter on top of shared package sessions.
-`PackageBackendState` wraps it in shared mutable state suitable for future Tauri command handlers.
+`PackageBackendState` wraps it in shared mutable state used by the internal Tauri harness and suitable for further Tauri command registration.
 `PackageCommandService` is the separate app-boundary transport layer that maps command requests into structured success/error envelopes.
 
 `PackageSession` owns:
@@ -257,6 +260,19 @@ Backend-session parquet metadata caches are session-local in the current phase. 
 DTOs are boundary and transport shapes. They are not the canonical domain model. `LasFile` remains the authoritative in-memory LAS representation inside the backend.
 
 The DTO contract is versioned with a lightweight `dto_contract_version` field. Session-backed metadata, curve-catalog, and curve-window reads now carry explicit session context so desktop clients do not need to infer package/session/revision state from unrelated calls.
+
+## Internal Tauri Harness
+
+`apps/lithos-harness` is now a first-party internal Tauri + React capability harness over the current SDK contract. It mounts thin Tauri handlers over `PackageCommandService` and is intended to exercise:
+
+- package inspection and validation
+- session lifecycle
+- curve catalog and windowed reads
+- metadata edits and curve edits
+- save/save-as flows
+- structured validation and conflict rendering
+
+This means Lithos is no longer far from a usable test desktop app. The backend contract and a thin desktop shell already exist in-repo. The main remaining gap is not SDK wiring; it is frontend install/build automation and then iterating on UI polish, acceptance coverage, and product-specific workflow design.
 The command service is intentionally thin and transport-focused. It should not become a second place where domain or save semantics live.
 At the app boundary, commands use `CommandResponse<T> = Ok(T) | Err(CommandErrorDto)`.
 The public command error kinds are intentionally small and caller-actionable: `OpenFailed`, `ValidationFailed`, `SaveConflict`, `SessionNotFound`, and `Internal`.
@@ -378,6 +394,7 @@ Instead, Lithos focuses on:
 - backend-only lazy session reads on top of Arrow/Parquet projection and row selection
 - lazy metadata-only backend edits and metadata-only save/save-as paths
 - direct first curve-edit materialization from lazy backend session state
+- internal first-party Tauri capability harness for exercising SDK flows end to end
 - `metadata.json + curves.parquet` package format
 - non-v3 `lasio` parity coverage
 - package round-trip tests including mixed-type columns
@@ -423,6 +440,7 @@ Before contributing large changes, open an issue first to discuss direction. Lit
 ```text
 src/                    root compatibility crate and thin CLI entrypoint
 crates/                 workspace crates for core, parser, table, package, and CLI
+apps/lithos-harness/    internal Tauri + React capability harness
 docs/                   architecture notes and ADRs
 examples/               LAS example corpus
 tests/                  parity and package/editing integration tests

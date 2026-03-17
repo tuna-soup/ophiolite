@@ -1,2 +1,4 @@
 /target/
-
+/apps/*/node_modules/
+/apps/*/dist/
+/apps/*/src-tauri/target/

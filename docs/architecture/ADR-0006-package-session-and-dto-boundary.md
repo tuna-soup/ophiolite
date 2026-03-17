@@ -84,7 +84,7 @@ Public command error kinds should remain small and caller-actionable rather than
 - windowed reads are part of the frontend contract even though full lazy sample-table loading is still an evolving internal concern
 - backend session reads may reuse Arrow/Parquet projection and row-selection internally without changing the public runtime abstraction
 - parquet row selection remains an internal implementation detail; public query semantics do not change
-- future Tauri command handlers should be built on top of this session model rather than reaching directly into storage internals
+- Tauri command handlers, including the internal harness, should be built on top of this session model rather than reaching directly into storage internals
 - the app-boundary command layer should preserve structured backend errors rather than collapsing them into ad hoc strings
 - edit requests must be atomic at the request level; rejected edits must not partially mutate session state
 - save/save-as failure behavior should preserve session usability and identity rather than partially mutating session state

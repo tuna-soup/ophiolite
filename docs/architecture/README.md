@@ -106,7 +106,7 @@ Current DTO families:
 
 - read DTOs: package summary, metadata, curve catalog, curve windows, session summary
 - edit DTOs: metadata edits, curve edits, dirty-state, validation reports, save results, save conflicts
-- `PackageBackendState` is the shared-state wrapper intended for future Tauri command registration
+- `PackageBackendState` is the shared-state wrapper used by the internal Tauri capability harness and intended for further Tauri command registration
 - `PackageCommandService` is the thin, transport-focused service that converts command calls into structured transport responses
 - session-backed metadata, catalog, and window reads now carry explicit session context and DTO contract versions
 - validation reports now carry structured diagnostic issues with code, severity, message, and optional target context
@@ -154,7 +154,7 @@ Current staged compromise:
 | In-memory samples | `CurveTable` backed by current in-memory values | potentially more formal Arrow-backed runtime contract later |
 | Package format | grouped `metadata.json + curves.parquet` with mixed-column preservation and legacy metadata read-compat | stricter canonical schema and package guarantees |
 | Canonical schema | partially aligned | `ADR-0007-canonical-schema-target.md` is the target-state reference |
-| Frontend/backend boundary | CLI, Rust API, shared backend state, and structured command wrapper | fuller Tauri app integration later |
+| Frontend/backend boundary | CLI, Rust API, shared backend state, structured command wrapper, and an internal Tauri capability harness | broader desktop-app integration later |
 
 ## Roadmap Placement of Arrow/Parquet
 

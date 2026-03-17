@@ -34,5 +34,6 @@ lithos-package = { path = "crates/lithos-package" }
 lithos-cli = { path = "crates/lithos-cli" }
 
 [dev-dependencies]
+parquet = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

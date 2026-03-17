@@ -1,8 +1,9 @@
 use lithos_las::{
     CommandErrorKind, CommandResponse, CurveEditRequest, CurveUpdateRequest, HeaderItemUpdate,
     LasValue, MetadataSectionDto, MetadataUpdateRequest, PackageCommandService, PackagePathRequest,
-    SessionCurveEditRequest, SessionMetadataEditRequest, SessionRequest, SessionSaveAsRequest,
-    SessionWindowRequest, ValidationKind, examples, open_package, write_package,
+    SessionCurveEditRequest, SessionDepthWindowRequest, SessionMetadataEditRequest, SessionRequest,
+    SessionSaveAsRequest, SessionWindowRequest, ValidationKind, examples, open_package,
+    write_package,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -272,6 +273,44 @@ fn command_service_supports_metadata_only_inspection_without_parquet() {
     assert_eq!(summary.summary.las_version, "1.2");
     assert_eq!(metadata.metadata.curves.len(), 8);
     assert_eq!(session_error.kind, CommandErrorKind::OpenFailed);
+}
+
+#[test]
+fn command_service_supports_depth_window_queries() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("adapter-depth-window");
+    write_package(&las, &package_dir).unwrap();
+
+    let service = PackageCommandService::new();
+    let session = unwrap_ok(service.open_package_session(&PackagePathRequest {
+        path: package_dir.display().to_string(),
+    }));
+    let row_window = unwrap_ok(service.read_curve_window(&SessionWindowRequest {
+        session_id: session.session_id.clone(),
+        window: lithos_las::CurveWindowRequest {
+            curve_names: vec![String::from("DEPT"), String::from("DT")],
+            start_row: 0,
+            row_count: 3,
+        },
+    }));
+    let depth_values = row_window.window.columns[0]
+        .values
+        .iter()
+        .map(|value| value.as_f64().unwrap())
+        .collect::<Vec<_>>();
+
+    let depth_window = unwrap_ok(service.read_depth_window(&SessionDepthWindowRequest {
+        session_id: session.session_id.clone(),
+        window: lithos_las::DepthWindowRequest {
+            curve_names: vec![String::from("DEPT"), String::from("DT")],
+            depth_min: depth_values[0].min(depth_values[1]),
+            depth_max: depth_values[0].max(depth_values[1]),
+        },
+    }));
+
+    assert_eq!(depth_window.session.session_id, session.session_id);
+    assert_eq!(depth_window.window.start_row, 0);
+    assert_eq!(depth_window.window.row_count, 2);
 }
 
 #[test]

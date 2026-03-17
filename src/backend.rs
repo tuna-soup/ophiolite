@@ -1,9 +1,9 @@
 use crate::{
     AssetSummaryDto, CloseSessionResultDto, CurveCatalogDto, CurveEditRequest, CurveWindowRequest,
-    DTO_CONTRACT_VERSION, DirtyStateDto, MetadataDto, MetadataUpdateRequest, Result,
-    SaveSessionResponseDto, SessionId, SessionMetadataDto, SessionSummaryDto, SessionWindowDto,
-    ValidationReportDto, close_session_result_dto, open_package_metadata, open_package_summary,
-    validate_package,
+    DTO_CONTRACT_VERSION, DepthWindowRequest, DirtyStateDto, MetadataDto, MetadataUpdateRequest,
+    Result, SaveSessionResponseDto, SessionId, SessionMetadataDto, SessionSummaryDto,
+    SessionWindowDto, ValidationReportDto, close_session_result_dto, open_package_metadata,
+    open_package_summary, validate_package,
 };
 use lithos_package::PackageBackendSessionStore;
 use std::path::Path;
@@ -52,6 +52,14 @@ impl PackageBackend {
         request: &CurveWindowRequest,
     ) -> Result<SessionWindowDto> {
         self.sessions.read_curve_window(session_id, request)
+    }
+
+    pub fn read_depth_window(
+        &self,
+        session_id: &SessionId,
+        request: &DepthWindowRequest,
+    ) -> Result<SessionWindowDto> {
+        self.sessions.read_depth_window(session_id, request)
     }
 
     pub fn dirty_state(&self, session_id: &SessionId) -> Result<DirtyStateDto> {

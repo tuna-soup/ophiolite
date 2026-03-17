@@ -3,7 +3,10 @@ use lithos_las::{
     MetadataSectionDto, MetadataUpdateRequest, PackageSessionStore, ValidationKind, examples,
     open_package, open_package_metadata, open_package_summary, validate_package, write_package,
 };
+use parquet::basic::Compression;
+use parquet::file::reader::{FileReader, SerializedFileReader};
 use std::fs;
+use std::fs::File;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -279,6 +282,39 @@ fn metadata_only_open_does_not_require_parquet_samples() {
     }
 }
 
+#[test]
+fn package_writes_depth_query_oriented_parquet_profile() {
+    let las = expanded_example_las(20_000);
+    let package_dir = temp_package_dir("parquet-profile");
+    write_package(&las, &package_dir).unwrap();
+
+    let reader =
+        SerializedFileReader::new(File::open(package_dir.join("curves.parquet")).unwrap()).unwrap();
+    let metadata = reader.metadata();
+    let row_groups = metadata.row_groups();
+
+    assert!(row_groups.len() >= 2);
+    assert!(row_groups.iter().all(|group| group.num_rows() <= 16_384));
+    assert!(row_groups.iter().all(|group| {
+        group
+            .columns()
+            .iter()
+            .all(|column| column.compression() == Compression::SNAPPY)
+    }));
+
+    let sorting_columns = row_groups[0]
+        .sorting_columns()
+        .expect("sorting metadata should be present for the index column");
+    let index_position = las
+        .curve_names()
+        .iter()
+        .position(|name| name == &las.index.curve_id)
+        .unwrap() as i32;
+    assert_eq!(sorting_columns[0].column_idx, index_position);
+    assert!(!sorting_columns[0].descending);
+    assert!(!sorting_columns[0].nulls_first);
+}
+
 fn temp_package_dir(prefix: &str) -> PathBuf {
     let unique = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -289,4 +325,33 @@ fn temp_package_dir(prefix: &str) -> PathBuf {
         fs::remove_dir_all(&path).unwrap();
     }
     path
+}
+
+fn expanded_example_las(row_count: usize) -> lithos_las::LasFile {
+    let mut las = examples::open("sample.las", &Default::default()).unwrap();
+    let index_curve_id = las.index.curve_id.clone();
+    let template_curves = las.curves.iter().cloned().collect::<Vec<_>>();
+    let template_len = template_curves
+        .first()
+        .map(|curve| curve.data.len())
+        .unwrap_or(1)
+        .max(1);
+
+    for curve in las.curves.iter_mut() {
+        curve.data.clear();
+    }
+
+    for (curve, template) in las.curves.iter_mut().zip(template_curves.iter()) {
+        curve.data = (0..row_count)
+            .map(|index| {
+                if curve.mnemonic == index_curve_id {
+                    LasValue::Number(index as f64)
+                } else {
+                    template.data[index % template_len].clone()
+                }
+            })
+            .collect();
+    }
+
+    las
 }

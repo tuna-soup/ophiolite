@@ -1,9 +1,11 @@
+@import "tailwindcss";
+
 :root {
-  font-family: "Segoe UI", "IBM Plex Sans", sans-serif;
-  color: #1d1c19;
+  color: #2a241a;
   background:
-    radial-gradient(circle at top left, rgba(209, 180, 124, 0.18), transparent 28%),
-    linear-gradient(180deg, #f7f1e5 0%, #ece3d3 100%);
+    radial-gradient(circle at top left, rgba(209, 165, 88, 0.18), transparent 28%),
+    linear-gradient(180deg, #fbf7ef 0%, #efe4d0 100%);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
 }
 
 * {
@@ -12,159 +14,20 @@
 
 body {
   margin: 0;
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
 }
 
 button,
 input,
-select,
 textarea {
   font: inherit;
 }
 
-.app-shell {
-  min-height: 100vh;
-  padding: 24px;
-}
-
-.hero {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  align-items: start;
-  margin-bottom: 24px;
-}
-
-.eyebrow {
-  margin: 0 0 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  font-size: 0.75rem;
-  color: #6d5b44;
-}
-
-.hero h1 {
-  margin: 0;
-  font-size: clamp(2rem, 3vw, 3rem);
-  line-height: 1.05;
-}
-
-.lede {
-  max-width: 72ch;
-  color: #5b4e3f;
-}
-
-.session-pill {
-  border: 1px solid rgba(69, 54, 35, 0.15);
-  border-radius: 20px;
-  padding: 18px;
-  background: rgba(255, 248, 238, 0.8);
-  backdrop-filter: blur(8px);
-}
-
-.session-pill span,
-.session-pill small {
-  display: block;
-  color: #6a5b48;
-}
-
-.session-pill strong {
-  display: block;
-  margin: 10px 0 8px;
-  font-size: 1.1rem;
-}
-
-.grid {
-  display: grid;
-  gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-}
-
-.panel {
-  border: 1px solid rgba(69, 54, 35, 0.15);
-  border-radius: 20px;
-  padding: 18px;
-  background: rgba(255, 250, 244, 0.85);
-  box-shadow: 0 10px 30px rgba(72, 54, 25, 0.08);
-}
-
-.panel h2 {
-  margin-top: 0;
-}
-
-.panel label {
-  display: block;
-  margin-bottom: 12px;
-  font-weight: 600;
-}
-
-.panel input,
-.panel select,
-.panel textarea {
-  width: 100%;
-  margin-top: 6px;
-  border: 1px solid rgba(69, 54, 35, 0.2);
-  border-radius: 12px;
-  padding: 10px 12px;
-  background: #fffdfa;
-}
-
-.button-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-button {
-  border: none;
-  border-radius: 999px;
-  padding: 10px 14px;
-  background: #ded1be;
-  color: #2c2418;
-  cursor: pointer;
-}
-
-button.primary {
-  background: #8f5d31;
-  color: #fff7f0;
-}
-
-.inline-fields {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.code-area {
-  min-height: 220px;
-  font-family: "Cascadia Code", "JetBrains Mono", monospace;
-  font-size: 0.9rem;
-}
-
-.hint {
-  margin-top: 0;
-  color: #6d5b44;
-}
-
-.output-grid {
-  margin-top: 16px;
-}
-
-.output-panel pre {
-  margin: 0;
-  max-height: 360px;
-  overflow: auto;
-  border-radius: 12px;
-  padding: 12px;
-  background: #f6efe5;
-  font-size: 0.86rem;
-}
-
-@media (max-width: 900px) {
-  .hero {
-    grid-template-columns: 1fr;
-  }
-
-  .inline-fields {
-    grid-template-columns: 1fr;
-  }
+pre {
+  white-space: pre-wrap;
+  word-break: break-word;
 }

@@ -452,6 +452,7 @@ dependencies = [
  "lithos-package",
  "lithos-parser",
  "lithos-table",
+ "parquet",
  "serde",
  "serde_json",
 ]

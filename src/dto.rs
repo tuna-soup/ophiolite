@@ -216,6 +216,18 @@ pub struct SessionWindowRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionDepthWindowRequest {
+    pub session_id: SessionId,
+    pub window: DepthWindowRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawLasWindowRequest {
+    pub path: String,
+    pub window: CurveWindowRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionMetadataEditRequest {
     pub session_id: SessionId,
     pub update: MetadataUpdateRequest,
@@ -238,6 +250,13 @@ pub struct CurveWindowRequest {
     pub curve_names: Vec<String>,
     pub start_row: usize,
     pub row_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DepthWindowRequest {
+    pub curve_names: Vec<String>,
+    pub depth_min: f64,
+    pub depth_max: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -383,6 +402,16 @@ pub fn curve_window_dto(file: &LasFile, request: &CurveWindowRequest) -> Result<
     })
 }
 
+pub fn curve_depth_window_dto(
+    file: &LasFile,
+    request: &DepthWindowRequest,
+) -> Result<CurveWindowDto> {
+    let index_curve = file.curve(&file.index.curve_id)?;
+    let row_window =
+        depth_window_request_for_values(&file.index.curve_id, &index_curve.data, request)?;
+    curve_window_dto(file, &row_window)
+}
+
 pub fn apply_metadata_update(file: &mut LasFile, request: &MetadataUpdateRequest) -> Result<()> {
     let mut candidate = file.clone();
     for item in &request.items {
@@ -407,6 +436,100 @@ pub fn apply_metadata_update(file: &mut LasFile, request: &MetadataUpdateRequest
     refresh_summary(&mut candidate);
     *file = candidate;
     Ok(())
+}
+
+pub fn depth_window_request_for_values(
+    index_name: &str,
+    index_values: &[LasValue],
+    request: &DepthWindowRequest,
+) -> Result<CurveWindowRequest> {
+    if request.depth_min > request.depth_max {
+        return Err(LasError::Validation(format!(
+            "depth window for index '{index_name}' requires depth_min <= depth_max"
+        )));
+    }
+
+    let numeric_values = index_values
+        .iter()
+        .map(|value| match value {
+            LasValue::Number(number) if number.is_finite() => Ok(*number),
+            LasValue::Number(_) | LasValue::Empty | LasValue::Text(_) => Err(LasError::Validation(
+                format!(
+                    "depth window for index '{index_name}' requires a finite monotonic numeric index"
+                ),
+            )),
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let order = detect_monotonic_order(&numeric_values).ok_or_else(|| {
+        LasError::Validation(format!(
+            "depth window for index '{index_name}' requires a monotonic numeric index"
+        ))
+    })?;
+
+    let (start_row, row_count) = depth_bounds_to_row_window(&numeric_values, request, order);
+    Ok(CurveWindowRequest {
+        curve_names: request.curve_names.clone(),
+        start_row,
+        row_count,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MonotonicOrder {
+    Ascending,
+    Descending,
+}
+
+fn detect_monotonic_order(values: &[f64]) -> Option<MonotonicOrder> {
+    if values.len() < 2 {
+        return Some(MonotonicOrder::Ascending);
+    }
+
+    let non_decreasing = values.windows(2).all(|pair| pair[0] <= pair[1]);
+    if non_decreasing {
+        return Some(MonotonicOrder::Ascending);
+    }
+
+    let non_increasing = values.windows(2).all(|pair| pair[0] >= pair[1]);
+    if non_increasing {
+        return Some(MonotonicOrder::Descending);
+    }
+
+    None
+}
+
+fn depth_bounds_to_row_window(
+    values: &[f64],
+    request: &DepthWindowRequest,
+    order: MonotonicOrder,
+) -> (usize, usize) {
+    match order {
+        MonotonicOrder::Ascending => {
+            let start_row = lower_bound(values, request.depth_min, |value, bound| value < bound);
+            let end_row = lower_bound(values, request.depth_max, |value, bound| value <= bound);
+            (start_row, end_row.saturating_sub(start_row))
+        }
+        MonotonicOrder::Descending => {
+            let start_row = lower_bound(values, request.depth_max, |value, bound| value > bound);
+            let end_row = lower_bound(values, request.depth_min, |value, bound| value >= bound);
+            (start_row, end_row.saturating_sub(start_row))
+        }
+    }
+}
+
+fn lower_bound(values: &[f64], bound: f64, pred: impl Fn(f64, f64) -> bool) -> usize {
+    let mut left = 0usize;
+    let mut right = values.len();
+    while left < right {
+        let mid = left + (right - left) / 2;
+        if pred(values[mid], bound) {
+            left = mid + 1;
+        } else {
+            right = mid;
+        }
+    }
+    left
 }
 
 pub fn apply_curve_edit(file: &mut LasFile, request: &CurveEditRequest) -> Result<()> {

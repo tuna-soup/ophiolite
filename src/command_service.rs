@@ -2,9 +2,10 @@ use crate::{
     AssetSummaryDto, CloseSessionResultDto, CommandErrorDto, CommandErrorKind, CommandGroup,
     CommandResponse, CurveCatalogDto, DirtyStateDto, LasError, MetadataDto, PackageBackendState,
     PackagePathRequest, SavePackageResultDto, SaveSessionResponseDto, SessionCurveEditRequest,
-    SessionId, SessionMetadataDto, SessionMetadataEditRequest, SessionRequest,
-    SessionSaveAsRequest, SessionSummaryDto, SessionWindowDto, SessionWindowRequest,
-    ValidationKind, ValidationReportDto, command_error_dto, validation_report_from_messages,
+    SessionDepthWindowRequest, SessionId, SessionMetadataDto, SessionMetadataEditRequest,
+    SessionRequest, SessionSaveAsRequest, SessionSummaryDto, SessionWindowDto,
+    SessionWindowRequest, ValidationKind, ValidationReportDto, command_error_dto,
+    validation_report_from_messages,
 };
 
 #[derive(Clone, Default)]
@@ -103,6 +104,17 @@ impl PackageCommandService {
             CommandGroup::Session,
             Some(request.session_id.clone()),
             self.state.read_curve_window(request),
+        )
+    }
+
+    pub fn read_depth_window(
+        &self,
+        request: &SessionDepthWindowRequest,
+    ) -> CommandResponse<SessionWindowDto> {
+        self.map_result(
+            CommandGroup::Session,
+            Some(request.session_id.clone()),
+            self.state.read_depth_window(request),
         )
     }
 

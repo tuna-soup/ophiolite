@@ -37,6 +37,7 @@ The package contract is split conceptually into:
   - metadata view
   - curve catalog
   - curve window query result
+  - depth-range curve window query result
   - session summary
 - edit DTOs:
   - metadata edit requests
@@ -62,6 +63,8 @@ The current Tauri-ready adapter layer is `PackageBackend`, with `PackageBackendS
 Session-backed DTOs should expose the currently bound package root so clients can observe rebinding after `save_as`.
 In the current phase, backend session read paths may stay lazy internally, while the public eager `PackageSession` and direct `open_package(...)` APIs remain unchanged.
 That lazy scope is intentionally narrow: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, metadata-only edits and metadata-only save/save-as remain lazy, and curve/sample edits trigger full materialization.
+Depth-range reads are first-class alongside row-window reads. They resolve against the monotonic numeric index curve and then reuse the same projected parquet window machinery internally.
+For regular-step depth logs, the backend may derive row bounds directly from package metadata before falling back to reading the full index column.
 When first curve/sample materialization is required, it should be built directly from the current lazy session metadata and cached parquet descriptors rather than reopening the package through the eager SDK path.
 
 DTO evolution should remain additive where possible. Formal compatibility guarantees can harden later once the Tauri contract stops moving quickly.
@@ -83,6 +86,7 @@ Public command error kinds should remain small and caller-actionable rather than
 - metadata-only opens are an explicit architectural behavior, not an accidental implementation detail
 - windowed reads are part of the frontend contract even though full lazy sample-table loading is still an evolving internal concern
 - backend session reads may reuse Arrow/Parquet projection and row-selection internally without changing the public runtime abstraction
+- `curves.parquet` should be written with a depth-query-oriented Parquet profile: column projection-friendly storage, page statistics, offset index, bounded row-group/data-page row counts, and sort metadata on the index column when the index is monotonic
 - parquet row selection remains an internal implementation detail; public query semantics do not change
 - Tauri command handlers, including the internal harness, should be built on top of this session model rather than reaching directly into storage internals
 - the app-boundary command layer should preserve structured backend errors rather than collapsing them into ad hoc strings

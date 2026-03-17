@@ -34,7 +34,7 @@ Current properties:
 - DTOs are the intended frontend/backend transfer boundary
 - package storage uses `metadata.json + curves.parquet`
 - `metadata.json` now groups package identity, document metadata, storage descriptors, raw preserved sections, and diagnostics explicitly
-- Arrow/Parquet are internal storage/package details, and now also power backend-session lazy window reads
+- Arrow/Parquet are internal storage/package details, and now also power backend-session lazy window reads and depth-range query execution
 - non-v3 `lasio` read/model parity is the main compatibility baseline
 
 ## Project Architecture
@@ -69,6 +69,8 @@ Current session properties:
 - `PackageSession` owns package identity, session identity, current in-memory `LasFile` state, dirty-state, and a revision token
 - backend session open validates package metadata and parquet footer without eagerly decoding all sample rows
 - backend-session lazy loading is intentionally scoped: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, metadata-only edits and metadata-only save/save-as remain lazy, and curve/sample edits trigger full materialization
+- backend session queries now support both row-window and depth-range access; depth-range requests resolve against the monotonic numeric index curve and then reuse the projected parquet window path
+- for regular-step depth logs, lazy backend sessions can derive the row window directly from package metadata and only fall back to reading the full index column when needed
 - session summary, metadata, and curve catalog reads are served from cached package metadata while the session remains clean
 - backend window reads use projected parquet scans and row selections as internal implementation details instead of preloading a full sample table
 - clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
@@ -152,7 +154,7 @@ Current staged compromise:
 | --- | --- | --- |
 | Domain model | `LasFile` plus typed canonical metadata and explicit index/curve descriptors | further canonical tightening around index/null semantics |
 | In-memory samples | `CurveTable` backed by current in-memory values | potentially more formal Arrow-backed runtime contract later |
-| Package format | grouped `metadata.json + curves.parquet` with mixed-column preservation and legacy metadata read-compat | stricter canonical schema and package guarantees |
+| Package format | grouped `metadata.json + curves.parquet` with mixed-column preservation, tuned Parquet writer properties for depth-track workloads, and legacy metadata read-compat | stricter canonical schema and package guarantees |
 | Canonical schema | partially aligned | `ADR-0007-canonical-schema-target.md` is the target-state reference |
 | Frontend/backend boundary | CLI, Rust API, shared backend state, structured command wrapper, and an internal Tauri capability harness | broader desktop-app integration later |
 

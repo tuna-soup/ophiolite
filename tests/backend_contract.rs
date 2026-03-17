@@ -1,7 +1,7 @@
 use lithos_las::{
-    CurveEditRequest, CurveUpdateRequest, CurveWindowRequest, HeaderItemUpdate, LasError, LasValue,
-    MetadataSectionDto, MetadataUpdateRequest, PackageBackend, SaveSessionResponseDto, examples,
-    open_package,
+    CurveEditRequest, CurveUpdateRequest, CurveWindowRequest, DepthWindowRequest, HeaderItemUpdate,
+    LasError, LasValue, MetadataSectionDto, MetadataUpdateRequest, PackageBackend,
+    SaveSessionResponseDto, examples, open_package,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -43,6 +43,92 @@ fn backend_supports_read_inspection_and_shared_session_queries() {
     assert_eq!(window.window.columns.len(), 2);
     assert_eq!(window.session.session_id, first.session_id);
     assert_eq!(window.window.columns[0].name, "DT");
+}
+
+#[test]
+fn backend_depth_window_matches_row_window_and_survives_materialization() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("backend-depth-window");
+    lithos_las::write_package(&las, &package_dir).unwrap();
+
+    let mut backend = PackageBackend::new();
+    let session = backend.open_package_session(&package_dir).unwrap();
+    let full_window = backend
+        .read_curve_window(
+            &session.session_id,
+            &CurveWindowRequest {
+                curve_names: vec![String::from("DEPT"), String::from("DT")],
+                start_row: 0,
+                row_count: 3,
+            },
+        )
+        .unwrap();
+    let depth_values = full_window.window.columns[0]
+        .values
+        .iter()
+        .map(|value| value.as_f64().unwrap())
+        .collect::<Vec<_>>();
+    let depth_window = backend
+        .read_depth_window(
+            &session.session_id,
+            &DepthWindowRequest {
+                curve_names: vec![String::from("DEPT"), String::from("DT")],
+                depth_min: depth_values[0].min(depth_values[1]),
+                depth_max: depth_values[0].max(depth_values[1]),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(depth_window.window.start_row, 0);
+    assert_eq!(depth_window.window.row_count, 2);
+    assert_eq!(
+        depth_window.window.columns[0].values,
+        full_window.window.columns[0].values[..2].to_vec()
+    );
+    assert_eq!(
+        depth_window.window.columns[1].values,
+        full_window.window.columns[1].values[..2].to_vec()
+    );
+
+    let original_dt = open_package(&package_dir)
+        .unwrap()
+        .file()
+        .curve("DT")
+        .unwrap()
+        .clone();
+    let mut edited_data = original_dt.data.clone();
+    edited_data[0] = LasValue::Number(321.0);
+    backend
+        .apply_curve_edit(
+            &session.session_id,
+            &CurveEditRequest::Upsert(CurveUpdateRequest {
+                mnemonic: String::from("DT"),
+                original_mnemonic: Some(original_dt.original_mnemonic.clone()),
+                unit: original_dt.unit.clone(),
+                header_value: original_dt.value.clone(),
+                description: original_dt.description.clone(),
+                data: edited_data,
+            }),
+        )
+        .unwrap();
+
+    let materialized_window = backend
+        .read_depth_window(
+            &session.session_id,
+            &DepthWindowRequest {
+                curve_names: vec![String::from("DEPT"), String::from("DT")],
+                depth_min: depth_values[0].min(depth_values[1]),
+                depth_max: depth_values[0].max(depth_values[1]),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(materialized_window.window.start_row, 0);
+    assert_eq!(materialized_window.window.row_count, 2);
+    assert_eq!(
+        materialized_window.window.columns[1].values[0].as_f64(),
+        Some(321.0)
+    );
 }
 
 #[test]

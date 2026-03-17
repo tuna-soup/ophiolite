@@ -94,6 +94,7 @@ Core components:
 - Tauri-ready shared backend state wrapper: `PackageBackendState`
 - app-boundary command service: `PackageCommandService`
 - internal Tauri capability harness: `apps/lithos-harness`
+- the internal Tauri capability harness now prefers depth-range curve queries for the workspace curve inspector and falls back to row windows when no valid depth range is available
 - typed canonical metadata view: `CanonicalMetadata`, `VersionInfo`, `WellInfo`, `IndexInfo`, `CurveInfo`
 - explicit grouped package metadata schema: `package`, `document`, `storage`, `raw`, and `diagnostics`
 - in-memory app/query layer: `CurveTable`
@@ -144,6 +145,7 @@ Key behaviors implemented:
 - structured diagnostic issues for package, edit, and save validation flows
 - metadata-only package opens without loading sample data
 - backend session open avoids eager sample materialization for metadata, catalog, and window read paths
+- session/query APIs now support both row-window reads and depth-range reads for projected curve access
 - metadata-only lazy package edits and save/save-as flows
 - first curve edits materialize directly from lazy backend session state rather than reopening through the eager SDK path
 - package write/read round-trip
@@ -170,6 +172,12 @@ well_123.laspkg/
 - diagnostics and import issues
 
 `curves.parquet` stores the sampled curve matrix. Today it preserves the imported curve mnemonics, including the index curve name.
+It is now written with an explicit depth-query-oriented profile:
+
+- `SNAPPY` compression
+- page statistics and offset index enabled
+- bounded row-group and data-page row counts
+- sorting metadata on the monotonic numeric index column when available
 
 Illustrative shape:
 
@@ -234,6 +242,8 @@ Current session semantics:
 - metadata-only package opens do not require loading `curves.parquet`
 - backend session open validates package metadata and parquet footer without eagerly decoding all samples
 - backend-session lazy loading is intentionally scoped: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, metadata-only edits and metadata-only save/save-as remain lazy, and curve/sample edits trigger full materialization
+- read-only backend session queries now include a first-class depth-range path in addition to row-window reads; depth-range requests are resolved against the monotonic numeric index curve and then executed through the same projected parquet window machinery
+- for regular-step depth logs, lazy backend sessions can resolve depth ranges directly from package metadata before falling back to reading the full index column
 - session metadata, session summaries, and curve catalogs are served from cached package metadata
 - window queries use projected parquet reads and row selection as internal implementation details rather than forcing full frontend materialization
 - clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
@@ -263,16 +273,38 @@ The DTO contract is versioned with a lightweight `dto_contract_version` field. S
 
 ## Internal Tauri Harness
 
-`apps/lithos-harness` is now a first-party internal Tauri + React capability harness over the current SDK contract. It mounts thin Tauri handlers over `PackageCommandService` and is intended to exercise:
+`apps/lithos-harness` is now a first-party internal Tauri + React desktop shell over the current SDK contract.
 
-- package inspection and validation
-- session lifecycle
-- curve catalog and windowed reads
-- metadata edits and curve edits
-- save/save-as flows
-- structured validation and conflict rendering
+It has two app-level modes:
 
-This means Lithos is no longer far from a usable test desktop app. The backend contract and a thin desktop shell already exist in-repo. The main remaining gap is not SDK wiring; it is frontend install/build automation and then iterating on UI polish, acceptance coverage, and product-specific workflow design.
+- `Home`
+  - create package
+  - open existing package
+  - recent packages
+- `Workspace`
+  - overview
+  - metadata inspector
+  - curve catalog and editable sample table
+  - LAS import/preview
+  - diagnostics
+  - read-only package file views
+
+The harness keeps the SDK concepts explicit:
+
+- package = saved folder on disk
+- session = live editable SDK state
+- workspace = app shell around a draft folder or live session
+
+Current harness behavior:
+
+- creating a package chooses a root folder and then immediately offers LAS import
+- if a LAS file is chosen, package files are written and a live session opens immediately
+- if LAS import is skipped, the app falls back to a draft workspace rooted at the chosen folder
+- existing packages open directly into a live session-backed workspace
+- save/save-as are available from both the visible toolbar and the native File menu
+- package files can be inspected in a parquet-viewer-style read-only pane adapted to Lithos storage
+
+This means Lithos is now close to a real test desktop app. The backend contract, command layer, and a multi-page Tauri shell already exist in-repo. The remaining gap is mostly product/UI iteration, richer diagnostics/repair flows, and broader end-to-end acceptance coverage.
 
 Harness verification commands:
 
@@ -328,6 +360,7 @@ cargo run -- import <input.las> <package_dir>
 cargo run -- inspect-file <input.las>
 cargo run -- summary <package_dir>
 cargo run -- list-curves <package_dir>
+cargo run -- generate-fixture-packages test_data/logs test_data/logs/packages
 ```
 
 The CLI currently provides basic import, inspection, and package introspection functionality.

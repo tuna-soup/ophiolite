@@ -4,16 +4,17 @@ use arrow_schema::{DataType, Field, Schema};
 use lithos_core::{
     AssetSummaryDto, CanonicalMetadata, CurveCatalogDto, CurveCatalogEntryDto, CurveColumnMetadata,
     CurveEditRequest, CurveInfo, CurveItem, CurveStorageKind, CurveTable, CurveWindowColumnDto,
-    CurveWindowDto, CurveWindowRequest, DTO_CONTRACT_VERSION, DirtyStateDto, HeaderItem, IndexInfo,
-    LasError, LasFile, LasFileSummary, LasValue, MetadataDto, MetadataSectionDto,
-    MetadataUpdateRequest, PackageId, PackageMetadata, ParameterInfo, Result, RevisionToken,
-    SaveConflictDto, SavePackageResultDto, SaveSessionResponseDto, SectionItems, SessionId,
-    SessionMetadataDto, SessionSummaryDto, SessionWindowDto, ValidationReportDto, VersionInfo,
-    WellInfo, apply_curve_edit, apply_metadata_update, asset_summary_dto, curve_catalog_dto,
-    curve_catalog_result_dto, curve_window_dto, dirty_state_dto, metadata_dto, package_id_for_path,
-    package_metadata_for, package_validation_report, parse_package_metadata,
-    revision_token_for_bytes, save_conflict_dto, session_metadata_dto, session_summary_dto,
-    session_window_dto, validate_edit_state, validate_package_metadata, validation_report_dto,
+    CurveWindowDto, CurveWindowRequest, DTO_CONTRACT_VERSION, DepthWindowRequest, DirtyStateDto,
+    HeaderItem, IndexInfo, LasError, LasFile, LasFileSummary, LasValue, MetadataDto,
+    MetadataSectionDto, MetadataUpdateRequest, PackageId, PackageMetadata, ParameterInfo, Result,
+    RevisionToken, SaveConflictDto, SavePackageResultDto, SaveSessionResponseDto, SectionItems,
+    SessionId, SessionMetadataDto, SessionSummaryDto, SessionWindowDto, ValidationReportDto,
+    VersionInfo, WellInfo, apply_curve_edit, apply_metadata_update, asset_summary_dto,
+    curve_catalog_dto, curve_catalog_result_dto, curve_window_dto, depth_window_request_for_values,
+    dirty_state_dto, metadata_dto, package_id_for_path, package_metadata_for,
+    package_validation_report, parse_package_metadata, revision_token_for_bytes, save_conflict_dto,
+    session_metadata_dto, session_summary_dto, session_window_dto, validate_edit_state,
+    validate_package_metadata, validation_report_dto,
 };
 use lithos_table::CurveColumnDescriptor;
 use parquet::arrow::ProjectionMask;
@@ -21,6 +22,9 @@ use parquet::arrow::arrow_reader::{
     ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder, RowSelection,
 };
 use parquet::arrow::arrow_writer::ArrowWriter;
+use parquet::basic::Compression;
+use parquet::file::metadata::SortingColumn;
+use parquet::file::properties::{EnabledStatistics, WriterProperties};
 use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
@@ -33,6 +37,8 @@ use tracing::debug;
 const PACKAGE_VERSION: u32 = 1;
 const METADATA_FILENAME: &str = "metadata.json";
 const CURVES_FILENAME: &str = "curves.parquet";
+const CURVES_ROW_GROUP_ROW_COUNT: usize = 16_384;
+const CURVES_DATA_PAGE_ROW_COUNT_LIMIT: usize = 4_096;
 
 #[derive(Debug, Clone)]
 pub struct PackageSession {
@@ -151,6 +157,14 @@ impl PackageBackendSessionStore {
         request: &CurveWindowRequest,
     ) -> Result<SessionWindowDto> {
         self.session(session_id)?.read_window(request)
+    }
+
+    pub fn read_depth_window(
+        &self,
+        session_id: &SessionId,
+        request: &DepthWindowRequest,
+    ) -> Result<SessionWindowDto> {
+        self.session(session_id)?.read_depth_window(request)
     }
 
     pub fn dirty_state(&self, session_id: &SessionId) -> Result<DirtyStateDto> {
@@ -315,6 +329,28 @@ impl BackendPackageSession {
                 session.revision().clone(),
                 session.root().display().to_string(),
                 session.read_window(request)?,
+            )),
+        }
+    }
+
+    fn read_depth_window(&self, request: &DepthWindowRequest) -> Result<SessionWindowDto> {
+        match self {
+            Self::Lazy(session) => {
+                ensure_lazy_session_current(session)?;
+                Ok(session_window_dto(
+                    session.package_id.clone(),
+                    session.session_id.clone(),
+                    session.revision.clone(),
+                    session.root.display().to_string(),
+                    read_lazy_depth_window(session, request)?,
+                ))
+            }
+            Self::Materialized(session) => Ok(session_window_dto(
+                session.package_id().clone(),
+                session.session_id().clone(),
+                session.revision().clone(),
+                session.root().display().to_string(),
+                session.read_depth_window(request)?,
             )),
         }
     }
@@ -489,6 +525,21 @@ impl PackageSession {
 
     pub fn read_window(&self, request: &CurveWindowRequest) -> Result<CurveWindowDto> {
         curve_window_dto(&self.file, request)
+    }
+
+    pub fn read_depth_window(&self, request: &DepthWindowRequest) -> Result<CurveWindowDto> {
+        let index_values = self
+            .file
+            .curve_data(&self.file.index.curve_id)
+            .ok_or_else(|| {
+                LasError::Validation(format!(
+                    "index curve '{}' not found in LAS file",
+                    self.file.index.curve_id
+                ))
+            })?;
+        let row_window =
+            depth_window_request_for_values(&self.file.index.curve_id, index_values, request)?;
+        curve_window_dto(&self.file, &row_window)
     }
 
     pub fn validation_report(&self) -> ValidationReportDto {
@@ -778,7 +829,7 @@ fn write_package_internal(
         metadata_path(output_dir),
         serde_json::to_string_pretty(&metadata)?,
     )?;
-    write_parquet_batch(curves_path(output_dir), &table)?;
+    write_parquet_batch(curves_path(output_dir), &table, Some(&file.index.curve_id))?;
 
     open_package(output_dir)
 }
@@ -807,8 +858,11 @@ fn read_package_metadata(root: &Path) -> Result<PackageMetadata> {
 
 fn load_parquet_reader_metadata(path: PathBuf) -> Result<ArrowReaderMetadata> {
     let file = File::open(path)?;
-    ArrowReaderMetadata::load(&file, ArrowReaderOptions::new())
-        .map_err(|err| LasError::Storage(err.to_string()))
+    ArrowReaderMetadata::load(
+        &file,
+        ArrowReaderOptions::new().with_page_index_policy(true.into()),
+    )
+    .map_err(|err| LasError::Storage(err.to_string()))
 }
 
 fn ensure_lazy_session_current(session: &LazyPackageSession) -> Result<()> {
@@ -961,6 +1015,155 @@ fn read_lazy_curve_window(
             })
             .collect(),
     })
+}
+
+fn read_lazy_depth_window(
+    session: &LazyPackageSession,
+    request: &DepthWindowRequest,
+) -> Result<CurveWindowDto> {
+    let index_column = lazy_index_column(session)?;
+    let row_window = match regular_depth_window_request_from_metadata(&session.metadata, request)? {
+        Some(window) => window,
+        None => {
+            let index_values = read_lazy_numeric_column(session, &index_column.name)?;
+            depth_window_request_for_values(&index_column.name, &index_values, request)?
+        }
+    };
+    read_lazy_curve_window(session, &row_window)
+}
+
+fn lazy_index_column(session: &LazyPackageSession) -> Result<&CurveColumnMetadata> {
+    session
+        .metadata
+        .storage
+        .curve_columns
+        .iter()
+        .find(|curve| curve.is_index)
+        .ok_or_else(|| {
+            LasError::Validation(String::from(
+                "package storage metadata must mark exactly one index column",
+            ))
+        })
+}
+
+fn read_lazy_numeric_column(
+    session: &LazyPackageSession,
+    column_name: &str,
+) -> Result<Vec<LasValue>> {
+    let total_rows = session.metadata.document.summary.row_count;
+    let projected_index = session
+        .metadata
+        .storage
+        .curve_columns
+        .iter()
+        .position(|curve| curve.name == column_name)
+        .ok_or_else(|| {
+            LasError::Storage(format!(
+                "column '{column_name}' missing from package storage descriptors"
+            ))
+        })?;
+    let curve = session
+        .metadata
+        .storage
+        .curve_columns
+        .get(projected_index)
+        .ok_or_else(|| {
+            LasError::Storage(format!(
+                "column '{column_name}' missing from package storage descriptors"
+            ))
+        })?;
+    let selection = RowSelection::from_consecutive_ranges(iter::once(0..total_rows), total_rows);
+    let batch = read_projected_parquet_batch(
+        curves_path(&session.root),
+        session.reader_metadata.clone(),
+        vec![projected_index],
+        selection,
+        total_rows.max(1),
+    )?;
+    let table = table_from_record_batch(
+        &batch,
+        &[CurveColumnDescriptor {
+            name: curve.name.clone(),
+            storage_kind: curve.storage_kind,
+        }],
+    )?;
+    table
+        .column(column_name)
+        .map(|column| column.values().to_vec())
+        .ok_or_else(|| {
+            LasError::Storage(format!(
+                "column '{column_name}' missing from projected parquet batch"
+            ))
+        })
+}
+
+fn regular_depth_window_request_from_metadata(
+    metadata: &PackageMetadata,
+    request: &DepthWindowRequest,
+) -> Result<Option<CurveWindowRequest>> {
+    if metadata.canonical.index.kind != lithos_core::IndexKind::Depth {
+        return Ok(None);
+    }
+
+    let start = match metadata.canonical.well.start {
+        Some(value) if value.is_finite() => value,
+        _ => return Ok(None),
+    };
+    let step = match metadata.canonical.well.step {
+        Some(value) if value.is_finite() && value != 0.0 => value,
+        _ => return Ok(None),
+    };
+    let total_rows = metadata.document.summary.row_count;
+    if total_rows == 0 {
+        return Ok(Some(CurveWindowRequest {
+            curve_names: request.curve_names.clone(),
+            start_row: 0,
+            row_count: 0,
+        }));
+    }
+
+    let (start_row, row_count) = regular_depth_bounds_to_row_window(
+        start,
+        step,
+        total_rows,
+        request.depth_min,
+        request.depth_max,
+    )?;
+    Ok(Some(CurveWindowRequest {
+        curve_names: request.curve_names.clone(),
+        start_row,
+        row_count,
+    }))
+}
+
+fn regular_depth_bounds_to_row_window(
+    start: f64,
+    step: f64,
+    total_rows: usize,
+    depth_min: f64,
+    depth_max: f64,
+) -> Result<(usize, usize)> {
+    if depth_min > depth_max {
+        return Err(LasError::Validation(String::from(
+            "depth window requires depth_min <= depth_max",
+        )));
+    }
+
+    let epsilon = step.abs() * 1e-9;
+    let (start_row, end_row) = if step > 0.0 {
+        let first = ((depth_min - start - epsilon) / step).ceil();
+        let last = ((depth_max - start + epsilon) / step).floor();
+        (first as isize, last as isize + 1)
+    } else {
+        let magnitude = step.abs();
+        let first = ((start - depth_max - epsilon) / magnitude).ceil();
+        let last = ((start - depth_min + epsilon) / magnitude).floor();
+        (first as isize, last as isize + 1)
+    };
+
+    let safe_start = start_row.clamp(0, total_rows as isize) as usize;
+    let safe_end = end_row.clamp(0, total_rows as isize) as usize;
+    Ok((safe_start, safe_end.saturating_sub(safe_start)))
 }
 
 fn apply_metadata_update_to_package_metadata(
@@ -1219,10 +1422,15 @@ fn package_path_key(root: &Path) -> String {
         .to_string()
 }
 
-fn write_parquet_batch(path: PathBuf, table: &CurveTable) -> Result<()> {
+fn write_parquet_batch(
+    path: PathBuf,
+    table: &CurveTable,
+    index_curve_name: Option<&str>,
+) -> Result<()> {
     let batch = table_to_record_batch(table)?;
     let file = File::create(path)?;
-    let mut writer = ArrowWriter::try_new(file, batch.schema(), None)
+    let props = curve_writer_properties(table, index_curve_name);
+    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))
         .map_err(|err| LasError::Storage(err.to_string()))?;
     writer
         .write(&batch)
@@ -1231,6 +1439,59 @@ fn write_parquet_batch(path: PathBuf, table: &CurveTable) -> Result<()> {
         .close()
         .map_err(|err| LasError::Storage(err.to_string()))?;
     Ok(())
+}
+
+fn curve_writer_properties(table: &CurveTable, index_curve_name: Option<&str>) -> WriterProperties {
+    let sorting_columns =
+        index_curve_name.and_then(|index_name| sorting_columns_for_index(table, index_name));
+
+    WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .set_statistics_enabled(EnabledStatistics::Page)
+        .set_write_page_header_statistics(false)
+        .set_offset_index_disabled(false)
+        .set_max_row_group_row_count(Some(CURVES_ROW_GROUP_ROW_COUNT))
+        .set_data_page_row_count_limit(CURVES_DATA_PAGE_ROW_COUNT_LIMIT)
+        .set_sorting_columns(sorting_columns)
+        .build()
+}
+
+fn sorting_columns_for_index(
+    table: &CurveTable,
+    index_curve_name: &str,
+) -> Option<Vec<SortingColumn>> {
+    let column_index = table
+        .column_names()
+        .iter()
+        .position(|name| name == index_curve_name)?;
+    let numeric_values = table.column(index_curve_name)?.numeric_values()?;
+    if numeric_values.is_empty() {
+        return Some(vec![SortingColumn {
+            column_idx: column_index as i32,
+            descending: false,
+            nulls_first: false,
+        }]);
+    }
+
+    let non_decreasing = numeric_values.windows(2).all(|pair| pair[0] <= pair[1]);
+    if non_decreasing {
+        return Some(vec![SortingColumn {
+            column_idx: column_index as i32,
+            descending: false,
+            nulls_first: false,
+        }]);
+    }
+
+    let non_increasing = numeric_values.windows(2).all(|pair| pair[0] >= pair[1]);
+    if non_increasing {
+        return Some(vec![SortingColumn {
+            column_idx: column_index as i32,
+            descending: true,
+            nulls_first: false,
+        }]);
+    }
+
+    None
 }
 
 fn read_parquet_batch(path: PathBuf, row_count: usize) -> Result<RecordBatch> {

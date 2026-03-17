@@ -1,8 +1,8 @@
 use crate::{
     AssetSummaryDto, CloseSessionResultDto, CurveCatalogDto, DirtyStateDto, LasError, MetadataDto,
     PackageBackend, PackagePathRequest, Result, SaveSessionResponseDto, SessionCurveEditRequest,
-    SessionMetadataDto, SessionMetadataEditRequest, SessionRequest, SessionSummaryDto,
-    SessionWindowDto, SessionWindowRequest, ValidationReportDto,
+    SessionDepthWindowRequest, SessionMetadataDto, SessionMetadataEditRequest, SessionRequest,
+    SessionSummaryDto, SessionWindowDto, SessionWindowRequest, ValidationReportDto,
 };
 use std::sync::{Arc, Mutex};
 
@@ -46,6 +46,13 @@ impl PackageBackendState {
 
     pub fn read_curve_window(&self, request: &SessionWindowRequest) -> Result<SessionWindowDto> {
         self.with_backend(|backend| backend.read_curve_window(&request.session_id, &request.window))
+    }
+
+    pub fn read_depth_window(
+        &self,
+        request: &SessionDepthWindowRequest,
+    ) -> Result<SessionWindowDto> {
+        self.with_backend(|backend| backend.read_depth_window(&request.session_id, &request.window))
     }
 
     pub fn dirty_state(&self, request: &SessionRequest) -> Result<DirtyStateDto> {

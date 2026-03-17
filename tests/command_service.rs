@@ -2,7 +2,7 @@ use lithos_las::{
     CommandErrorKind, CommandResponse, CurveEditRequest, CurveUpdateRequest, HeaderItemUpdate,
     LasValue, MetadataSectionDto, MetadataUpdateRequest, PackageCommandService, PackagePathRequest,
     SessionCurveEditRequest, SessionMetadataEditRequest, SessionRequest, SessionSaveAsRequest,
-    ValidationKind, examples, open_package, write_package,
+    SessionWindowRequest, ValidationKind, examples, open_package, write_package,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -199,6 +199,58 @@ fn command_service_reports_save_as_validation_failures_as_save_errors() {
         after_metadata.metadata.metadata.well.company.as_deref(),
         Some("COMMAND FAILURE EDIT")
     );
+}
+
+#[test]
+fn command_service_keeps_metadata_only_save_flows_lazy() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("adapter-lazy-metadata-save");
+    write_package(&las, &package_dir).unwrap();
+
+    let service = PackageCommandService::new();
+    let session = unwrap_ok(service.open_package_session(&PackagePathRequest {
+        path: package_dir.display().to_string(),
+    }));
+
+    let edited = unwrap_ok(service.apply_metadata_edit(&SessionMetadataEditRequest {
+        session_id: session.session_id.clone(),
+        update: MetadataUpdateRequest {
+            items: vec![HeaderItemUpdate {
+                section: MetadataSectionDto::Well,
+                mnemonic: String::from("COMP"),
+                unit: String::new(),
+                value: LasValue::Text(String::from("COMMAND LAZY SAVE")),
+                description: String::from("COMPANY"),
+            }],
+            other: None,
+        },
+    }));
+    assert!(edited.dirty.has_unsaved_changes);
+
+    let saved = unwrap_ok(service.save_session(&SessionRequest {
+        session_id: session.session_id.clone(),
+    }));
+    assert_eq!(saved.session_id, session.session_id);
+
+    fs::remove_file(package_dir.join("curves.parquet")).unwrap();
+
+    let metadata = unwrap_ok(service.session_metadata(&SessionRequest {
+        session_id: session.session_id.clone(),
+    }));
+    assert_eq!(
+        metadata.metadata.metadata.well.company.as_deref(),
+        Some("COMMAND LAZY SAVE")
+    );
+
+    let err = unwrap_err(service.read_curve_window(&SessionWindowRequest {
+        session_id: session.session_id.clone(),
+        window: lithos_las::CurveWindowRequest {
+            curve_names: vec![String::from("DT")],
+            start_row: 0,
+            row_count: 1,
+        },
+    }));
+    assert_eq!(err.kind, CommandErrorKind::OpenFailed);
 }
 
 #[test]

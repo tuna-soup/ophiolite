@@ -61,7 +61,7 @@ Validation reports should expose structured diagnostic issues with stable codes,
 The current Tauri-ready adapter layer is `PackageBackend`, with `PackageBackendState` as the shared-state wrapper and `PackageCommandService` as the thin, transport-focused app-boundary service above it.
 Session-backed DTOs should expose the currently bound package root so clients can observe rebinding after `save_as`.
 In the current phase, backend session read paths may stay lazy internally, while the public eager `PackageSession` and direct `open_package(...)` APIs remain unchanged.
-That lazy scope is intentionally narrow: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, and accepted edits trigger full materialization.
+That lazy scope is intentionally narrow: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, metadata-only edits and metadata-only save/save-as remain lazy, and curve/sample edits trigger full materialization.
 
 DTO evolution should remain additive where possible. Formal compatibility guarantees can harden later once the Tauri contract stops moving quickly.
 Public command error kinds should remain small and caller-actionable rather than implementation-shaped.
@@ -108,6 +108,7 @@ Session invariants for the current model:
 - `save` preserves session identity and bound package root on success
 - `save_as` preserves session identity and rebinds the currently bound package root on success
 - clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
+- metadata-only dirty lazy sessions may rewrite `metadata.json` and save/save-as without materializing sample data
 - once a backend session materializes, it does not transition back to lazy in the current phase
 - failed `save` and `save_as` leave the session open with unchanged identity, dirty-state, bound root, and in-memory document snapshot
 - failed materialization leaves the session open with unchanged identity, dirty-state, bound root, and no partial mutation applied

@@ -230,11 +230,12 @@ Current session semantics:
 - sessions remain alive until explicitly closed in the current desktop MVP
 - metadata-only package opens do not require loading `curves.parquet`
 - backend session open validates package metadata and parquet footer without eagerly decoding all samples
-- backend-session lazy loading is intentionally scoped: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, and accepted edits trigger full materialization
+- backend-session lazy loading is intentionally scoped: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, metadata-only edits and metadata-only save/save-as remain lazy, and curve/sample edits trigger full materialization
 - session metadata, session summaries, and curve catalogs are served from cached package metadata
 - window queries use projected parquet reads and row selection as internal implementation details rather than forcing full frontend materialization
 - clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
-- the first accepted edit and any save/save-as path that needs a canonical snapshot materializes the eager in-memory `PackageSession`
+- metadata-only dirty lazy sessions can rewrite `metadata.json` and save/save-as without materializing sample data
+- the first accepted curve/sample edit and any later save/save-as path that needs the canonical snapshot materializes the eager in-memory `PackageSession`
 - revision tokens are for persistence conflict detection against the currently bound package baseline/root, not collaborative synchronization
 
 Session invariants:
@@ -373,6 +374,7 @@ Instead, Lithos focuses on:
 - explicit session-context DTOs for session metadata, curve catalogs, and curve-window queries
 - structured diagnostic DTOs for package, edit, and save validation
 - backend-only lazy session reads on top of Arrow/Parquet projection and row selection
+- lazy metadata-only backend edits and metadata-only save/save-as paths
 - `metadata.json + curves.parquet` package format
 - non-v3 `lasio` parity coverage
 - package round-trip tests including mixed-type columns
@@ -381,7 +383,7 @@ Instead, Lithos focuses on:
 
 - deepen validation coverage and diagnostic rules now that structured reports exist
 - keep the command service thin and transport-focused while the app boundary settles
-- extend lazy backend-session reads only where they do not complicate edit semantics or stale-session correctness
+- extend lazy backend-session reads beyond metadata-only flows only where they do not complicate sample-edit semantics or stale-session correctness
 - keep consolidating architecture guidance under `docs/architecture/` rather than root-level notes
 
 ### After That

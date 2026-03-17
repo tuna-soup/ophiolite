@@ -68,11 +68,12 @@ Current session properties:
 - editable session open reuses one shared backend session per package path by default
 - `PackageSession` owns package identity, session identity, current in-memory `LasFile` state, dirty-state, and a revision token
 - backend session open validates package metadata and parquet footer without eagerly decoding all sample rows
-- backend-session lazy loading is intentionally scoped: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, and accepted edits trigger full materialization
+- backend-session lazy loading is intentionally scoped: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, metadata-only edits and metadata-only save/save-as remain lazy, and curve/sample edits trigger full materialization
 - session summary, metadata, and curve catalog reads are served from cached package metadata while the session remains clean
 - backend window reads use projected parquet scans and row selections as internal implementation details instead of preloading a full sample table
 - clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
-- the first accepted edit and any save/save-as path that needs the canonical snapshot materializes a real eager `PackageSession`
+- metadata-only dirty lazy sessions can rewrite `metadata.json` and save/save-as without materializing sample data
+- the first accepted curve/sample edit and any later save/save-as path that needs the canonical snapshot materializes a real eager `PackageSession`
 - edits are applied to the session snapshot in memory
 - `save` persists the current session snapshot back to the same package using optimistic revision checks
 - `save_as` persists the current session snapshot to a new package root and updates the session baseline

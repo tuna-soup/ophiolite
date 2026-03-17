@@ -2,13 +2,14 @@ use arrow_array::Array;
 use arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use lithos_core::{
-    AssetSummaryDto, CurveCatalogDto, CurveCatalogEntryDto, CurveColumnMetadata, CurveEditRequest,
-    CurveItem, CurveStorageKind, CurveTable, CurveWindowColumnDto, CurveWindowDto,
-    CurveWindowRequest, DTO_CONTRACT_VERSION, DirtyStateDto, LasError, LasFile, LasFileSummary,
-    LasValue, MetadataDto, MetadataUpdateRequest, PackageId, PackageMetadata, Result,
-    RevisionToken, SaveConflictDto, SavePackageResultDto, SaveSessionResponseDto, SectionItems,
-    SessionId, SessionMetadataDto, SessionSummaryDto, SessionWindowDto, ValidationReportDto,
-    apply_curve_edit, apply_metadata_update, asset_summary_dto, curve_catalog_dto,
+    AssetSummaryDto, CanonicalMetadata, CurveCatalogDto, CurveCatalogEntryDto, CurveColumnMetadata,
+    CurveEditRequest, CurveInfo, CurveItem, CurveStorageKind, CurveTable, CurveWindowColumnDto,
+    CurveWindowDto, CurveWindowRequest, DTO_CONTRACT_VERSION, DirtyStateDto, HeaderItem, IndexInfo,
+    LasError, LasFile, LasFileSummary, LasValue, MetadataDto, MetadataSectionDto,
+    MetadataUpdateRequest, PackageId, PackageMetadata, ParameterInfo, Result, RevisionToken,
+    SaveConflictDto, SavePackageResultDto, SaveSessionResponseDto, SectionItems, SessionId,
+    SessionMetadataDto, SessionSummaryDto, SessionWindowDto, ValidationReportDto, VersionInfo,
+    WellInfo, apply_curve_edit, apply_metadata_update, asset_summary_dto, curve_catalog_dto,
     curve_catalog_result_dto, curve_window_dto, dirty_state_dto, metadata_dto, package_id_for_path,
     package_metadata_for, package_validation_report, parse_package_metadata,
     revision_token_for_bytes, save_conflict_dto, session_metadata_dto, session_summary_dto,
@@ -331,7 +332,17 @@ impl BackendPackageSession {
     }
 
     fn apply_metadata_update(&mut self, request: &MetadataUpdateRequest) -> Result<()> {
-        self.materialize_for_edit()?.apply_metadata_update(request)
+        match self {
+            Self::Lazy(session) => {
+                ensure_lazy_session_current(session)?;
+                let mut candidate = session.metadata.clone();
+                apply_metadata_update_to_package_metadata(&mut candidate, request)?;
+                session.metadata = candidate;
+                session.dirty = true;
+                Ok(())
+            }
+            Self::Materialized(session) => session.apply_metadata_update(request),
+        }
     }
 
     fn apply_curve_edit(&mut self, request: &CurveEditRequest) -> Result<()> {
@@ -363,6 +374,10 @@ impl BackendPackageSession {
                     summary: asset_summary_from_package_metadata(&session.metadata),
                 }));
             }
+
+            return Ok(SaveSessionResponseDto::Saved(
+                save_lazy_metadata_session_in_place(session)?,
+            ));
         }
 
         match self.materialize_for_edit()?.save_checked()? {
@@ -383,6 +398,10 @@ impl BackendPackageSession {
                     session.root.display().to_string(),
                 )));
             }
+
+            return Ok(SaveSessionResponseDto::Saved(
+                save_lazy_session_as_in_place(session, output_dir)?,
+            ));
         }
 
         let saved = self.materialize_for_edit()?.save_as_in_place(output_dir)?;
@@ -904,6 +923,232 @@ fn read_lazy_curve_window(
             })
             .collect(),
     })
+}
+
+fn apply_metadata_update_to_package_metadata(
+    metadata: &mut PackageMetadata,
+    request: &MetadataUpdateRequest,
+) -> Result<()> {
+    let mut candidate = metadata.clone();
+    for item in &request.items {
+        let header = HeaderItem::new(
+            item.mnemonic.clone(),
+            item.unit.clone(),
+            item.value.clone(),
+            item.description.clone(),
+        );
+        match item.section {
+            MetadataSectionDto::Version => candidate.raw.version.set_item(&item.mnemonic, header),
+            MetadataSectionDto::Well => candidate.raw.well.set_item(&item.mnemonic, header),
+            MetadataSectionDto::Parameters => candidate.raw.params.set_item(&item.mnemonic, header),
+        }
+    }
+
+    if let Some(other) = &request.other {
+        candidate.raw.other = other.clone();
+    }
+
+    refresh_package_metadata_after_metadata_edit(&mut candidate)?;
+    *metadata = candidate;
+    Ok(())
+}
+
+fn refresh_package_metadata_after_metadata_edit(metadata: &mut PackageMetadata) -> Result<()> {
+    metadata.document.summary.las_version = metadata_version_string(&metadata.raw.version);
+    metadata.document.summary.wrap_mode = metadata_wrap_mode(&metadata.raw.version);
+    metadata.document.summary.delimiter =
+        metadata_delimiter(&metadata.raw.version, &metadata.document.summary.delimiter);
+    metadata.document.summary.curve_count = metadata.storage.curve_columns.len();
+    metadata.document.summary.issue_count = metadata.diagnostics.issues.len();
+    metadata.canonical = canonical_metadata_from_package(metadata)?;
+    validate_package_metadata(metadata)
+}
+
+fn canonical_metadata_from_package(metadata: &PackageMetadata) -> Result<CanonicalMetadata> {
+    let index_column = metadata
+        .storage
+        .curve_columns
+        .iter()
+        .find(|column| column.is_index)
+        .ok_or_else(|| {
+            LasError::Validation(String::from(
+                "package storage metadata must mark exactly one index column",
+            ))
+        })?;
+
+    Ok(CanonicalMetadata {
+        version: VersionInfo {
+            vers: header_display_string(metadata.raw.version.get("VERS")),
+            wrap: header_display_string(metadata.raw.version.get("WRAP")),
+            delimiter: optional_string(&metadata.document.summary.delimiter),
+        },
+        well: WellInfo {
+            well: header_display_string(metadata.raw.well.get("WELL")),
+            company: header_display_string(metadata.raw.well.get("COMP")),
+            field: header_display_string(metadata.raw.well.get("FLD")),
+            location: header_display_string(metadata.raw.well.get("LOC")),
+            province: header_display_string(metadata.raw.well.get("PROV")),
+            service_company: header_display_string(metadata.raw.well.get("SRVC")),
+            date: header_display_string(metadata.raw.well.get("DATE")),
+            uwi: header_display_string(metadata.raw.well.get("UWI")),
+            api: header_display_string(metadata.raw.well.get("API")),
+            start: header_numeric_value(metadata.raw.well.get("STRT")),
+            stop: header_numeric_value(metadata.raw.well.get("STOP")),
+            step: header_numeric_value(metadata.raw.well.get("STEP")),
+            null_value: header_numeric_value(metadata.raw.well.get("NULL")),
+        },
+        index: IndexInfo {
+            name: metadata.storage.index.curve_id.clone(),
+            original_mnemonic: metadata.storage.index.raw_mnemonic.clone(),
+            canonical_name: String::from("index"),
+            unit: optional_string(&index_column.unit)
+                .or_else(|| metadata.storage.index_unit.clone()),
+            kind: metadata.storage.index.kind.clone(),
+            row_count: index_column.row_count,
+            nullable: index_column.nullable,
+            storage_kind: index_column.storage_kind,
+            alias: index_column.alias.clone(),
+        },
+        curves: metadata
+            .storage
+            .curve_columns
+            .iter()
+            .map(|curve| CurveInfo {
+                name: curve.name.clone(),
+                original_mnemonic: curve.original_mnemonic.clone(),
+                canonical_name: curve.canonical_name.clone(),
+                unit: optional_string(&curve.unit),
+                description: optional_string(&curve.description),
+                header_value: las_value_option(&curve.header_value),
+                nullable: curve.nullable,
+                storage_kind: curve.storage_kind,
+                row_count: curve.row_count,
+                alias: curve.alias.clone(),
+            })
+            .collect(),
+        parameters: metadata
+            .raw
+            .params
+            .iter()
+            .map(|param| ParameterInfo {
+                name: param.mnemonic.clone(),
+                original_mnemonic: param.original_mnemonic.clone(),
+                unit: optional_string(&param.unit),
+                value: las_value_option(&param.value),
+                description: optional_string(&param.description),
+            })
+            .collect(),
+        other: optional_string(&metadata.raw.other),
+        issue_count: metadata.diagnostics.issues.len(),
+    })
+}
+
+fn save_lazy_metadata_session_in_place(
+    session: &mut LazyPackageSession,
+) -> Result<SavePackageResultDto> {
+    validate_package_metadata(&session.metadata)?;
+    write_package_metadata_file(&session.root, &session.metadata)?;
+    let reopened = read_package_metadata(&session.root)?;
+    session.metadata = reopened;
+    session.revision = package_revision(&session.root)?;
+    session.dirty = false;
+    Ok(SavePackageResultDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+        package_id: session.package_id.clone(),
+        session_id: session.session_id.clone(),
+        revision: session.revision.clone(),
+        root: session.root.display().to_string(),
+        overwritten: true,
+        dirty_cleared: true,
+        summary: asset_summary_from_package_metadata(&session.metadata),
+    })
+}
+
+fn save_lazy_session_as_in_place(
+    session: &mut LazyPackageSession,
+    output_dir: &Path,
+) -> Result<SavePackageResultDto> {
+    validate_package_metadata(&session.metadata)?;
+    if output_dir.exists() {
+        return Err(LasError::Storage(format!(
+            "output directory '{}' already exists",
+            output_dir.display()
+        )));
+    }
+
+    debug!(
+        package = %output_dir.display(),
+        "writing lazy LAS package copy without sample materialization"
+    );
+    fs::create_dir_all(output_dir)?;
+    write_package_metadata_file(output_dir, &session.metadata)?;
+    fs::copy(curves_path(&session.root), curves_path(output_dir))?;
+
+    let reopened = read_package_metadata(output_dir)?;
+    let reader_metadata = load_parquet_reader_metadata(curves_path(output_dir))?;
+    let new_root = output_dir.to_path_buf();
+    let new_root_key = package_path_key(&new_root);
+    session.package_id = package_id_for_path(&new_root_key);
+    session.revision = package_revision(&new_root)?;
+    session.root = new_root;
+    session.metadata = reopened;
+    session.reader_metadata = reader_metadata;
+    session.dirty = false;
+
+    Ok(SavePackageResultDto {
+        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+        package_id: session.package_id.clone(),
+        session_id: session.session_id.clone(),
+        revision: session.revision.clone(),
+        root: session.root.display().to_string(),
+        overwritten: false,
+        dirty_cleared: true,
+        summary: asset_summary_from_package_metadata(&session.metadata),
+    })
+}
+
+fn write_package_metadata_file(root: &Path, metadata: &PackageMetadata) -> Result<()> {
+    fs::write(metadata_path(root), serde_json::to_string_pretty(metadata)?)?;
+    Ok(())
+}
+
+fn metadata_version_string(version: &SectionItems<HeaderItem>) -> String {
+    version
+        .get("VERS")
+        .and_then(|item| item.value.as_f64())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| String::from("unknown"))
+}
+
+fn metadata_wrap_mode(version: &SectionItems<HeaderItem>) -> String {
+    version
+        .get("WRAP")
+        .map(|item| item.value.display_string())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| String::from("NO"))
+}
+
+fn metadata_delimiter(version: &SectionItems<HeaderItem>, current: &str) -> String {
+    version
+        .get("DLM")
+        .map(|item| item.value.display_string())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| current.to_string())
+}
+
+fn header_display_string(item: Option<&HeaderItem>) -> Option<String> {
+    item.and_then(|item| las_value_option(&item.value))
+}
+
+fn header_numeric_value(item: Option<&HeaderItem>) -> Option<f64> {
+    item.and_then(|item| item.value.as_f64())
+}
+
+fn las_value_option(value: &LasValue) -> Option<String> {
+    match value {
+        LasValue::Empty => None,
+        _ => Some(value.display_string()),
+    }
 }
 
 fn package_revision(root: &Path) -> Result<RevisionToken> {

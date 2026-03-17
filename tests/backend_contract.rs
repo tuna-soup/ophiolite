@@ -298,6 +298,168 @@ fn backend_session_open_keeps_metadata_queries_available_without_preloading_samp
 }
 
 #[test]
+fn backend_clean_lazy_save_stays_lazy_and_preserves_session_state() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("backend-clean-lazy-save");
+    lithos_las::write_package(&las, &package_dir).unwrap();
+
+    let mut backend = PackageBackend::new();
+    let session = backend.open_package_session(&package_dir).unwrap();
+    let saved = backend.save_session(&session.session_id).unwrap();
+    let save_result = match saved {
+        SaveSessionResponseDto::Saved(result) => result,
+        SaveSessionResponseDto::Conflict(conflict) => {
+            panic!("unexpected save conflict: {}", conflict.actual_revision.0)
+        }
+    };
+
+    assert_eq!(save_result.session_id, session.session_id);
+    assert_eq!(save_result.root, package_dir.display().to_string());
+    assert!(save_result.dirty_cleared);
+    assert_eq!(
+        backend
+            .open_package_session(&package_dir)
+            .unwrap()
+            .session_id,
+        session.session_id
+    );
+
+    fs::remove_file(package_dir.join("curves.parquet")).unwrap();
+
+    let summary = backend.session_summary(&session.session_id).unwrap();
+    assert_eq!(summary.session_id, session.session_id);
+    assert!(!summary.dirty.has_unsaved_changes);
+    let err = backend
+        .read_curve_window(
+            &session.session_id,
+            &CurveWindowRequest {
+                curve_names: vec![String::from("DT")],
+                start_row: 0,
+                row_count: 1,
+            },
+        )
+        .unwrap_err();
+
+    match err {
+        LasError::Io(_) => {}
+        other => panic!("expected lazy window read io error after clean save, got {other}"),
+    }
+}
+
+#[test]
+fn backend_first_successful_edit_materializes_and_stays_materialized() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("backend-materialized-after-edit");
+    lithos_las::write_package(&las, &package_dir).unwrap();
+
+    let mut backend = PackageBackend::new();
+    let session = backend.open_package_session(&package_dir).unwrap();
+    let session_id = session.session_id.clone();
+
+    let edited = backend
+        .apply_metadata_edit(
+            &session_id,
+            &MetadataUpdateRequest {
+                items: vec![HeaderItemUpdate {
+                    section: MetadataSectionDto::Well,
+                    mnemonic: String::from("COMP"),
+                    unit: String::new(),
+                    value: LasValue::Text(String::from("MATERIALIZED")),
+                    description: String::from("COMPANY"),
+                }],
+                other: None,
+            },
+        )
+        .unwrap();
+    assert!(edited.dirty.has_unsaved_changes);
+
+    fs::remove_file(package_dir.join("curves.parquet")).unwrap();
+
+    let metadata = backend.session_metadata(&session_id).unwrap();
+    assert_eq!(
+        metadata.metadata.metadata.well.company.as_deref(),
+        Some("MATERIALIZED")
+    );
+    let window = backend
+        .read_curve_window(
+            &session_id,
+            &CurveWindowRequest {
+                curve_names: vec![String::from("DT")],
+                start_row: 0,
+                row_count: 2,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(window.session.session_id, session_id);
+    assert_eq!(window.window.row_count, 2);
+}
+
+#[test]
+fn backend_failed_materialization_keeps_lazy_session_open_and_unchanged() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("backend-failed-materialize");
+    lithos_las::write_package(&las, &package_dir).unwrap();
+
+    let mut backend = PackageBackend::new();
+    let session = backend.open_package_session(&package_dir).unwrap();
+    let session_id = session.session_id.clone();
+    let before = backend.session_summary(&session_id).unwrap();
+
+    fs::remove_file(package_dir.join("curves.parquet")).unwrap();
+
+    let err = backend
+        .apply_metadata_edit(
+            &session_id,
+            &MetadataUpdateRequest {
+                items: vec![HeaderItemUpdate {
+                    section: MetadataSectionDto::Well,
+                    mnemonic: String::from("COMP"),
+                    unit: String::new(),
+                    value: LasValue::Text(String::from("SHOULD NOT APPLY")),
+                    description: String::from("COMPANY"),
+                }],
+                other: None,
+            },
+        )
+        .unwrap_err();
+    match err {
+        LasError::Io(_) => {}
+        other => panic!("expected io error during lazy materialization, got {other}"),
+    }
+
+    let after = backend.session_summary(&session_id).unwrap();
+    let metadata = backend.session_metadata(&session_id).unwrap();
+    assert_eq!(after.session_id, before.session_id);
+    assert_eq!(after.root, before.root);
+    assert_eq!(
+        after.dirty.has_unsaved_changes,
+        before.dirty.has_unsaved_changes
+    );
+    assert_ne!(
+        metadata.metadata.metadata.well.company.as_deref(),
+        Some("SHOULD NOT APPLY")
+    );
+
+    let window_err = backend
+        .read_curve_window(
+            &session_id,
+            &CurveWindowRequest {
+                curve_names: vec![String::from("DT")],
+                start_row: 0,
+                row_count: 1,
+            },
+        )
+        .unwrap_err();
+    match window_err {
+        LasError::Io(_) => {}
+        other => {
+            panic!("expected lazy window read io error after failed materialization, got {other}")
+        }
+    }
+}
+
+#[test]
 fn backend_lazy_window_reads_reject_stale_sessions_after_external_change() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-stale-lazy");

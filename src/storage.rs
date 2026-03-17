@@ -350,6 +350,19 @@ impl BackendPackageSession {
                     session.root.display().to_string(),
                 )));
             }
+
+            if !session.dirty {
+                return Ok(SaveSessionResponseDto::Saved(SavePackageResultDto {
+                    dto_contract_version: String::from(DTO_CONTRACT_VERSION),
+                    package_id: session.package_id.clone(),
+                    session_id: session.session_id.clone(),
+                    revision: session.revision.clone(),
+                    root: session.root.display().to_string(),
+                    overwritten: false,
+                    dirty_cleared: true,
+                    summary: asset_summary_from_package_metadata(&session.metadata),
+                }));
+            }
         }
 
         match self.materialize_for_edit()?.save_checked()? {

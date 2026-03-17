@@ -68,9 +68,11 @@ Current session properties:
 - editable session open reuses one shared backend session per package path by default
 - `PackageSession` owns package identity, session identity, current in-memory `LasFile` state, dirty-state, and a revision token
 - backend session open validates package metadata and parquet footer without eagerly decoding all sample rows
+- backend-session lazy loading is intentionally scoped: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, and accepted edits trigger full materialization
 - session summary, metadata, and curve catalog reads are served from cached package metadata while the session remains clean
-- backend window reads use projected parquet scans and row selections instead of preloading a full sample table
-- the first edit or save path that needs the canonical snapshot materializes a real eager `PackageSession`
+- backend window reads use projected parquet scans and row selections as internal implementation details instead of preloading a full sample table
+- clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
+- the first accepted edit and any save/save-as path that needs the canonical snapshot materializes a real eager `PackageSession`
 - edits are applied to the session snapshot in memory
 - `save` persists the current session snapshot back to the same package using optimistic revision checks
 - `save_as` persists the current session snapshot to a new package root and updates the session baseline
@@ -86,9 +88,14 @@ Session invariants:
 - same package path returns the same shared session while it remains open
 - close invalidates the current `SessionId`
 - reopen after close creates a new `SessionId`
+- `Lazy` and materialized backend-session states preserve the same session identity and bound package root semantics
 - `save` preserves session identity and bound package root on success
 - `save_as` preserves session identity and rebinds the currently bound package root on success
+- once a backend session materializes, it does not transition back to lazy in the current phase
 - failed `save` and `save_as` leave the session open with unchanged identity, dirty-state, bound root, and in-memory document snapshot
+- failed materialization leaves the session open with unchanged identity, dirty-state, bound root, and no partial mutation applied
+
+Backend-session parquet metadata caches are session-local in the current phase. They are reused across repeated reads within one open session and dropped when that session is closed.
 
 DTOs are transport shapes for this contract. They do not replace the canonical domain model.
 

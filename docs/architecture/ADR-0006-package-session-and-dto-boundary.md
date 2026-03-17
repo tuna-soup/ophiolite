@@ -61,6 +61,7 @@ Validation reports should expose structured diagnostic issues with stable codes,
 The current Tauri-ready adapter layer is `PackageBackend`, with `PackageBackendState` as the shared-state wrapper and `PackageCommandService` as the thin, transport-focused app-boundary service above it.
 Session-backed DTOs should expose the currently bound package root so clients can observe rebinding after `save_as`.
 In the current phase, backend session read paths may stay lazy internally, while the public eager `PackageSession` and direct `open_package(...)` APIs remain unchanged.
+That lazy scope is intentionally narrow: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, and accepted edits trigger full materialization.
 
 DTO evolution should remain additive where possible. Formal compatibility guarantees can harden later once the Tauri contract stops moving quickly.
 Public command error kinds should remain small and caller-actionable rather than implementation-shaped.
@@ -81,6 +82,7 @@ Public command error kinds should remain small and caller-actionable rather than
 - metadata-only opens are an explicit architectural behavior, not an accidental implementation detail
 - windowed reads are part of the frontend contract even though full lazy sample-table loading is still an evolving internal concern
 - backend session reads may reuse Arrow/Parquet projection and row-selection internally without changing the public runtime abstraction
+- parquet row selection remains an internal implementation detail; public query semantics do not change
 - future Tauri command handlers should be built on top of this session model rather than reaching directly into storage internals
 - the app-boundary command layer should preserve structured backend errors rather than collapsing them into ad hoc strings
 - edit requests must be atomic at the request level; rejected edits must not partially mutate session state
@@ -102,11 +104,17 @@ Session invariants for the current model:
 - same package path returns the same shared session while it remains open
 - close invalidates the current `SessionId`
 - reopen after close returns a new `SessionId`
+- lazy and materialized backend-session states preserve the same session identity and bound package root semantics
 - `save` preserves session identity and bound package root on success
 - `save_as` preserves session identity and rebinds the currently bound package root on success
+- clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
+- once a backend session materializes, it does not transition back to lazy in the current phase
 - failed `save` and `save_as` leave the session open with unchanged identity, dirty-state, bound root, and in-memory document snapshot
+- failed materialization leaves the session open with unchanged identity, dirty-state, bound root, and no partial mutation applied
 
 `save_as` should be understood as: the user remains in the same editing session, but that session is now editing the newly written package.
+
+Backend-session parquet metadata caches are session-local in the current phase. They are reused across repeated reads within one open session and dropped when that session is closed.
 
 ## Validation Boundaries
 

@@ -230,9 +230,11 @@ Current session semantics:
 - sessions remain alive until explicitly closed in the current desktop MVP
 - metadata-only package opens do not require loading `curves.parquet`
 - backend session open validates package metadata and parquet footer without eagerly decoding all samples
+- backend-session lazy loading is intentionally scoped: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, and accepted edits trigger full materialization
 - session metadata, session summaries, and curve catalogs are served from cached package metadata
-- window queries use projected parquet reads rather than forcing full frontend materialization
-- the first edit or save path that needs a canonical snapshot materializes the eager in-memory `PackageSession`
+- window queries use projected parquet reads and row selection as internal implementation details rather than forcing full frontend materialization
+- clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
+- the first accepted edit and any save/save-as path that needs a canonical snapshot materializes the eager in-memory `PackageSession`
 - revision tokens are for persistence conflict detection against the currently bound package baseline/root, not collaborative synchronization
 
 Session invariants:
@@ -240,9 +242,14 @@ Session invariants:
 - same package path returns the same shared session while it remains open
 - close invalidates the current `SessionId`
 - reopen after close returns a new `SessionId`
+- `Lazy` and materialized backend-session states preserve the same session identity and bound package root semantics
 - `save` preserves session identity and package root on success
 - `save_as` keeps the same session identity, but that session is now editing the newly written package
+- once a backend session materializes, it does not transition back to lazy in the current phase
 - failed `save` and `save_as` leave the session open with the same session id, dirty-state, package root, and in-memory document snapshot
+- failed materialization leaves the session open with the same session id, dirty-state, package root, and no partial mutation applied
+
+Backend-session parquet metadata caches are session-local in the current phase. They are reused across repeated reads within one open session and dropped when that session is closed.
 
 DTOs are boundary and transport shapes. They are not the canonical domain model. `LasFile` remains the authoritative in-memory LAS representation inside the backend.
 

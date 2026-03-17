@@ -2,6 +2,7 @@ mod backend;
 mod backend_commands;
 mod command_service;
 mod project;
+mod project_assets;
 
 pub use backend::{PackageBackend, dto_contract_version};
 pub use backend_commands::PackageBackendState;
@@ -47,6 +48,10 @@ pub use project::{
     AssetCollectionId, AssetCollectionRecord, AssetExtent, AssetId, AssetKind, AssetManifest,
     AssetRecord, AssetReferenceMetadata, AssetStatus, BulkDataDescriptor, CoordinateReference,
     DepthReference, ImportResolution, LithosProject, LithosProjectManifest, LogAssetImportResult,
-    SourceArtifactRef, UnitSystem, VerticalDatum, WellId, WellIdentifierSet, WellRecord,
-    WellboreId, WellboreRecord,
+    ProjectAssetImportResult, SourceArtifactRef, UnitSystem, VerticalDatum, WellId,
+    WellIdentifierSet, WellRecord, WellboreId, WellboreRecord,
+};
+pub use project_assets::{
+    AssetBindingInput, AssetColumnMetadata, AssetColumnType, AssetTableMetadata, DepthRangeQuery,
+    DrillingObservationRow, PressureObservationRow, TopRow, TrajectoryRow,
 };

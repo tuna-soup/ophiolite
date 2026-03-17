@@ -30,6 +30,7 @@ Current properties:
 - `LasFile` is the canonical public domain object
 - `PackageSession` is the backend-owned editable package session model
 - `LithosProject` is the local-first multi-well project/catalog root
+- project-managed typed asset families now include log, trajectory, tops, pressure observations, and drilling observations
 - `PackageBackend` and `PackageBackendState` are the current Tauri-ready backend adapter layer
 - `PackageCommandService` is the app-boundary transport layer above the shared backend state
 - `CurveTable` is the app-facing in-memory table abstraction
@@ -80,7 +81,7 @@ Current properties of this layer:
 - SQLite stores discovery, identities, relationships, package paths, and lightweight status
 - single-asset packages remain the authoritative storage unit for asset-local metadata and bulk data
 - log assets are the first project-managed asset family
-- trajectory, tops, pressure observations, and drilling observations are scaffolded as typed asset families for future expansion
+- trajectory, tops, pressure observations, and drilling observations now exist as typed project-managed asset families
 - every project-managed asset can carry both:
   - logical identity
   - storage/package identity
@@ -91,7 +92,9 @@ Current multi-well status:
 - project creation/open exists now
 - LAS import into project-managed log packages exists now
 - well/wellbore/collection/asset registry exists now
-- non-log asset ingest is still a later step
+- CSV ingest for trajectory, tops, pressure observations, and drilling observations exists now
+- typed read/query helpers for those non-log families exist now
+- cross-asset depth-range discovery across one wellbore exists now
 - non-log asset editing is deferred
 
 ## Package Session Contract

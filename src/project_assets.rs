@@ -1,0 +1,916 @@
+use crate::{AssetKind, DepthReference, LasError, Result, VerticalDatum};
+use arrow_array::{Array, ArrayRef, Float64Array, RecordBatch, StringArray};
+use arrow_schema::{DataType, Field, Schema};
+use csv::StringRecord;
+use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::arrow_writer::ArrowWriter;
+use parquet::basic::Compression;
+use parquet::file::properties::{EnabledStatistics, WriterProperties};
+use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::path::Path;
+use std::sync::Arc;
+
+const ASSET_TABLE_METADATA_SCHEMA_VERSION: &str = "0.1.0";
+const DATA_FILENAME: &str = "data.parquet";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AssetColumnType {
+    Float64,
+    Utf8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetColumnMetadata {
+    pub name: String,
+    pub data_type: AssetColumnType,
+    pub unit: Option<String>,
+    pub description: Option<String>,
+    pub nullable: bool,
+    pub is_index: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetTableMetadata {
+    pub schema_version: String,
+    pub asset_kind: AssetKind,
+    pub row_count: usize,
+    pub columns: Vec<AssetColumnMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetBindingInput {
+    pub well_name: String,
+    pub wellbore_name: String,
+    pub uwi: Option<String>,
+    pub api: Option<String>,
+    pub operator_aliases: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TrajectoryRow {
+    pub measured_depth: f64,
+    pub true_vertical_depth: Option<f64>,
+    pub azimuth_deg: Option<f64>,
+    pub inclination_deg: Option<f64>,
+    pub northing_offset: Option<f64>,
+    pub easting_offset: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TopRow {
+    pub name: String,
+    pub top_depth: f64,
+    pub base_depth: Option<f64>,
+    pub source: Option<String>,
+    pub depth_reference: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PressureObservationRow {
+    pub measured_depth: Option<f64>,
+    pub pressure: f64,
+    pub phase: Option<String>,
+    pub test_kind: Option<String>,
+    pub timestamp: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DrillingObservationRow {
+    pub measured_depth: Option<f64>,
+    pub event_kind: String,
+    pub value: Option<f64>,
+    pub unit: Option<String>,
+    pub timestamp: Option<String>,
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DepthRangeQuery {
+    pub depth_min: Option<f64>,
+    pub depth_max: Option<f64>,
+}
+
+pub fn data_filename() -> &'static str {
+    DATA_FILENAME
+}
+
+pub fn trajectory_metadata(rows: &[TrajectoryRow]) -> AssetTableMetadata {
+    AssetTableMetadata {
+        schema_version: ASSET_TABLE_METADATA_SCHEMA_VERSION.to_string(),
+        asset_kind: AssetKind::Trajectory,
+        row_count: rows.len(),
+        columns: vec![
+            column(
+                "measured_depth",
+                AssetColumnType::Float64,
+                None,
+                true,
+                false,
+            ),
+            column(
+                "true_vertical_depth",
+                AssetColumnType::Float64,
+                None,
+                false,
+                false,
+            ),
+            column("azimuth_deg", AssetColumnType::Float64, None, false, false),
+            column(
+                "inclination_deg",
+                AssetColumnType::Float64,
+                None,
+                false,
+                false,
+            ),
+            column(
+                "northing_offset",
+                AssetColumnType::Float64,
+                None,
+                false,
+                false,
+            ),
+            column(
+                "easting_offset",
+                AssetColumnType::Float64,
+                None,
+                false,
+                false,
+            ),
+        ],
+    }
+}
+
+pub fn tops_metadata(rows: &[TopRow]) -> AssetTableMetadata {
+    AssetTableMetadata {
+        schema_version: ASSET_TABLE_METADATA_SCHEMA_VERSION.to_string(),
+        asset_kind: AssetKind::TopSet,
+        row_count: rows.len(),
+        columns: vec![
+            column("name", AssetColumnType::Utf8, None, true, false),
+            column("top_depth", AssetColumnType::Float64, None, true, false),
+            column("base_depth", AssetColumnType::Float64, None, false, false),
+            column("source", AssetColumnType::Utf8, None, false, false),
+            column("depth_reference", AssetColumnType::Utf8, None, false, false),
+        ],
+    }
+}
+
+pub fn pressure_metadata(rows: &[PressureObservationRow]) -> AssetTableMetadata {
+    AssetTableMetadata {
+        schema_version: ASSET_TABLE_METADATA_SCHEMA_VERSION.to_string(),
+        asset_kind: AssetKind::PressureObservation,
+        row_count: rows.len(),
+        columns: vec![
+            column(
+                "measured_depth",
+                AssetColumnType::Float64,
+                None,
+                false,
+                false,
+            ),
+            column("pressure", AssetColumnType::Float64, None, true, false),
+            column("phase", AssetColumnType::Utf8, None, false, false),
+            column("test_kind", AssetColumnType::Utf8, None, false, false),
+            column("timestamp", AssetColumnType::Utf8, None, false, false),
+        ],
+    }
+}
+
+pub fn drilling_metadata(rows: &[DrillingObservationRow]) -> AssetTableMetadata {
+    AssetTableMetadata {
+        schema_version: ASSET_TABLE_METADATA_SCHEMA_VERSION.to_string(),
+        asset_kind: AssetKind::DrillingObservation,
+        row_count: rows.len(),
+        columns: vec![
+            column(
+                "measured_depth",
+                AssetColumnType::Float64,
+                None,
+                false,
+                false,
+            ),
+            column("event_kind", AssetColumnType::Utf8, None, true, false),
+            column("value", AssetColumnType::Float64, None, false, false),
+            column("unit", AssetColumnType::Utf8, None, false, false),
+            column("timestamp", AssetColumnType::Utf8, None, false, false),
+            column("comment", AssetColumnType::Utf8, None, false, false),
+        ],
+    }
+}
+
+pub fn depth_reference_for_kind(kind: &AssetKind) -> DepthReference {
+    match kind {
+        AssetKind::Log | AssetKind::Trajectory | AssetKind::TopSet => DepthReference::MeasuredDepth,
+        AssetKind::PressureObservation | AssetKind::DrillingObservation => DepthReference::Unknown,
+    }
+}
+
+pub fn vertical_datum_for_kind(kind: &AssetKind) -> Option<VerticalDatum> {
+    match kind {
+        AssetKind::Trajectory | AssetKind::TopSet => Some(VerticalDatum::Unknown),
+        _ => None,
+    }
+}
+
+pub fn trajectory_extent(rows: &[TrajectoryRow]) -> (Option<f64>, Option<f64>, Option<usize>) {
+    numeric_extent(rows.iter().map(|row| row.measured_depth), rows.len())
+}
+
+pub fn tops_extent(rows: &[TopRow]) -> (Option<f64>, Option<f64>, Option<usize>) {
+    numeric_extent(rows.iter().map(|row| row.top_depth), rows.len())
+}
+
+pub fn pressure_extent(
+    rows: &[PressureObservationRow],
+) -> (Option<f64>, Option<f64>, Option<usize>) {
+    numeric_extent(rows.iter().filter_map(|row| row.measured_depth), rows.len())
+}
+
+pub fn drilling_extent(
+    rows: &[DrillingObservationRow],
+) -> (Option<f64>, Option<f64>, Option<usize>) {
+    numeric_extent(rows.iter().filter_map(|row| row.measured_depth), rows.len())
+}
+
+pub fn parse_trajectory_csv(path: &Path) -> Result<Vec<TrajectoryRow>> {
+    let mut reader = csv::Reader::from_path(path)
+        .map_err(|error| LasError::Parse(format!("failed to read trajectory csv: {error}")))?;
+    let headers = reader
+        .headers()
+        .map_err(|error| LasError::Parse(format!("failed to read trajectory headers: {error}")))?
+        .clone();
+    let md_index = required_header(&headers, &["md", "measured_depth"])?;
+    let tvd_index = optional_header(&headers, &["tvd", "true_vertical_depth"]);
+    let azimuth_index = optional_header(&headers, &["azimuth", "azimuth_deg"]);
+    let inclination_index = optional_header(&headers, &["inclination", "inclination_deg"]);
+    let northing_index = optional_header(&headers, &["northing_offset", "northing"]);
+    let easting_index = optional_header(&headers, &["easting_offset", "easting"]);
+
+    reader
+        .records()
+        .map(|record| {
+            let record = record.map_err(csv_record_error)?;
+            Ok(TrajectoryRow {
+                measured_depth: required_f64(&record, md_index, "measured_depth")?,
+                true_vertical_depth: optional_f64(&record, tvd_index),
+                azimuth_deg: optional_f64(&record, azimuth_index),
+                inclination_deg: optional_f64(&record, inclination_index),
+                northing_offset: optional_f64(&record, northing_index),
+                easting_offset: optional_f64(&record, easting_index),
+            })
+        })
+        .collect()
+}
+
+pub fn parse_tops_csv(path: &Path) -> Result<Vec<TopRow>> {
+    let mut reader = csv::Reader::from_path(path)
+        .map_err(|error| LasError::Parse(format!("failed to read tops csv: {error}")))?;
+    let headers = reader
+        .headers()
+        .map_err(|error| LasError::Parse(format!("failed to read tops headers: {error}")))?
+        .clone();
+    let name_index = required_header(&headers, &["name", "top_name"])?;
+    let top_index = required_header(&headers, &["top_depth", "top"])?;
+    let base_index = optional_header(&headers, &["base_depth", "base"]);
+    let source_index = optional_header(&headers, &["source"]);
+    let reference_index = optional_header(&headers, &["depth_reference", "reference"]);
+
+    reader
+        .records()
+        .map(|record| {
+            let record = record.map_err(csv_record_error)?;
+            Ok(TopRow {
+                name: required_string(&record, name_index, "name")?,
+                top_depth: required_f64(&record, top_index, "top_depth")?,
+                base_depth: optional_f64(&record, base_index),
+                source: optional_string(&record, source_index),
+                depth_reference: optional_string(&record, reference_index),
+            })
+        })
+        .collect()
+}
+
+pub fn parse_pressure_csv(path: &Path) -> Result<Vec<PressureObservationRow>> {
+    let mut reader = csv::Reader::from_path(path)
+        .map_err(|error| LasError::Parse(format!("failed to read pressure csv: {error}")))?;
+    let headers = reader
+        .headers()
+        .map_err(|error| LasError::Parse(format!("failed to read pressure headers: {error}")))?
+        .clone();
+    let md_index = optional_header(&headers, &["md", "measured_depth"]);
+    let pressure_index = required_header(&headers, &["pressure"])?;
+    let phase_index = optional_header(&headers, &["phase"]);
+    let kind_index = optional_header(&headers, &["test_kind", "kind"]);
+    let timestamp_index = optional_header(&headers, &["timestamp", "time"]);
+
+    reader
+        .records()
+        .map(|record| {
+            let record = record.map_err(csv_record_error)?;
+            Ok(PressureObservationRow {
+                measured_depth: optional_f64(&record, md_index),
+                pressure: required_f64(&record, pressure_index, "pressure")?,
+                phase: optional_string(&record, phase_index),
+                test_kind: optional_string(&record, kind_index),
+                timestamp: optional_string(&record, timestamp_index),
+            })
+        })
+        .collect()
+}
+
+pub fn parse_drilling_csv(path: &Path) -> Result<Vec<DrillingObservationRow>> {
+    let mut reader = csv::Reader::from_path(path)
+        .map_err(|error| LasError::Parse(format!("failed to read drilling csv: {error}")))?;
+    let headers = reader
+        .headers()
+        .map_err(|error| LasError::Parse(format!("failed to read drilling headers: {error}")))?
+        .clone();
+    let md_index = optional_header(&headers, &["md", "measured_depth"]);
+    let kind_index = required_header(&headers, &["event_kind", "kind"])?;
+    let value_index = optional_header(&headers, &["value"]);
+    let unit_index = optional_header(&headers, &["unit"]);
+    let timestamp_index = optional_header(&headers, &["timestamp", "time"]);
+    let comment_index = optional_header(&headers, &["comment", "description"]);
+
+    reader
+        .records()
+        .map(|record| {
+            let record = record.map_err(csv_record_error)?;
+            Ok(DrillingObservationRow {
+                measured_depth: optional_f64(&record, md_index),
+                event_kind: required_string(&record, kind_index, "event_kind")?,
+                value: optional_f64(&record, value_index),
+                unit: optional_string(&record, unit_index),
+                timestamp: optional_string(&record, timestamp_index),
+                comment: optional_string(&record, comment_index),
+            })
+        })
+        .collect()
+}
+
+pub fn write_trajectory_package(path: &Path, rows: &[TrajectoryRow]) -> Result<()> {
+    write_record_batch(path, trajectory_batch(rows), trajectory_metadata(rows))
+}
+
+pub fn write_tops_package(path: &Path, rows: &[TopRow]) -> Result<()> {
+    write_record_batch(path, tops_batch(rows), tops_metadata(rows))
+}
+
+pub fn write_pressure_package(path: &Path, rows: &[PressureObservationRow]) -> Result<()> {
+    write_record_batch(path, pressure_batch(rows), pressure_metadata(rows))
+}
+
+pub fn write_drilling_package(path: &Path, rows: &[DrillingObservationRow]) -> Result<()> {
+    write_record_batch(path, drilling_batch(rows), drilling_metadata(rows))
+}
+
+pub fn read_trajectory_rows(
+    path: &Path,
+    range: Option<&DepthRangeQuery>,
+) -> Result<Vec<TrajectoryRow>> {
+    let batch = read_batch(path)?;
+    let rows = trajectory_rows_from_batch(&batch)?;
+    Ok(filter_trajectory_rows(rows, range))
+}
+
+pub fn read_tops_rows(path: &Path) -> Result<Vec<TopRow>> {
+    tops_rows_from_batch(&read_batch(path)?)
+}
+
+pub fn read_pressure_rows(
+    path: &Path,
+    range: Option<&DepthRangeQuery>,
+) -> Result<Vec<PressureObservationRow>> {
+    let batch = read_batch(path)?;
+    let rows = pressure_rows_from_batch(&batch)?;
+    Ok(filter_pressure_rows(rows, range))
+}
+
+pub fn read_drilling_rows(
+    path: &Path,
+    range: Option<&DepthRangeQuery>,
+) -> Result<Vec<DrillingObservationRow>> {
+    let batch = read_batch(path)?;
+    let rows = drilling_rows_from_batch(&batch)?;
+    Ok(filter_drilling_rows(rows, range))
+}
+
+fn write_record_batch(path: &Path, batch: RecordBatch, metadata: AssetTableMetadata) -> Result<()> {
+    std::fs::create_dir_all(path)?;
+    std::fs::write(
+        path.join("metadata.json"),
+        serde_json::to_vec_pretty(&metadata)?,
+    )?;
+    let file = File::create(path.join(DATA_FILENAME))?;
+    let props = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .set_statistics_enabled(EnabledStatistics::Page)
+        .build();
+    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))
+        .map_err(|error| LasError::Storage(error.to_string()))?;
+    writer
+        .write(&batch)
+        .map_err(|error| LasError::Storage(error.to_string()))?;
+    writer
+        .close()
+        .map_err(|error| LasError::Storage(error.to_string()))?;
+    Ok(())
+}
+
+fn read_batch(path: &Path) -> Result<RecordBatch> {
+    let file = File::open(path.join(DATA_FILENAME))?;
+    let mut reader = ParquetRecordBatchReaderBuilder::try_new(file)
+        .map_err(|error| LasError::Storage(error.to_string()))?
+        .with_batch_size(8192)
+        .build()
+        .map_err(|error| LasError::Storage(error.to_string()))?;
+    reader
+        .next()
+        .transpose()
+        .map_err(|error| LasError::Storage(error.to_string()))?
+        .ok_or_else(|| LasError::Storage("asset package parquet file was empty".to_string()))
+}
+
+fn trajectory_batch(rows: &[TrajectoryRow]) -> RecordBatch {
+    build_batch(vec![
+        (
+            "measured_depth",
+            float_field(false),
+            Arc::new(Float64Array::from(
+                rows.iter()
+                    .map(|row| Some(row.measured_depth))
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "true_vertical_depth",
+            float_field(true),
+            Arc::new(Float64Array::from(
+                rows.iter()
+                    .map(|row| row.true_vertical_depth)
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "azimuth_deg",
+            float_field(true),
+            Arc::new(Float64Array::from(
+                rows.iter().map(|row| row.azimuth_deg).collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "inclination_deg",
+            float_field(true),
+            Arc::new(Float64Array::from(
+                rows.iter()
+                    .map(|row| row.inclination_deg)
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "northing_offset",
+            float_field(true),
+            Arc::new(Float64Array::from(
+                rows.iter()
+                    .map(|row| row.northing_offset)
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "easting_offset",
+            float_field(true),
+            Arc::new(Float64Array::from(
+                rows.iter()
+                    .map(|row| row.easting_offset)
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+    ])
+}
+
+fn tops_batch(rows: &[TopRow]) -> RecordBatch {
+    build_batch(vec![
+        (
+            "name",
+            string_field(false),
+            Arc::new(StringArray::from(
+                rows.iter()
+                    .map(|row| Some(row.name.as_str()))
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "top_depth",
+            float_field(false),
+            Arc::new(Float64Array::from(
+                rows.iter()
+                    .map(|row| Some(row.top_depth))
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "base_depth",
+            float_field(true),
+            Arc::new(Float64Array::from(
+                rows.iter().map(|row| row.base_depth).collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "source",
+            string_field(true),
+            Arc::new(StringArray::from(
+                rows.iter()
+                    .map(|row| row.source.as_deref())
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "depth_reference",
+            string_field(true),
+            Arc::new(StringArray::from(
+                rows.iter()
+                    .map(|row| row.depth_reference.as_deref())
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+    ])
+}
+
+fn pressure_batch(rows: &[PressureObservationRow]) -> RecordBatch {
+    build_batch(vec![
+        (
+            "measured_depth",
+            float_field(true),
+            Arc::new(Float64Array::from(
+                rows.iter()
+                    .map(|row| row.measured_depth)
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "pressure",
+            float_field(false),
+            Arc::new(Float64Array::from(
+                rows.iter()
+                    .map(|row| Some(row.pressure))
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "phase",
+            string_field(true),
+            Arc::new(StringArray::from(
+                rows.iter()
+                    .map(|row| row.phase.as_deref())
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "test_kind",
+            string_field(true),
+            Arc::new(StringArray::from(
+                rows.iter()
+                    .map(|row| row.test_kind.as_deref())
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "timestamp",
+            string_field(true),
+            Arc::new(StringArray::from(
+                rows.iter()
+                    .map(|row| row.timestamp.as_deref())
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+    ])
+}
+
+fn drilling_batch(rows: &[DrillingObservationRow]) -> RecordBatch {
+    build_batch(vec![
+        (
+            "measured_depth",
+            float_field(true),
+            Arc::new(Float64Array::from(
+                rows.iter()
+                    .map(|row| row.measured_depth)
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "event_kind",
+            string_field(false),
+            Arc::new(StringArray::from(
+                rows.iter()
+                    .map(|row| Some(row.event_kind.as_str()))
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "value",
+            float_field(true),
+            Arc::new(Float64Array::from(
+                rows.iter().map(|row| row.value).collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "unit",
+            string_field(true),
+            Arc::new(StringArray::from(
+                rows.iter()
+                    .map(|row| row.unit.as_deref())
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "timestamp",
+            string_field(true),
+            Arc::new(StringArray::from(
+                rows.iter()
+                    .map(|row| row.timestamp.as_deref())
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
+            "comment",
+            string_field(true),
+            Arc::new(StringArray::from(
+                rows.iter()
+                    .map(|row| row.comment.as_deref())
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+    ])
+}
+
+fn trajectory_rows_from_batch(batch: &RecordBatch) -> Result<Vec<TrajectoryRow>> {
+    let md = float_column(batch, "measured_depth")?;
+    let tvd = optional_float_column(batch, "true_vertical_depth")?;
+    let azimuth = optional_float_column(batch, "azimuth_deg")?;
+    let inclination = optional_float_column(batch, "inclination_deg")?;
+    let northing = optional_float_column(batch, "northing_offset")?;
+    let easting = optional_float_column(batch, "easting_offset")?;
+    Ok((0..batch.num_rows())
+        .map(|idx| TrajectoryRow {
+            measured_depth: md[idx].unwrap_or(f64::NAN),
+            true_vertical_depth: tvd[idx],
+            azimuth_deg: azimuth[idx],
+            inclination_deg: inclination[idx],
+            northing_offset: northing[idx],
+            easting_offset: easting[idx],
+        })
+        .collect())
+}
+
+fn tops_rows_from_batch(batch: &RecordBatch) -> Result<Vec<TopRow>> {
+    let names = string_column(batch, "name")?;
+    let top = float_column(batch, "top_depth")?;
+    let base = optional_float_column(batch, "base_depth")?;
+    let source = optional_string_column(batch, "source")?;
+    let reference = optional_string_column(batch, "depth_reference")?;
+    Ok((0..batch.num_rows())
+        .map(|idx| TopRow {
+            name: names[idx].clone().unwrap_or_default(),
+            top_depth: top[idx].unwrap_or(f64::NAN),
+            base_depth: base[idx],
+            source: source[idx].clone(),
+            depth_reference: reference[idx].clone(),
+        })
+        .collect())
+}
+
+fn pressure_rows_from_batch(batch: &RecordBatch) -> Result<Vec<PressureObservationRow>> {
+    let md = optional_float_column(batch, "measured_depth")?;
+    let pressure = float_column(batch, "pressure")?;
+    let phase = optional_string_column(batch, "phase")?;
+    let kind = optional_string_column(batch, "test_kind")?;
+    let timestamp = optional_string_column(batch, "timestamp")?;
+    Ok((0..batch.num_rows())
+        .map(|idx| PressureObservationRow {
+            measured_depth: md[idx],
+            pressure: pressure[idx].unwrap_or(f64::NAN),
+            phase: phase[idx].clone(),
+            test_kind: kind[idx].clone(),
+            timestamp: timestamp[idx].clone(),
+        })
+        .collect())
+}
+
+fn drilling_rows_from_batch(batch: &RecordBatch) -> Result<Vec<DrillingObservationRow>> {
+    let md = optional_float_column(batch, "measured_depth")?;
+    let kind = string_column(batch, "event_kind")?;
+    let value = optional_float_column(batch, "value")?;
+    let unit = optional_string_column(batch, "unit")?;
+    let timestamp = optional_string_column(batch, "timestamp")?;
+    let comment = optional_string_column(batch, "comment")?;
+    Ok((0..batch.num_rows())
+        .map(|idx| DrillingObservationRow {
+            measured_depth: md[idx],
+            event_kind: kind[idx].clone().unwrap_or_default(),
+            value: value[idx],
+            unit: unit[idx].clone(),
+            timestamp: timestamp[idx].clone(),
+            comment: comment[idx].clone(),
+        })
+        .collect())
+}
+
+fn filter_trajectory_rows(
+    rows: Vec<TrajectoryRow>,
+    range: Option<&DepthRangeQuery>,
+) -> Vec<TrajectoryRow> {
+    match range {
+        Some(range) => rows
+            .into_iter()
+            .filter(|row| depth_matches(row.measured_depth, range))
+            .collect(),
+        None => rows,
+    }
+}
+
+fn filter_pressure_rows(
+    rows: Vec<PressureObservationRow>,
+    range: Option<&DepthRangeQuery>,
+) -> Vec<PressureObservationRow> {
+    match range {
+        Some(range) => rows
+            .into_iter()
+            .filter(|row| {
+                row.measured_depth
+                    .is_none_or(|depth| depth_matches(depth, range))
+            })
+            .collect(),
+        None => rows,
+    }
+}
+
+fn filter_drilling_rows(
+    rows: Vec<DrillingObservationRow>,
+    range: Option<&DepthRangeQuery>,
+) -> Vec<DrillingObservationRow> {
+    match range {
+        Some(range) => rows
+            .into_iter()
+            .filter(|row| {
+                row.measured_depth
+                    .is_none_or(|depth| depth_matches(depth, range))
+            })
+            .collect(),
+        None => rows,
+    }
+}
+
+fn depth_matches(value: f64, range: &DepthRangeQuery) -> bool {
+    if let Some(min) = range.depth_min
+        && value < min
+    {
+        return false;
+    }
+    if let Some(max) = range.depth_max
+        && value > max
+    {
+        return false;
+    }
+    true
+}
+
+fn build_batch(columns: Vec<(&str, Field, ArrayRef)>) -> RecordBatch {
+    let fields = columns
+        .iter()
+        .map(|(name, field, _)| {
+            Field::new(
+                name.to_string(),
+                field.data_type().clone(),
+                field.is_nullable(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let arrays = columns
+        .into_iter()
+        .map(|(_, _, array)| array)
+        .collect::<Vec<_>>();
+    RecordBatch::try_new(Arc::new(Schema::new(fields)), arrays).expect("valid asset record batch")
+}
+
+fn float_field(nullable: bool) -> Field {
+    Field::new("value", DataType::Float64, nullable)
+}
+
+fn string_field(nullable: bool) -> Field {
+    Field::new("value", DataType::Utf8, nullable)
+}
+
+fn column(
+    name: &str,
+    data_type: AssetColumnType,
+    unit: Option<&str>,
+    nullable: bool,
+    is_index: bool,
+) -> AssetColumnMetadata {
+    AssetColumnMetadata {
+        name: name.to_string(),
+        data_type,
+        unit: unit.map(str::to_string),
+        description: None,
+        nullable,
+        is_index,
+    }
+}
+
+fn required_header(headers: &StringRecord, candidates: &[&str]) -> Result<usize> {
+    optional_header(headers, candidates).ok_or_else(|| {
+        LasError::Validation(format!(
+            "csv is missing required header; expected one of {}",
+            candidates.join(", ")
+        ))
+    })
+}
+
+fn optional_header(headers: &StringRecord, candidates: &[&str]) -> Option<usize> {
+    headers.iter().position(|header| {
+        let normalized = header.trim().to_ascii_lowercase();
+        candidates
+            .iter()
+            .any(|candidate| normalized == candidate.trim().to_ascii_lowercase())
+    })
+}
+
+fn required_f64(record: &StringRecord, index: usize, field: &str) -> Result<f64> {
+    optional_f64(record, Some(index)).ok_or_else(|| {
+        LasError::Validation(format!(
+            "csv row is missing required numeric field '{field}'"
+        ))
+    })
+}
+
+fn optional_f64(record: &StringRecord, index: Option<usize>) -> Option<f64> {
+    let text = index.and_then(|idx| record.get(idx))?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        trimmed.parse::<f64>().ok()
+    }
+}
+
+fn required_string(record: &StringRecord, index: usize, field: &str) -> Result<String> {
+    optional_string(record, Some(index))
+        .ok_or_else(|| LasError::Validation(format!("csv row is missing required field '{field}'")))
+}
+
+fn optional_string(record: &StringRecord, index: Option<usize>) -> Option<String> {
+    let value = index.and_then(|idx| record.get(idx))?.trim().to_string();
+    if value.is_empty() { None } else { Some(value) }
+}
+
+fn csv_record_error(error: csv::Error) -> LasError {
+    LasError::Parse(format!("failed to read csv record: {error}"))
+}
+
+fn float_column(batch: &RecordBatch, name: &str) -> Result<Vec<Option<f64>>> {
+    let array = batch.column_by_name(name).ok_or_else(|| {
+        LasError::Storage(format!("missing float column '{name}' in asset package"))
+    })?;
+    let floats = array
+        .as_any()
+        .downcast_ref::<Float64Array>()
+        .ok_or_else(|| LasError::Storage(format!("column '{name}' was not Float64")))?;
+    Ok((0..floats.len())
+        .map(|idx| (!floats.is_null(idx)).then_some(floats.value(idx)))
+        .collect())
+}
+
+fn optional_float_column(batch: &RecordBatch, name: &str) -> Result<Vec<Option<f64>>> {
+    float_column(batch, name)
+}
+
+fn string_column(batch: &RecordBatch, name: &str) -> Result<Vec<Option<String>>> {
+    let array = batch.column_by_name(name).ok_or_else(|| {
+        LasError::Storage(format!("missing string column '{name}' in asset package"))
+    })?;
+    let strings = array
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| LasError::Storage(format!("column '{name}' was not Utf8")))?;
+    Ok((0..strings.len())
+        .map(|idx| (!strings.is_null(idx)).then_some(strings.value(idx).to_string()))
+        .collect())
+}
+
+fn optional_string_column(batch: &RecordBatch, name: &str) -> Result<Vec<Option<String>>> {
+    string_column(batch, name)
+}
+
+fn numeric_extent<I>(values: I, row_count: usize) -> (Option<f64>, Option<f64>, Option<usize>)
+where
+    I: Iterator<Item = f64>,
+{
+    let mut start = None;
+    let mut stop = None;
+    for value in values {
+        start = Some(start.map_or(value, |current: f64| current.min(value)));
+        stop = Some(stop.map_or(value, |current: f64| current.max(value)));
+    }
+    (start, stop, Some(row_count))
+}

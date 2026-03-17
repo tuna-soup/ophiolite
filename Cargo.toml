@@ -13,6 +13,7 @@ resolver = "2"
 [workspace.dependencies]
 arrow-array = "58.0.0"
 arrow-schema = "58.0.0"
+csv = "1.4"
 encoding_rs = "0.8"
 parquet = "58.0.0"
 regex = "1.11"
@@ -28,11 +29,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+arrow-array = { workspace = true }
+arrow-schema = { workspace = true }
+csv = { workspace = true }
 lithos-core = { path = "crates/lithos-core" }
 lithos-parser = { path = "crates/lithos-parser" }
 lithos-table = { path = "crates/lithos-table" }
 lithos-package = { path = "crates/lithos-package" }
 lithos-cli = { path = "crates/lithos-cli" }
+parquet = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -24,13 +24,20 @@ The package layer remains authoritative for:
 - bulk data descriptors
 - Parquet-backed or file-backed payloads
 
-The initial multi-well implementation is intentionally read-mostly and currently makes log assets the first project-managed family. The near-term typed asset family direction is:
+The initial multi-well implementation is intentionally read-mostly. It currently includes:
 
 - log assets
 - trajectory assets
 - tops assets
 - pressure observation assets
 - drilling observation assets
+
+Current ingest/query status:
+
+- LAS import feeds project-managed log assets
+- CSV import feeds the first non-log asset families
+- typed read/query APIs exist for trajectory, tops, pressure observations, and drilling observations
+- rich edit sessions are still primarily a log/package capability
 
 ## Why
 
@@ -47,4 +54,4 @@ The initial multi-well implementation is intentionally read-mostly and currently
 - asset collections group related or versioned assets under one wellbore
 - the catalog is for discovery and relationships; the package is the authoritative storage unit for the asset itself
 - the first multi-well slice focuses on project creation, import, binding, search, and read/query rather than rich edit sessions for every asset family
-- non-log asset ingestion and richer reconciliation workflows remain follow-on work
+- richer reconciliation workflows, non-log edit sessions, and broader source support remain follow-on work

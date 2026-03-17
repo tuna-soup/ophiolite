@@ -92,6 +92,7 @@ Core components:
 - canonical domain object: `LasFile`
 - explicit editable package session model: `PackageSession`
 - local multi-well project/catalog root: `LithosProject`
+- typed multi-well asset families: log, trajectory, tops, pressure observations, and drilling observations
 - Tauri/backend adapter surface: `PackageBackend`
 - Tauri-ready shared backend state wrapper: `PackageBackendState`
 - app-boundary command service: `PackageCommandService`
@@ -103,6 +104,7 @@ Core components:
 - DTO/query layer for package-backed applications
 - optimized package format: `metadata.json + curves.parquet`
 - SQLite-backed project catalog for well, wellbore, collection, and asset discovery
+- Parquet-backed project-managed asset packages for non-log structured wellbore data
 - CLI for import and inspection
 - local example corpus and parity tests against `lasio` non-v3 behavior
 
@@ -222,7 +224,14 @@ The current rule is:
 - well and wellbore discovery
 - asset-collection grouping
 - log-asset import from LAS into project-managed packages
+- structured non-log asset import from CSV into project-managed packages for:
+  - trajectory
+  - tops
+  - pressure observations
+  - drilling observations
 - stable logical asset identity plus per-import storage identity
+- typed read/query APIs for those non-log asset families
+- cross-asset depth-range discovery for one wellbore
 
 The first multi-well slice is still intentionally read-mostly. Log/package editing remains the most mature edit path.
 

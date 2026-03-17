@@ -1,6 +1,16 @@
+use crate::project_assets::{
+    data_filename, depth_reference_for_kind, drilling_extent, drilling_metadata,
+    parse_drilling_csv, parse_pressure_csv, parse_tops_csv, parse_trajectory_csv, pressure_extent,
+    pressure_metadata, read_drilling_rows, read_pressure_rows, read_tops_rows,
+    read_trajectory_rows, tops_extent, tops_metadata, trajectory_extent, trajectory_metadata,
+    vertical_datum_for_kind, write_drilling_package, write_pressure_package, write_tops_package,
+    write_trajectory_package,
+};
 use crate::{
-    IndexKind, IngestIssue, LasError, LasFile, Provenance, Result, WellInfo, package_metadata_for,
-    read_path, write_package_overwrite,
+    AssetBindingInput, AssetTableMetadata, DepthRangeQuery, DrillingObservationRow, IndexKind,
+    IngestIssue, LasError, LasFile, PressureObservationRow, Provenance, Result, TopRow,
+    TrajectoryRow, WellInfo, package_metadata_for, read_path, revision_token_for_bytes,
+    write_package_overwrite,
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -259,6 +269,8 @@ pub struct LogAssetImportResult {
     pub asset: AssetRecord,
 }
 
+pub type ProjectAssetImportResult = LogAssetImportResult;
+
 pub struct LithosProject {
     root: PathBuf,
     catalog_path: PathBuf,
@@ -515,6 +527,242 @@ impl LithosProject {
         })
     }
 
+    pub fn import_trajectory_csv(
+        &mut self,
+        csv_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<ProjectAssetImportResult> {
+        let rows = parse_trajectory_csv(csv_path.as_ref())?;
+        self.import_structured_asset(
+            csv_path.as_ref(),
+            binding,
+            AssetKind::Trajectory,
+            collection_name,
+            |root| write_trajectory_package(root, &rows),
+            trajectory_metadata(&rows),
+            structured_asset_extent(AssetKind::Trajectory, trajectory_extent(&rows)),
+        )
+    }
+
+    pub fn import_tops_csv(
+        &mut self,
+        csv_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<ProjectAssetImportResult> {
+        let rows = parse_tops_csv(csv_path.as_ref())?;
+        self.import_structured_asset(
+            csv_path.as_ref(),
+            binding,
+            AssetKind::TopSet,
+            collection_name,
+            |root| write_tops_package(root, &rows),
+            tops_metadata(&rows),
+            structured_asset_extent(AssetKind::TopSet, tops_extent(&rows)),
+        )
+    }
+
+    pub fn import_pressure_csv(
+        &mut self,
+        csv_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<ProjectAssetImportResult> {
+        let rows = parse_pressure_csv(csv_path.as_ref())?;
+        self.import_structured_asset(
+            csv_path.as_ref(),
+            binding,
+            AssetKind::PressureObservation,
+            collection_name,
+            |root| write_pressure_package(root, &rows),
+            pressure_metadata(&rows),
+            structured_asset_extent(AssetKind::PressureObservation, pressure_extent(&rows)),
+        )
+    }
+
+    pub fn import_drilling_csv(
+        &mut self,
+        csv_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<ProjectAssetImportResult> {
+        let rows = parse_drilling_csv(csv_path.as_ref())?;
+        self.import_structured_asset(
+            csv_path.as_ref(),
+            binding,
+            AssetKind::DrillingObservation,
+            collection_name,
+            |root| write_drilling_package(root, &rows),
+            drilling_metadata(&rows),
+            structured_asset_extent(AssetKind::DrillingObservation, drilling_extent(&rows)),
+        )
+    }
+
+    pub fn read_trajectory_rows(
+        &self,
+        asset_id: &AssetId,
+        range: Option<&DepthRangeQuery>,
+    ) -> Result<Vec<TrajectoryRow>> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::Trajectory)?;
+        read_trajectory_rows(Path::new(&asset.package_path), range)
+    }
+
+    pub fn read_tops(&self, asset_id: &AssetId) -> Result<Vec<TopRow>> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::TopSet)?;
+        read_tops_rows(Path::new(&asset.package_path))
+    }
+
+    pub fn read_pressure_observations(
+        &self,
+        asset_id: &AssetId,
+        range: Option<&DepthRangeQuery>,
+    ) -> Result<Vec<PressureObservationRow>> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::PressureObservation)?;
+        read_pressure_rows(Path::new(&asset.package_path), range)
+    }
+
+    pub fn read_drilling_observations(
+        &self,
+        asset_id: &AssetId,
+        range: Option<&DepthRangeQuery>,
+    ) -> Result<Vec<DrillingObservationRow>> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::DrillingObservation)?;
+        read_drilling_rows(Path::new(&asset.package_path), range)
+    }
+
+    pub fn assets_covering_depth_range(
+        &self,
+        wellbore_id: &WellboreId,
+        depth_min: f64,
+        depth_max: f64,
+    ) -> Result<Vec<AssetRecord>> {
+        if depth_min > depth_max {
+            return Err(LasError::Validation(String::from(
+                "depth range requires depth_min <= depth_max",
+            )));
+        }
+        Ok(self
+            .list_assets(wellbore_id, None)?
+            .into_iter()
+            .filter(|asset| asset_covers_depth_range(asset, depth_min, depth_max))
+            .collect())
+    }
+
+    fn import_structured_asset<F>(
+        &mut self,
+        source_path: &Path,
+        binding: &AssetBindingInput,
+        asset_kind: AssetKind,
+        collection_name: Option<&str>,
+        writer: F,
+        metadata: AssetTableMetadata,
+        extent: AssetExtent,
+    ) -> Result<ProjectAssetImportResult>
+    where
+        F: FnOnce(&Path) -> Result<()>,
+    {
+        let identifiers = identifiers_from_binding(binding);
+        let (well, created_well) = self.resolve_or_create_well(&identifiers)?;
+        let (wellbore, created_wellbore) =
+            self.resolve_or_create_wellbore_for_binding(&well.id, binding)?;
+        let collection_name = collection_name
+            .map(str::to_owned)
+            .or_else(|| {
+                source_path
+                    .file_stem()
+                    .map(|value| value.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| asset_kind.as_str().to_string());
+        let collection =
+            self.resolve_or_create_collection(&wellbore.id, asset_kind.clone(), &collection_name)?;
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(asset_kind.asset_dir_name())
+            .join(format!("{}.lithos-asset", storage_asset_id.0));
+        let package_root = self.root.join(&package_rel_path);
+        writer(&package_root)?;
+        let supersedes = self
+            .latest_active_asset_for_collection(&collection.id)?
+            .map(|asset| asset.id);
+        let manifest = structured_asset_manifest(
+            source_path,
+            &metadata,
+            &well.id,
+            &wellbore.id,
+            &collection.id,
+            &collection.logical_asset_id,
+            &storage_asset_id,
+            asset_kind.clone(),
+            extent,
+            identifiers.clone(),
+            supersedes.clone(),
+        )?;
+        write_asset_manifest(&package_root, &manifest)?;
+        if let Some(asset_id) = &supersedes {
+            self.mark_asset_superseded(asset_id)?;
+        }
+        let asset = AssetRecord {
+            id: storage_asset_id,
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: well.id.clone(),
+            wellbore_id: wellbore.id.clone(),
+            asset_kind,
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest,
+        };
+        self.insert_asset(&asset, &package_rel_path)?;
+        Ok(ProjectAssetImportResult {
+            resolution: ImportResolution {
+                status: AssetStatus::Bound,
+                well_id: well.id,
+                wellbore_id: wellbore.id,
+                created_well,
+                created_wellbore,
+            },
+            collection,
+            asset,
+        })
+    }
+
+    fn asset_by_id(&self, asset_id: &AssetId) -> Result<AssetRecord> {
+        self.connection
+            .query_row(
+                "SELECT id, logical_asset_id, collection_id, well_id, wellbore_id, asset_kind, status, package_rel_path, manifest_json
+                 FROM assets
+                 WHERE id = ?1",
+                params![asset_id.0],
+                |row| {
+                    let manifest = serde_json::from_str::<AssetManifest>(&row.get::<_, String>(8)?)
+                        .map_err(sql_json_error)?;
+                    Ok(AssetRecord {
+                        id: AssetId(row.get(0)?),
+                        logical_asset_id: AssetId(row.get(1)?),
+                        collection_id: AssetCollectionId(row.get(2)?),
+                        well_id: WellId(row.get(3)?),
+                        wellbore_id: WellboreId(row.get(4)?),
+                        asset_kind: AssetKind::from_str(&row.get::<_, String>(5)?)
+                            .map_err(sql_validation_error)?,
+                        status: AssetStatus::from_str(&row.get::<_, String>(6)?)
+                            .map_err(sql_validation_error)?,
+                        package_path: self
+                            .root
+                            .join(row.get::<_, String>(7)?)
+                            .to_string_lossy()
+                            .into_owned(),
+                        manifest,
+                    })
+                },
+            )
+            .map_err(sqlite_error)
+    }
+
     fn resolve_or_create_well(
         &self,
         identifiers: &WellIdentifierSet,
@@ -601,6 +849,20 @@ impl LithosProject {
             ],
         ).map_err(sqlite_error)?;
         Ok((wellbore, true))
+    }
+
+    fn resolve_or_create_wellbore_for_binding(
+        &self,
+        well_id: &WellId,
+        binding: &AssetBindingInput,
+    ) -> Result<(WellboreRecord, bool)> {
+        let identifiers = WellIdentifierSet {
+            primary_name: Some(binding.wellbore_name.clone()),
+            uwi: binding.uwi.clone(),
+            api: binding.api.clone(),
+            operator_aliases: binding.operator_aliases.clone(),
+        };
+        self.resolve_or_create_wellbore(well_id, &identifiers)
     }
 
     fn resolve_or_create_collection(
@@ -928,6 +1190,69 @@ fn log_asset_manifest(
     }
 }
 
+fn structured_asset_manifest(
+    source_path: &Path,
+    metadata: &AssetTableMetadata,
+    well_id: &WellId,
+    wellbore_id: &WellboreId,
+    collection_id: &AssetCollectionId,
+    logical_asset_id: &AssetId,
+    storage_asset_id: &AssetId,
+    asset_kind: AssetKind,
+    extent: AssetExtent,
+    identifiers: WellIdentifierSet,
+    supersedes: Option<AssetId>,
+) -> Result<AssetManifest> {
+    let imported_at = now_unix_seconds();
+    let source_bytes = fs::read(source_path)?;
+    let fingerprint = source_fingerprint(&source_bytes);
+    let provenance = Provenance::from_path(source_path, fingerprint.clone(), imported_at);
+    Ok(AssetManifest {
+        asset_kind: asset_kind.clone(),
+        asset_schema_version: metadata.schema_version.clone(),
+        logical_asset_id: logical_asset_id.clone(),
+        storage_asset_id: storage_asset_id.clone(),
+        well_id: well_id.clone(),
+        wellbore_id: wellbore_id.clone(),
+        asset_collection_id: collection_id.clone(),
+        source_artifacts: vec![SourceArtifactRef {
+            source_path: provenance.source_path.clone(),
+            original_filename: provenance.original_filename.clone(),
+            source_fingerprint: provenance.source_fingerprint.clone(),
+        }],
+        provenance,
+        diagnostics: Vec::new(),
+        extents: extent,
+        bulk_data_descriptors: vec![
+            BulkDataDescriptor {
+                relative_path: "metadata.json".to_string(),
+                media_type: "application/json".to_string(),
+                role: "metadata".to_string(),
+            },
+            BulkDataDescriptor {
+                relative_path: data_filename().to_string(),
+                media_type: "application/vnd.apache.parquet".to_string(),
+                role: "bulk_data".to_string(),
+            },
+        ],
+        reference_metadata: AssetReferenceMetadata {
+            identifiers,
+            coordinate_reference: None,
+            vertical_datum: vertical_datum_for_kind(&asset_kind),
+            depth_reference: depth_reference_for_kind(&asset_kind),
+            unit_system: UnitSystem {
+                depth_unit: None,
+                coordinate_unit: None,
+                pressure_unit: None,
+            },
+        },
+        created_at_unix_seconds: imported_at,
+        imported_at_unix_seconds: imported_at,
+        supersedes,
+        derived_from: None,
+    })
+}
+
 fn write_asset_manifest(root: &Path, manifest: &AssetManifest) -> Result<()> {
     fs::write(
         root.join(ASSET_MANIFEST_FILENAME),
@@ -947,6 +1272,54 @@ fn identifiers_from_well_info(info: &WellInfo) -> WellIdentifierSet {
             .into_iter()
             .filter(|value| !value.trim().is_empty())
             .collect(),
+    }
+}
+
+fn identifiers_from_binding(binding: &AssetBindingInput) -> WellIdentifierSet {
+    WellIdentifierSet {
+        primary_name: Some(binding.well_name.clone()),
+        uwi: binding.uwi.clone(),
+        api: binding.api.clone(),
+        operator_aliases: binding.operator_aliases.clone(),
+    }
+}
+
+fn structured_asset_extent(
+    asset_kind: AssetKind,
+    extent: (Option<f64>, Option<f64>, Option<usize>),
+) -> AssetExtent {
+    AssetExtent {
+        index_kind: match asset_kind {
+            AssetKind::Trajectory
+            | AssetKind::TopSet
+            | AssetKind::PressureObservation
+            | AssetKind::DrillingObservation => Some(IndexKind::Depth),
+            AssetKind::Log => Some(IndexKind::Depth),
+        },
+        start: extent.0,
+        stop: extent.1,
+        row_count: extent.2,
+    }
+}
+
+fn require_asset_kind(asset: &AssetRecord, expected: AssetKind) -> Result<()> {
+    if asset.asset_kind != expected {
+        return Err(LasError::Validation(format!(
+            "asset '{}' is {}, not {}",
+            asset.id.0,
+            asset.asset_kind.as_str(),
+            expected.as_str()
+        )));
+    }
+    Ok(())
+}
+
+fn asset_covers_depth_range(asset: &AssetRecord, depth_min: f64, depth_max: f64) -> bool {
+    let start = asset.manifest.extents.start;
+    let stop = asset.manifest.extents.stop;
+    match (start, stop) {
+        (Some(start), Some(stop)) => start <= depth_max && stop >= depth_min,
+        _ => false,
     }
 }
 
@@ -991,4 +1364,11 @@ fn sql_validation_error(error: LasError) -> rusqlite::Error {
         rusqlite::types::Type::Text,
         Box::new(std::io::Error::other(error.to_string())),
     )
+}
+
+fn source_fingerprint(bytes: &[u8]) -> String {
+    let checksum = bytes.iter().fold(0u64, |acc, byte| {
+        acc.wrapping_mul(16777619).wrapping_add(u64::from(*byte))
+    });
+    revision_token_for_bytes("source", &format!("{}:{checksum}", bytes.len())).0
 }

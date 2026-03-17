@@ -320,36 +320,36 @@ The DTO contract is versioned with a lightweight `dto_contract_version` field. S
 
 `apps/lithos-harness` is now a first-party internal Tauri + React desktop shell over the current SDK contract.
 
-It has two app-level modes:
+It is now project-first rather than package-first:
 
 - `Home`
-  - create package
-  - open existing package
-  - recent packages
+  - create `LithosProject`
+  - open existing `LithosProject`
+  - recent projects
 - `Workspace`
-  - overview
-  - metadata inspector
-  - curve catalog and editable sample table
-  - LAS import/preview
-  - diagnostics
-  - read-only package file views
+  - browse wells
+  - browse wellbores, asset collections, and assets
+  - inspect selected log, tops, trajectory, pressure, and drilling assets
+  - import LAS and structured CSV assets into the selected project
+  - run depth-range coverage queries across one wellbore
 
 The harness keeps the SDK concepts explicit:
 
-- package = saved folder on disk
-- session = live editable SDK state
-- workspace = app shell around a draft folder or live session
+- project = the multi-well root with `catalog.sqlite` and `assets/`
+- asset package = one authoritative storage unit for one asset
+- session = live editable SDK state for a selected log package
+- workspace = app shell around one open project
 
 Current harness behavior:
 
-- creating a package chooses a root folder and then immediately offers LAS import
-- if a LAS file is chosen, package files are written and a live session opens immediately
-- if LAS import is skipped, the app falls back to a draft workspace rooted at the chosen folder
-- existing packages open directly into a live session-backed workspace
-- save/save-as are available from both the visible toolbar and the native File menu
-- package files can be inspected in a parquet-viewer-style read-only pane adapted to Lithos storage
+- creating or opening a project lands in a project browser rather than a single-package editor
+- wells, wellbores, collections, and assets are browsed directly from `LithosProject`
+- selecting a log asset opens the existing package/session-backed log inspection path
+- selecting a non-log asset loads typed trajectory, tops, pressure, or drilling rows through the project query APIs
+- LAS and structured CSV asset imports happen from the project workspace
+- save/save-as remain available for selected log sessions from both the visible toolbar and the native File menu
 
-This means Lithos is now close to a real test desktop app. The backend contract, command layer, and a multi-page Tauri shell already exist in-repo. The remaining gap is mostly product/UI iteration, richer diagnostics/repair flows, and broader end-to-end acceptance coverage.
+This means Lithos now has a real multi-asset desktop validation surface in-repo. The next gaps are mostly workflow hardening, richer cross-asset viewers, stronger import/reconciliation governance, and broader acceptance coverage.
 
 Harness verification commands:
 

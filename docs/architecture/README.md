@@ -95,6 +95,7 @@ Current multi-well status:
 - CSV ingest for trajectory, tops, pressure observations, and drilling observations exists now
 - typed read/query helpers for those non-log families exist now
 - cross-asset depth-range discovery across one wellbore exists now
+- synthetic project-fixture generation now exists for testing and app validation; it generates raw LAS/CSV sources and imports them into one coherent `LithosProject`
 - non-log asset editing is deferred
 
 ## Package Session Contract

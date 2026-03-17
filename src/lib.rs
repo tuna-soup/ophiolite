@@ -3,6 +3,7 @@ mod backend_commands;
 mod command_service;
 mod project;
 mod project_assets;
+mod synthetic_fixtures;
 
 pub use backend::{PackageBackend, dto_contract_version};
 pub use backend_commands::PackageBackendState;
@@ -54,4 +55,8 @@ pub use project::{
 pub use project_assets::{
     AssetBindingInput, AssetColumnMetadata, AssetColumnType, AssetTableMetadata, DepthRangeQuery,
     DrillingObservationRow, PressureObservationRow, TopRow, TrajectoryRow,
+};
+pub use synthetic_fixtures::{
+    SyntheticProjectAssetIds, SyntheticProjectFixture, SyntheticProjectSourcePaths,
+    generate_synthetic_project_fixture,
 };

@@ -232,8 +232,27 @@ The current rule is:
 - stable logical asset identity plus per-import storage identity
 - typed read/query APIs for those non-log asset families
 - cross-asset depth-range discovery for one wellbore
+- synthetic multi-asset project fixture generation for testing and manual inspection
 
 The first multi-well slice is still intentionally read-mostly. Log/package editing remains the most mature edit path.
+
+For test and app-validation workflows, Lithos can also generate a coherent synthetic project fixture:
+
+```text
+synthetic_well_project/
+  lithos-project.json
+  catalog.sqlite
+  sources/
+    logs/synthetic_well.las
+    trajectory/synthetic_trajectory.csv
+    tops/synthetic_tops.csv
+    pressure/synthetic_pressure.csv
+    drilling/synthetic_drilling.csv
+  assets/
+    ...
+```
+
+The raw files are generated first and then imported through the normal `LithosProject` APIs, so the fixture validates the real import pipeline rather than bypassing it.
 
 ## CurveTable
 
@@ -406,9 +425,11 @@ cargo run -- inspect-file <input.las>
 cargo run -- summary <package_dir>
 cargo run -- list-curves <package_dir>
 cargo run -- generate-fixture-packages test_data/logs test_data/logs/packages
+cargo run -- generate-synthetic-project test_data/projects/synthetic_well_project
 ```
 
 The CLI currently provides basic import, inspection, and package introspection functionality.
+It can also regenerate a synthetic multi-asset `LithosProject` fixture with linked log, trajectory, tops, pressure, and drilling assets for manual inspection.
 
 ## Design Docs
 

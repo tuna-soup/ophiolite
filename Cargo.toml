@@ -16,6 +16,7 @@ arrow-schema = "58.0.0"
 encoding_rs = "0.8"
 parquet = "58.0.0"
 regex = "1.11"
+rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0.18"
@@ -32,6 +33,9 @@ lithos-parser = { path = "crates/lithos-parser" }
 lithos-table = { path = "crates/lithos-table" }
 lithos-package = { path = "crates/lithos-package" }
 lithos-cli = { path = "crates/lithos-cli" }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 parquet = { workspace = true }

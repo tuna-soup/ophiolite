@@ -1,6 +1,7 @@
 mod backend;
 mod backend_commands;
 mod command_service;
+mod project;
 
 pub use backend::{PackageBackend, dto_contract_version};
 pub use backend_commands::PackageBackendState;
@@ -41,4 +42,11 @@ pub use lithos_parser::examples;
 pub use lithos_parser::{
     DType, DTypeSpec, DecodedText, NullPolicy, NullRule, ParsedHeaderLine, ReadOptions, ReadPolicy,
     decode_bytes, import_las_file, parse_header_line, read_path, read_reader, read_string,
+};
+pub use project::{
+    AssetCollectionId, AssetCollectionRecord, AssetExtent, AssetId, AssetKind, AssetManifest,
+    AssetRecord, AssetReferenceMetadata, AssetStatus, BulkDataDescriptor, CoordinateReference,
+    DepthReference, ImportResolution, LithosProject, LithosProjectManifest, LogAssetImportResult,
+    SourceArtifactRef, UnitSystem, VerticalDatum, WellId, WellIdentifierSet, WellRecord,
+    WellboreId, WellboreRecord,
 };

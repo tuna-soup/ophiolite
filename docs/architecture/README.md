@@ -8,6 +8,7 @@ The goal is that someone new to the codebase can read this directory and underst
 - which design choices are intentional
 - which documents describe current behavior versus target-state behavior
 - where Arrow/Parquet fit in the roadmap
+- how the new project/catalog layer fits above single-asset packages
 
 ## System Today
 
@@ -28,11 +29,13 @@ Current properties:
 - the root `lithos_las` crate is a compatibility facade over those workspace crates
 - `LasFile` is the canonical public domain object
 - `PackageSession` is the backend-owned editable package session model
+- `LithosProject` is the local-first multi-well project/catalog root
 - `PackageBackend` and `PackageBackendState` are the current Tauri-ready backend adapter layer
 - `PackageCommandService` is the app-boundary transport layer above the shared backend state
 - `CurveTable` is the app-facing in-memory table abstraction
 - DTOs are the intended frontend/backend transfer boundary
 - package storage uses `metadata.json + curves.parquet`
+- packages remain single-asset storage units; the project catalog organizes them into well-domain relationships
 - `metadata.json` now groups package identity, document metadata, storage descriptors, raw preserved sections, and diagnostics explicitly
 - Arrow/Parquet are internal storage/package details, and now also power backend-session lazy window reads and depth-range query execution
 - non-v3 `lasio` read/model parity is the main compatibility baseline
@@ -57,6 +60,39 @@ Current properties:
 ```
 
 This separation is intentional: the SDK owns LAS semantics, DTOs own transfer shapes, and storage formats remain replaceable implementation details.
+
+## Multi-Well Layer
+
+`lithos` now has an explicit layer above single-asset packages:
+
+```text
+LithosProject
+  -> catalog.sqlite
+  -> wells
+  -> wellbores
+  -> asset collections
+  -> typed asset packages
+```
+
+Current properties of this layer:
+
+- `LithosProject` is the user-facing/root concept
+- SQLite stores discovery, identities, relationships, package paths, and lightweight status
+- single-asset packages remain the authoritative storage unit for asset-local metadata and bulk data
+- log assets are the first project-managed asset family
+- trajectory, tops, pressure observations, and drilling observations are scaffolded as typed asset families for future expansion
+- every project-managed asset can carry both:
+  - logical identity
+  - storage/package identity
+- asset collections exist between wellbore and asset instances so versions or alternate deliveries do not collapse into a flat pile
+
+Current multi-well status:
+
+- project creation/open exists now
+- LAS import into project-managed log packages exists now
+- well/wellbore/collection/asset registry exists now
+- non-log asset ingest is still a later step
+- non-log asset editing is deferred
 
 ## Package Session Contract
 
@@ -180,6 +216,7 @@ Only after those are stable should the project tighten runtime/package behavior 
 - `ADR-0005-staged-workspace-split-and-table-boundary.md`
 - `ADR-0006-package-session-and-dto-boundary.md`
 - `ADR-0007-canonical-schema-target.md`
+- `ADR-0008-project-catalog-and-single-asset-packages.md`
 
 ## Related Docs
 

@@ -2,7 +2,7 @@
 
 Status: Early development. The canonical LAS model and optimized package schema are still evolving.
 
-`lithos` is a Rust-first LAS SDK for desktop and local-tooling workflows. It reads raw LAS files into a canonical domain model, exposes an application-facing table abstraction for curve data, and can persist an optimized local package split into `metadata.json` and `curves.parquet`.
+`lithos` is a Rust-first LAS and well-data SDK for desktop and local-tooling workflows. It reads raw LAS files into a canonical domain model, exposes an application-facing table abstraction for curve data, can persist optimized local asset packages split into `metadata.json` and `curves.parquet`, and now also supports a local multi-well project/catalog layer above those packages.
 
 The project is designed primarily for Rust desktop applications such as Tauri backends and local data tooling, while remaining interoperable with common data ecosystems.
 
@@ -28,6 +28,7 @@ Lithos aims to fill that gap with:
 - an app-friendly runtime table abstraction
 - an optimized local package format
 - a Rust-native SDK suitable for desktop applications
+- a local-first project/catalog layer for assembling multiple wellbore assets coherently
 
 The design philosophy is domain-first, meaning the API reflects LAS concepts rather than storage formats.
 
@@ -90,6 +91,7 @@ Core components:
 - root compatibility crate: `lithos_las`
 - canonical domain object: `LasFile`
 - explicit editable package session model: `PackageSession`
+- local multi-well project/catalog root: `LithosProject`
 - Tauri/backend adapter surface: `PackageBackend`
 - Tauri-ready shared backend state wrapper: `PackageBackendState`
 - app-boundary command service: `PackageCommandService`
@@ -100,6 +102,7 @@ Core components:
 - in-memory app/query layer: `CurveTable`
 - DTO/query layer for package-backed applications
 - optimized package format: `metadata.json + curves.parquet`
+- SQLite-backed project catalog for well, wellbore, collection, and asset discovery
 - CLI for import and inspection
 - local example corpus and parity tests against `lasio` non-v3 behavior
 
@@ -189,6 +192,39 @@ DEPT      DT      RHOB    NPHI
 ```
 
 This keeps metadata and sampled data cleanly separated while remaining easy to inspect from other tools.
+
+## LithosProject
+
+Lithos now also has a local-first project/catalog layer for multi-well organization.
+
+Illustrative shape:
+
+```text
+my-study/
+  lithos-project.json
+  catalog.sqlite
+  assets/
+    logs/
+      asset_123.laspkg/
+        metadata.json
+        curves.parquet
+        asset_manifest.json
+```
+
+The current rule is:
+
+- the catalog is for discovery and relationships
+- the package is the authoritative storage unit for the asset itself
+
+`LithosProject` currently provides:
+
+- project creation/open
+- well and wellbore discovery
+- asset-collection grouping
+- log-asset import from LAS into project-managed packages
+- stable logical asset identity plus per-import storage identity
+
+The first multi-well slice is still intentionally read-mostly. Log/package editing remains the most mature edit path.
 
 ## CurveTable
 

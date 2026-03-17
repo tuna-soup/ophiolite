@@ -411,11 +411,7 @@ impl BackendPackageSession {
     fn materialize_for_edit(&mut self) -> Result<&mut PackageSession> {
         if let Self::Lazy(session) = self {
             ensure_lazy_session_current(session)?;
-            let mut materialized = open_package(&session.root)?;
-            materialized.package_id = session.package_id.clone();
-            materialized.session_id = session.session_id.clone();
-            materialized.revision = session.revision.clone();
-            materialized.dirty = session.dirty;
+            let materialized = materialize_package_session_from_lazy(session)?;
             *self = Self::Materialized(materialized);
         }
 
@@ -637,14 +633,32 @@ fn open_backend_session(path: impl AsRef<Path>) -> Result<BackendPackageSession>
     }))
 }
 
-pub fn open_package(path: impl AsRef<Path>) -> Result<PackageSession> {
-    let root = path.as_ref().to_path_buf();
-    debug!(package = %root.display(), "opening LAS package");
+fn materialize_package_session_from_lazy(session: &LazyPackageSession) -> Result<PackageSession> {
+    let batch = read_parquet_batch_with_metadata(
+        curves_path(&session.root),
+        session.reader_metadata.clone(),
+        session.metadata.document.summary.row_count,
+    )?;
+    package_session_from_record_batch(
+        session.root.clone(),
+        session.package_id.clone(),
+        session.session_id.clone(),
+        session.revision.clone(),
+        session.dirty,
+        session.metadata.clone(),
+        batch,
+    )
+}
 
-    let metadata = read_package_metadata(&root)?;
-    let revision = package_revision(&root)?;
-
-    let batch = read_parquet_batch(curves_path(&root), metadata.document.summary.row_count)?;
+fn package_session_from_record_batch(
+    root: PathBuf,
+    package_id: PackageId,
+    session_id: SessionId,
+    revision: RevisionToken,
+    dirty: bool,
+    metadata: PackageMetadata,
+    batch: RecordBatch,
+) -> Result<PackageSession> {
     let descriptors = metadata
         .storage
         .curve_columns
@@ -657,29 +671,53 @@ pub fn open_package(path: impl AsRef<Path>) -> Result<PackageSession> {
     let table = table_from_record_batch(&batch, &descriptors)?;
     let curves = materialize_curves(&metadata.storage.curve_columns, &table)?;
 
-    let root_key = package_path_key(&root);
     Ok(PackageSession {
-        package_id: package_id_for_path(&root_key),
-        session_id: new_session_id(&root),
+        package_id,
+        session_id,
         revision,
-        dirty: false,
+        dirty,
         root,
-        file: LasFile {
-            summary: metadata.document.summary,
-            provenance: metadata.document.provenance,
-            encoding: metadata.document.encoding,
-            index: metadata.storage.index,
-            version: metadata.raw.version,
-            well: metadata.raw.well,
-            params: metadata.raw.params,
-            curves: SectionItems::from_items(curves, metadata.raw.curve_mnemonic_case),
-            other: metadata.raw.other,
-            extra_sections: metadata.raw.extra_sections,
-            issues: metadata.diagnostics.issues,
-            index_unit: metadata.storage.index_unit,
-        },
+        file: las_file_from_package_metadata(metadata, curves),
         table,
     })
+}
+
+fn las_file_from_package_metadata(metadata: PackageMetadata, curves: Vec<CurveItem>) -> LasFile {
+    LasFile {
+        summary: metadata.document.summary,
+        provenance: metadata.document.provenance,
+        encoding: metadata.document.encoding,
+        index: metadata.storage.index,
+        version: metadata.raw.version,
+        well: metadata.raw.well,
+        params: metadata.raw.params,
+        curves: SectionItems::from_items(curves, metadata.raw.curve_mnemonic_case),
+        other: metadata.raw.other,
+        extra_sections: metadata.raw.extra_sections,
+        issues: metadata.diagnostics.issues,
+        index_unit: metadata.storage.index_unit,
+    }
+}
+
+pub fn open_package(path: impl AsRef<Path>) -> Result<PackageSession> {
+    let root = path.as_ref().to_path_buf();
+    debug!(package = %root.display(), "opening LAS package");
+
+    let metadata = read_package_metadata(&root)?;
+    let revision = package_revision(&root)?;
+    let session_id = new_session_id(&root);
+
+    let root_key = package_path_key(&root);
+    let batch = read_parquet_batch(curves_path(&root), metadata.document.summary.row_count)?;
+    package_session_from_record_batch(
+        root,
+        package_id_for_path(&root_key),
+        session_id,
+        revision,
+        false,
+        metadata,
+        batch,
+    )
 }
 
 pub fn open_package_summary(path: impl AsRef<Path>) -> Result<AssetSummaryDto> {
@@ -1199,6 +1237,28 @@ fn read_parquet_batch(path: PathBuf, row_count: usize) -> Result<RecordBatch> {
     let file = File::open(path)?;
     let reader = ParquetRecordBatchReaderBuilder::try_new(file)
         .map_err(|err| LasError::Storage(err.to_string()))?
+        .with_batch_size(row_count.max(1))
+        .build()
+        .map_err(|err| LasError::Storage(err.to_string()))?;
+    let mut batches = reader
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|err| LasError::Storage(err.to_string()))?;
+    match batches.len() {
+        0 => Err(LasError::Storage(String::from(
+            "package parquet data did not contain any record batches",
+        ))),
+        1 => Ok(batches.remove(0)),
+        _ => merge_batches(batches),
+    }
+}
+
+fn read_parquet_batch_with_metadata(
+    path: PathBuf,
+    reader_metadata: ArrowReaderMetadata,
+    row_count: usize,
+) -> Result<RecordBatch> {
+    let file = File::open(path)?;
+    let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(file, reader_metadata)
         .with_batch_size(row_count.max(1))
         .build()
         .map_err(|err| LasError::Storage(err.to_string()))?;

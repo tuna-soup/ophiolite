@@ -236,6 +236,7 @@ Current session semantics:
 - clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
 - metadata-only dirty lazy sessions can rewrite `metadata.json` and save/save-as without materializing sample data
 - the first accepted curve/sample edit and any later save/save-as path that needs the canonical snapshot materializes the eager in-memory `PackageSession`
+- first curve/sample materialization is constructed directly from the current lazy session metadata and cached parquet descriptors rather than reopening the package through the eager SDK path
 - revision tokens are for persistence conflict detection against the currently bound package baseline/root, not collaborative synchronization
 
 Session invariants:
@@ -249,6 +250,7 @@ Session invariants:
 - once a backend session materializes, it does not transition back to lazy in the current phase
 - failed `save` and `save_as` leave the session open with the same session id, dirty-state, package root, and in-memory document snapshot
 - failed materialization leaves the session open with the same session id, dirty-state, package root, and no partial mutation applied
+- materialization preserves all accepted lazy metadata edits already present in the session and must not reconstruct from stale on-disk metadata
 
 Backend-session parquet metadata caches are session-local in the current phase. They are reused across repeated reads within one open session and dropped when that session is closed.
 
@@ -375,6 +377,7 @@ Instead, Lithos focuses on:
 - structured diagnostic DTOs for package, edit, and save validation
 - backend-only lazy session reads on top of Arrow/Parquet projection and row selection
 - lazy metadata-only backend edits and metadata-only save/save-as paths
+- direct first curve-edit materialization from lazy backend session state
 - `metadata.json + curves.parquet` package format
 - non-v3 `lasio` parity coverage
 - package round-trip tests including mixed-type columns

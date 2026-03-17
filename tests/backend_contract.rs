@@ -481,6 +481,21 @@ fn backend_first_successful_curve_edit_materializes_and_stays_materialized() {
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
     let session_id = session.session_id.clone();
+    backend
+        .apply_metadata_edit(
+            &session_id,
+            &MetadataUpdateRequest {
+                items: vec![HeaderItemUpdate {
+                    section: MetadataSectionDto::Well,
+                    mnemonic: String::from("COMP"),
+                    unit: String::new(),
+                    value: LasValue::Text(String::from("LAZY BEFORE CURVE EDIT")),
+                    description: String::from("COMPANY"),
+                }],
+                other: None,
+            },
+        )
+        .unwrap();
     let before = backend
         .read_curve_window(
             &session_id,
@@ -510,6 +525,7 @@ fn backend_first_successful_curve_edit_materializes_and_stays_materialized() {
 
     fs::remove_file(package_dir.join("curves.parquet")).unwrap();
 
+    let metadata = backend.session_metadata(&session_id).unwrap();
     let window = backend
         .read_curve_window(
             &session_id,
@@ -521,6 +537,10 @@ fn backend_first_successful_curve_edit_materializes_and_stays_materialized() {
         )
         .unwrap();
 
+    assert_eq!(
+        metadata.metadata.metadata.well.company.as_deref(),
+        Some("LAZY BEFORE CURVE EDIT")
+    );
     assert_eq!(window.session.session_id, session_id);
     assert_eq!(window.window.row_count, 2);
 }
@@ -534,11 +554,7 @@ fn backend_failed_materialization_keeps_lazy_session_open_and_unchanged() {
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
     let session_id = session.session_id.clone();
-    let before = backend.session_summary(&session_id).unwrap();
-
-    fs::remove_file(package_dir.join("curves.parquet")).unwrap();
-
-    let err = backend
+    backend
         .apply_metadata_edit(
             &session_id,
             &MetadataUpdateRequest {
@@ -546,11 +562,32 @@ fn backend_failed_materialization_keeps_lazy_session_open_and_unchanged() {
                     section: MetadataSectionDto::Well,
                     mnemonic: String::from("COMP"),
                     unit: String::new(),
-                    value: LasValue::Text(String::from("SHOULD NOT APPLY")),
+                    value: LasValue::Text(String::from("LAZY BEFORE FAILURE")),
                     description: String::from("COMPANY"),
                 }],
                 other: None,
             },
+        )
+        .unwrap();
+    let before = backend.session_summary(&session_id).unwrap();
+
+    fs::remove_file(package_dir.join("curves.parquet")).unwrap();
+
+    let err = backend
+        .apply_curve_edit(
+            &session_id,
+            &CurveEditRequest::Upsert(CurveUpdateRequest {
+                mnemonic: String::from("DT"),
+                original_mnemonic: Some(String::from("DT")),
+                unit: String::from("US/M"),
+                header_value: LasValue::Empty,
+                description: String::from("curve edit should fail"),
+                data: vec![
+                    LasValue::Number(1.0),
+                    LasValue::Number(2.0),
+                    LasValue::Number(3.0),
+                ],
+            }),
         )
         .unwrap_err();
     match err {
@@ -566,9 +603,9 @@ fn backend_failed_materialization_keeps_lazy_session_open_and_unchanged() {
         after.dirty.has_unsaved_changes,
         before.dirty.has_unsaved_changes
     );
-    assert_ne!(
+    assert_eq!(
         metadata.metadata.metadata.well.company.as_deref(),
-        Some("SHOULD NOT APPLY")
+        Some("LAZY BEFORE FAILURE")
     );
 
     let window_err = backend
@@ -587,6 +624,75 @@ fn backend_failed_materialization_keeps_lazy_session_open_and_unchanged() {
             panic!("expected lazy window read io error after failed materialization, got {other}")
         }
     }
+}
+
+#[test]
+fn backend_curve_edit_after_lazy_metadata_edit_saves_both_changes() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("backend-mixed-lazy-curve-save");
+    lithos_las::write_package(&las, &package_dir).unwrap();
+
+    let mut backend = PackageBackend::new();
+    let session = backend.open_package_session(&package_dir).unwrap();
+    let session_id = session.session_id.clone();
+    backend
+        .apply_metadata_edit(
+            &session_id,
+            &MetadataUpdateRequest {
+                items: vec![HeaderItemUpdate {
+                    section: MetadataSectionDto::Well,
+                    mnemonic: String::from("COMP"),
+                    unit: String::new(),
+                    value: LasValue::Text(String::from("MIXED SAVE")),
+                    description: String::from("COMPANY"),
+                }],
+                other: None,
+            },
+        )
+        .unwrap();
+    let before = backend
+        .read_curve_window(
+            &session_id,
+            &CurveWindowRequest {
+                curve_names: vec![String::from("DT")],
+                start_row: 0,
+                row_count: 3,
+            },
+        )
+        .unwrap();
+    let mut dt_values = before.window.columns[0].values.clone();
+    dt_values[0] = LasValue::Number(999.0);
+
+    backend
+        .apply_curve_edit(
+            &session_id,
+            &CurveEditRequest::Upsert(CurveUpdateRequest {
+                mnemonic: String::from("DT"),
+                original_mnemonic: Some(String::from("DT")),
+                unit: String::from("US/M"),
+                header_value: LasValue::Empty,
+                description: String::from("mixed save curve edit"),
+                data: dt_values,
+            }),
+        )
+        .unwrap();
+    backend.save_session(&session_id).unwrap();
+
+    let reopened = open_package(&package_dir).unwrap();
+    assert_eq!(
+        reopened
+            .file()
+            .well
+            .get("COMP")
+            .unwrap()
+            .value
+            .display_string(),
+        "MIXED SAVE"
+    );
+    assert_eq!(
+        reopened.read_curve("DT").unwrap()[0],
+        LasValue::Number(999.0)
+    );
 }
 
 #[test]

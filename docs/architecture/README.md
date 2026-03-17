@@ -74,6 +74,7 @@ Current session properties:
 - clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
 - metadata-only dirty lazy sessions can rewrite `metadata.json` and save/save-as without materializing sample data
 - the first accepted curve/sample edit and any later save/save-as path that needs the canonical snapshot materializes a real eager `PackageSession`
+- first curve/sample materialization is built directly from the current lazy session metadata and cached parquet descriptors rather than reopening through the eager SDK package path
 - edits are applied to the session snapshot in memory
 - `save` persists the current session snapshot back to the same package using optimistic revision checks
 - `save_as` persists the current session snapshot to a new package root and updates the session baseline
@@ -95,6 +96,7 @@ Session invariants:
 - once a backend session materializes, it does not transition back to lazy in the current phase
 - failed `save` and `save_as` leave the session open with unchanged identity, dirty-state, bound root, and in-memory document snapshot
 - failed materialization leaves the session open with unchanged identity, dirty-state, bound root, and no partial mutation applied
+- materialization preserves all accepted lazy metadata edits already present in the session and must not reconstruct from stale on-disk metadata
 
 Backend-session parquet metadata caches are session-local in the current phase. They are reused across repeated reads within one open session and dropped when that session is closed.
 

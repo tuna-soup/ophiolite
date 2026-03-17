@@ -62,6 +62,7 @@ The current Tauri-ready adapter layer is `PackageBackend`, with `PackageBackendS
 Session-backed DTOs should expose the currently bound package root so clients can observe rebinding after `save_as`.
 In the current phase, backend session read paths may stay lazy internally, while the public eager `PackageSession` and direct `open_package(...)` APIs remain unchanged.
 That lazy scope is intentionally narrow: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, metadata-only edits and metadata-only save/save-as remain lazy, and curve/sample edits trigger full materialization.
+When first curve/sample materialization is required, it should be built directly from the current lazy session metadata and cached parquet descriptors rather than reopening the package through the eager SDK path.
 
 DTO evolution should remain additive where possible. Formal compatibility guarantees can harden later once the Tauri contract stops moving quickly.
 Public command error kinds should remain small and caller-actionable rather than implementation-shaped.
@@ -112,6 +113,7 @@ Session invariants for the current model:
 - once a backend session materializes, it does not transition back to lazy in the current phase
 - failed `save` and `save_as` leave the session open with unchanged identity, dirty-state, bound root, and in-memory document snapshot
 - failed materialization leaves the session open with unchanged identity, dirty-state, bound root, and no partial mutation applied
+- materialization preserves all accepted lazy metadata edits already present in the session and must not reconstruct from stale on-disk metadata
 
 `save_as` should be understood as: the user remains in the same editing session, but that session is now editing the newly written package.
 

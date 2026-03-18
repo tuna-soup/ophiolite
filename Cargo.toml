@@ -7,6 +7,7 @@ members = [
     "crates/lithos-package",
     "crates/lithos-project",
     "crates/lithos-ingest",
+    "crates/lithos-compute",
     "crates/lithos-cli",
 ]
 exclude = ["apps/lithos-harness/src-tauri"]
@@ -40,6 +41,7 @@ lithos-table = { path = "crates/lithos-table" }
 lithos-package = { path = "crates/lithos-package" }
 lithos-project = { path = "crates/lithos-project" }
 lithos-ingest = { path = "crates/lithos-ingest" }
+lithos-compute = { path = "crates/lithos-compute" }
 lithos-cli = { path = "crates/lithos-cli" }
 parquet = { workspace = true }
 rusqlite = { workspace = true }

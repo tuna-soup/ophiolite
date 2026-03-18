@@ -7,6 +7,7 @@ Lithos is no longer just a LAS/log SDK. The current repo already contains:
 - a strong LAS/log import and package/edit foundation
 - a local-first `LithosProject` catalog
 - typed non-log asset families for trajectory, tops, pressure observations, and drilling observations
+- a logs-first typed compute layer with derived sibling assets
 - a project-first Tauri harness
 - synthetic multi-asset project fixtures for testing and app validation
 
@@ -50,6 +51,7 @@ The current goal is:
 
 - `lithos-project` workspace crate for project/catalog, manifests, typed queries, and synthetic fixtures
 - `lithos-ingest` workspace crate for import-oriented orchestration boundaries
+- `lithos-compute` workspace crate for semantic compute eligibility, function registry, and derived-asset execution
 - `lithos_las` preserved as the compatibility facade over the workspace crates
 
 ### Validation Surface
@@ -73,7 +75,16 @@ Keep the operational model simple and local-first:
 
 The goal is to make Lithos predictable for everyday subsurface work rather than Git-like.
 
-### 2. Cross-Asset App Workflows
+### 2. Broader Compute Surface
+
+The first compute slice is now in place for log assets. The next compute-specific steps are:
+
+- deeper semantic classification and override workflows
+- more petrophysics / rock-physics functions
+- non-log asset-family compute only where it clearly fits the typed model
+- better app workflows for selecting bindings and inspecting derived assets
+
+### 3. Cross-Asset App Workflows
 
 Use the harness as the validation target for:
 
@@ -81,7 +92,7 @@ Use the harness as the validation target for:
 - current vs superseded asset visibility
 - richer viewers for logs + trajectory + tops together
 
-### 3. Broader Ingest Adapters
+### 4. Broader Ingest Adapters
 
 Deepen the explicit ingest layer after the crate extraction:
 
@@ -105,16 +116,6 @@ The rule is:
 ## Later Ecosystem Direction
 
 These are intentionally later than the current platform-core work.
-
-### Compute Layer
-
-Add a separate computation layer for:
-
-- pure functions / UDFs
-- derived asset generation
-- stateless transformations over assets
-
-This should sit above Lithos Core rather than inside the catalog/package layer.
 
 ### Sync / Distribution Layer
 
@@ -148,6 +149,6 @@ After platform-core and app validation:
 
 Lithos is now best described as:
 
-> a local-first subsurface well-data platform foundation with a particularly strong LAS/log engine
+> a local-first subsurface well-data platform foundation with a particularly strong LAS/log and log-compute engine
 
 The next step is not to rebuild the foundation. It is to make the current foundation app-facing, structurally clear in the monorepo, and easy to build on.

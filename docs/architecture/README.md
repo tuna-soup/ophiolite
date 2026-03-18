@@ -19,6 +19,7 @@ source artifacts
   -> canonical log + typed asset models
   -> single-asset packages
   -> LithosProject catalog
+  -> typed compute / derived assets
   -> DTO/query/edit layers
 ```
 
@@ -30,6 +31,7 @@ Current properties:
 - `PackageSession` is the backend-owned editable package session model
 - `LithosProject` is the local-first multi-well project/catalog root
 - project-managed typed asset families now include log, trajectory, tops, pressure observations, and drilling observations
+- `lithos-compute` now provides a logs-first typed compute/UDF registry
 - `PackageBackend` and `PackageBackendState` are the current Tauri-ready backend adapter layer
 - `PackageCommandService` is the app-boundary transport layer above the shared backend state
 - `CurveTable` is the app-facing in-memory table abstraction
@@ -70,15 +72,15 @@ The current repo already implements the local-first core:
 - canonical log and typed wellbore asset models
 - single-asset packages
 - `LithosProject`
+- logs-first typed compute and derived sibling assets
 - desktop app validation through the internal harness
 
 Later ecosystem layers remain intentionally separate from that core:
 
-- compute / UDF execution
 - sync / distribution
 - broader deployment or enterprise packaging concerns
 
-Those are roadmap items, not current architecture. See:
+Sync/distribution and broader deployment remain roadmap items rather than current architecture. See:
 
 - `../../lithos_roadmap.md`
 - `ADR-0009-future-ecosystem-boundaries.md`
@@ -116,6 +118,7 @@ Current multi-well status:
 - CSV ingest for trajectory, tops, pressure observations, and drilling observations exists now
 - typed read/query helpers for those non-log families exist now
 - cross-asset depth-range discovery across one wellbore exists now
+- typed compute discovery/execution for log assets exists now and persists derived sibling assets with execution manifests
 - synthetic project-fixture generation now exists for testing and app validation; it generates raw LAS/CSV sources and imports them into one coherent `LithosProject`
 - non-log asset editing is deferred
 
@@ -200,6 +203,7 @@ root compatibility crate: lithos_las
   -> lithos-package
   -> lithos-project
   -> lithos-ingest
+  -> lithos-compute
   -> lithos-cli
 ```
 
@@ -207,6 +211,7 @@ Current staged compromise:
 
 - `lithos-project` now owns the multi-asset catalog, asset manifests, typed project queries, summary APIs, and synthetic project fixtures
 - `lithos-ingest` now provides the first explicit ingest-oriented crate boundary over project import flows
+- `lithos-compute` now owns the typed compute registry, semantic curve eligibility, and execution-manifest model for derived assets
 - the root `lithos_las` crate remains the compatibility facade that re-exports the workspace surface
 - the runtime table boundary has its own crate, but `CurveTable` still originates from the core layer in this phase to preserve the current `LasFile::data()` API
 - Arrow/Parquet conversion now lives in the package crate rather than the runtime table type
@@ -246,6 +251,7 @@ Only after those are stable should the project tighten runtime/package behavior 
 - `ADR-0007-canonical-schema-target.md`
 - `ADR-0008-project-catalog-and-single-asset-packages.md`
 - `ADR-0009-future-ecosystem-boundaries.md`
+- `ADR-0010-typed-compute-and-derived-assets.md`
 
 ## Related Docs
 

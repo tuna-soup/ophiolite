@@ -7,6 +7,8 @@ import type {
   AssetCollectionRecord,
   AssetRecord,
   CommandErrorDto,
+  ComputeCatalog,
+  ComputeCatalogEntry,
   CurveCatalogDto,
   CurveWindowDto,
   DrillingObservationRow,
@@ -47,6 +49,7 @@ type LogDetail = {
   session: SessionSummaryDto;
   metadata: SessionMetadataDto;
   catalog: CurveCatalogDto;
+  computeCatalog: ComputeCatalog;
   window: CurveWindowDto | null;
   files: PackageFilesViewDto | null;
 };
@@ -107,6 +110,29 @@ function asText(value: unknown) {
   if (value && typeof value === "object" && "Text" in (value as Record<string, unknown>)) return String((value as { Text: unknown }).Text);
   if (value && typeof value === "object" && "Number" in (value as Record<string, unknown>)) return String((value as { Number: unknown }).Number);
   return value == null ? "" : String(value);
+}
+
+function computeIsAvailable(entry: ComputeCatalogEntry) {
+  return "Available" in entry.availability;
+}
+
+function defaultCurveBindings(entry: ComputeCatalogEntry) {
+  const bindings: Record<string, string> = {};
+  for (const candidate of entry.binding_candidates) {
+    const first = candidate.matches[0];
+    if (first) bindings[candidate.parameter_name] = first.curve_name;
+  }
+  return bindings;
+}
+
+function defaultComputeParameters(entry: ComputeCatalogEntry) {
+  const parameters: Record<string, number | string | boolean> = {};
+  for (const definition of entry.parameters) {
+    if ("Number" in definition && definition.Number.default != null) {
+      parameters[definition.Number.name] = definition.Number.default;
+    }
+  }
+  return parameters;
 }
 
 function loadRecents(): string[] {
@@ -210,10 +236,11 @@ async function loadAssetDetail(workspace: ProjectWorkspace): Promise<AssetDetail
   if (!asset) return null;
   if (asset.asset_kind === "Log") {
     const session = await api.openPackageSession(asset.package_path);
-    const [metadata, catalog, files] = await Promise.all([
+    const [metadata, catalog, files, computeCatalog] = await Promise.all([
       api.sessionMetadata(session.session_id),
       api.sessionCurveCatalog(session.session_id),
-      api.readPackageFiles(asset.package_path)
+      api.readPackageFiles(asset.package_path),
+      api.listProjectComputeCatalog(workspace.project.root, asset.id)
     ]);
     const curveNames = catalog.curves
       .filter((curve) => curve.name)
@@ -225,7 +252,7 @@ async function loadAssetDetail(workspace: ProjectWorkspace): Promise<AssetDetail
           ? (await api.readDepthWindow(session.session_id, { curve_names: curveNames.slice(0, 2), depth_min: range.min, depth_max: range.max })).window
           : (await api.readCurveWindow(session.session_id, { curve_names: curveNames.slice(0, 2), start_row: 0, row_count: 25 })).window
         : null;
-    return { kind: "log", asset, session, metadata, catalog, window, files };
+    return { kind: "log", asset, session, metadata, catalog, computeCatalog, window, files };
   }
   if (asset.asset_kind === "Trajectory") {
     return { kind: "trajectory", asset, rows: await api.readProjectTrajectoryRows(workspace.project.root, asset.id, null, null) };
@@ -530,6 +557,38 @@ function ProjectPage({
     await selectAsset(workspace.detail.asset.id);
   }
 
+  async function runCompute(entry: ComputeCatalogEntry) {
+    if (!workspace.detail || workspace.detail.kind !== "log") {
+      throw { kind: "NoSession", message: "Select a log asset first." };
+    }
+    if (!computeIsAvailable(entry)) {
+      throw { kind: "ValidationFailed", message: "This compute function is not available for the selected log asset." };
+    }
+    const result = await api.runProjectCompute(
+      workspace.project.root,
+      workspace.detail.asset.id,
+      entry.metadata.id,
+      defaultCurveBindings(entry),
+      defaultComputeParameters(entry),
+      null,
+      null
+    );
+    const refreshed = await loadProjectWorkspace(await api.openProject(workspace.project.root), {
+      ...workspace,
+      selectedAssetId: result.asset.id,
+      selectedWellId: result.asset.well_id,
+      selectedWellboreId: result.asset.wellbore_id,
+      view: "asset"
+    });
+    setWorkspace(refreshed);
+    setNotice({
+      tone: "info",
+      title: "Compute complete",
+      detail: `Created derived asset ${result.asset.id} with ${result.execution.output_curve_name}.`
+    });
+    await selectAsset(result.asset.id);
+  }
+
   useEffect(() => {
     if (menuAction === "file.new-project") {
       void run(async () => {
@@ -609,7 +668,7 @@ function ProjectPage({
               <TreeButton key={asset.id} selected={workspace.selectedAssetId === asset.id} onClick={() => void run(() => selectAsset(asset.id))} title={assetKindLabel(asset.asset_kind)} subtitle={`${asset.id} | ${asset.manifest.extents.start ?? "?"} - ${asset.manifest.extents.stop ?? "?"}`} />
             ))}
           </SidebarCard>
-          <MainPanel workspace={workspace} setWorkspace={setWorkspace} onImport={() => void run(importAsset)} onRunCoverage={() => void run(runCoverage)} onSelectAsset={(assetId) => void run(() => selectAsset(assetId))} />
+          <MainPanel workspace={workspace} setWorkspace={setWorkspace} onImport={() => void run(importAsset)} onRunCoverage={() => void run(runCoverage)} onSelectAsset={(assetId) => void run(() => selectAsset(assetId))} onRunCompute={(entry) => void run(() => runCompute(entry))} />
           <InspectorPanel workspace={workspace} onRefresh={() => void run(() => reload())} />
         </div>
       </div>
@@ -643,13 +702,15 @@ function MainPanel({
   setWorkspace,
   onImport,
   onRunCoverage,
-  onSelectAsset
+  onSelectAsset,
+  onRunCompute
 }: {
   workspace: ProjectWorkspace;
   setWorkspace: Dispatch<SetStateAction<ProjectWorkspace | null>>;
   onImport: () => void;
   onRunCoverage: () => void;
   onSelectAsset: (assetId: string) => void;
+  onRunCompute: (entry: ComputeCatalogEntry) => void;
 }) {
   return (
     <Card className="overflow-hidden">
@@ -666,7 +727,7 @@ function MainPanel({
         {workspace.view === "overview" ? <OverviewPanel workspace={workspace} /> : null}
         {workspace.view === "imports" ? <ImportsPanel workspace={workspace} setWorkspace={setWorkspace} onImport={onImport} /> : null}
         {workspace.view === "coverage" ? <CoveragePanel workspace={workspace} setWorkspace={setWorkspace} onRun={onRunCoverage} onSelectAsset={onSelectAsset} /> : null}
-        {workspace.view === "asset" ? <AssetPanel detail={workspace.detail} /> : null}
+        {workspace.view === "asset" ? <AssetPanel detail={workspace.detail} onRunCompute={onRunCompute} /> : null}
       </CardContent>
     </Card>
   );
@@ -824,7 +885,13 @@ function CoveragePanel({
   );
 }
 
-function AssetPanel({ detail }: { detail: AssetDetail }) {
+function AssetPanel({
+  detail,
+  onRunCompute
+}: {
+  detail: AssetDetail;
+  onRunCompute: (entry: ComputeCatalogEntry) => void;
+}) {
   if (!detail) return <div className="p-6 text-sm text-stone-600">Select an asset to inspect it.</div>;
   if (detail.kind === "log") {
     const rows = [
@@ -877,6 +944,42 @@ function AssetPanel({ detail }: { detail: AssetDetail }) {
             </div>
           </TableShell>
           <div className="grid gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Compute</CardTitle>
+                <CardDescription>Type-safe derived-log functions available for this asset.</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-3">
+                {detail.computeCatalog.functions.map((entry) => {
+                  const available = computeIsAvailable(entry);
+                  return (
+                    <div key={entry.metadata.id} className="rounded-2xl border border-stone-200 bg-stone-50/70 p-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="font-medium">{entry.metadata.name}</div>
+                          <div className="text-xs text-stone-600">{entry.metadata.description}</div>
+                          <div className="text-xs text-stone-500">
+                            {entry.binding_candidates.map((candidate) => `${candidate.parameter_name}: ${candidate.matches.map((item) => item.curve_name).join(", ") || "no match"}`).join(" | ")}
+                          </div>
+                        </div>
+                        <Button
+                          variant={available ? "default" : "outline"}
+                          disabled={!available}
+                          onClick={() => onRunCompute(entry)}
+                        >
+                          Run
+                        </Button>
+                      </div>
+                      {!available && "Unavailable" in entry.availability ? (
+                        <div className="mt-2 text-xs text-amber-800">
+                          {entry.availability.Unavailable.reasons.join("; ")}
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
             <InfoBlock title="Session metadata" value={detail.metadata} />
             <InfoBlock title="Curve catalog" value={detail.catalog} />
             <InfoBlock title="Package files" value={detail.files} />

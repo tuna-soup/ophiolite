@@ -12,8 +12,16 @@ use crate::{
     TrajectoryRow, WellInfo, package_metadata_for, read_path, revision_token_for_bytes,
     write_package_overwrite,
 };
+use lithos_compute::{
+    ComputeCatalog, ComputeExecutionManifest, ComputeParameterValue, ComputeRegistry,
+    CurveSemanticDescriptor, CurveSemanticSource, CurveSemanticType, LogCurveData,
+    classify_curve_semantic,
+};
+use lithos_core::{CurveItem, LasValue, SectionItems, derive_canonical_alias};
+use lithos_package::open_package;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -213,6 +221,10 @@ pub struct AssetManifest {
     pub imported_at_unix_seconds: u64,
     pub supersedes: Option<AssetId>,
     pub derived_from: Option<AssetId>,
+    #[serde(default)]
+    pub curve_semantics: Vec<CurveSemanticDescriptor>,
+    #[serde(default)]
+    pub compute_manifest: Option<ComputeExecutionManifest>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -310,6 +322,23 @@ pub struct LogAssetImportResult {
 }
 
 pub type ProjectAssetImportResult = LogAssetImportResult;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectComputeRunRequest {
+    pub source_asset_id: AssetId,
+    pub function_id: String,
+    pub curve_bindings: BTreeMap<String, String>,
+    pub parameters: BTreeMap<String, ComputeParameterValue>,
+    pub output_collection_name: Option<String>,
+    pub output_mnemonic: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectComputeRunResult {
+    pub collection: AssetCollectionRecord,
+    pub asset: AssetRecord,
+    pub execution: ComputeExecutionManifest,
+}
 
 pub struct LithosProject {
     root: PathBuf,
@@ -786,6 +815,149 @@ impl LithosProject {
         read_drilling_rows(Path::new(&asset.package_path), range)
     }
 
+    pub fn log_curve_semantics(&self, asset_id: &AssetId) -> Result<Vec<CurveSemanticDescriptor>> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::Log)?;
+        Ok(asset.manifest.curve_semantics)
+    }
+
+    pub fn set_log_curve_semantic_override(
+        &mut self,
+        asset_id: &AssetId,
+        curve_name: &str,
+        semantic_type: CurveSemanticType,
+    ) -> Result<AssetRecord> {
+        let mut asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::Log)?;
+
+        let mut curve_semantics = if asset.manifest.curve_semantics.is_empty() {
+            classify_log_curves_from_package(&asset.package_path)?
+        } else {
+            asset.manifest.curve_semantics.clone()
+        };
+
+        let descriptor = curve_semantics
+            .iter_mut()
+            .find(|item| item.curve_name == curve_name)
+            .ok_or_else(|| {
+                LasError::Validation(format!(
+                    "curve '{}' not found in log asset '{}'",
+                    curve_name, asset.id.0
+                ))
+            })?;
+        descriptor.semantic_type = semantic_type;
+        descriptor.source = CurveSemanticSource::Override;
+        asset.manifest.curve_semantics = curve_semantics;
+        write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
+        self.update_asset_manifest(&asset)?;
+        Ok(asset)
+    }
+
+    pub fn list_compute_catalog(&self, asset_id: &AssetId) -> Result<ComputeCatalog> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::Log)?;
+        let semantics = if asset.manifest.curve_semantics.is_empty() {
+            classify_log_curves_from_package(&asset.package_path)?
+        } else {
+            asset.manifest.curve_semantics.clone()
+        };
+        let package = open_package(&asset.package_path)?;
+        let numeric_curve_names = package
+            .file()
+            .curves
+            .iter()
+            .filter_map(|curve| curve.numeric_data().map(|_| curve.mnemonic.clone()))
+            .collect::<Vec<_>>();
+        Ok(ComputeRegistry::new().catalog_for_log_asset(&semantics, &numeric_curve_names))
+    }
+
+    pub fn run_compute(
+        &mut self,
+        request: &ProjectComputeRunRequest,
+    ) -> Result<ProjectComputeRunResult> {
+        let source_asset = self.asset_by_id(&request.source_asset_id)?;
+        require_asset_kind(&source_asset, AssetKind::Log)?;
+        let source_package = open_package(&source_asset.package_path)?;
+        let source_file = source_package.file();
+        let semantics = if source_asset.manifest.curve_semantics.is_empty() {
+            classify_log_curves_from_package(&source_asset.package_path)?
+        } else {
+            source_asset.manifest.curve_semantics.clone()
+        };
+        let log_curves = log_curve_data_for_compute(source_file, &semantics)?;
+        let (mut execution, computed_curve) = ComputeRegistry::new().run_log_compute(
+            &request.function_id,
+            &log_curves,
+            &request.curve_bindings,
+            &request.parameters,
+            request.output_mnemonic.as_deref(),
+        )?;
+        execution.source_asset_id = source_asset.id.0.clone();
+        execution.source_logical_asset_id = source_asset.logical_asset_id.0.clone();
+        execution.executed_at_unix_seconds = now_unix_seconds();
+
+        let source_collection = self.collection_by_id(&source_asset.collection_id)?;
+        let collection_name = request.output_collection_name.clone().unwrap_or_else(|| {
+            format!(
+                "{} / Derived / {}",
+                source_collection.name, execution.function_name
+            )
+        });
+        let collection = self.resolve_or_create_collection(
+            &source_asset.wellbore_id,
+            AssetKind::Log,
+            &collection_name,
+        )?;
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(AssetKind::Log.asset_dir_name())
+            .join(format!("{}.laspkg", storage_asset_id.0));
+        let package_root = self.root.join(&package_rel_path);
+        let derived_file = build_derived_log_file(
+            source_file,
+            &source_asset,
+            &collection,
+            &storage_asset_id,
+            &computed_curve,
+            &execution,
+        );
+        write_package_overwrite(&derived_file, &package_root)?;
+
+        let supersedes = self
+            .latest_active_asset_for_collection(&collection.id)?
+            .map(|asset| asset.id);
+        let manifest = derived_log_asset_manifest(
+            &derived_file,
+            &source_asset,
+            &collection,
+            &storage_asset_id,
+            supersedes.clone(),
+            &computed_curve,
+            &execution,
+        );
+        write_asset_manifest(&package_root, &manifest)?;
+        if let Some(asset_id) = &supersedes {
+            self.mark_asset_superseded(asset_id)?;
+        }
+        let asset = AssetRecord {
+            id: storage_asset_id,
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: source_asset.well_id.clone(),
+            wellbore_id: source_asset.wellbore_id.clone(),
+            asset_kind: AssetKind::Log,
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest,
+        };
+        self.insert_asset(&asset, &package_rel_path)?;
+        Ok(ProjectComputeRunResult {
+            collection,
+            asset,
+            execution,
+        })
+    }
+
     pub fn assets_covering_depth_range(
         &self,
         wellbore_id: &WellboreId,
@@ -908,6 +1080,29 @@ impl LithosProject {
                             .to_string_lossy()
                             .into_owned(),
                         manifest,
+                    })
+                },
+            )
+            .map_err(sqlite_error)
+    }
+
+    fn collection_by_id(&self, collection_id: &AssetCollectionId) -> Result<AssetCollectionRecord> {
+        self.connection
+            .query_row(
+                "SELECT id, wellbore_id, asset_kind, name, logical_asset_id, status
+                 FROM asset_collections
+                 WHERE id = ?1",
+                params![collection_id.0],
+                |row| {
+                    Ok(AssetCollectionRecord {
+                        id: AssetCollectionId(row.get(0)?),
+                        wellbore_id: WellboreId(row.get(1)?),
+                        asset_kind: AssetKind::from_str(&row.get::<_, String>(2)?)
+                            .map_err(sql_validation_error)?,
+                        name: row.get(3)?,
+                        logical_asset_id: AssetId(row.get(4)?),
+                        status: AssetStatus::from_str(&row.get::<_, String>(5)?)
+                            .map_err(sql_validation_error)?,
                     })
                 },
             )
@@ -1141,6 +1336,35 @@ impl LithosProject {
         Ok(())
     }
 
+    fn update_asset_manifest(&self, asset: &AssetRecord) -> Result<()> {
+        let package_rel_path = Path::new(&asset.package_path)
+            .strip_prefix(&self.root)
+            .map_err(|_| {
+                LasError::Storage(format!(
+                    "asset '{}' does not live under project root '{}'",
+                    asset.id.0,
+                    self.root.display()
+                ))
+            })?
+            .to_string_lossy()
+            .to_string();
+        self.connection
+            .execute(
+                "UPDATE assets
+                 SET manifest_json = ?2, package_rel_path = ?3, source_path = ?4, source_fingerprint = ?5
+                 WHERE id = ?1",
+                params![
+                    asset.id.0,
+                    serde_json::to_string(&asset.manifest)?,
+                    package_rel_path,
+                    asset.manifest.provenance.source_path.clone(),
+                    asset.manifest.provenance.source_fingerprint.clone(),
+                ],
+            )
+            .map_err(sqlite_error)?;
+        Ok(())
+    }
+
     fn find_matching_well(&self, identifiers: &WellIdentifierSet) -> Result<Option<WellRecord>> {
         if let Some(uwi) = &identifiers.uwi {
             if let Some(well) = self
@@ -1279,6 +1503,136 @@ fn initialize_project_schema(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn classify_log_curves_from_file(file: &LasFile) -> Vec<CurveSemanticDescriptor> {
+    let package_metadata = package_metadata_for(file, 1);
+    package_metadata
+        .storage
+        .curve_columns
+        .iter()
+        .map(|curve| CurveSemanticDescriptor {
+            curve_name: curve.name.clone(),
+            original_mnemonic: curve.original_mnemonic.clone(),
+            unit: (!curve.unit.trim().is_empty()).then_some(curve.unit.clone()),
+            semantic_type: classify_curve_semantic(
+                &curve.alias,
+                &curve.original_mnemonic,
+                Some(&curve.unit),
+                curve.is_index,
+            ),
+            source: CurveSemanticSource::Derived,
+        })
+        .collect()
+}
+
+fn classify_log_curves_from_package(package_path: &str) -> Result<Vec<CurveSemanticDescriptor>> {
+    let package = open_package(package_path)?;
+    Ok(classify_log_curves_from_file(package.file()))
+}
+
+fn log_curve_data_for_compute(
+    file: &LasFile,
+    semantics: &[CurveSemanticDescriptor],
+) -> Result<Vec<LogCurveData>> {
+    let index_curve = file.curve(&file.index.curve_id)?;
+    let depths = index_curve.numeric_data().ok_or_else(|| {
+        LasError::Validation(format!(
+            "index curve '{}' must remain numeric for compute execution",
+            file.index.curve_id
+        ))
+    })?;
+    let semantics_by_name = semantics
+        .iter()
+        .map(|item| (item.curve_name.clone(), item.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut result = Vec::new();
+    for curve in file.curves.iter() {
+        let numeric = curve.numeric_data();
+        if numeric.is_none() {
+            continue;
+        }
+        let descriptor = semantics_by_name
+            .get(&curve.mnemonic)
+            .cloned()
+            .unwrap_or_else(|| CurveSemanticDescriptor {
+                curve_name: curve.mnemonic.clone(),
+                original_mnemonic: curve.original_mnemonic.clone(),
+                unit: (!curve.unit.trim().is_empty()).then_some(curve.unit.clone()),
+                semantic_type: classify_curve_semantic(
+                    &derive_canonical_alias(&curve.original_mnemonic, &curve.unit),
+                    &curve.original_mnemonic,
+                    Some(&curve.unit),
+                    curve.mnemonic == file.index.curve_id,
+                ),
+                source: CurveSemanticSource::Derived,
+            });
+        let values = numeric
+            .unwrap()
+            .into_iter()
+            .map(|value| (!value.is_nan()).then_some(value))
+            .collect::<Vec<_>>();
+        result.push(LogCurveData {
+            curve_name: curve.mnemonic.clone(),
+            original_mnemonic: curve.original_mnemonic.clone(),
+            unit: (!curve.unit.trim().is_empty()).then_some(curve.unit.clone()),
+            semantic_type: descriptor.semantic_type,
+            depths: depths.clone(),
+            values,
+        });
+    }
+    Ok(result)
+}
+
+fn build_derived_log_file(
+    source_file: &LasFile,
+    source_asset: &AssetRecord,
+    collection: &AssetCollectionRecord,
+    storage_asset_id: &AssetId,
+    computed_curve: &lithos_compute::ComputedCurve,
+    execution: &ComputeExecutionManifest,
+) -> LasFile {
+    let mut derived = source_file.clone();
+    let index_curve = source_file
+        .curve(&source_file.index.curve_id)
+        .cloned()
+        .unwrap();
+    let curve_item = CurveItem::new(
+        computed_curve.curve_name.clone(),
+        computed_curve.unit.clone().unwrap_or_default(),
+        LasValue::Empty,
+        computed_curve.description.clone().unwrap_or_default(),
+        computed_curve
+            .values
+            .iter()
+            .map(|value| match value {
+                Some(number) => LasValue::Number(*number),
+                None => LasValue::Empty,
+            })
+            .collect(),
+    );
+    derived.curves = SectionItems::from_items(
+        vec![index_curve, curve_item],
+        source_file.curves.mnemonic_case,
+    );
+    derived.summary.source_path = source_asset.package_path.clone();
+    derived.summary.original_filename = format!(
+        "{}-{}.las",
+        collection.name.replace(' ', "_"),
+        storage_asset_id.0
+    );
+    derived.summary.source_fingerprint =
+        revision_token_for_bytes("compute", &execution.function_id).0;
+    derived.summary.curve_count = derived.curves.len();
+    derived.summary.row_count = derived.row_count();
+    derived.summary.issue_count = derived.issues.len();
+    derived.provenance = Provenance {
+        source_path: source_asset.package_path.clone(),
+        original_filename: derived.summary.original_filename.clone(),
+        source_fingerprint: derived.summary.source_fingerprint.clone(),
+        imported_at_unix_seconds: execution.executed_at_unix_seconds,
+    };
+    derived
+}
+
 fn log_asset_manifest(
     file: &LasFile,
     well_id: &WellId,
@@ -1338,6 +1692,8 @@ fn log_asset_manifest(
         imported_at_unix_seconds: imported_at,
         supersedes,
         derived_from: None,
+        curve_semantics: classify_log_curves_from_file(file),
+        compute_manifest: None,
     }
 }
 
@@ -1401,7 +1757,56 @@ fn structured_asset_manifest(
         imported_at_unix_seconds: imported_at,
         supersedes,
         derived_from: None,
+        curve_semantics: Vec::new(),
+        compute_manifest: None,
     })
+}
+
+fn derived_log_asset_manifest(
+    file: &LasFile,
+    source_asset: &AssetRecord,
+    collection: &AssetCollectionRecord,
+    storage_asset_id: &AssetId,
+    supersedes: Option<AssetId>,
+    computed_curve: &lithos_compute::ComputedCurve,
+    execution: &ComputeExecutionManifest,
+) -> AssetManifest {
+    let mut manifest = log_asset_manifest(
+        file,
+        &source_asset.well_id,
+        &source_asset.wellbore_id,
+        &collection.id,
+        &collection.logical_asset_id,
+        storage_asset_id,
+        supersedes,
+    );
+    manifest.asset_schema_version = "0.2.0".to_string();
+    manifest.source_artifacts = source_asset.manifest.source_artifacts.clone();
+    manifest.reference_metadata = source_asset.manifest.reference_metadata.clone();
+    manifest.derived_from = Some(source_asset.logical_asset_id.clone());
+    manifest.curve_semantics = vec![
+        CurveSemanticDescriptor {
+            curve_name: file.index.curve_id.clone(),
+            original_mnemonic: file.index.raw_mnemonic.clone(),
+            unit: (!file.index.unit.trim().is_empty()).then_some(file.index.unit.clone()),
+            semantic_type: classify_curve_semantic(
+                &derive_canonical_alias(&file.index.raw_mnemonic, &file.index.unit),
+                &file.index.raw_mnemonic,
+                Some(&file.index.unit),
+                true,
+            ),
+            source: CurveSemanticSource::Derived,
+        },
+        CurveSemanticDescriptor {
+            curve_name: computed_curve.curve_name.clone(),
+            original_mnemonic: computed_curve.original_mnemonic.clone(),
+            unit: computed_curve.unit.clone(),
+            semantic_type: computed_curve.semantic_type.clone(),
+            source: CurveSemanticSource::Computed,
+        },
+    ];
+    manifest.compute_manifest = Some(execution.clone());
+    manifest
 }
 
 fn write_asset_manifest(root: &Path, manifest: &AssetManifest) -> Result<()> {

@@ -6,12 +6,13 @@ use commands::{
     import_project_pressure_csv, import_project_tops_csv, import_project_trajectory_csv,
     inspect_las_curve_catalog, inspect_las_depth_window, inspect_las_metadata,
     inspect_las_summary, inspect_las_window, inspect_package_metadata, inspect_package_summary,
-    list_project_asset_collections, list_project_assets, list_project_wellbores,
-    list_project_wells, open_package_session, open_project, project_assets_covering_depth_range,
-    read_curve_window, read_depth_window, read_package_files, read_project_drilling_observations,
-    read_project_pressure_observations, read_project_tops, read_project_trajectory_rows,
-    save_session, save_session_as, session_curve_catalog, session_metadata, session_summary,
-    validate_las, validate_package,
+    list_project_asset_collections, list_project_assets, list_project_compute_catalog,
+    list_project_wellbores, list_project_wells, open_package_session, open_project,
+    project_assets_covering_depth_range, read_curve_window, read_depth_window,
+    read_package_files, read_project_drilling_observations, read_project_pressure_observations,
+    read_project_tops, read_project_trajectory_rows, run_project_compute, save_session,
+    save_session_as, session_curve_catalog, session_metadata, session_summary, validate_las,
+    validate_package,
 };
 use tauri::menu::{MenuBuilder, MenuEvent, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
 use tauri::Emitter;
@@ -111,6 +112,8 @@ pub fn run() {
             list_project_wellbores,
             list_project_asset_collections,
             list_project_assets,
+            list_project_compute_catalog,
+            run_project_compute,
             import_project_las,
             import_project_trajectory_csv,
             import_project_tops_csv,

@@ -7,6 +7,7 @@ edition = "2024"
 lithos-core = { path = "../lithos-core" }
 lithos-parser = { path = "../lithos-parser" }
 lithos-package = { path = "../lithos-package" }
+lithos-compute = { path = "../lithos-compute" }
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 csv = { workspace = true }

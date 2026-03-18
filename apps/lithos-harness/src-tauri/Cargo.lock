@@ -1883,6 +1883,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "lithos-compute"
+version = "0.1.0"
+dependencies = [
+ "lithos-core",
+ "serde",
+]
+
+[[package]]
 name = "lithos-core"
 version = "0.1.0"
 dependencies = [
@@ -1941,6 +1949,7 @@ dependencies = [
  "arrow-array",
  "arrow-schema",
  "csv",
+ "lithos-compute",
  "lithos-core",
  "lithos-package",
  "lithos-parser",
@@ -1965,6 +1974,7 @@ dependencies = [
  "arrow-schema",
  "csv",
  "lithos-cli",
+ "lithos-compute",
  "lithos-core",
  "lithos-ingest",
  "lithos-package",

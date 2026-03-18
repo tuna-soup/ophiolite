@@ -12,8 +12,9 @@ use lithos_las::{
 };
 use lithos_las::{
     AssetBindingInput, AssetCollectionRecord, AssetKind, AssetRecord, DrillingObservationRow,
-    PressureObservationRow,
+    PressureObservationRow, ProjectComputeRunRequest,
 };
+use lithos_las::{ComputeCatalog, ProjectComputeRunResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -101,6 +102,17 @@ pub struct ProjectAssetsRequest {
 pub struct ProjectAssetRequest {
     pub project_root: String,
     pub asset_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectComputeRunCommandRequest {
+    pub project_root: String,
+    pub source_asset_id: String,
+    pub function_id: String,
+    pub curve_bindings: std::collections::BTreeMap<String, String>,
+    pub parameters: std::collections::BTreeMap<String, lithos_las::ComputeParameterValue>,
+    pub output_collection_name: Option<String>,
+    pub output_mnemonic: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -482,6 +494,39 @@ fn list_project_assets_impl(request: ProjectAssetsRequest) -> CommandResponse<Ve
     }) {
         Ok(assets) => CommandResponse::Ok(assets),
         Err(error) => project_read_error(error),
+    }
+}
+
+fn list_project_compute_catalog_impl(
+    request: ProjectAssetRequest,
+) -> CommandResponse<ComputeCatalog> {
+    match LithosProject::open(&request.project_root)
+        .and_then(|project| project.list_compute_catalog(&lithos_las::AssetId(request.asset_id)))
+    {
+        Ok(catalog) => CommandResponse::Ok(catalog),
+        Err(error) => project_read_error(error),
+    }
+}
+
+fn run_project_compute_impl(
+    request: ProjectComputeRunCommandRequest,
+) -> CommandResponse<ProjectComputeRunResult> {
+    match LithosProject::open(&request.project_root).and_then(|mut project| {
+        project.run_compute(&ProjectComputeRunRequest {
+            source_asset_id: lithos_las::AssetId(request.source_asset_id),
+            function_id: request.function_id,
+            curve_bindings: request.curve_bindings,
+            parameters: request.parameters,
+            output_collection_name: request.output_collection_name,
+            output_mnemonic: request.output_mnemonic,
+        })
+    }) {
+        Ok(result) => CommandResponse::Ok(result),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::EditPersist,
+            CommandErrorKind::ValidationFailed,
+            error.to_string(),
+        )),
     }
 }
 
@@ -888,6 +933,20 @@ pub fn list_project_asset_collections(
 #[tauri::command]
 pub fn list_project_assets(request: ProjectAssetsRequest) -> CommandResponse<Vec<AssetRecord>> {
     list_project_assets_impl(request)
+}
+
+#[tauri::command]
+pub fn list_project_compute_catalog(
+    request: ProjectAssetRequest,
+) -> CommandResponse<ComputeCatalog> {
+    list_project_compute_catalog_impl(request)
+}
+
+#[tauri::command]
+pub fn run_project_compute(
+    request: ProjectComputeRunCommandRequest,
+) -> CommandResponse<ProjectComputeRunResult> {
+    run_project_compute_impl(request)
 }
 
 #[tauri::command]
@@ -1303,6 +1362,85 @@ mod tests {
         assert_eq!(top_rows.len(), 1);
         assert_eq!(pressure_rows.len(), 1);
         assert_eq!(drilling_rows.len(), 1);
+    }
+
+    #[test]
+    fn project_commands_list_and_run_type_safe_compute() {
+        let project_dir = temp_package_dir("harness-project-compute");
+        let project_root = project_dir.display().to_string();
+        expect_ok(create_project_impl(super::ProjectPathRequest {
+            path: project_root.clone(),
+        }));
+
+        let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("..")
+            .join("test_data")
+            .join("logs")
+            .join("6038187_v1.2_short.las");
+
+        let imported = expect_ok(super::import_project_las_impl(super::ImportProjectLasRequest {
+            project_root: project_root.clone(),
+            las_path: fixture_path.display().to_string(),
+            collection_name: Some(String::from("logs")),
+        }));
+
+        let catalog = expect_ok(super::list_project_compute_catalog_impl(super::ProjectAssetRequest {
+            project_root: project_root.clone(),
+            asset_id: imported.asset.id.0.clone(),
+        }));
+
+        let vshale = catalog
+            .functions
+            .iter()
+            .find(|entry| entry.metadata.id == "petro:vshale_linear")
+            .unwrap();
+        let binding = vshale
+            .binding_candidates
+            .iter()
+            .find(|candidate| candidate.parameter_name == "gr_curve")
+            .unwrap()
+            .matches
+            .first()
+            .unwrap()
+            .curve_name
+            .clone();
+
+        let mut bindings = std::collections::BTreeMap::new();
+        bindings.insert(String::from("gr_curve"), binding);
+        let mut parameters = std::collections::BTreeMap::new();
+        parameters.insert(
+            String::from("gr_min"),
+            lithos_las::ComputeParameterValue::Number(30.0),
+        );
+        parameters.insert(
+            String::from("gr_max"),
+            lithos_las::ComputeParameterValue::Number(120.0),
+        );
+
+        let result = expect_ok(super::run_project_compute_impl(
+            super::ProjectComputeRunCommandRequest {
+                project_root: project_root.clone(),
+                source_asset_id: imported.asset.id.0.clone(),
+                function_id: String::from("petro:vshale_linear"),
+                curve_bindings: bindings,
+                parameters,
+                output_collection_name: None,
+                output_mnemonic: None,
+            },
+        ));
+
+        assert_eq!(result.execution.output_curve_name, "VSH_LIN");
+        assert_eq!(
+            result.asset
+                .manifest
+                .compute_manifest
+                .as_ref()
+                .unwrap()
+                .function_id,
+            "petro:vshale_linear"
+        );
     }
 
     fn expect_ok<T>(response: CommandResponse<T>) -> T {

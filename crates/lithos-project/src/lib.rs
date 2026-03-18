@@ -1,3 +1,10 @@
+pub use lithos_compute::{
+    AssetSemanticFamily, ComputeAvailability, ComputeBindingCandidate, ComputeCatalog,
+    ComputeCatalogEntry, ComputeExecutionManifest, ComputeFunctionMetadata, ComputeInputBinding,
+    ComputeInputSpec, ComputeParameterDefinition, ComputeParameterValue, ComputeRegistry,
+    ComputedCurve, CurveBindingCandidate, CurveSemanticDescriptor, CurveSemanticSource,
+    CurveSemanticType, LogCurveData, classify_curve_semantic, default_curve_semantics,
+};
 pub use lithos_core::{
     IndexKind, IngestIssue, LasError, LasFile, Provenance, Result, WellInfo, package_metadata_for,
     revision_token_for_bytes,
@@ -16,9 +23,9 @@ pub use project::{
     AssetCollectionId, AssetCollectionRecord, AssetCollectionSummary, AssetExtent, AssetId,
     AssetKind, AssetManifest, AssetRecord, AssetReferenceMetadata, AssetStatus, BulkDataDescriptor,
     CoordinateReference, DepthReference, ImportResolution, LithosProject, LithosProjectManifest,
-    LogAssetImportResult, ProjectAssetImportResult, ProjectAssetSummary, ProjectSummary,
-    SourceArtifactRef, UnitSystem, VerticalDatum, WellId, WellIdentifierSet, WellRecord,
-    WellSummary, WellboreId, WellboreRecord, WellboreSummary,
+    LogAssetImportResult, ProjectAssetImportResult, ProjectAssetSummary, ProjectComputeRunRequest,
+    ProjectComputeRunResult, ProjectSummary, SourceArtifactRef, UnitSystem, VerticalDatum, WellId,
+    WellIdentifierSet, WellRecord, WellSummary, WellboreId, WellboreRecord, WellboreSummary,
 };
 pub use project_assets::{
     AssetBindingInput, AssetColumnMetadata, AssetColumnType, AssetTableMetadata, DepthRangeQuery,

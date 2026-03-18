@@ -1,7 +1,9 @@
 use lithos_las::{
-    AssetBindingInput, AssetKind, AssetStatus, DepthRangeQuery, LithosProject, examples,
+    AssetBindingInput, AssetKind, AssetStatus, ComputeAvailability, ComputeParameterValue,
+    CurveSemanticType, DepthRangeQuery, LithosProject, ProjectComputeRunRequest, examples,
     import_las_asset,
 };
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -289,6 +291,131 @@ fn project_supports_non_log_asset_imports_and_cross_asset_queries() {
         covering
             .iter()
             .any(|asset| asset.asset_kind == AssetKind::DrillingObservation)
+    );
+}
+
+#[test]
+fn project_lists_type_safe_compute_catalog_for_log_assets() {
+    let root = temp_project_root("project_lists_type_safe_compute_catalog_for_log_assets");
+    let mut project = LithosProject::create(&root).unwrap();
+
+    let log = project
+        .import_las(examples::path("6038187_v1.2_short.las"), Some("logs"))
+        .unwrap();
+
+    let catalog = project.list_compute_catalog(&log.asset.id).unwrap();
+    let vshale = catalog
+        .functions
+        .iter()
+        .find(|entry| entry.metadata.id == "petro:vshale_linear")
+        .unwrap();
+    assert!(matches!(
+        vshale.availability,
+        ComputeAvailability::Available
+    ));
+    assert!(vshale.binding_candidates.iter().any(|candidate| {
+        candidate.parameter_name == "gr_curve"
+            && candidate
+                .matches
+                .iter()
+                .any(|curve| curve.semantic_type == CurveSemanticType::GammaRay)
+    }));
+
+    let acoustic_impedance = catalog
+        .functions
+        .iter()
+        .find(|entry| entry.metadata.id == "rock_physics:acoustic_impedance")
+        .unwrap();
+    assert!(matches!(
+        acoustic_impedance.availability,
+        ComputeAvailability::Unavailable { .. }
+    ));
+}
+
+#[test]
+fn project_runs_compute_and_persists_derived_log_assets() {
+    let root = temp_project_root("project_runs_compute_and_persists_derived_log_assets");
+    let mut project = LithosProject::create(&root).unwrap();
+
+    let log = project
+        .import_las(examples::path("6038187_v1.2_short.las"), Some("logs"))
+        .unwrap();
+
+    let semantics = project.log_curve_semantics(&log.asset.id).unwrap();
+    let gr_curve = semantics
+        .iter()
+        .find(|curve| curve.semantic_type == CurveSemanticType::GammaRay)
+        .unwrap();
+
+    let mut bindings = BTreeMap::new();
+    bindings.insert("gr_curve".to_string(), gr_curve.curve_name.clone());
+    let mut parameters = BTreeMap::new();
+    parameters.insert("gr_min".to_string(), ComputeParameterValue::Number(30.0));
+    parameters.insert("gr_max".to_string(), ComputeParameterValue::Number(120.0));
+
+    let result = project
+        .run_compute(&ProjectComputeRunRequest {
+            source_asset_id: log.asset.id.clone(),
+            function_id: "petro:vshale_linear".to_string(),
+            curve_bindings: bindings.clone(),
+            parameters: parameters.clone(),
+            output_collection_name: None,
+            output_mnemonic: None,
+        })
+        .unwrap();
+
+    assert_eq!(
+        result.asset.manifest.derived_from,
+        Some(log.asset.logical_asset_id.clone())
+    );
+    assert!(result.asset.manifest.compute_manifest.is_some());
+    assert_eq!(
+        result
+            .asset
+            .manifest
+            .curve_semantics
+            .iter()
+            .find(|curve| curve.curve_name == "VSH_LIN")
+            .unwrap()
+            .semantic_type,
+        CurveSemanticType::VShale
+    );
+
+    let package_root = PathBuf::from(&result.asset.package_path);
+    assert!(package_root.join("metadata.json").exists());
+    assert!(package_root.join("curves.parquet").exists());
+    assert!(package_root.join("asset_manifest.json").exists());
+
+    let assets = project
+        .list_assets(&log.resolution.wellbore_id, Some(AssetKind::Log))
+        .unwrap();
+    assert_eq!(assets.len(), 2);
+    assert!(assets.iter().any(|asset| asset.id == result.asset.id));
+
+    let rerun = project
+        .run_compute(&ProjectComputeRunRequest {
+            source_asset_id: log.asset.id.clone(),
+            function_id: "petro:vshale_linear".to_string(),
+            curve_bindings: bindings,
+            parameters,
+            output_collection_name: Some(result.collection.name.clone()),
+            output_mnemonic: Some("VSH_LIN".to_string()),
+        })
+        .unwrap();
+
+    let asset_summaries = project
+        .asset_summaries(&log.resolution.wellbore_id, Some(AssetKind::Log))
+        .unwrap();
+    let derived_entries = asset_summaries
+        .iter()
+        .filter(|summary| summary.asset.collection_id == rerun.collection.id)
+        .collect::<Vec<_>>();
+    assert_eq!(derived_entries.len(), 2);
+    assert!(derived_entries.iter().any(|summary| summary.is_current));
+    assert!(
+        derived_entries
+            .iter()
+            .any(|summary| summary.asset.status == AssetStatus::Superseded)
     );
 }
 

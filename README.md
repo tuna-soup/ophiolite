@@ -10,6 +10,7 @@ Today, Lithos can:
 - import typed non-log wellbore datasets from structured files
 - persist optimized local asset packages
 - organize multiple linked assets under one `LithosProject`
+- discover and run typed compute/UDF functions against eligible log data
 - expose app-facing query and editing surfaces for desktop workflows
 
 The project is designed primarily for Rust desktop applications such as Tauri backends and local data tooling, while remaining interoperable with common data ecosystems.
@@ -47,6 +48,7 @@ Lithos therefore aims to provide:
 - an app-friendly runtime/query abstraction
 - optimized local single-asset package formats
 - a local-first project/catalog layer for assembling multiple linked assets coherently
+- a typed compute layer for derived assets and domain-aware transforms
 - a Rust-native SDK suitable for desktop subsurface applications
 
 The design philosophy is domain-first: APIs should reflect well-domain concepts and workflows rather than raw storage formats.
@@ -124,11 +126,12 @@ The current implementation still has its deepest maturity in the LAS/log slice, 
 - a strong LAS/log import and package/edit path
 - a local-first multi-well project/catalog layer
 - typed non-log asset packages and read/query APIs
+- a logs-first typed compute layer for derived assets
 - an internal desktop app that exercises those assets together
 
 Core components:
 
-- workspace crates: `lithos-core`, `lithos-parser`, `lithos-table`, `lithos-package`, `lithos-cli`
+- workspace crates: `lithos-core`, `lithos-parser`, `lithos-table`, `lithos-package`, `lithos-project`, `lithos-ingest`, `lithos-compute`, `lithos-cli`
 - root compatibility crate: `lithos_las`
 - canonical domain object: `LasFile`
 - explicit editable package session model: `PackageSession`
@@ -146,6 +149,7 @@ Core components:
 - optimized package format: `metadata.json + curves.parquet`
 - SQLite-backed project catalog for well, wellbore, collection, and asset discovery
 - Parquet-backed project-managed asset packages for non-log structured wellbore data
+- typed compute registry with semantic eligibility and derived sibling log assets
 - CLI for import and inspection
 - local example corpus and parity tests against `lasio` non-v3 behavior
 
@@ -159,6 +163,7 @@ source artifacts
   -> canonical log + typed asset models
   -> single-asset packages
   -> LithosProject catalog + linked assets
+  -> type-safe compute / derived assets
   -> app/query/edit workflows
 ```
 
@@ -172,6 +177,7 @@ root compatibility crate: lithos_las
   -> lithos-package
   -> lithos-project
   -> lithos-ingest
+  -> lithos-compute
   -> lithos-cli
 ```
 
@@ -195,6 +201,8 @@ Key behaviors implemented:
 - session/query APIs now support both row-window reads and depth-range reads for projected curve access
 - metadata-only lazy package edits and save/save-as flows
 - first curve edits materialize directly from lazy backend session state rather than reopening through the eager SDK path
+- compute/UDF discovery is type-safe against semantic curve classifications rather than loose mnemonic matches
+- compute runs currently target log assets, create derived sibling log assets, and persist execution provenance on the derived asset manifest
 - package write/read round-trip
 - mixed numeric/text curve column support
 
@@ -298,6 +306,35 @@ synthetic_well_project/
 ```
 
 The raw files are generated first and then imported through the normal `LithosProject` APIs, so the fixture validates the real import pipeline rather than bypassing it.
+
+## Typed Compute
+
+Lithos now has a logs-first compute layer in `lithos-compute`.
+
+Current compute properties:
+
+- functions are exposed through a typed registry rather than ad hoc curve scripts
+- eligibility is driven by semantic curve types such as `GammaRay`, `BulkDensity`, `Sonic`, and `PVelocity`
+- functions only appear as available when the selected log asset actually contains compatible inputs
+- curve semantics are persisted on log asset manifests, and manual overrides can be stored when classification is uncertain
+- compute runs create derived sibling log assets under the same `LithosProject`
+- derived assets record both `derived_from` lineage and a `compute_manifest` describing the execution
+
+Current built-in function families:
+
+- generic numeric log transforms:
+  - moving average
+  - z-score normalization
+  - min-max scaling
+  - gap flags
+- domain-specific petrophysics / rock-physics:
+  - `VShale (Linear|Clavier|Steiber)` on gamma ray
+  - `Sonic to Vp`
+  - `Shear Sonic to Vs`
+  - `Acoustic Impedance`
+  - `Poisson's Ratio`
+
+This keeps compute attached to typed wellbore-linked assets rather than treating curves as anonymous arrays.
 
 ## Runtime Query Surface
 
@@ -557,22 +594,21 @@ Implemented foundations include:
 - internal first-party Tauri capability harness for exercising SDK flows end to end
 - `metadata.json + curves.parquet` package format
 - `LithosProject` catalog and typed single-asset packages for logs, trajectory, tops, pressure observations, and drilling observations
+- `lithos-compute` typed function registry and derived sibling log assets
 - synthetic multi-asset project-fixture generation for testing and app validation
 - non-v3 `lasio` parity coverage
 - package round-trip tests including mixed-type columns
 
 Current next priorities are:
 
-- deepen validation coverage and diagnostic rules now that structured reports exist
-- harden cross-asset import/reconciliation and project workflows
-- extract clearer `project` and `ingest` platform boundaries in the monorepo
-- keep the command service thin and transport-focused while the app boundary settles
-- extend lazy backend-session reads beyond metadata-only flows only where they do not complicate sample-edit semantics or stale-session correctness
-- use the Tauri harness as the validation surface for richer multi-asset workflows
+- deepen semantic classification and override workflows for compute eligibility
+- expand built-in compute/UDF coverage and derived-asset workflows
+- harden richer cross-asset project workflows in the harness
+- deepen LAS 3 and broader structured ingest for non-log assets
+- keep the command and app boundary thin while the project-first workflow settles
 
 Later directions include:
 
-- compute/UDF layers above the core platform
 - optional sync/distribution layers
 - broader ingest and asset-family expansion
 - broader subsurface asset families and richer cross-asset application workflows

@@ -234,6 +234,19 @@ export type AssetManifest = {
     original_filename: string;
     source_fingerprint: string;
   }>;
+  curve_semantics?: Array<{
+    curve_name: string;
+    original_mnemonic: string;
+    unit?: string | null;
+    semantic_type: string;
+    source: string;
+  }>;
+  compute_manifest?: {
+    function_id: string;
+    function_name: string;
+    provider: string;
+    output_curve_name: string;
+  } | null;
 };
 
 export type AssetRecord = {
@@ -300,6 +313,68 @@ export type DrillingObservationRow = {
   unit?: string | null;
   timestamp?: string | null;
   comment?: string | null;
+};
+
+export type ComputeParameterDefinition =
+  | {
+      Number: {
+        name: string;
+        label: string;
+        description: string;
+        default?: number | null;
+        min?: number | null;
+        max?: number | null;
+        unit?: string | null;
+      };
+    };
+
+export type ComputeBindingCandidate = {
+  parameter_name: string;
+  allowed_types: string[];
+  matches: Array<{
+    curve_name: string;
+    original_mnemonic: string;
+    semantic_type: string;
+    unit?: string | null;
+  }>;
+};
+
+export type ComputeAvailability =
+  | { Available: unknown }
+  | { Unavailable: { reasons: string[] } };
+
+export type ComputeCatalogEntry = {
+  metadata: {
+    id: string;
+    provider: string;
+    name: string;
+    category: string;
+    description: string;
+    default_output_mnemonic: string;
+    output_curve_type: string;
+    tags: string[];
+  };
+  input_specs: Array<Record<string, unknown>>;
+  parameters: ComputeParameterDefinition[];
+  binding_candidates: ComputeBindingCandidate[];
+  availability: ComputeAvailability;
+};
+
+export type ComputeCatalog = {
+  asset_family: string;
+  functions: ComputeCatalogEntry[];
+};
+
+export type ProjectComputeRunResult = {
+  collection: AssetCollectionRecord;
+  asset: AssetRecord;
+  execution: {
+    function_id: string;
+    function_name: string;
+    provider: string;
+    output_curve_name: string;
+    output_curve_type: string;
+  };
 };
 
 export async function invokeCommand<T>(
@@ -413,6 +488,31 @@ export const api = {
       depth_max: depthMax
     });
   },
+  listProjectComputeCatalog(projectRoot: string, assetId: string) {
+    return unwrap<ComputeCatalog>("list_project_compute_catalog", {
+      project_root: projectRoot,
+      asset_id: assetId
+    });
+  },
+  runProjectCompute(
+    projectRoot: string,
+    sourceAssetId: string,
+    functionId: string,
+    curveBindings: Record<string, string>,
+    parameters: Record<string, ComputeParameterValue>,
+    outputCollectionName?: string | null,
+    outputMnemonic?: string | null
+  ) {
+    return unwrap<ProjectComputeRunResult>("run_project_compute", {
+      project_root: projectRoot,
+      source_asset_id: sourceAssetId,
+      function_id: functionId,
+      curve_bindings: curveBindings,
+      parameters,
+      output_collection_name: outputCollectionName ?? null,
+      output_mnemonic: outputMnemonic ?? null
+    });
+  },
   readProjectTrajectoryRows(projectRoot: string, assetId: string, depthMin?: number | null, depthMax?: number | null) {
     return unwrap<TrajectoryRow[]>("read_project_trajectory_rows", {
       project_root: projectRoot,
@@ -517,3 +617,5 @@ export const api = {
     return unwrap<PackageFilesViewDto>("read_package_files", { path });
   }
 };
+
+export type ComputeParameterValue = number | string | boolean;

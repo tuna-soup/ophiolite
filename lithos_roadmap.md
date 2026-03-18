@@ -27,8 +27,8 @@ The current goal is:
 - `PackageSession` editing and save/save-as model
 - lazy backend reads and depth-range log queries
 - structured command and DTO boundary for desktop app use
-- last-save-wins package/session persistence
-- immutable local package revisions with hidden revision stores and domain-level diff summaries
+- overwrite-oriented package/session persistence
+- immutable local package revisions with hidden canonical revision stores, typed machine diffs, and readable change summaries
 
 ### Multi-Asset Project Layer
 
@@ -71,10 +71,11 @@ These are the highest-value missing pieces for turning the current foundation in
 
 Keep the operational model simple and local-first:
 
-- last save wins for package/session persistence
+- overwrite-oriented saves for package/session persistence
 - latest import becomes the current asset in a collection by default
 - previous asset versions remain traceable as superseded history
 - provenance stays available without forcing review-heavy workflows
+- hidden revision stores stay append-only for now; retention/GC remain later infrastructure work
 
 The goal is to make Lithos predictable for everyday subsurface work rather than Git-like.
 
@@ -110,7 +111,7 @@ Once the platform-core skeleton is in place, validate it through real workflows:
 
 - open a project and browse multiple wells / wellbores
 - inspect logs, tops, trajectory, pressure, and drilling together
-- reimport and confirm last-save-wins/supersession behavior
+- reimport and confirm overwrite-oriented save/supersession behavior
 - exercise synthetic project fixtures as a default demo/test path
 
 The rule is:

@@ -76,7 +76,7 @@ Public command error kinds should remain small and caller-actionable rather than
 - package-backed desktop workflows need a clear owner for pending edits and save semantics
 - session identity and revision tracking are required once multiple queries and edits can occur against the same open package
 - separating read DTOs from edit DTOs keeps the frontend/backend contract easier to reason about
-- last-save-wins persistence better matches current local-first desktop workflows than merge/conflict-centric behavior
+- overwrite-oriented persistence better matches current local-first desktop workflows than merge/conflict-centric behavior
 - keeping DTOs distinct from the domain model preserves the domain-first architecture
 
 ## Consequences
@@ -115,8 +115,8 @@ Session invariants for the current model:
 - `save_as` preserves session identity and rebinds the currently bound package root on success
 - clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
 - metadata-only dirty lazy sessions may rewrite `metadata.json` and save/save-as without materializing sample data
-- successful package saves create a new immutable local revision in a hidden `.lithos/revisions/` store while the visible package path remains the stable current head
-- package revision records include parent linkage, blob refs, and domain-level diff summaries for metadata and curve changes
+- successful package saves create a new immutable local revision in a hidden `.lithos/revisions/` store while the visible package path remains a materialized stable current head
+- package revision records include parent linkage, blob refs, typed machine diffs, and readable change summaries for metadata and curve changes
 - once a backend session materializes, it does not transition back to lazy in the current phase
 - failed `save` and `save_as` leave the session open with unchanged identity, dirty-state, bound root, and in-memory document snapshot
 - failed materialization leaves the session open with unchanged identity, dirty-state, bound root, and no partial mutation applied

@@ -142,8 +142,9 @@ Current session properties:
 - the first accepted curve/sample edit and any later save/save-as path that needs the canonical snapshot materializes a real eager `PackageSession`
 - first curve/sample materialization is built directly from the current lazy session metadata and cached parquet descriptors rather than reopening through the eager SDK package path
 - edits are applied to the session snapshot in memory
-- `save` persists the current session snapshot back to the same package using last-save-wins overwrite semantics
+- `save` persists the current session snapshot back to the same package using overwrite-oriented save semantics
 - `save` also creates a new immutable local package revision in a hidden `.lithos/revisions/` store
+- the hidden revision store is canonical; the visible package root is a materialized current-head view
 - `save_as` persists the current session snapshot to a new package root and updates the session baseline
 - session summaries and session-context DTOs expose the currently bound package root
 - sessions remain alive until explicitly closed in the current desktop MVP
@@ -151,7 +152,7 @@ Current session properties:
 - windowed reads are part of the frontend contract and avoid forcing full frontend materialization
 - rejected edit requests must not partially mutate session state
 - save/save-as verifies enough to confirm the written package is readable and internally coherent before treating the write as successful
-- package revision records carry parent linkage, blob refs, and domain-level diff summaries for metadata, curve, and row/value changes
+- package revision records carry parent linkage, blob refs, typed machine diffs, and readable change summaries for metadata, curve, and row/value changes
 
 Session invariants:
 

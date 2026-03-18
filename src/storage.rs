@@ -44,6 +44,7 @@ const CURVES_DATA_PAGE_ROW_COUNT_LIMIT: usize = 4_096;
 const PACKAGE_HISTORY_DIRNAME: &str = ".lithos";
 const PACKAGE_HISTORY_HEAD_FILENAME: &str = "head.json";
 const PACKAGE_HISTORY_REVISIONS_DIRNAME: &str = "revisions";
+const PACKAGE_HISTORY_STAGING_DIRNAME: &str = "staging";
 const PACKAGE_HISTORY_REVISION_FILENAME: &str = "revision.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -81,11 +82,18 @@ pub struct PackageRevisionRecord {
     pub metadata_blob: PackageBlobRef,
     pub parquet_blob: PackageBlobRef,
     pub diff_summary: PackageDiffSummary,
+    #[serde(default)]
+    pub change_summary: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct PackageRevisionHead {
     pub current_revision_id: RevisionToken,
+}
+
+#[derive(Debug)]
+struct StagedPackageSnapshot {
+    root: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -820,32 +828,34 @@ fn write_package_internal(
     };
     let parent_revision = current_package_head_revision(output_dir).ok();
 
-    if output_dir.exists() {
-        if overwrite {
-            clear_package_payload(output_dir)?;
-        } else {
-            return Err(LasError::Storage(format!(
-                "output directory '{}' already exists",
-                output_dir.display()
-            )));
-        }
-    }
-
     debug!(package = %output_dir.display(), "writing LAS package");
-    fs::create_dir_all(output_dir)?;
 
     let table = file.data();
     let metadata = package_metadata_for(file, PACKAGE_VERSION);
     let metadata_json = serde_json::to_string_pretty(&metadata)?;
 
-    fs::write(metadata_path(output_dir), &metadata_json)?;
-    write_parquet_batch(curves_path(output_dir), &table, Some(&file.index.curve_id))?;
-    record_package_revision(
+    if output_dir.exists() && !overwrite {
+        return Err(LasError::Storage(format!(
+            "output directory '{}' already exists",
+            output_dir.display()
+        )));
+    }
+    fs::create_dir_all(output_dir)?;
+
+    let staged_snapshot = stage_package_snapshot(
         output_dir,
         &metadata_json,
+        &table,
+        Some(&file.index.curve_id),
+    )?;
+    let revision = record_package_revision(
+        output_dir,
+        &staged_snapshot,
         &diff_package_files(previous_file.as_ref(), file),
         parent_revision.as_ref(),
     )?;
+    materialize_package_head_from_revision(output_dir, &revision)?;
+    write_package_revision_head(output_dir, &revision.revision_id)?;
 
     open_package(output_dir)
 }
@@ -868,6 +878,10 @@ fn package_history_head_path(root: &Path) -> PathBuf {
 
 fn package_history_revisions_dir(root: &Path) -> PathBuf {
     package_history_root(root).join(PACKAGE_HISTORY_REVISIONS_DIRNAME)
+}
+
+fn package_history_staging_dir(root: &Path) -> PathBuf {
+    package_history_root(root).join(PACKAGE_HISTORY_STAGING_DIRNAME)
 }
 
 fn read_package_metadata(root: &Path) -> Result<PackageMetadata> {
@@ -1487,37 +1501,39 @@ fn package_path_key(root: &Path) -> String {
         .to_string()
 }
 
-fn clear_package_payload(root: &Path) -> Result<()> {
-    for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        let path = entry.path();
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        if file_name == PACKAGE_HISTORY_DIRNAME || file_name == "asset_manifest.json" {
-            continue;
-        }
-        if path.is_dir() {
-            fs::remove_dir_all(path)?;
-        } else {
-            fs::remove_file(path)?;
-        }
-    }
-    Ok(())
+fn stage_package_snapshot(
+    output_dir: &Path,
+    metadata_json: &str,
+    table: &CurveTable,
+    index_curve_name: Option<&str>,
+) -> Result<StagedPackageSnapshot> {
+    let staging_root = package_history_staging_dir(output_dir).join(
+        revision_token_for_bytes(
+            "package-stage",
+            &format!("{}:{}", output_dir.display(), now_unix_nanos()),
+        )
+        .0,
+    );
+    fs::create_dir_all(&staging_root)?;
+    fs::write(metadata_path(&staging_root), metadata_json)?;
+    write_parquet_batch(curves_path(&staging_root), table, index_curve_name)?;
+    Ok(StagedPackageSnapshot { root: staging_root })
 }
 
 fn record_package_revision(
     root: &Path,
-    metadata_json: &str,
+    staged_snapshot: &StagedPackageSnapshot,
     diff_summary: &PackageDiffSummary,
     parent_revision_id: Option<&RevisionToken>,
 ) -> Result<PackageRevisionRecord> {
     let created_at_unix_seconds = now_unix_seconds();
-    let metadata_bytes = metadata_json.as_bytes();
-    let parquet_bytes = fs::read(curves_path(root))?;
+    let metadata_bytes = fs::read(metadata_path(&staged_snapshot.root))?;
+    let parquet_bytes = fs::read(curves_path(&staged_snapshot.root))?;
     let metadata_blob = PackageBlobRef {
         relative_path: METADATA_FILENAME.to_string(),
         media_type: "application/json".to_string(),
         byte_count: metadata_bytes.len() as u64,
-        content_hash: stable_blob_hash("metadata-blob", metadata_bytes),
+        content_hash: stable_blob_hash("metadata-blob", &metadata_bytes),
     };
     let parquet_blob = PackageBlobRef {
         relative_path: CURVES_FILENAME.to_string(),
@@ -1540,23 +1556,51 @@ fn record_package_revision(
         metadata_blob,
         parquet_blob,
         diff_summary: diff_summary.clone(),
+        change_summary: summarize_package_diff(diff_summary),
     };
     let revision_root = package_history_revisions_dir(root).join(&revision_id.0);
-    fs::create_dir_all(&revision_root)?;
-    fs::copy(metadata_path(root), revision_root.join(METADATA_FILENAME))?;
-    fs::copy(curves_path(root), revision_root.join(CURVES_FILENAME))?;
+    fs::create_dir_all(package_history_revisions_dir(root))?;
+    if revision_root.exists() {
+        fs::remove_dir_all(&revision_root)?;
+    }
+    fs::rename(&staged_snapshot.root, &revision_root)?;
     fs::write(
         revision_root.join(PACKAGE_HISTORY_REVISION_FILENAME),
         serde_json::to_vec_pretty(&record)?,
     )?;
+    Ok(record)
+}
+
+fn materialize_package_head_from_revision(
+    root: &Path,
+    revision: &PackageRevisionRecord,
+) -> Result<()> {
+    let revision_root = package_history_revisions_dir(root).join(&revision.revision_id.0);
+    fs::create_dir_all(root)?;
+    materialize_visible_files(
+        root,
+        &[
+            (revision_root.join(METADATA_FILENAME), metadata_path(root)),
+            (revision_root.join(CURVES_FILENAME), curves_path(root)),
+        ],
+    )
+}
+
+fn write_package_revision_head(root: &Path, revision_id: &RevisionToken) -> Result<()> {
     fs::create_dir_all(package_history_root(root))?;
+    let head_path = package_history_head_path(root);
+    let temp_path = head_path.with_extension("tmp");
     fs::write(
-        package_history_head_path(root),
+        &temp_path,
         serde_json::to_vec_pretty(&PackageRevisionHead {
-            current_revision_id: revision_id,
+            current_revision_id: revision_id.clone(),
         })?,
     )?;
-    Ok(record)
+    if head_path.exists() {
+        fs::remove_file(&head_path)?;
+    }
+    fs::rename(temp_path, head_path)?;
+    Ok(())
 }
 
 fn diff_package_files(previous: Option<&LasFile>, current: &LasFile) -> PackageDiffSummary {
@@ -1656,11 +1700,109 @@ fn stable_blob_hash(scope: &str, bytes: &[u8]) -> String {
     format!("{scope}-{:016x}", hasher.finish())
 }
 
+fn materialize_visible_files(root: &Path, mappings: &[(PathBuf, PathBuf)]) -> Result<()> {
+    let backup_root = package_history_staging_dir(root).join(
+        revision_token_for_bytes(
+            "materialize-backup",
+            &format!("{}:{}", root.display(), now_unix_nanos()),
+        )
+        .0,
+    );
+    fs::create_dir_all(&backup_root)?;
+
+    for (_, destination) in mappings {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if destination.exists() {
+            let backup_path = backup_root.join(
+                destination
+                    .file_name()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| String::from("backup")),
+            );
+            fs::copy(destination, backup_path)?;
+        }
+    }
+
+    for (source, destination) in mappings {
+        let temp_path = destination.with_extension("next");
+        fs::copy(source, &temp_path)?;
+        if destination.exists() {
+            fs::remove_file(destination)?;
+        }
+        if let Err(error) = fs::rename(&temp_path, destination) {
+            restore_visible_files(&backup_root, mappings)?;
+            return Err(LasError::Io(error));
+        }
+    }
+
+    if backup_root.exists() {
+        fs::remove_dir_all(backup_root)?;
+    }
+    Ok(())
+}
+
+fn restore_visible_files(backup_root: &Path, mappings: &[(PathBuf, PathBuf)]) -> Result<()> {
+    for (_, destination) in mappings {
+        let backup_path = backup_root.join(
+            destination
+                .file_name()
+                .map(|value| value.to_string_lossy().into_owned())
+                .unwrap_or_else(|| String::from("backup")),
+        );
+        if backup_path.exists() {
+            if destination.exists() {
+                fs::remove_file(destination)?;
+            }
+            fs::copy(&backup_path, destination)?;
+        }
+    }
+    Ok(())
+}
+
 fn now_unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_secs())
         .unwrap_or(0)
+}
+
+fn now_unix_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or(0)
+}
+
+fn summarize_package_diff(diff: &PackageDiffSummary) -> String {
+    let mut parts = Vec::new();
+    if diff.metadata_changed {
+        parts.push(String::from("metadata updated"));
+    }
+    if !diff.curves_added.is_empty() {
+        parts.push(format!("added curves {}", diff.curves_added.join(", ")));
+    }
+    if !diff.curves_removed.is_empty() {
+        parts.push(format!("removed curves {}", diff.curves_removed.join(", ")));
+    }
+    if !diff.modified_curves.is_empty() {
+        parts.push(format!(
+            "updated {} curve value ranges",
+            diff.modified_curves.len()
+        ));
+    }
+    if diff.row_count_changed {
+        parts.push(String::from("row count changed"));
+    }
+    if diff.curve_count_changed {
+        parts.push(String::from("curve count changed"));
+    }
+    if parts.is_empty() {
+        String::from("initial package revision")
+    } else {
+        parts.join("; ")
+    }
 }
 
 fn write_parquet_batch(

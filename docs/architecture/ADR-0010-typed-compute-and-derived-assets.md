@@ -36,7 +36,7 @@ Current rules:
   - `derived_from`
   - `compute_manifest`
   - output curve semantics
-- latest derived output in a derived collection supersedes the previous current output using the existing last-save-wins/supersede model
+- latest derived output in a derived collection supersedes the previous current output using the existing overwrite-oriented save/supersede model
 
 ## Consequences
 

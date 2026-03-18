@@ -191,7 +191,7 @@ Key behaviors implemented:
 - typed canonical metadata derivation and explicit package metadata schema versioning
 - package-backed edit/save and save-as flows
 - versioned DTO/query contract for frontend-safe access
-- package session dirty-state, identity, and last-save-wins persistence
+- package session dirty-state, identity, and overwrite-oriented persistence
 - session summaries and session-backed DTOs report the current bound package root
 - Tauri-oriented backend session/query adapter
 - separate command-boundary transport service with structured command errors
@@ -289,14 +289,15 @@ The current rule is:
 - project-scoped structured edit sessions for trajectory, tops, pressure observations, and drilling observations
 - synthetic multi-asset project fixture generation for testing and manual inspection
 
-The first multi-well slice is still log-first in editing maturity, but it is no longer read-only outside logs. Structured assets now support bounded in-family row/field editing with explicit save and last-save-wins overwrite of the active asset package.
+The first multi-well slice is still log-first in editing maturity, but it is no longer read-only outside logs. Structured assets now support bounded in-family row/field editing with explicit save and overwrite-oriented save semantics for the active asset package.
 
 Those structured saves are revisioned too:
 
 - every successful structured save creates a new immutable asset revision
 - the active asset package path remains the stable current head
 - historical structured revisions are stored in a hidden project-local revision store
-- each revision records a typed diff summary such as row adds/removes/updates and extent changes
+- the hidden revision store is canonical; the visible asset/package path is a materialized current-head view
+- each revision records a typed machine diff plus a readable change summary such as row adds/removes/updates and extent changes
 
 For test and app-validation workflows, Lithos can also generate a coherent synthetic project fixture:
 
@@ -393,7 +394,7 @@ Current session semantics:
 - editable session open reuses one shared backend session per package path by default
 - edits are applied to the in-memory session snapshot
 - edit requests are atomic at the request level
-- `save` writes the current snapshot back to the original package using last-save-wins semantics and advances the package head to a new immutable local revision
+- `save` writes the current snapshot back to the original package using overwrite-oriented save semantics and advances the package head to a new immutable local revision
 - `save_as` writes the current snapshot to a new package path and updates the current session baseline
 - session-backed DTOs carry the current bound package root so clients can observe rebinding after `save_as`
 - successful save clears dirty-state
@@ -411,7 +412,7 @@ Current session semantics:
 - first curve/sample materialization is constructed directly from the current lazy session metadata and cached parquet descriptors rather than reopening the package through the eager SDK path
 - package saves do not patch Parquet in place; they rewrite the affected payload and record a new immutable local revision snapshot
 - local package revision history lives in a hidden `.lithos/revisions/` store under the package root while the visible package path remains the stable current head
-- package revision records include parent linkage, blob refs, and a domain-level diff summary for metadata changes, curve additions/removals, and curve value edits
+- package revision records include parent linkage, blob refs, a typed machine diff, and a readable change summary for metadata changes, curve additions/removals, and curve value edits
 - revision tokens identify the current saved head; they still do not block saves or act as merge/conflict tokens
 
 Session invariants:

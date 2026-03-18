@@ -21,7 +21,7 @@ They are:
 - typed by asset family
 - limited to in-family row add/update/delete and field patch operations
 - explicit-save workflows
-- last-save-wins on persistence
+- overwrite-oriented save semantics on persistence
 
 They do not:
 
@@ -32,7 +32,7 @@ They do not:
 
 Persistence rule:
 
-- successful save overwrites the current active structured asset package in place and advances a new immutable local asset revision
+- successful save overwrites the current active structured asset package in place, writes a new immutable local asset revision into the hidden revision store, and rematerializes the visible asset root from that head
 - failed save leaves the edit session open and dirty
 - compute-derived structured assets remain separate sibling assets and can also be edited as normal structured assets later
 

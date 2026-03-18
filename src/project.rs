@@ -36,6 +36,7 @@ const PROJECT_CATALOG_FILENAME: &str = "catalog.sqlite";
 const ASSET_MANIFEST_FILENAME: &str = "asset_manifest.json";
 const PROJECT_REVISION_STORE_DIRNAME: &str = ".lithos";
 const PROJECT_ASSET_REVISION_STORE_DIRNAME: &str = "asset-revisions";
+const PROJECT_STAGING_DIRNAME: &str = "staging";
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -250,6 +251,13 @@ pub struct AssetRevisionRecord {
     pub metadata_blob: AssetBlobRef,
     pub data_blob: AssetBlobRef,
     pub diff_summary: AssetDiffSummary,
+    #[serde(default)]
+    pub change_summary: String,
+}
+
+#[derive(Debug)]
+struct StagedAssetSnapshot {
+    root: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -731,7 +739,8 @@ impl LithosProject {
             .join(AssetKind::Log.asset_dir_name())
             .join(format!("{}.laspkg", storage_asset_id.0));
         let package_root = self.root.join(&package_rel_path);
-        write_package_overwrite(&file, &package_root)?;
+        let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
+        write_package_overwrite(&file, &staged.root)?;
         let supersedes = self
             .latest_active_asset_for_collection(&collection.id)?
             .map(|asset| asset.id);
@@ -744,7 +753,7 @@ impl LithosProject {
             &storage_asset_id,
             supersedes.clone(),
         );
-        write_asset_manifest(&package_root, &manifest)?;
+        write_asset_manifest(&staged.root, &manifest)?;
         if let Some(asset_id) = &supersedes {
             self.mark_asset_superseded(asset_id)?;
         }
@@ -759,12 +768,14 @@ impl LithosProject {
             package_path: package_root.to_string_lossy().into_owned(),
             manifest: manifest.clone(),
         };
-        self.insert_asset(&asset, &package_rel_path)?;
-        self.record_asset_revision_from_head(
+        let revision = self.build_asset_revision_from_snapshot(
             &asset,
             None,
             AssetDiffSummary::Log(Default::default()),
+            &staged,
         )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.insert_asset(&asset, &package_rel_path)?;
         Ok(LogAssetImportResult {
             resolution: ImportResolution {
                 status: AssetStatus::Bound,
@@ -929,13 +940,13 @@ impl LithosProject {
         let parent_revision = self
             .current_asset_revision(asset_id)?
             .map(|item| item.revision_id);
-        write_trajectory_package(Path::new(&asset.package_path), rows)?;
+        let staged = stage_project_asset_root(&self.root, &asset.id)?;
+        write_trajectory_package(&staged.root, rows)?;
         asset.manifest.asset_schema_version = trajectory_metadata(rows).schema_version;
         asset.manifest.extents =
             structured_asset_extent(AssetKind::Trajectory, trajectory_extent(rows));
-        write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
-        self.update_asset_manifest(&asset)?;
-        self.record_asset_revision_from_head(
+        write_asset_manifest(&staged.root, &asset.manifest)?;
+        let revision = self.build_asset_revision_from_snapshot(
             &asset,
             parent_revision.as_ref(),
             diff_structured_rows(
@@ -948,7 +959,10 @@ impl LithosProject {
                         trajectory_extent(&previous_rows),
                     ),
             ),
+            &staged,
         )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.update_asset_manifest(&asset)?;
         Ok(asset)
     }
 
@@ -965,12 +979,12 @@ impl LithosProject {
         let parent_revision = self
             .current_asset_revision(asset_id)?
             .map(|item| item.revision_id);
-        write_tops_package(Path::new(&asset.package_path), rows)?;
+        let staged = stage_project_asset_root(&self.root, &asset.id)?;
+        write_tops_package(&staged.root, rows)?;
         asset.manifest.asset_schema_version = tops_metadata(rows).schema_version;
         asset.manifest.extents = structured_asset_extent(AssetKind::TopSet, tops_extent(rows));
-        write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
-        self.update_asset_manifest(&asset)?;
-        self.record_asset_revision_from_head(
+        write_asset_manifest(&staged.root, &asset.manifest)?;
+        let revision = self.build_asset_revision_from_snapshot(
             &asset,
             parent_revision.as_ref(),
             diff_structured_rows(
@@ -979,7 +993,10 @@ impl LithosProject {
                 rows,
                 previous_extent != asset.manifest.extents,
             ),
+            &staged,
         )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.update_asset_manifest(&asset)?;
         Ok(asset)
     }
 
@@ -998,13 +1015,13 @@ impl LithosProject {
         let parent_revision = self
             .current_asset_revision(asset_id)?
             .map(|item| item.revision_id);
-        write_pressure_package(Path::new(&asset.package_path), rows)?;
+        let staged = stage_project_asset_root(&self.root, &asset.id)?;
+        write_pressure_package(&staged.root, rows)?;
         asset.manifest.asset_schema_version = pressure_metadata(rows).schema_version;
         asset.manifest.extents =
             structured_asset_extent(AssetKind::PressureObservation, pressure_extent(rows));
-        write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
-        self.update_asset_manifest(&asset)?;
-        self.record_asset_revision_from_head(
+        write_asset_manifest(&staged.root, &asset.manifest)?;
+        let revision = self.build_asset_revision_from_snapshot(
             &asset,
             parent_revision.as_ref(),
             diff_structured_rows(
@@ -1013,7 +1030,10 @@ impl LithosProject {
                 rows,
                 previous_extent != asset.manifest.extents,
             ),
+            &staged,
         )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.update_asset_manifest(&asset)?;
         Ok(asset)
     }
 
@@ -1032,13 +1052,13 @@ impl LithosProject {
         let parent_revision = self
             .current_asset_revision(asset_id)?
             .map(|item| item.revision_id);
-        write_drilling_package(Path::new(&asset.package_path), rows)?;
+        let staged = stage_project_asset_root(&self.root, &asset.id)?;
+        write_drilling_package(&staged.root, rows)?;
         asset.manifest.asset_schema_version = drilling_metadata(rows).schema_version;
         asset.manifest.extents =
             structured_asset_extent(AssetKind::DrillingObservation, drilling_extent(rows));
-        write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
-        self.update_asset_manifest(&asset)?;
-        self.record_asset_revision_from_head(
+        write_asset_manifest(&staged.root, &asset.manifest)?;
+        let revision = self.build_asset_revision_from_snapshot(
             &asset,
             parent_revision.as_ref(),
             diff_structured_rows(
@@ -1047,7 +1067,10 @@ impl LithosProject {
                 rows,
                 previous_extent != asset.manifest.extents,
             ),
+            &staged,
         )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.update_asset_manifest(&asset)?;
         Ok(asset)
     }
 
@@ -1088,15 +1111,18 @@ impl LithosProject {
         descriptor.semantic_type = semantic_type;
         descriptor.source = CurveSemanticSource::Override;
         asset.manifest.curve_semantics = curve_semantics;
-        write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
-        self.update_asset_manifest(&asset)?;
+        let staged = stage_existing_asset_root(&self.root, &asset)?;
+        write_asset_manifest(&staged.root, &asset.manifest)?;
         let changed_fields =
             semantic_diff_fields(&previous_semantics, &asset.manifest.curve_semantics);
-        self.record_asset_revision_from_head(
+        let revision = self.build_asset_revision_from_snapshot(
             &asset,
             parent_revision.as_ref(),
             AssetDiffSummary::MetadataOnly { changed_fields },
+            &staged,
         )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.update_asset_manifest(&asset)?;
         Ok(asset)
     }
 
@@ -1108,6 +1134,7 @@ impl LithosProject {
         require_asset_kind(&asset, AssetKind::Log)?;
         let current = open_package(&asset.package_path)?;
         let parent = self.current_asset_revision(asset_id)?;
+        let staged = stage_existing_asset_root(&self.root, &asset)?;
         let diff_summary = if let Some(previous) = &parent {
             let snapshot_root = self.root.join(&previous.package_snapshot_rel_path);
             if snapshot_root.exists() {
@@ -1119,11 +1146,14 @@ impl LithosProject {
         } else {
             default_asset_diff_summary(&AssetKind::Log)
         };
-        self.record_asset_revision_from_head(
+        let revision = self.build_asset_revision_from_snapshot(
             &asset,
             parent.as_ref().map(|item| &item.revision_id),
             diff_summary,
-        )
+            &staged,
+        )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        Ok(revision)
     }
 
     pub fn list_compute_catalog(&self, asset_id: &AssetId) -> Result<ComputeCatalog> {
@@ -1197,6 +1227,7 @@ impl LithosProject {
                     .join(AssetKind::Log.asset_dir_name())
                     .join(format!("{}.laspkg", storage_asset_id.0));
                 let package_root = self.root.join(&package_rel_path);
+                let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
                 let derived_file = build_derived_log_file(
                     source_file,
                     &source_asset,
@@ -1205,7 +1236,7 @@ impl LithosProject {
                     &computed_curve,
                     &execution,
                 );
-                write_package_overwrite(&derived_file, &package_root)?;
+                write_package_overwrite(&derived_file, &staged.root)?;
 
                 let supersedes = self
                     .latest_active_asset_for_collection(&collection.id)?
@@ -1219,7 +1250,7 @@ impl LithosProject {
                     &computed_curve,
                     &execution,
                 );
-                write_asset_manifest(&package_root, &manifest)?;
+                write_asset_manifest(&staged.root, &manifest)?;
                 if let Some(asset_id) = &supersedes {
                     self.mark_asset_superseded(asset_id)?;
                 }
@@ -1234,12 +1265,14 @@ impl LithosProject {
                     package_path: package_root.to_string_lossy().into_owned(),
                     manifest,
                 };
-                self.insert_asset(&asset, &package_rel_path)?;
-                self.record_asset_revision_from_head(
+                let revision = self.build_asset_revision_from_snapshot(
                     &asset,
                     None,
                     AssetDiffSummary::Log(Default::default()),
+                    &staged,
                 )?;
+                self.commit_asset_revision(&asset, &revision)?;
+                self.insert_asset(&asset, &package_rel_path)?;
                 (collection, asset, execution)
             }
             AssetKind::Trajectory => {
@@ -1351,11 +1384,12 @@ impl LithosProject {
                 _ => format!("{}.lithos-asset", storage_asset_id.0),
             });
         let package_root = self.root.join(&package_rel_path);
+        let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
         let supersedes = self
             .latest_active_asset_for_collection(&collection.id)?
             .map(|asset| asset.id);
         let manifest = write_structured_compute_rows(
-            &package_root,
+            &staged.root,
             source_asset,
             &collection,
             &storage_asset_id,
@@ -1364,7 +1398,7 @@ impl LithosProject {
             &execution,
             asset_kind.clone(),
         )?;
-        write_asset_manifest(&package_root, &manifest)?;
+        write_asset_manifest(&staged.root, &manifest)?;
         if let Some(asset_id) = &supersedes {
             self.mark_asset_superseded(asset_id)?;
         }
@@ -1379,12 +1413,14 @@ impl LithosProject {
             package_path: package_root.to_string_lossy().into_owned(),
             manifest,
         };
-        self.insert_asset(&asset, &package_rel_path)?;
-        self.record_asset_revision_from_head(
+        let revision = self.build_asset_revision_from_snapshot(
             &asset,
             None,
             default_asset_diff_summary(&asset.asset_kind),
+            &staged,
         )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.insert_asset(&asset, &package_rel_path)?;
         Ok((collection, asset, execution))
     }
 
@@ -1438,7 +1474,8 @@ impl LithosProject {
             .join(asset_kind.asset_dir_name())
             .join(format!("{}.lithos-asset", storage_asset_id.0));
         let package_root = self.root.join(&package_rel_path);
-        writer(&package_root)?;
+        let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
+        writer(&staged.root)?;
         let supersedes = self
             .latest_active_asset_for_collection(&collection.id)?
             .map(|asset| asset.id);
@@ -1455,7 +1492,7 @@ impl LithosProject {
             identifiers.clone(),
             supersedes.clone(),
         )?;
-        write_asset_manifest(&package_root, &manifest)?;
+        write_asset_manifest(&staged.root, &manifest)?;
         if let Some(asset_id) = &supersedes {
             self.mark_asset_superseded(asset_id)?;
         }
@@ -1470,12 +1507,14 @@ impl LithosProject {
             package_path: package_root.to_string_lossy().into_owned(),
             manifest,
         };
-        self.insert_asset(&asset, &package_rel_path)?;
-        self.record_asset_revision_from_head(
+        let revision = self.build_asset_revision_from_snapshot(
             &asset,
             None,
             default_asset_diff_summary(&asset.asset_kind),
+            &staged,
         )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.insert_asset(&asset, &package_rel_path)?;
         Ok(ProjectAssetImportResult {
             resolution: ImportResolution {
                 status: AssetStatus::Bound,
@@ -1899,15 +1938,18 @@ impl LithosProject {
         Ok(())
     }
 
-    fn record_asset_revision_from_head(
+    fn build_asset_revision_from_snapshot(
         &self,
         asset: &AssetRecord,
         parent_revision_id: Option<&AssetRevisionId>,
         diff_summary: AssetDiffSummary,
+        staged_snapshot: &StagedAssetSnapshot,
     ) -> Result<AssetRevisionRecord> {
         let created_at_unix_seconds = now_unix_seconds();
-        let manifest_path = Path::new(&asset.package_path).join(ASSET_MANIFEST_FILENAME);
-        let data_path = Path::new(&asset.package_path).join(asset_data_filename(&asset.asset_kind));
+        let manifest_path = staged_snapshot.root.join(ASSET_MANIFEST_FILENAME);
+        let data_path = staged_snapshot
+            .root
+            .join(asset_data_filename(&asset.asset_kind));
         let manifest_bytes = fs::read(&manifest_path)?;
         let data_bytes = fs::read(&data_path)?;
         let metadata_blob = AssetBlobRef {
@@ -1934,16 +1976,14 @@ impl LithosProject {
         );
         let snapshot_rel_path = project_asset_revision_store_rel_path(&asset.id, &revision_id);
         let snapshot_root = self.root.join(&snapshot_rel_path);
-        fs::create_dir_all(&snapshot_root)?;
-        copy_if_exists(
-            &Path::new(&asset.package_path).join("metadata.json"),
-            &snapshot_root.join("metadata.json"),
-        )?;
-        fs::copy(&manifest_path, snapshot_root.join(ASSET_MANIFEST_FILENAME))?;
-        fs::copy(
-            &data_path,
-            snapshot_root.join(asset_data_filename(&asset.asset_kind)),
-        )?;
+        if let Some(parent) = snapshot_root.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if snapshot_root.exists() {
+            fs::remove_dir_all(&snapshot_root)?;
+        }
+        fs::rename(&staged_snapshot.root, &snapshot_root)?;
+        let change_summary = summarize_asset_diff(&asset.asset_kind, &diff_summary);
         let revision = AssetRevisionRecord {
             revision_id,
             asset_id: asset.id.clone(),
@@ -1955,9 +1995,53 @@ impl LithosProject {
             metadata_blob,
             data_blob,
             diff_summary,
+            change_summary,
         };
-        self.insert_asset_revision(&revision)?;
         Ok(revision)
+    }
+
+    fn commit_asset_revision(
+        &self,
+        asset: &AssetRecord,
+        revision: &AssetRevisionRecord,
+    ) -> Result<()> {
+        let previous_head = self.current_asset_revision(&asset.id)?;
+        self.materialize_asset_head_from_revision(asset, revision)?;
+        if let Err(error) = self.insert_asset_revision(revision) {
+            if let Some(previous_revision) = previous_head.as_ref() {
+                self.materialize_asset_head_from_revision(asset, previous_revision)?;
+            } else {
+                clear_project_visible_files(asset)?;
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn materialize_asset_head_from_revision(
+        &self,
+        asset: &AssetRecord,
+        revision: &AssetRevisionRecord,
+    ) -> Result<()> {
+        let revision_root = self.root.join(&revision.package_snapshot_rel_path);
+        fs::create_dir_all(&asset.package_path)?;
+        materialize_project_visible_files(
+            &self.root,
+            &[
+                (
+                    revision_root.join("metadata.json"),
+                    Path::new(&asset.package_path).join("metadata.json"),
+                ),
+                (
+                    revision_root.join(ASSET_MANIFEST_FILENAME),
+                    Path::new(&asset.package_path).join(ASSET_MANIFEST_FILENAME),
+                ),
+                (
+                    revision_root.join(asset_data_filename(&asset.asset_kind)),
+                    Path::new(&asset.package_path).join(asset_data_filename(&asset.asset_kind)),
+                ),
+            ],
+        )
     }
 }
 
@@ -1966,6 +2050,39 @@ fn copy_if_exists(source: &Path, target: &Path) -> Result<()> {
         fs::copy(source, target)?;
     }
     Ok(())
+}
+
+fn stage_project_asset_root(root: &Path, asset_id: &AssetId) -> Result<StagedAssetSnapshot> {
+    let staging_root = PathBuf::from(root)
+        .join(PROJECT_REVISION_STORE_DIRNAME)
+        .join(PROJECT_STAGING_DIRNAME)
+        .join(&asset_id.0)
+        .join(
+            revision_token_for_bytes(
+                "asset-stage",
+                &format!("{}:{}", asset_id.0, now_unix_nanos()),
+            )
+            .0,
+        );
+    fs::create_dir_all(&staging_root)?;
+    Ok(StagedAssetSnapshot { root: staging_root })
+}
+
+fn stage_existing_asset_root(root: &Path, asset: &AssetRecord) -> Result<StagedAssetSnapshot> {
+    let staged = stage_project_asset_root(root, &asset.id)?;
+    copy_if_exists(
+        &Path::new(&asset.package_path).join("metadata.json"),
+        &staged.root.join("metadata.json"),
+    )?;
+    copy_if_exists(
+        &Path::new(&asset.package_path).join(ASSET_MANIFEST_FILENAME),
+        &staged.root.join(ASSET_MANIFEST_FILENAME),
+    )?;
+    copy_if_exists(
+        &Path::new(&asset.package_path).join(asset_data_filename(&asset.asset_kind)),
+        &staged.root.join(asset_data_filename(&asset.asset_kind)),
+    )?;
+    Ok(staged)
 }
 
 fn project_asset_revision_store_rel_path(
@@ -1990,6 +2107,85 @@ fn stable_project_blob_hash(scope: &str, bytes: &[u8]) -> String {
     scope.hash(&mut hasher);
     bytes.hash(&mut hasher);
     format!("{scope}-{:016x}", hasher.finish())
+}
+
+fn materialize_project_visible_files(root: &Path, mappings: &[(PathBuf, PathBuf)]) -> Result<()> {
+    let backup_root = PathBuf::from(root)
+        .join(PROJECT_REVISION_STORE_DIRNAME)
+        .join(PROJECT_STAGING_DIRNAME)
+        .join(
+            revision_token_for_bytes(
+                "project-materialize-backup",
+                &format!("{}:{}", root.display(), now_unix_nanos()),
+            )
+            .0,
+        );
+    fs::create_dir_all(&backup_root)?;
+
+    for (_, destination) in mappings {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        if destination.exists() {
+            fs::copy(
+                destination,
+                backup_root.join(
+                    destination
+                        .file_name()
+                        .map(|value| value.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| String::from("backup")),
+                ),
+            )?;
+        }
+    }
+
+    for (source, destination) in mappings {
+        let temp_path = destination.with_extension("next");
+        fs::copy(source, &temp_path)?;
+        if destination.exists() {
+            fs::remove_file(destination)?;
+        }
+        if let Err(error) = fs::rename(&temp_path, destination) {
+            restore_project_visible_files(&backup_root, mappings)?;
+            return Err(LasError::Io(error));
+        }
+    }
+
+    if backup_root.exists() {
+        fs::remove_dir_all(backup_root)?;
+    }
+    Ok(())
+}
+
+fn restore_project_visible_files(root: &Path, mappings: &[(PathBuf, PathBuf)]) -> Result<()> {
+    for (_, destination) in mappings {
+        let backup_path = root.join(
+            destination
+                .file_name()
+                .map(|value| value.to_string_lossy().into_owned())
+                .unwrap_or_else(|| String::from("backup")),
+        );
+        if backup_path.exists() {
+            if destination.exists() {
+                fs::remove_file(destination)?;
+            }
+            fs::copy(&backup_path, destination)?;
+        }
+    }
+    Ok(())
+}
+
+fn clear_project_visible_files(asset: &AssetRecord) -> Result<()> {
+    for path in [
+        Path::new(&asset.package_path).join("metadata.json"),
+        Path::new(&asset.package_path).join(ASSET_MANIFEST_FILENAME),
+        Path::new(&asset.package_path).join(asset_data_filename(&asset.asset_kind)),
+    ] {
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
 }
 
 fn default_asset_diff_summary(asset_kind: &AssetKind) -> AssetDiffSummary {
@@ -2118,6 +2314,80 @@ fn diff_log_curve_values(
         changed_value_count,
         first_changed_row,
         last_changed_row,
+    }
+}
+
+fn summarize_asset_diff(asset_kind: &AssetKind, diff: &AssetDiffSummary) -> String {
+    match diff {
+        AssetDiffSummary::Log(summary) => summarize_log_asset_diff(summary),
+        AssetDiffSummary::Trajectory(summary) => {
+            summarize_structured_asset_diff("trajectory", summary)
+        }
+        AssetDiffSummary::TopSet(summary) => summarize_structured_asset_diff("tops", summary),
+        AssetDiffSummary::PressureObservation(summary) => {
+            summarize_structured_asset_diff("pressure observations", summary)
+        }
+        AssetDiffSummary::DrillingObservation(summary) => {
+            summarize_structured_asset_diff("drilling observations", summary)
+        }
+        AssetDiffSummary::MetadataOnly { changed_fields } => {
+            if changed_fields.is_empty() {
+                format!("updated {} metadata", asset_kind.as_str())
+            } else {
+                format!("updated metadata fields {}", changed_fields.join(", "))
+            }
+        }
+    }
+}
+
+fn summarize_log_asset_diff(diff: &LogAssetDiffSummary) -> String {
+    let mut parts = Vec::new();
+    if diff.metadata_changed {
+        parts.push(String::from("metadata updated"));
+    }
+    if !diff.curves_added.is_empty() {
+        parts.push(format!("added curves {}", diff.curves_added.join(", ")));
+    }
+    if !diff.curves_removed.is_empty() {
+        parts.push(format!("removed curves {}", diff.curves_removed.join(", ")));
+    }
+    if !diff.modified_curves.is_empty() {
+        parts.push(format!(
+            "updated {} curve value ranges",
+            diff.modified_curves.len()
+        ));
+    }
+    if diff.row_count_changed {
+        parts.push(String::from("row count changed"));
+    }
+    if diff.curve_count_changed {
+        parts.push(String::from("curve count changed"));
+    }
+    if parts.is_empty() {
+        String::from("initial log asset revision")
+    } else {
+        parts.join("; ")
+    }
+}
+
+fn summarize_structured_asset_diff(label: &str, diff: &StructuredAssetDiffSummary) -> String {
+    let mut parts = Vec::new();
+    if diff.rows_added > 0 {
+        parts.push(format!("added {} rows", diff.rows_added));
+    }
+    if diff.rows_removed > 0 {
+        parts.push(format!("removed {} rows", diff.rows_removed));
+    }
+    if diff.rows_updated > 0 {
+        parts.push(format!("updated {} rows", diff.rows_updated));
+    }
+    if diff.extent_changed {
+        parts.push(String::from("extent changed"));
+    }
+    if parts.is_empty() {
+        format!("initial {label} asset revision")
+    } else {
+        parts.join("; ")
     }
 }
 
@@ -2832,6 +3102,13 @@ fn now_unix_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn now_unix_nanos() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
         .unwrap_or(0)
 }
 

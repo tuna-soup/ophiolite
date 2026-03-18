@@ -198,12 +198,16 @@ root compatibility crate: lithos_las
   -> lithos-parser
   -> lithos-table
   -> lithos-package
+  -> lithos-project
+  -> lithos-ingest
   -> lithos-cli
 ```
 
 Current staged compromise:
 
-- parser, package, and CLI are split into their own crates
+- `lithos-project` now owns the multi-asset catalog, asset manifests, typed project queries, summary APIs, and synthetic project fixtures
+- `lithos-ingest` now provides the first explicit ingest-oriented crate boundary over project import flows
+- the root `lithos_las` crate remains the compatibility facade that re-exports the workspace surface
 - the runtime table boundary has its own crate, but `CurveTable` still originates from the core layer in this phase to preserve the current `LasFile::data()` API
 - Arrow/Parquet conversion now lives in the package crate rather than the runtime table type
 - direct SDK package opens remain eager; only backend session reads are lazy in this phase

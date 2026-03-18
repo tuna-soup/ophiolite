@@ -37,6 +37,7 @@ Current ingest/query status:
 - LAS import feeds project-managed log assets
 - CSV import feeds the first non-log asset families
 - typed read/query APIs exist for trajectory, tops, pressure observations, and drilling observations
+- project-facing summary APIs exist for project, well, wellbore, collection, and asset overviews
 - synthetic multi-asset project fixtures are generated from raw LAS/CSV source files and then imported through those same project APIs
 - rich edit sessions are still primarily a log/package capability
 
@@ -51,6 +52,7 @@ Current ingest/query status:
 ## Consequences
 
 - `LithosProject` becomes the multi-well entry point without turning `.laspkg` into a multi-well container
+- the monorepo now carries an explicit `lithos-project` crate for this layer and a separate `lithos-ingest` crate boundary for import-oriented orchestration
 - project-managed assets use a shared `AssetManifest` contract
 - asset collections group related or versioned assets under one wellbore
 - the catalog is for discovery and relationships; the package is the authoritative storage unit for the asset itself

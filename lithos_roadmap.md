@@ -35,6 +35,7 @@ The current goal is:
 - logical vs storage asset identity
 - project catalog in SQLite
 - project-managed single-asset packages
+- project-facing summary APIs for project, well, wellbore, collection, and asset overviews
 - typed asset families:
   - log
   - trajectory
@@ -44,6 +45,12 @@ The current goal is:
 - typed read/query APIs for those families
 - cross-asset depth-range discovery for one wellbore
 - current/superseded asset history for simple replace workflows
+
+### Monorepo Platform Skeleton
+
+- `lithos-project` workspace crate for project/catalog, manifests, typed queries, and synthetic fixtures
+- `lithos-ingest` workspace crate for import-oriented orchestration boundaries
+- `lithos_las` preserved as the compatibility facade over the workspace crates
 
 ### Validation Surface
 
@@ -55,35 +62,7 @@ The current goal is:
 
 These are the highest-value missing pieces for turning the current foundation into a durable application platform.
 
-### 1. Project-Facing Platform API
-
-Stabilize a cleaner project-facing summary/service layer above raw catalog internals:
-
-- well summaries
-- wellbore summaries
-- asset collection summaries
-- asset summaries by type and status
-- cross-asset coverage queries
-
-The goal is to give apps a durable platform surface instead of making them bind directly to lower-level catalog details.
-
-### 2. Monorepo Platform Skeleton
-
-Make the platform shape explicit in the workspace by extracting:
-
-- `crates/lithos-project`
-  - catalog
-  - manifests
-  - typed asset queries
-  - synthetic project fixtures
-- `crates/lithos-ingest`
-  - import orchestration
-  - source import adapters
-  - future ingest adapters
-
-Keep `lithos_las` as the compatibility facade over the workspace crates.
-
-### 3. Simpler Import and Versioning Workflows
+### 1. Simpler Import and Versioning Workflows
 
 Keep the operational model simple and local-first:
 
@@ -94,13 +73,21 @@ Keep the operational model simple and local-first:
 
 The goal is to make Lithos predictable for everyday subsurface work rather than Git-like.
 
-### 4. Cross-Asset App Workflows
+### 2. Cross-Asset App Workflows
 
 Use the harness as the validation target for:
 
 - better project browsing over wells, wellbores, collections, and assets
 - current vs superseded asset visibility
 - richer viewers for logs + trajectory + tops together
+
+### 3. Broader Ingest Adapters
+
+Deepen the explicit ingest layer after the crate extraction:
+
+- stronger CSV adapter coverage
+- richer LAS 3 section extraction into non-log asset families
+- cleaner import entry points for apps and automation
 
 ## Application-Validation Milestones
 

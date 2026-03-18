@@ -1,9 +1,6 @@
 mod backend;
 mod backend_commands;
 mod command_service;
-mod project;
-mod project_assets;
-mod synthetic_fixtures;
 
 pub use backend::{PackageBackend, dto_contract_version};
 pub use backend_commands::PackageBackendState;
@@ -35,6 +32,10 @@ pub use lithos_core::{
     validate_edit_state, validate_package_metadata, validation_issue_for_message,
     validation_report_dto, validation_report_from_issues, validation_report_from_messages,
 };
+pub use lithos_ingest::{
+    import_drilling_csv_asset, import_las_asset, import_pressure_csv_asset, import_tops_csv_asset,
+    import_trajectory_csv_asset,
+};
 pub use lithos_package::{
     PackageSession, PackageSessionStore, StoredLasFile, open_package, open_package_metadata,
     open_package_summary, validate_package, write_bundle, write_package, write_package_overwrite,
@@ -44,18 +45,19 @@ pub use lithos_parser::{
     DType, DTypeSpec, DecodedText, NullPolicy, NullRule, ParsedHeaderLine, ReadOptions, ReadPolicy,
     decode_bytes, import_las_file, parse_header_line, read_path, read_reader, read_string,
 };
-pub use project::{
-    AssetCollectionId, AssetCollectionRecord, AssetExtent, AssetId, AssetKind, AssetManifest,
-    AssetRecord, AssetReferenceMetadata, AssetStatus, BulkDataDescriptor, CoordinateReference,
-    DepthReference, ImportResolution, LithosProject, LithosProjectManifest, LogAssetImportResult,
-    ProjectAssetImportResult, SourceArtifactRef, UnitSystem, VerticalDatum, WellId,
-    WellIdentifierSet, WellRecord, WellboreId, WellboreRecord,
-};
-pub use project_assets::{
+pub use lithos_project::{
     AssetBindingInput, AssetColumnMetadata, AssetColumnType, AssetTableMetadata, DepthRangeQuery,
     DrillingObservationRow, PressureObservationRow, TopRow, TrajectoryRow,
 };
-pub use synthetic_fixtures::{
+pub use lithos_project::{
+    AssetCollectionId, AssetCollectionRecord, AssetCollectionSummary, AssetExtent, AssetId,
+    AssetKind, AssetManifest, AssetRecord, AssetReferenceMetadata, AssetStatus, BulkDataDescriptor,
+    CoordinateReference, DepthReference, ImportResolution, LithosProject, LithosProjectManifest,
+    LogAssetImportResult, ProjectAssetImportResult, ProjectAssetSummary, ProjectSummary,
+    SourceArtifactRef, UnitSystem, VerticalDatum, WellId, WellIdentifierSet, WellRecord,
+    WellSummary, WellboreId, WellboreRecord, WellboreSummary,
+};
+pub use lithos_project::{
     SyntheticProjectAssetIds, SyntheticProjectFixture, SyntheticProjectSourcePaths,
     generate_synthetic_project_fixture,
 };

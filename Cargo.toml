@@ -5,6 +5,8 @@ members = [
     "crates/lithos-parser",
     "crates/lithos-table",
     "crates/lithos-package",
+    "crates/lithos-project",
+    "crates/lithos-ingest",
     "crates/lithos-cli",
 ]
 exclude = ["apps/lithos-harness/src-tauri"]
@@ -36,6 +38,8 @@ lithos-core = { path = "crates/lithos-core" }
 lithos-parser = { path = "crates/lithos-parser" }
 lithos-table = { path = "crates/lithos-table" }
 lithos-package = { path = "crates/lithos-package" }
+lithos-project = { path = "crates/lithos-project" }
+lithos-ingest = { path = "crates/lithos-ingest" }
 lithos-cli = { path = "crates/lithos-cli" }
 parquet = { workspace = true }
 rusqlite = { workspace = true }

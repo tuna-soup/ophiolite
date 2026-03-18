@@ -640,28 +640,16 @@ where
 }
 
 fn project_summary_response(project: LithosProject) -> CommandResponse<ProjectSummaryDto> {
-    let well_count = project.list_wells().map(|value| value.len()).unwrap_or(0);
-    let asset_count = project
-        .list_wells()
-        .and_then(|wells| {
-            wells.into_iter().try_fold(0usize, |acc, well| {
-                let wellbores = project.list_wellbores(&well.id)?;
-                let counts = wellbores.into_iter().try_fold(0usize, |sum, wellbore| {
-                    project
-                        .list_assets(&wellbore.id, None)
-                        .map(|assets| sum + assets.len())
-                })?;
-                Ok(acc + counts)
-            })
-        })
-        .unwrap_or(0);
-    CommandResponse::Ok(ProjectSummaryDto {
-        root: project.root().display().to_string(),
-        catalog_path: project.catalog_path().display().to_string(),
-        manifest_path: project.root().join("lithos-project.json").display().to_string(),
-        well_count,
-        asset_count,
-    })
+    match project.summary() {
+        Ok(summary) => CommandResponse::Ok(ProjectSummaryDto {
+            root: summary.root,
+            catalog_path: summary.catalog_path,
+            manifest_path: summary.manifest_path,
+            well_count: summary.well_count,
+            asset_count: summary.asset_count,
+        }),
+        Err(error) => project_read_error(error),
+    }
 }
 
 fn project_read_error<T>(error: lithos_las::LasError) -> CommandResponse<T> {

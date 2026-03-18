@@ -476,6 +476,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "lithos-ingest"
+version = "0.1.0"
+dependencies = [
+ "lithos-core",
+ "lithos-project",
+]
+
+[[package]]
 name = "lithos-package"
 version = "0.1.0"
 dependencies = [
@@ -499,6 +507,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "lithos-project"
+version = "0.1.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "csv",
+ "lithos-core",
+ "lithos-package",
+ "lithos-parser",
+ "parquet",
+ "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lithos-table"
 version = "0.1.0"
 dependencies = [
@@ -514,8 +538,10 @@ dependencies = [
  "csv",
  "lithos-cli",
  "lithos-core",
+ "lithos-ingest",
  "lithos-package",
  "lithos-parser",
+ "lithos-project",
  "lithos-table",
  "parquet",
  "rusqlite",

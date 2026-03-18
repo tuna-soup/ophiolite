@@ -1,0 +1,8 @@
+[package]
+name = "lithos-ingest"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+lithos-core = { path = "../lithos-core" }
+lithos-project = { path = "../lithos-project" }

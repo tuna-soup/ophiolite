@@ -170,6 +170,8 @@ root compatibility crate: lithos_las
   -> lithos-parser
   -> lithos-table
   -> lithos-package
+  -> lithos-project
+  -> lithos-ingest
   -> lithos-cli
 ```
 
@@ -274,6 +276,7 @@ The current rule is:
 - stable logical asset identity plus per-import storage identity
 - typed read/query APIs for those non-log asset families
 - cross-asset depth-range discovery for one wellbore
+- project-facing summary APIs for project, well, wellbore, collection, and asset overviews
 - synthetic multi-asset project fixture generation for testing and manual inspection
 
 The first multi-well slice is still intentionally read-mostly. Log/package editing remains the most mature edit path.

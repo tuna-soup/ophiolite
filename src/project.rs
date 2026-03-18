@@ -254,6 +254,46 @@ pub struct AssetRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectSummary {
+    pub root: String,
+    pub catalog_path: String,
+    pub manifest_path: String,
+    pub well_count: usize,
+    pub wellbore_count: usize,
+    pub asset_collection_count: usize,
+    pub asset_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WellSummary {
+    pub well: WellRecord,
+    pub wellbore_count: usize,
+    pub asset_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WellboreSummary {
+    pub wellbore: WellboreRecord,
+    pub collection_count: usize,
+    pub asset_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetCollectionSummary {
+    pub collection: AssetCollectionRecord,
+    pub asset_count: usize,
+    pub current_asset_id: Option<AssetId>,
+    pub superseded_asset_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectAssetSummary {
+    pub asset: AssetRecord,
+    pub is_current: bool,
+    pub supersedes: Option<AssetId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ImportResolution {
     pub status: AssetStatus,
     pub well_id: WellId,
@@ -331,6 +371,37 @@ impl LithosProject {
         &self.catalog_path
     }
 
+    pub fn summary(&self) -> Result<ProjectSummary> {
+        let wells = self.list_wells()?;
+        let well_count = wells.len();
+        let mut wellbore_count = 0usize;
+        let mut asset_collection_count = 0usize;
+        let mut asset_count = 0usize;
+
+        for well in &wells {
+            let wellbores = self.list_wellbores(&well.id)?;
+            wellbore_count += wellbores.len();
+            for wellbore in &wellbores {
+                asset_collection_count += self.list_asset_collections(&wellbore.id)?.len();
+                asset_count += self.list_assets(&wellbore.id, None)?.len();
+            }
+        }
+
+        Ok(ProjectSummary {
+            root: self.root.display().to_string(),
+            catalog_path: self.catalog_path.display().to_string(),
+            manifest_path: self
+                .root
+                .join(PROJECT_MANIFEST_FILENAME)
+                .display()
+                .to_string(),
+            well_count,
+            wellbore_count,
+            asset_collection_count,
+            asset_count,
+        })
+    }
+
     pub fn list_wells(&self) -> Result<Vec<WellRecord>> {
         let mut statement = self
             .connection
@@ -353,6 +424,24 @@ impl LithosProject {
             .map_err(sqlite_error)
     }
 
+    pub fn well_summaries(&self) -> Result<Vec<WellSummary>> {
+        self.list_wells()?
+            .into_iter()
+            .map(|well| {
+                let wellbores = self.list_wellbores(&well.id)?;
+                let asset_count = wellbores.iter().try_fold(0usize, |count, wellbore| {
+                    self.list_assets(&wellbore.id, None)
+                        .map(|assets| count + assets.len())
+                })?;
+                Ok(WellSummary {
+                    well,
+                    wellbore_count: wellbores.len(),
+                    asset_count,
+                })
+            })
+            .collect()
+    }
+
     pub fn list_wellbores(&self, well_id: &WellId) -> Result<Vec<WellboreRecord>> {
         let mut statement = self.connection.prepare(
             "SELECT id, well_id, primary_name, identifiers_json FROM wellbores WHERE well_id = ?1 ORDER BY primary_name",
@@ -373,6 +462,21 @@ impl LithosProject {
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sqlite_error)
+    }
+
+    pub fn wellbore_summaries(&self, well_id: &WellId) -> Result<Vec<WellboreSummary>> {
+        self.list_wellbores(well_id)?
+            .into_iter()
+            .map(|wellbore| {
+                let collection_count = self.list_asset_collections(&wellbore.id)?.len();
+                let asset_count = self.list_assets(&wellbore.id, None)?.len();
+                Ok(WellboreSummary {
+                    wellbore,
+                    collection_count,
+                    asset_count,
+                })
+            })
+            .collect()
     }
 
     pub fn list_asset_collections(
@@ -405,6 +509,36 @@ impl LithosProject {
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sqlite_error)
+    }
+
+    pub fn asset_collection_summaries(
+        &self,
+        wellbore_id: &WellboreId,
+    ) -> Result<Vec<AssetCollectionSummary>> {
+        self.list_asset_collections(wellbore_id)?
+            .into_iter()
+            .map(|collection| {
+                let assets = self.list_assets(wellbore_id, Some(collection.asset_kind.clone()))?;
+                let collection_assets = assets
+                    .into_iter()
+                    .filter(|asset| asset.collection_id == collection.id)
+                    .collect::<Vec<_>>();
+                let current_asset_id = collection_assets
+                    .iter()
+                    .find(|asset| asset.status == AssetStatus::Bound)
+                    .map(|asset| asset.id.clone());
+                let superseded_asset_count = collection_assets
+                    .iter()
+                    .filter(|asset| asset.status == AssetStatus::Superseded)
+                    .count();
+                Ok(AssetCollectionSummary {
+                    collection,
+                    asset_count: collection_assets.len(),
+                    current_asset_id,
+                    superseded_asset_count,
+                })
+            })
+            .collect()
     }
 
     pub fn list_assets(
@@ -457,6 +591,23 @@ impl LithosProject {
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sqlite_error)
+    }
+
+    pub fn asset_summaries(
+        &self,
+        wellbore_id: &WellboreId,
+        asset_kind: Option<AssetKind>,
+    ) -> Result<Vec<ProjectAssetSummary>> {
+        self.list_assets(wellbore_id, asset_kind)?
+            .into_iter()
+            .map(|asset| {
+                Ok(ProjectAssetSummary {
+                    is_current: asset.status == AssetStatus::Bound,
+                    supersedes: asset.manifest.supersedes.clone(),
+                    asset,
+                })
+            })
+            .collect()
     }
 
     pub fn import_las(

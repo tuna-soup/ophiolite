@@ -1,5 +1,6 @@
 use lithos_las::{
     AssetBindingInput, AssetKind, AssetStatus, DepthRangeQuery, LithosProject, examples,
+    import_las_asset,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -13,9 +14,8 @@ fn project_import_creates_catalog_entities_and_asset_manifest() {
     let root = temp_project_root("project_import_creates_catalog_entities_and_asset_manifest");
     let mut project = LithosProject::create(&root).unwrap();
 
-    let result = project
-        .import_las(examples::path("6038187_v1.2_short.las"), None)
-        .unwrap();
+    let result =
+        import_las_asset(&mut project, examples::path("6038187_v1.2_short.las"), None).unwrap();
 
     let wells = project.list_wells().unwrap();
     assert_eq!(wells.len(), 1);
@@ -52,6 +52,47 @@ fn project_import_creates_catalog_entities_and_asset_manifest() {
 
     let reopened = LithosProject::open(&root).unwrap();
     assert!(reopened.catalog_path().exists());
+}
+
+#[test]
+fn project_exposes_summary_api_for_apps() {
+    let root = temp_project_root("project_exposes_summary_api_for_apps");
+    let mut project = LithosProject::create(&root).unwrap();
+
+    project
+        .import_las(examples::path("6038187_v1.2_short.las"), Some("logs"))
+        .unwrap();
+
+    let summary = project.summary().unwrap();
+    assert_eq!(summary.well_count, 1);
+    assert_eq!(summary.wellbore_count, 1);
+    assert_eq!(summary.asset_collection_count, 1);
+    assert_eq!(summary.asset_count, 1);
+
+    let well_summaries = project.well_summaries().unwrap();
+    assert_eq!(well_summaries.len(), 1);
+    assert_eq!(well_summaries[0].wellbore_count, 1);
+    assert_eq!(well_summaries[0].asset_count, 1);
+
+    let wellbore_summaries = project
+        .wellbore_summaries(&well_summaries[0].well.id)
+        .unwrap();
+    assert_eq!(wellbore_summaries.len(), 1);
+    assert_eq!(wellbore_summaries[0].collection_count, 1);
+    assert_eq!(wellbore_summaries[0].asset_count, 1);
+
+    let collection_summaries = project
+        .asset_collection_summaries(&wellbore_summaries[0].wellbore.id)
+        .unwrap();
+    assert_eq!(collection_summaries.len(), 1);
+    assert_eq!(collection_summaries[0].asset_count, 1);
+    assert!(collection_summaries[0].current_asset_id.is_some());
+
+    let asset_summaries = project
+        .asset_summaries(&wellbore_summaries[0].wellbore.id, Some(AssetKind::Log))
+        .unwrap();
+    assert_eq!(asset_summaries.len(), 1);
+    assert!(asset_summaries[0].is_current);
 }
 
 #[test]

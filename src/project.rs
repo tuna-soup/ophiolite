@@ -816,6 +816,73 @@ impl LithosProject {
         read_drilling_rows(Path::new(&asset.package_path), range)
     }
 
+    pub fn asset_record(&self, asset_id: &AssetId) -> Result<AssetRecord> {
+        self.asset_by_id(asset_id)
+    }
+
+    pub fn overwrite_trajectory_asset(
+        &mut self,
+        asset_id: &AssetId,
+        rows: &[TrajectoryRow],
+    ) -> Result<AssetRecord> {
+        let mut asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::Trajectory)?;
+        write_trajectory_package(Path::new(&asset.package_path), rows)?;
+        asset.manifest.asset_schema_version = trajectory_metadata(rows).schema_version;
+        asset.manifest.extents =
+            structured_asset_extent(AssetKind::Trajectory, trajectory_extent(rows));
+        write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
+        self.update_asset_manifest(&asset)?;
+        Ok(asset)
+    }
+
+    pub fn overwrite_tops_asset(
+        &mut self,
+        asset_id: &AssetId,
+        rows: &[TopRow],
+    ) -> Result<AssetRecord> {
+        let mut asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::TopSet)?;
+        write_tops_package(Path::new(&asset.package_path), rows)?;
+        asset.manifest.asset_schema_version = tops_metadata(rows).schema_version;
+        asset.manifest.extents = structured_asset_extent(AssetKind::TopSet, tops_extent(rows));
+        write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
+        self.update_asset_manifest(&asset)?;
+        Ok(asset)
+    }
+
+    pub fn overwrite_pressure_asset(
+        &mut self,
+        asset_id: &AssetId,
+        rows: &[PressureObservationRow],
+    ) -> Result<AssetRecord> {
+        let mut asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::PressureObservation)?;
+        write_pressure_package(Path::new(&asset.package_path), rows)?;
+        asset.manifest.asset_schema_version = pressure_metadata(rows).schema_version;
+        asset.manifest.extents =
+            structured_asset_extent(AssetKind::PressureObservation, pressure_extent(rows));
+        write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
+        self.update_asset_manifest(&asset)?;
+        Ok(asset)
+    }
+
+    pub fn overwrite_drilling_asset(
+        &mut self,
+        asset_id: &AssetId,
+        rows: &[DrillingObservationRow],
+    ) -> Result<AssetRecord> {
+        let mut asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::DrillingObservation)?;
+        write_drilling_package(Path::new(&asset.package_path), rows)?;
+        asset.manifest.asset_schema_version = drilling_metadata(rows).schema_version;
+        asset.manifest.extents =
+            structured_asset_extent(AssetKind::DrillingObservation, drilling_extent(rows));
+        write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
+        self.update_asset_manifest(&asset)?;
+        Ok(asset)
+    }
+
     pub fn log_curve_semantics(&self, asset_id: &AssetId) -> Result<Vec<CurveSemanticDescriptor>> {
         let asset = self.asset_by_id(asset_id)?;
         require_asset_kind(&asset, AssetKind::Log)?;

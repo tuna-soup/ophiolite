@@ -1,17 +1,23 @@
 mod commands;
 
 use commands::{
-    HarnessState, apply_curve_edit, apply_metadata_edit, close_session, create_project,
-    dirty_state, import_las_into_workspace, import_project_drilling_csv, import_project_las,
-    import_project_pressure_csv, import_project_tops_csv, import_project_trajectory_csv,
-    inspect_las_curve_catalog, inspect_las_depth_window, inspect_las_metadata,
-    inspect_las_summary, inspect_las_window, inspect_package_metadata, inspect_package_summary,
-    list_project_asset_collections, list_project_assets, list_project_compute_catalog,
-    list_project_wellbores, list_project_wells, open_package_session, open_project,
+    HarnessState, apply_curve_edit, apply_drilling_structured_edit, apply_metadata_edit,
+    apply_pressure_structured_edit, apply_tops_structured_edit,
+    apply_trajectory_structured_edit, close_session, close_structured_asset_edit_session,
+    create_project, dirty_state, import_las_into_workspace, import_project_drilling_csv,
+    import_project_las, import_project_pressure_csv, import_project_tops_csv,
+    import_project_trajectory_csv, inspect_las_curve_catalog, inspect_las_depth_window,
+    inspect_las_metadata, inspect_las_summary, inspect_las_window, inspect_package_metadata,
+    inspect_package_summary, list_project_asset_collections, list_project_assets,
+    list_project_compute_catalog, list_project_wellbores, list_project_wells,
+    open_package_session, open_project, open_structured_asset_edit_session,
     project_assets_covering_depth_range, read_curve_window, read_depth_window,
     read_package_files, read_project_drilling_observations, read_project_pressure_observations,
-    read_project_tops, read_project_trajectory_rows, run_project_compute, save_session,
-    save_session_as, session_curve_catalog, session_metadata, session_summary, validate_las,
+    read_project_tops, read_project_trajectory_rows, read_structured_session_drilling_observations,
+    read_structured_session_pressure_observations, read_structured_session_tops,
+    read_structured_session_trajectory_rows, run_project_compute, save_session,
+    save_session_as, save_structured_asset_edit_session, session_curve_catalog,
+    session_metadata, session_summary, structured_asset_edit_session_summary, validate_las,
     validate_package,
 };
 use tauri::menu::{MenuBuilder, MenuEvent, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
@@ -123,7 +129,19 @@ pub fn run() {
             read_project_trajectory_rows,
             read_project_tops,
             read_project_pressure_observations,
-            read_project_drilling_observations
+            read_project_drilling_observations,
+            open_structured_asset_edit_session,
+            structured_asset_edit_session_summary,
+            close_structured_asset_edit_session,
+            read_structured_session_trajectory_rows,
+            read_structured_session_tops,
+            read_structured_session_pressure_observations,
+            read_structured_session_drilling_observations,
+            apply_trajectory_structured_edit,
+            apply_tops_structured_edit,
+            apply_pressure_structured_edit,
+            apply_drilling_structured_edit,
+            save_structured_asset_edit_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running lithos harness");

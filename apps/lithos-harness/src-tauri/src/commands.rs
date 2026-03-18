@@ -12,22 +12,34 @@ use lithos_las::{
 };
 use lithos_las::{
     AssetBindingInput, AssetCollectionRecord, AssetKind, AssetRecord, DrillingObservationRow,
-    PressureObservationRow, ProjectComputeRunRequest,
+    PressureObservationEditRequest, PressureObservationRow, ProjectComputeRunRequest,
 };
 use lithos_las::{ComputeCatalog, ProjectComputeRunResult};
+use lithos_las::{
+    DrillingObservationEditRequest, OpenStructuredAssetEditSessionRequest,
+    StructuredAssetEditSessionStore, StructuredAssetEditSessionSummary,
+    StructuredAssetSaveResult, StructuredAssetSessionRequest, TopSetEditRequest,
+    TrajectoryEditRequest,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
 
 #[derive(Clone, Default)]
 pub struct HarnessState {
     service: PackageCommandService,
+    structured_sessions: std::sync::Arc<Mutex<StructuredAssetEditSessionStore>>,
 }
 
 impl HarnessState {
     fn service(&self) -> &PackageCommandService {
         &self.service
+    }
+
+    fn structured_sessions(&self) -> &Mutex<StructuredAssetEditSessionStore> {
+        &self.structured_sessions
     }
 }
 
@@ -102,6 +114,12 @@ pub struct ProjectAssetsRequest {
 pub struct ProjectAssetRequest {
     pub project_root: String,
     pub asset_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructuredAssetEditCommandRequest<T> {
+    pub session_id: lithos_las::StructuredAssetEditSessionId,
+    pub edit: T,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -655,6 +673,267 @@ fn read_project_drilling_observations_impl(
     }
 }
 
+fn open_structured_asset_edit_session_impl(
+    store: &Mutex<StructuredAssetEditSessionStore>,
+    request: ProjectAssetRequest,
+) -> CommandResponse<StructuredAssetEditSessionSummary> {
+    match store
+        .lock()
+        .map_err(|error| {
+            lithos_las::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
+        })
+        .and_then(|mut sessions| {
+            sessions.open_session(&OpenStructuredAssetEditSessionRequest {
+                project_root: request.project_root,
+                asset_id: lithos_las::AssetId(request.asset_id),
+            })
+        }) {
+        Ok(summary) => CommandResponse::Ok(summary),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::EditPersist,
+            CommandErrorKind::ValidationFailed,
+            error.to_string(),
+        )),
+    }
+}
+
+fn structured_session_summary_impl(
+    store: &Mutex<StructuredAssetEditSessionStore>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<StructuredAssetEditSessionSummary> {
+    match store
+        .lock()
+        .map_err(|error| {
+            lithos_las::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
+        })
+        .and_then(|sessions| sessions.session_summary(&request)) {
+        Ok(summary) => CommandResponse::Ok(summary),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::Inspect,
+            CommandErrorKind::OpenFailed,
+            error.to_string(),
+        )),
+    }
+}
+
+fn close_structured_asset_edit_session_impl(
+    store: &Mutex<StructuredAssetEditSessionStore>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<bool> {
+    match store
+        .lock()
+        .map_err(|error| {
+            lithos_las::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
+        })
+        .and_then(|mut sessions| sessions.close_session(&request)) {
+        Ok(closed) => CommandResponse::Ok(closed),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::EditPersist,
+            CommandErrorKind::ValidationFailed,
+            error.to_string(),
+        )),
+    }
+}
+
+fn read_structured_session_trajectory_rows_impl(
+    store: &Mutex<StructuredAssetEditSessionStore>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<Vec<TrajectoryRow>> {
+    match store
+        .lock()
+        .map_err(|error| {
+            lithos_las::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
+        })
+        .and_then(|sessions| sessions.trajectory_rows(&request)) {
+        Ok(rows) => CommandResponse::Ok(rows),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::Inspect,
+            CommandErrorKind::OpenFailed,
+            error.to_string(),
+        )),
+    }
+}
+
+fn read_structured_session_tops_impl(
+    store: &Mutex<StructuredAssetEditSessionStore>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<Vec<TopRow>> {
+    match store
+        .lock()
+        .map_err(|error| {
+            lithos_las::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
+        })
+        .and_then(|sessions| sessions.tops_rows(&request)) {
+        Ok(rows) => CommandResponse::Ok(rows),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::Inspect,
+            CommandErrorKind::OpenFailed,
+            error.to_string(),
+        )),
+    }
+}
+
+fn read_structured_session_pressure_impl(
+    store: &Mutex<StructuredAssetEditSessionStore>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<Vec<PressureObservationRow>> {
+    match store
+        .lock()
+        .map_err(|error| {
+            lithos_las::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
+        })
+        .and_then(|sessions| sessions.pressure_rows(&request)) {
+        Ok(rows) => CommandResponse::Ok(rows),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::Inspect,
+            CommandErrorKind::OpenFailed,
+            error.to_string(),
+        )),
+    }
+}
+
+fn read_structured_session_drilling_impl(
+    store: &Mutex<StructuredAssetEditSessionStore>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<Vec<DrillingObservationRow>> {
+    match store
+        .lock()
+        .map_err(|error| {
+            lithos_las::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
+        })
+        .and_then(|sessions| sessions.drilling_rows(&request)) {
+        Ok(rows) => CommandResponse::Ok(rows),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::Inspect,
+            CommandErrorKind::OpenFailed,
+            error.to_string(),
+        )),
+    }
+}
+
+fn apply_trajectory_structured_edit_impl(
+    store: &Mutex<StructuredAssetEditSessionStore>,
+    request: StructuredAssetEditCommandRequest<TrajectoryEditRequest>,
+) -> CommandResponse<StructuredAssetEditSessionSummary> {
+    match store
+        .lock()
+        .map_err(|error| {
+            lithos_las::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
+        })
+        .and_then(|mut sessions| {
+            sessions.apply_trajectory_edit(
+                &StructuredAssetSessionRequest {
+                    session_id: request.session_id,
+                },
+                &request.edit,
+            )
+        }) {
+        Ok(summary) => CommandResponse::Ok(summary),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::EditPersist,
+            CommandErrorKind::ValidationFailed,
+            error.to_string(),
+        )),
+    }
+}
+
+fn apply_tops_structured_edit_impl(
+    store: &Mutex<StructuredAssetEditSessionStore>,
+    request: StructuredAssetEditCommandRequest<TopSetEditRequest>,
+) -> CommandResponse<StructuredAssetEditSessionSummary> {
+    match store
+        .lock()
+        .map_err(|error| {
+            lithos_las::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
+        })
+        .and_then(|mut sessions| {
+            sessions.apply_tops_edit(
+                &StructuredAssetSessionRequest {
+                    session_id: request.session_id,
+                },
+                &request.edit,
+            )
+        }) {
+        Ok(summary) => CommandResponse::Ok(summary),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::EditPersist,
+            CommandErrorKind::ValidationFailed,
+            error.to_string(),
+        )),
+    }
+}
+
+fn apply_pressure_structured_edit_impl(
+    store: &Mutex<StructuredAssetEditSessionStore>,
+    request: StructuredAssetEditCommandRequest<PressureObservationEditRequest>,
+) -> CommandResponse<StructuredAssetEditSessionSummary> {
+    match store
+        .lock()
+        .map_err(|error| {
+            lithos_las::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
+        })
+        .and_then(|mut sessions| {
+            sessions.apply_pressure_edit(
+                &StructuredAssetSessionRequest {
+                    session_id: request.session_id,
+                },
+                &request.edit,
+            )
+        }) {
+        Ok(summary) => CommandResponse::Ok(summary),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::EditPersist,
+            CommandErrorKind::ValidationFailed,
+            error.to_string(),
+        )),
+    }
+}
+
+fn apply_drilling_structured_edit_impl(
+    store: &Mutex<StructuredAssetEditSessionStore>,
+    request: StructuredAssetEditCommandRequest<DrillingObservationEditRequest>,
+) -> CommandResponse<StructuredAssetEditSessionSummary> {
+    match store
+        .lock()
+        .map_err(|error| {
+            lithos_las::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
+        })
+        .and_then(|mut sessions| {
+            sessions.apply_drilling_edit(
+                &StructuredAssetSessionRequest {
+                    session_id: request.session_id,
+                },
+                &request.edit,
+            )
+        }) {
+        Ok(summary) => CommandResponse::Ok(summary),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::EditPersist,
+            CommandErrorKind::ValidationFailed,
+            error.to_string(),
+        )),
+    }
+}
+
+fn save_structured_asset_edit_session_impl(
+    store: &Mutex<StructuredAssetEditSessionStore>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<StructuredAssetSaveResult> {
+    match store
+        .lock()
+        .map_err(|error| {
+            lithos_las::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
+        })
+        .and_then(|mut sessions| sessions.save_session(&request)) {
+        Ok(result) => CommandResponse::Ok(result),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::EditPersist,
+            CommandErrorKind::ValidationFailed,
+            error.to_string(),
+        )),
+    }
+}
+
 fn import_structured_asset<F>(
     request: ImportStructuredAssetRequest,
     importer: F,
@@ -1015,6 +1294,102 @@ pub fn read_project_drilling_observations(
     request: ProjectDepthReadRequest,
 ) -> CommandResponse<Vec<DrillingObservationRow>> {
     read_project_drilling_observations_impl(request)
+}
+
+#[tauri::command]
+pub fn open_structured_asset_edit_session(
+    state: tauri::State<HarnessState>,
+    request: ProjectAssetRequest,
+) -> CommandResponse<StructuredAssetEditSessionSummary> {
+    open_structured_asset_edit_session_impl(state.structured_sessions(), request)
+}
+
+#[tauri::command]
+pub fn structured_asset_edit_session_summary(
+    state: tauri::State<HarnessState>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<StructuredAssetEditSessionSummary> {
+    structured_session_summary_impl(state.structured_sessions(), request)
+}
+
+#[tauri::command]
+pub fn close_structured_asset_edit_session(
+    state: tauri::State<HarnessState>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<bool> {
+    close_structured_asset_edit_session_impl(state.structured_sessions(), request)
+}
+
+#[tauri::command]
+pub fn read_structured_session_trajectory_rows(
+    state: tauri::State<HarnessState>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<Vec<TrajectoryRow>> {
+    read_structured_session_trajectory_rows_impl(state.structured_sessions(), request)
+}
+
+#[tauri::command]
+pub fn read_structured_session_tops(
+    state: tauri::State<HarnessState>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<Vec<TopRow>> {
+    read_structured_session_tops_impl(state.structured_sessions(), request)
+}
+
+#[tauri::command]
+pub fn read_structured_session_pressure_observations(
+    state: tauri::State<HarnessState>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<Vec<PressureObservationRow>> {
+    read_structured_session_pressure_impl(state.structured_sessions(), request)
+}
+
+#[tauri::command]
+pub fn read_structured_session_drilling_observations(
+    state: tauri::State<HarnessState>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<Vec<DrillingObservationRow>> {
+    read_structured_session_drilling_impl(state.structured_sessions(), request)
+}
+
+#[tauri::command]
+pub fn apply_trajectory_structured_edit(
+    state: tauri::State<HarnessState>,
+    request: StructuredAssetEditCommandRequest<TrajectoryEditRequest>,
+) -> CommandResponse<StructuredAssetEditSessionSummary> {
+    apply_trajectory_structured_edit_impl(state.structured_sessions(), request)
+}
+
+#[tauri::command]
+pub fn apply_tops_structured_edit(
+    state: tauri::State<HarnessState>,
+    request: StructuredAssetEditCommandRequest<TopSetEditRequest>,
+) -> CommandResponse<StructuredAssetEditSessionSummary> {
+    apply_tops_structured_edit_impl(state.structured_sessions(), request)
+}
+
+#[tauri::command]
+pub fn apply_pressure_structured_edit(
+    state: tauri::State<HarnessState>,
+    request: StructuredAssetEditCommandRequest<PressureObservationEditRequest>,
+) -> CommandResponse<StructuredAssetEditSessionSummary> {
+    apply_pressure_structured_edit_impl(state.structured_sessions(), request)
+}
+
+#[tauri::command]
+pub fn apply_drilling_structured_edit(
+    state: tauri::State<HarnessState>,
+    request: StructuredAssetEditCommandRequest<DrillingObservationEditRequest>,
+) -> CommandResponse<StructuredAssetEditSessionSummary> {
+    apply_drilling_structured_edit_impl(state.structured_sessions(), request)
+}
+
+#[tauri::command]
+pub fn save_structured_asset_edit_session(
+    state: tauri::State<HarnessState>,
+    request: StructuredAssetSessionRequest,
+) -> CommandResponse<StructuredAssetSaveResult> {
+    save_structured_asset_edit_session_impl(state.structured_sessions(), request)
 }
 
 #[cfg(test)]

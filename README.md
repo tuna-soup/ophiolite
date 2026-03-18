@@ -125,7 +125,7 @@ The current implementation still has its deepest maturity in the LAS/log slice, 
 
 - a strong LAS/log import and package/edit path
 - a local-first multi-well project/catalog layer
-- typed non-log asset packages and read/query APIs
+- typed non-log asset packages with read/query and bounded in-family edit APIs
 - a typed compute layer for derived assets, with the richest surface currently in logs and family-specific transforms for structured assets
 - an internal desktop app that exercises those assets together
 
@@ -203,6 +203,7 @@ Key behaviors implemented:
 - first curve edits materialize directly from lazy backend session state rather than reopening through the eager SDK path
 - compute/UDF discovery is type-safe against semantic curve classifications rather than loose mnemonic matches
 - compute runs target typed assets, create derived sibling assets in the same family, and persist execution provenance on the derived asset manifest
+- trajectory, tops, pressure, and drilling assets now support project-scoped typed edit sessions with row add/update/delete and explicit save
 - package write/read round-trip
 - mixed numeric/text curve column support
 
@@ -285,9 +286,10 @@ The current rule is:
 - typed read/query APIs for those non-log asset families
 - cross-asset depth-range discovery for one wellbore
 - project-facing summary APIs for project, well, wellbore, collection, and asset overviews
+- project-scoped structured edit sessions for trajectory, tops, pressure observations, and drilling observations
 - synthetic multi-asset project fixture generation for testing and manual inspection
 
-The first multi-well slice is still intentionally read-mostly. Log/package editing remains the most mature edit path.
+The first multi-well slice is still log-first in editing maturity, but it is no longer read-only outside logs. Structured assets now support bounded in-family row/field editing with explicit save and last-save-wins overwrite of the active asset package.
 
 For test and app-validation workflows, Lithos can also generate a coherent synthetic project fixture:
 
@@ -451,6 +453,7 @@ Current harness behavior:
 - wells, wellbores, collections, and assets are browsed directly from `LithosProject`
 - selecting a log asset opens the existing package/session-backed log inspection path
 - selecting a non-log asset loads typed trajectory, tops, pressure, or drilling rows through the project query APIs
+- selected non-log assets can also be opened into structured edit sessions for typed row/field changes and explicit save
 - LAS and structured CSV asset imports happen from the project workspace
 - save/save-as remain available for selected log sessions from both the visible toolbar and the native File menu
 
@@ -530,6 +533,8 @@ Architecture and design decisions are documented in:
 - `docs/architecture/ADR-0007-canonical-schema-target.md`
 - `docs/architecture/ADR-0008-project-catalog-and-single-asset-packages.md`
 - `docs/architecture/ADR-0009-future-ecosystem-boundaries.md`
+- `docs/architecture/ADR-0010-typed-compute-and-derived-assets.md`
+- `docs/architecture/ADR-0011-structured-asset-edit-sessions.md`
 - `lithos_roadmap.md`
 - `docs/lasio_non_v3_parity.md`
 - `lasio-basic-example.md`
@@ -599,6 +604,7 @@ Implemented foundations include:
 - `lithos-compute` typed function registry and derived sibling assets
 - synthetic multi-asset project-fixture generation for testing and app validation
 - non-v3 `lasio` parity coverage
+- project-scoped structured asset edit sessions for trajectory, tops, pressure, and drilling data
 - package round-trip tests including mixed-type columns
 
 Current next priorities are:
@@ -606,6 +612,7 @@ Current next priorities are:
 - deepen semantic classification and override workflows for compute eligibility
 - expand built-in compute/UDF coverage and derived-asset workflows
 - harden richer cross-asset project workflows in the harness
+- improve structured asset editing UX and comparison/overlay workflows in the harness
 - deepen LAS 3 and broader structured ingest for non-log assets
 - keep the command and app boundary thin while the project-first workflow settles
 

@@ -120,7 +120,7 @@ Current multi-well status:
 - cross-asset depth-range discovery across one wellbore exists now
 - typed compute discovery/execution exists now for log, trajectory, tops, pressure, and drilling assets and persists derived sibling assets with execution manifests
 - synthetic project-fixture generation now exists for testing and app validation; it generates raw LAS/CSV sources and imports them into one coherent `LithosProject`
-- non-log asset editing is deferred
+- trajectory, tops, pressure observations, and drilling observations now also support bounded project-scoped edit sessions with explicit save and in-place overwrite of the active asset package
 
 ## Package Session Contract
 
@@ -252,6 +252,7 @@ Only after those are stable should the project tighten runtime/package behavior 
 - `ADR-0008-project-catalog-and-single-asset-packages.md`
 - `ADR-0009-future-ecosystem-boundaries.md`
 - `ADR-0010-typed-compute-and-derived-assets.md`
+- `ADR-0011-structured-asset-edit-sessions.md`
 
 ## Related Docs
 

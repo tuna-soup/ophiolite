@@ -66,6 +66,13 @@ pub use lithos_project::{
     WellIdentifierSet, WellRecord, WellSummary, WellboreId, WellboreRecord, WellboreSummary,
 };
 pub use lithos_project::{
+    DrillingObservationEditRequest, DrillingObservationRowPatch,
+    OpenStructuredAssetEditSessionRequest, OptionalFieldPatch, PressureObservationEditRequest,
+    PressureObservationRowPatch, StructuredAssetEditSessionId, StructuredAssetEditSessionStore,
+    StructuredAssetEditSessionSummary, StructuredAssetSaveResult, StructuredAssetSessionRequest,
+    TopRowPatch, TopSetEditRequest, TrajectoryEditRequest, TrajectoryRowPatch,
+};
+pub use lithos_project::{
     SyntheticProjectAssetIds, SyntheticProjectFixture, SyntheticProjectSourcePaths,
     generate_synthetic_project_fixture,
 };

@@ -40,7 +40,7 @@ Current ingest/query status:
 - logs-first typed compute now produces derived sibling log assets through the same project/catalog and single-asset package model
 - project-facing summary APIs exist for project, well, wellbore, collection, and asset overviews
 - synthetic multi-asset project fixtures are generated from raw LAS/CSV source files and then imported through those same project APIs
-- rich edit sessions are still primarily a log/package capability
+- rich edit sessions are still primarily a log/package capability, but trajectory/tops/pressure/drilling now also support bounded in-family project-scoped edit sessions
 
 ## Why
 
@@ -58,6 +58,6 @@ Current ingest/query status:
 - asset collections group related or versioned assets under one wellbore
 - compute outputs fit the same pattern by persisting as derived sibling assets rather than mutating the source asset in place
 - the catalog is for discovery and relationships; the package is the authoritative storage unit for the asset itself
-- the first multi-well slice focuses on project creation, import, binding, search, and read/query rather than rich edit sessions for every asset family
+- the first multi-well slice still focuses primarily on project creation, import, binding, search, and read/query, but it now includes bounded in-family edit sessions for the first structured asset families
 - synthetic fixtures should validate the real import path and the project/catalog linkage rather than writing package internals directly
-- richer reconciliation workflows, non-log edit sessions, and broader source support remain follow-on work
+- richer reconciliation workflows, broader structured editing UX, and broader source support remain follow-on work

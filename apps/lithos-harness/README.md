@@ -13,6 +13,7 @@ It exists to validate that the current SDK can support a real local-first subsur
 - inspect asset collections and typed assets
 - import LAS and structured CSV assets
 - open selected log assets into live package sessions when editing is needed
+- open selected trajectory, tops, pressure, and drilling assets into typed structured edit sessions
 - list and run eligible compute/UDF functions for selected log and structured assets
 
 The app is still intentionally utilitarian. It is a capability harness, not the final product UI.
@@ -43,10 +44,10 @@ The app is still intentionally utilitarian. It is a capability harness, not the 
    - drilling observation CSV
 4. Select an asset to inspect it:
    - logs open the package/session-backed log viewer
-   - non-log assets render typed tabular views
+   - non-log assets render typed tabular views and can enter structured edit mode
 5. Run depth-range coverage queries for the selected wellbore.
 6. Run available compute functions for the selected asset, adjust bindings/parameters when needed, and inspect the derived sibling asset.
-7. Save or Save As when a log asset session is open.
+7. Save or Save As when a log asset session is open, or explicitly save structured non-log edits from the editor panel.
 
 ## UI Structure
 
@@ -76,6 +77,7 @@ The Tauri shell exposes:
 - `File > Close Workspace`
 
 `Save` and `Save As` apply to the currently selected log asset session when one is open.
+Structured non-log assets use explicit save/discard controls inside the asset editor rather than `Save As`.
 
 ## Running
 
@@ -119,6 +121,7 @@ bun tauri dev
    - import one structured non-log asset
    - browse the resulting well / wellbore / asset hierarchy
    - open the log asset and confirm the package/session-backed viewer loads
+   - open a structured asset, enter edit mode, change one row, and save it
    - run one available compute function and confirm a derived asset appears in the same asset family
    - run a depth-range coverage query and confirm multiple assets can be opened from the result list
 
@@ -129,6 +132,7 @@ bun tauri dev
 3. Import a LAS file and confirm a log asset appears under the selected wellbore.
 4. Import a trajectory, tops, pressure, or drilling CSV and confirm it is visible as a separate typed asset.
 5. Select the log asset and confirm session-backed package inspection works.
-6. Use `Save` and `Save As` with a selected log asset session.
-7. Run an available compute function from a selected asset and confirm the derived asset appears in a derived collection.
-8. Open `Depth Coverage`, enter a range, and confirm matching assets are listed.
+6. Select a trajectory, tops, pressure, or drilling asset, enter edit mode, change one row, and save it.
+7. Use `Save` and `Save As` with a selected log asset session.
+8. Run an available compute function from a selected asset and confirm the derived asset appears in a derived collection.
+9. Open `Depth Coverage`, enter a range, and confirm matching assets are listed.

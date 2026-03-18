@@ -12,14 +12,19 @@ import type {
   ComputeParameterValue,
   CurveCatalogDto,
   CurveWindowDto,
+  DrillingObservationEditRequest,
   DrillingObservationRow,
   PackageFilesViewDto,
+  PressureObservationEditRequest,
   PressureObservationRow,
   ProjectAssetImportResult,
   ProjectSummaryDto,
   SessionMetadataDto,
   SessionSummaryDto,
+  StructuredAssetEditSessionSummary,
   TopRow,
+  TopSetEditRequest,
+  TrajectoryEditRequest,
   TrajectoryRow,
   WellRecord,
   WellboreRecord
@@ -184,6 +189,59 @@ function operatorAliases(raw: string) {
     .split(",")
     .map((value) => value.trim())
     .filter(Boolean);
+}
+
+function optionalNumberPatch(value: number | null | undefined) {
+  return value == null ? { clear: true } : { set: value };
+}
+
+function optionalStringPatch(value: string | null | undefined) {
+  return value == null || value === "" ? { clear: true } : { set: value };
+}
+
+function numberValue(value: string) {
+  if (value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function defaultStructuredRow(kind: StructuredDetail["kind"]): TrajectoryRow | TopRow | PressureObservationRow | DrillingObservationRow {
+  switch (kind) {
+    case "trajectory":
+      return {
+        measured_depth: 0,
+        true_vertical_depth: null,
+        azimuth_deg: null,
+        inclination_deg: null,
+        northing_offset: null,
+        easting_offset: null
+      };
+    case "tops":
+      return {
+        name: "New Top",
+        top_depth: 0,
+        base_depth: null,
+        source: null,
+        depth_reference: null
+      };
+    case "pressure":
+      return {
+        measured_depth: null,
+        pressure: 0,
+        phase: null,
+        test_kind: null,
+        timestamp: null
+      };
+    case "drilling":
+      return {
+        measured_depth: null,
+        event_kind: "EVENT",
+        value: null,
+        unit: null,
+        timestamp: null,
+        comment: null
+      };
+  }
 }
 
 function inferDepthRange(metadata: SessionMetadataDto, rowCount?: number) {
@@ -523,6 +581,19 @@ function ProjectPage({
     pushRecent(project.root);
   }
 
+  async function reloadSelectedAsset(assetId: string) {
+    const project = await api.openProject(workspace.project.root);
+    const refreshed = await loadProjectWorkspace(project, {
+      ...workspace,
+      selectedAssetId: assetId,
+      view: "asset"
+    });
+    setWorkspace(refreshed);
+    pushRecent(project.root);
+    const detail = await loadAssetDetail(refreshed);
+    setWorkspace((current) => (current ? { ...refreshed, detail } : current));
+  }
+
   async function selectWell(wellId: string) {
     const refreshed = await loadProjectWorkspace(workspace.project, { ...workspace, selectedWellId: wellId, selectedWellboreId: null, selectedAssetId: null });
     setWorkspace(refreshed);
@@ -625,7 +696,7 @@ function ProjectPage({
       title: "Compute complete",
       detail: `Created derived asset ${result.asset.id} with ${result.execution.output_curve_name}.`
     });
-    await selectAsset(result.asset.id);
+    await reloadSelectedAsset(result.asset.id);
   }
 
   useEffect(() => {
@@ -707,7 +778,7 @@ function ProjectPage({
               <TreeButton key={asset.id} selected={workspace.selectedAssetId === asset.id} onClick={() => void run(() => selectAsset(asset.id))} title={assetKindLabel(asset.asset_kind)} subtitle={`${asset.id} | ${asset.manifest.extents.start ?? "?"} - ${asset.manifest.extents.stop ?? "?"}`} />
             ))}
           </SidebarCard>
-          <MainPanel workspace={workspace} setWorkspace={setWorkspace} onImport={() => void run(importAsset)} onRunCoverage={() => void run(runCoverage)} onSelectAsset={(assetId) => void run(() => selectAsset(assetId))} onRunCompute={(entry, curveBindings, parameters, outputCollectionName, outputMnemonic) => void run(() => runCompute(entry, curveBindings, parameters, outputCollectionName, outputMnemonic))} />
+          <MainPanel workspace={workspace} setWorkspace={setWorkspace} onImport={() => void run(importAsset)} onRunCoverage={() => void run(runCoverage)} onSelectAsset={(assetId) => void run(() => selectAsset(assetId))} onRunCompute={(entry, curveBindings, parameters, outputCollectionName, outputMnemonic) => void run(() => runCompute(entry, curveBindings, parameters, outputCollectionName, outputMnemonic))} onRefreshAsset={(assetId) => void run(() => reloadSelectedAsset(assetId))} />
           <InspectorPanel workspace={workspace} onRefresh={() => void run(() => reload())} />
         </div>
       </div>
@@ -742,7 +813,8 @@ function MainPanel({
   onImport,
   onRunCoverage,
   onSelectAsset,
-  onRunCompute
+  onRunCompute,
+  onRefreshAsset
 }: {
   workspace: ProjectWorkspace;
   setWorkspace: Dispatch<SetStateAction<ProjectWorkspace | null>>;
@@ -756,6 +828,7 @@ function MainPanel({
     outputCollectionName?: string,
     outputMnemonic?: string
   ) => void;
+  onRefreshAsset: (assetId: string) => void;
 }) {
   return (
     <Card className="overflow-hidden">
@@ -772,7 +845,7 @@ function MainPanel({
         {workspace.view === "overview" ? <OverviewPanel workspace={workspace} /> : null}
         {workspace.view === "imports" ? <ImportsPanel workspace={workspace} setWorkspace={setWorkspace} onImport={onImport} /> : null}
         {workspace.view === "coverage" ? <CoveragePanel workspace={workspace} setWorkspace={setWorkspace} onRun={onRunCoverage} onSelectAsset={onSelectAsset} /> : null}
-        {workspace.view === "asset" ? <AssetPanel detail={workspace.detail} onRunCompute={onRunCompute} /> : null}
+        {workspace.view === "asset" ? <AssetPanel projectRoot={workspace.project.root} detail={workspace.detail} onRunCompute={onRunCompute} onRefreshAsset={onRefreshAsset} /> : null}
       </CardContent>
     </Card>
   );
@@ -931,9 +1004,12 @@ function CoveragePanel({
 }
 
 function AssetPanel({
+  projectRoot,
   detail,
-  onRunCompute
+  onRunCompute,
+  onRefreshAsset
 }: {
+  projectRoot: string;
   detail: AssetDetail;
   onRunCompute: (
     entry: ComputeCatalogEntry,
@@ -942,6 +1018,7 @@ function AssetPanel({
     outputCollectionName?: string,
     outputMnemonic?: string
   ) => void;
+  onRefreshAsset: (assetId: string) => void;
 }) {
   if (!detail) return <div className="p-6 text-sm text-stone-600">Select an asset to inspect it.</div>;
   if (detail.kind === "log") {
@@ -1008,43 +1085,411 @@ function AssetPanel({
       </div>
     );
   }
-
-  const columns = detail.rows.length > 0 ? Object.keys(detail.rows[0] as Record<string, unknown>) : [];
   return (
     <div className="grid gap-4 p-4">
       <InfoBlock title={`${assetKindLabel(detail.asset.asset_kind)} asset`} value={detail.asset} />
-      <ComputeCatalogPanel
-        catalog={detail.computeCatalog}
-        assetKind={detail.asset.asset_kind}
-        onRunCompute={onRunCompute}
-      />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <StructuredAssetEditor projectRoot={projectRoot} detail={detail} onRefreshAsset={onRefreshAsset} />
+        <ComputeCatalogPanel
+          catalog={detail.computeCatalog}
+          assetKind={detail.asset.asset_kind}
+          onRunCompute={onRunCompute}
+        />
+      </div>
+    </div>
+  );
+}
+
+function StructuredAssetEditor({
+  projectRoot,
+  detail,
+  onRefreshAsset
+}: {
+  projectRoot: string;
+  detail: StructuredDetail;
+  onRefreshAsset: (assetId: string) => void;
+}) {
+  const [session, setSession] = useState<StructuredAssetEditSessionSummary | null>(null);
+  const [rows, setRows] = useState<StructuredDetail["rows"]>(detail.rows);
+
+  useEffect(() => {
+    setRows(detail.rows);
+    setSession(null);
+  }, [detail.asset.id, detail.rows]);
+
+  useEffect(() => {
+    const sessionId = session?.session_id;
+    return () => {
+      if (sessionId) {
+        void api.closeStructuredAssetEditSession(sessionId);
+      }
+    };
+  }, [session?.session_id]);
+
+  async function refreshSessionRows(sessionId: string) {
+    if (detail.kind === "trajectory") return api.readStructuredSessionTrajectoryRows(sessionId);
+    if (detail.kind === "tops") return api.readStructuredSessionTops(sessionId);
+    if (detail.kind === "pressure") return api.readStructuredSessionPressureObservations(sessionId);
+    return api.readStructuredSessionDrillingObservations(sessionId);
+  }
+
+  async function openEditSession() {
+    const opened = await api.openStructuredAssetEditSession(projectRoot, detail.asset.id);
+    setSession(opened);
+    setRows(await refreshSessionRows(opened.session_id));
+  }
+
+  async function closeEditSession(refreshAsset = false) {
+    if (session) {
+      await api.closeStructuredAssetEditSession(session.session_id);
+    }
+    setSession(null);
+    setRows(detail.rows);
+    if (refreshAsset) onRefreshAsset(detail.asset.id);
+  }
+
+  async function addRow() {
+    const row = defaultStructuredRow(detail.kind);
+    if (!session) return;
+    if (detail.kind === "trajectory") {
+      await api.applyTrajectoryStructuredEdit(session.session_id, { AddRow: { row: row as TrajectoryRow } });
+    } else if (detail.kind === "tops") {
+      await api.applyTopsStructuredEdit(session.session_id, { AddRow: { row: row as TopRow } });
+    } else if (detail.kind === "pressure") {
+      await api.applyPressureStructuredEdit(session.session_id, { AddRow: { row: row as PressureObservationRow } });
+    } else {
+      await api.applyDrillingStructuredEdit(session.session_id, { AddRow: { row: row as DrillingObservationRow } });
+    }
+    setSession(await api.structuredAssetEditSessionSummary(session.session_id));
+    setRows(await refreshSessionRows(session.session_id));
+  }
+
+  async function deleteRow(rowIndex: number) {
+    if (!session) return;
+    if (detail.kind === "trajectory") {
+      await api.applyTrajectoryStructuredEdit(session.session_id, { DeleteRow: { row_index: rowIndex } });
+    } else if (detail.kind === "tops") {
+      await api.applyTopsStructuredEdit(session.session_id, { DeleteRow: { row_index: rowIndex } });
+    } else if (detail.kind === "pressure") {
+      await api.applyPressureStructuredEdit(session.session_id, { DeleteRow: { row_index: rowIndex } });
+    } else {
+      await api.applyDrillingStructuredEdit(session.session_id, { DeleteRow: { row_index: rowIndex } });
+    }
+    setSession(await api.structuredAssetEditSessionSummary(session.session_id));
+    setRows(await refreshSessionRows(session.session_id));
+  }
+
+  async function applyRow(rowIndex: number) {
+    if (!session) return;
+    if (detail.kind === "trajectory") {
+      const row = rows[rowIndex] as TrajectoryRow;
+      const edit: TrajectoryEditRequest = {
+        UpdateRow: {
+          row_index: rowIndex,
+          patch: {
+            measured_depth: row.measured_depth,
+            true_vertical_depth: optionalNumberPatch(row.true_vertical_depth),
+            azimuth_deg: optionalNumberPatch(row.azimuth_deg),
+            inclination_deg: optionalNumberPatch(row.inclination_deg),
+            northing_offset: optionalNumberPatch(row.northing_offset),
+            easting_offset: optionalNumberPatch(row.easting_offset)
+          }
+        }
+      };
+      await api.applyTrajectoryStructuredEdit(session.session_id, edit);
+    } else if (detail.kind === "tops") {
+      const row = rows[rowIndex] as TopRow;
+      const edit: TopSetEditRequest = {
+        UpdateRow: {
+          row_index: rowIndex,
+          patch: {
+            name: row.name,
+            top_depth: row.top_depth,
+            base_depth: optionalNumberPatch(row.base_depth),
+            source: optionalStringPatch(row.source),
+            depth_reference: optionalStringPatch(row.depth_reference)
+          }
+        }
+      };
+      await api.applyTopsStructuredEdit(session.session_id, edit);
+    } else if (detail.kind === "pressure") {
+      const row = rows[rowIndex] as PressureObservationRow;
+      const edit: PressureObservationEditRequest = {
+        UpdateRow: {
+          row_index: rowIndex,
+          patch: {
+            measured_depth: optionalNumberPatch(row.measured_depth),
+            pressure: row.pressure,
+            phase: optionalStringPatch(row.phase),
+            test_kind: optionalStringPatch(row.test_kind),
+            timestamp: optionalStringPatch(row.timestamp)
+          }
+        }
+      };
+      await api.applyPressureStructuredEdit(session.session_id, edit);
+    } else {
+      const row = rows[rowIndex] as DrillingObservationRow;
+      const edit: DrillingObservationEditRequest = {
+        UpdateRow: {
+          row_index: rowIndex,
+          patch: {
+            measured_depth: optionalNumberPatch(row.measured_depth),
+            event_kind: row.event_kind,
+            value: optionalNumberPatch(row.value),
+            unit: optionalStringPatch(row.unit),
+            timestamp: optionalStringPatch(row.timestamp),
+            comment: optionalStringPatch(row.comment)
+          }
+        }
+      };
+      await api.applyDrillingStructuredEdit(session.session_id, edit);
+    }
+    setSession(await api.structuredAssetEditSessionSummary(session.session_id));
+  }
+
+  async function saveSession() {
+    if (!session) return;
+    await api.saveStructuredAssetEditSession(session.session_id);
+    await closeEditSession(true);
+  }
+
+  function updateRow(nextRow: StructuredDetail["rows"][number], rowIndex: number) {
+    setRows((current) => current.map((row, index) => (index === rowIndex ? nextRow : row)) as StructuredDetail["rows"]);
+  }
+
+  return (
+    <div className="grid gap-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Structured editor</CardTitle>
+          <CardDescription>
+            Edit rows within the bounds of the selected {assetKindLabel(detail.asset.asset_kind).toLowerCase()} asset.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {!session ? (
+            <Button onClick={() => void openEditSession()}>Edit Asset</Button>
+          ) : (
+            <div className="flex flex-wrap gap-3">
+              <Button onClick={() => void addRow()}>Add Row</Button>
+              <Button variant="secondary" onClick={() => void saveSession()}>Save Asset</Button>
+              <Button variant="outline" onClick={() => void closeEditSession(false)}>Discard Session</Button>
+              <Badge tone={session.dirty ? "warn" : "accent"}>{session.dirty ? "Unsaved" : "Clean"}</Badge>
+            </div>
+          )}
+        </CardContent>
+      </Card>
       <TableShell>
         <div className="overflow-auto">
-          <table className="min-w-full border-collapse text-sm">
-            <thead className="bg-stone-100/80">
-              <tr>
-                {columns.map((column) => (
-                  <th key={column} className="border-l border-stone-200 px-4 py-3 text-left font-medium first:border-l-0">{column}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {detail.rows.length === 0 ? (
-                <tr><td className="px-4 py-4 text-stone-600">No rows returned for this asset.</td></tr>
-              ) : (
-                detail.rows.map((row, index) => (
-                  <tr key={index} className="border-t border-stone-200">
-                    {columns.map((column) => (
-                      <td key={`${index}-${column}`} className="border-l border-stone-200 px-4 py-3 text-stone-600 first:border-l-0">{asText((row as Record<string, unknown>)[column])}</td>
-                    ))}
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+          {detail.kind === "trajectory" ? (
+            <TrajectoryEditorTable rows={rows as TrajectoryRow[]} editable={Boolean(session)} onChangeRow={updateRow} onApplyRow={(rowIndex) => void applyRow(rowIndex)} onDeleteRow={(rowIndex) => void deleteRow(rowIndex)} />
+          ) : null}
+          {detail.kind === "tops" ? (
+            <TopSetEditorTable rows={rows as TopRow[]} editable={Boolean(session)} onChangeRow={updateRow} onApplyRow={(rowIndex) => void applyRow(rowIndex)} onDeleteRow={(rowIndex) => void deleteRow(rowIndex)} />
+          ) : null}
+          {detail.kind === "pressure" ? (
+            <PressureEditorTable rows={rows as PressureObservationRow[]} editable={Boolean(session)} onChangeRow={updateRow} onApplyRow={(rowIndex) => void applyRow(rowIndex)} onDeleteRow={(rowIndex) => void deleteRow(rowIndex)} />
+          ) : null}
+          {detail.kind === "drilling" ? (
+            <DrillingEditorTable rows={rows as DrillingObservationRow[]} editable={Boolean(session)} onChangeRow={updateRow} onApplyRow={(rowIndex) => void applyRow(rowIndex)} onDeleteRow={(rowIndex) => void deleteRow(rowIndex)} />
+          ) : null}
         </div>
       </TableShell>
     </div>
+  );
+}
+
+function EditorActions({
+  editable,
+  onApply,
+  onDelete
+}: {
+  editable: boolean;
+  onApply: () => void;
+  onDelete: () => void;
+}) {
+  if (!editable) return <span className="text-xs text-stone-500">Read only</span>;
+  return (
+    <div className="flex gap-2">
+      <Button onClick={onApply}>Apply</Button>
+      <Button variant="outline" onClick={onDelete}>Delete</Button>
+    </div>
+  );
+}
+
+function NumericCell({
+  value,
+  editable,
+  onChange,
+  allowEmpty = true
+}: {
+  value: number | null | undefined;
+  editable: boolean;
+  onChange: (value: number | null) => void;
+  allowEmpty?: boolean;
+}) {
+  if (!editable) return <span>{value ?? ""}</span>;
+  return (
+    <Input
+      type="number"
+      value={value ?? ""}
+      onChange={(event) => onChange(numberValue(event.target.value))}
+      placeholder={allowEmpty ? "" : "required"}
+    />
+  );
+}
+
+function TextCell({
+  value,
+  editable,
+  onChange,
+  placeholder
+}: {
+  value: string | null | undefined;
+  editable: boolean;
+  onChange: (value: string) => void;
+  placeholder?: string;
+}) {
+  if (!editable) return <span>{value ?? ""}</span>;
+  return <Input value={value ?? ""} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />;
+}
+
+function EditorTable({
+  headers,
+  children
+}: {
+  headers: string[];
+  children: ReactNode;
+}) {
+  return (
+    <table className="min-w-full border-collapse text-sm">
+      <thead className="bg-stone-100/80">
+        <tr>
+          {headers.map((header) => (
+            <th key={header} className="border-l border-stone-200 px-4 py-3 text-left font-medium first:border-l-0">{header}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>{children}</tbody>
+    </table>
+  );
+}
+
+function TrajectoryEditorTable({
+  rows,
+  editable,
+  onChangeRow,
+  onApplyRow,
+  onDeleteRow
+}: {
+  rows: TrajectoryRow[];
+  editable: boolean;
+  onChangeRow: (row: TrajectoryRow, rowIndex: number) => void;
+  onApplyRow: (rowIndex: number) => void;
+  onDeleteRow: (rowIndex: number) => void;
+}) {
+  return (
+    <EditorTable headers={["MD", "TVD", "Azimuth", "Inclination", "Northing", "Easting", "Actions"]}>
+      {rows.map((row, index) => (
+        <tr key={index} className="border-t border-stone-200 align-top">
+          <td className="border-l border-stone-200 px-3 py-2 first:border-l-0"><NumericCell value={row.measured_depth} editable={editable} allowEmpty={false} onChange={(value) => onChangeRow({ ...row, measured_depth: value ?? 0 }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><NumericCell value={row.true_vertical_depth} editable={editable} onChange={(value) => onChangeRow({ ...row, true_vertical_depth: value }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><NumericCell value={row.azimuth_deg} editable={editable} onChange={(value) => onChangeRow({ ...row, azimuth_deg: value }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><NumericCell value={row.inclination_deg} editable={editable} onChange={(value) => onChangeRow({ ...row, inclination_deg: value }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><NumericCell value={row.northing_offset} editable={editable} onChange={(value) => onChangeRow({ ...row, northing_offset: value }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><NumericCell value={row.easting_offset} editable={editable} onChange={(value) => onChangeRow({ ...row, easting_offset: value }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><EditorActions editable={editable} onApply={() => onApplyRow(index)} onDelete={() => onDeleteRow(index)} /></td>
+        </tr>
+      ))}
+    </EditorTable>
+  );
+}
+
+function TopSetEditorTable({
+  rows,
+  editable,
+  onChangeRow,
+  onApplyRow,
+  onDeleteRow
+}: {
+  rows: TopRow[];
+  editable: boolean;
+  onChangeRow: (row: TopRow, rowIndex: number) => void;
+  onApplyRow: (rowIndex: number) => void;
+  onDeleteRow: (rowIndex: number) => void;
+}) {
+  return (
+    <EditorTable headers={["Name", "Top", "Base", "Source", "Reference", "Actions"]}>
+      {rows.map((row, index) => (
+        <tr key={index} className="border-t border-stone-200 align-top">
+          <td className="border-l border-stone-200 px-3 py-2 first:border-l-0"><TextCell value={row.name} editable={editable} onChange={(value) => onChangeRow({ ...row, name: value }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><NumericCell value={row.top_depth} editable={editable} allowEmpty={false} onChange={(value) => onChangeRow({ ...row, top_depth: value ?? 0 }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><NumericCell value={row.base_depth} editable={editable} onChange={(value) => onChangeRow({ ...row, base_depth: value }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><TextCell value={row.source} editable={editable} onChange={(value) => onChangeRow({ ...row, source: value || null }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><TextCell value={row.depth_reference} editable={editable} onChange={(value) => onChangeRow({ ...row, depth_reference: value || null }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><EditorActions editable={editable} onApply={() => onApplyRow(index)} onDelete={() => onDeleteRow(index)} /></td>
+        </tr>
+      ))}
+    </EditorTable>
+  );
+}
+
+function PressureEditorTable({
+  rows,
+  editable,
+  onChangeRow,
+  onApplyRow,
+  onDeleteRow
+}: {
+  rows: PressureObservationRow[];
+  editable: boolean;
+  onChangeRow: (row: PressureObservationRow, rowIndex: number) => void;
+  onApplyRow: (rowIndex: number) => void;
+  onDeleteRow: (rowIndex: number) => void;
+}) {
+  return (
+    <EditorTable headers={["MD", "Pressure", "Phase", "Test Kind", "Timestamp", "Actions"]}>
+      {rows.map((row, index) => (
+        <tr key={index} className="border-t border-stone-200 align-top">
+          <td className="border-l border-stone-200 px-3 py-2 first:border-l-0"><NumericCell value={row.measured_depth} editable={editable} onChange={(value) => onChangeRow({ ...row, measured_depth: value }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><NumericCell value={row.pressure} editable={editable} allowEmpty={false} onChange={(value) => onChangeRow({ ...row, pressure: value ?? 0 }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><TextCell value={row.phase} editable={editable} onChange={(value) => onChangeRow({ ...row, phase: value || null }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><TextCell value={row.test_kind} editable={editable} onChange={(value) => onChangeRow({ ...row, test_kind: value || null }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><TextCell value={row.timestamp} editable={editable} onChange={(value) => onChangeRow({ ...row, timestamp: value || null }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><EditorActions editable={editable} onApply={() => onApplyRow(index)} onDelete={() => onDeleteRow(index)} /></td>
+        </tr>
+      ))}
+    </EditorTable>
+  );
+}
+
+function DrillingEditorTable({
+  rows,
+  editable,
+  onChangeRow,
+  onApplyRow,
+  onDeleteRow
+}: {
+  rows: DrillingObservationRow[];
+  editable: boolean;
+  onChangeRow: (row: DrillingObservationRow, rowIndex: number) => void;
+  onApplyRow: (rowIndex: number) => void;
+  onDeleteRow: (rowIndex: number) => void;
+}) {
+  return (
+    <EditorTable headers={["MD", "Event", "Value", "Unit", "Timestamp", "Comment", "Actions"]}>
+      {rows.map((row, index) => (
+        <tr key={index} className="border-t border-stone-200 align-top">
+          <td className="border-l border-stone-200 px-3 py-2 first:border-l-0"><NumericCell value={row.measured_depth} editable={editable} onChange={(value) => onChangeRow({ ...row, measured_depth: value }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><TextCell value={row.event_kind} editable={editable} onChange={(value) => onChangeRow({ ...row, event_kind: value }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><NumericCell value={row.value} editable={editable} onChange={(value) => onChangeRow({ ...row, value }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><TextCell value={row.unit} editable={editable} onChange={(value) => onChangeRow({ ...row, unit: value || null }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><TextCell value={row.timestamp} editable={editable} onChange={(value) => onChangeRow({ ...row, timestamp: value || null }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><TextCell value={row.comment} editable={editable} onChange={(value) => onChangeRow({ ...row, comment: value || null }, index)} /></td>
+          <td className="border-l border-stone-200 px-3 py-2"><EditorActions editable={editable} onApply={() => onApplyRow(index)} onDelete={() => onDeleteRow(index)} /></td>
+        </tr>
+      ))}
+    </EditorTable>
   );
 }
 

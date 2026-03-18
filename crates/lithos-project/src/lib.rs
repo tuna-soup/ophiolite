@@ -17,6 +17,8 @@ pub use lithos_parser::read_path;
 mod project;
 #[path = "../../../src/project_assets.rs"]
 mod project_assets;
+#[path = "../../../src/project_edit.rs"]
+mod project_edit;
 #[path = "../../../src/synthetic_fixtures.rs"]
 mod synthetic_fixtures;
 
@@ -31,6 +33,13 @@ pub use project::{
 pub use project_assets::{
     AssetBindingInput, AssetColumnMetadata, AssetColumnType, AssetTableMetadata, DepthRangeQuery,
     DrillingObservationRow, PressureObservationRow, TopRow, TrajectoryRow,
+};
+pub use project_edit::{
+    DrillingObservationEditRequest, DrillingObservationRowPatch,
+    OpenStructuredAssetEditSessionRequest, OptionalFieldPatch, PressureObservationEditRequest,
+    PressureObservationRowPatch, StructuredAssetEditSessionId, StructuredAssetEditSessionStore,
+    StructuredAssetEditSessionSummary, StructuredAssetSaveResult, StructuredAssetSessionRequest,
+    TopRowPatch, TopSetEditRequest, TrajectoryEditRequest, TrajectoryRowPatch,
 };
 pub use synthetic_fixtures::{
     SyntheticProjectAssetIds, SyntheticProjectFixture, SyntheticProjectSourcePaths,

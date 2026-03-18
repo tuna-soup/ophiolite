@@ -315,6 +315,84 @@ export type DrillingObservationRow = {
   comment?: string | null;
 };
 
+export type StructuredAssetEditSessionSummary = {
+  session_id: string;
+  project_root: string;
+  asset_id: string;
+  asset_kind: string;
+  row_count: number;
+  dirty: boolean;
+};
+
+export type StructuredAssetSaveResult = {
+  session: StructuredAssetEditSessionSummary;
+  asset: AssetRecord;
+};
+
+export type OptionalNumberPatch = {
+  set?: number | null;
+  clear?: boolean;
+};
+
+export type OptionalStringPatch = {
+  set?: string | null;
+  clear?: boolean;
+};
+
+export type TrajectoryRowPatch = {
+  measured_depth?: number;
+  true_vertical_depth?: OptionalNumberPatch;
+  azimuth_deg?: OptionalNumberPatch;
+  inclination_deg?: OptionalNumberPatch;
+  northing_offset?: OptionalNumberPatch;
+  easting_offset?: OptionalNumberPatch;
+};
+
+export type TopRowPatch = {
+  name?: string;
+  top_depth?: number;
+  base_depth?: OptionalNumberPatch;
+  source?: OptionalStringPatch;
+  depth_reference?: OptionalStringPatch;
+};
+
+export type PressureObservationRowPatch = {
+  measured_depth?: OptionalNumberPatch;
+  pressure?: number;
+  phase?: OptionalStringPatch;
+  test_kind?: OptionalStringPatch;
+  timestamp?: OptionalStringPatch;
+};
+
+export type DrillingObservationRowPatch = {
+  measured_depth?: OptionalNumberPatch;
+  event_kind?: string;
+  value?: OptionalNumberPatch;
+  unit?: OptionalStringPatch;
+  timestamp?: OptionalStringPatch;
+  comment?: OptionalStringPatch;
+};
+
+export type TrajectoryEditRequest =
+  | { AddRow: { row: TrajectoryRow; at_index?: number | null } }
+  | { UpdateRow: { row_index: number; patch: TrajectoryRowPatch } }
+  | { DeleteRow: { row_index: number } };
+
+export type TopSetEditRequest =
+  | { AddRow: { row: TopRow; at_index?: number | null } }
+  | { UpdateRow: { row_index: number; patch: TopRowPatch } }
+  | { DeleteRow: { row_index: number } };
+
+export type PressureObservationEditRequest =
+  | { AddRow: { row: PressureObservationRow; at_index?: number | null } }
+  | { UpdateRow: { row_index: number; patch: PressureObservationRowPatch } }
+  | { DeleteRow: { row_index: number } };
+
+export type DrillingObservationEditRequest =
+  | { AddRow: { row: DrillingObservationRow; at_index?: number | null } }
+  | { UpdateRow: { row_index: number; patch: DrillingObservationRowPatch } }
+  | { DeleteRow: { row_index: number } };
+
 export type ComputeParameterDefinition =
   | {
       Number: {
@@ -541,6 +619,71 @@ export const api = {
       asset_id: assetId,
       depth_min: depthMin ?? null,
       depth_max: depthMax ?? null
+    });
+  },
+  openStructuredAssetEditSession(projectRoot: string, assetId: string) {
+    return unwrap<StructuredAssetEditSessionSummary>("open_structured_asset_edit_session", {
+      project_root: projectRoot,
+      asset_id: assetId
+    });
+  },
+  structuredAssetEditSessionSummary(sessionId: string) {
+    return unwrap<StructuredAssetEditSessionSummary>("structured_asset_edit_session_summary", {
+      session_id: sessionId
+    });
+  },
+  closeStructuredAssetEditSession(sessionId: string) {
+    return unwrap<boolean>("close_structured_asset_edit_session", {
+      session_id: sessionId
+    });
+  },
+  readStructuredSessionTrajectoryRows(sessionId: string) {
+    return unwrap<TrajectoryRow[]>("read_structured_session_trajectory_rows", {
+      session_id: sessionId
+    });
+  },
+  readStructuredSessionTops(sessionId: string) {
+    return unwrap<TopRow[]>("read_structured_session_tops", {
+      session_id: sessionId
+    });
+  },
+  readStructuredSessionPressureObservations(sessionId: string) {
+    return unwrap<PressureObservationRow[]>("read_structured_session_pressure_observations", {
+      session_id: sessionId
+    });
+  },
+  readStructuredSessionDrillingObservations(sessionId: string) {
+    return unwrap<DrillingObservationRow[]>("read_structured_session_drilling_observations", {
+      session_id: sessionId
+    });
+  },
+  applyTrajectoryStructuredEdit(sessionId: string, edit: TrajectoryEditRequest) {
+    return unwrap<StructuredAssetEditSessionSummary>("apply_trajectory_structured_edit", {
+      session_id: sessionId,
+      edit
+    });
+  },
+  applyTopsStructuredEdit(sessionId: string, edit: TopSetEditRequest) {
+    return unwrap<StructuredAssetEditSessionSummary>("apply_tops_structured_edit", {
+      session_id: sessionId,
+      edit
+    });
+  },
+  applyPressureStructuredEdit(sessionId: string, edit: PressureObservationEditRequest) {
+    return unwrap<StructuredAssetEditSessionSummary>("apply_pressure_structured_edit", {
+      session_id: sessionId,
+      edit
+    });
+  },
+  applyDrillingStructuredEdit(sessionId: string, edit: DrillingObservationEditRequest) {
+    return unwrap<StructuredAssetEditSessionSummary>("apply_drilling_structured_edit", {
+      session_id: sessionId,
+      edit
+    });
+  },
+  saveStructuredAssetEditSession(sessionId: string) {
+    return unwrap<StructuredAssetSaveResult>("save_structured_asset_edit_session", {
+      session_id: sessionId
     });
   },
   inspectPackageSummary(path: string) {

@@ -46,6 +46,7 @@ The current goal is:
 - typed read/query APIs for those families
 - cross-asset depth-range discovery for one wellbore
 - current/superseded asset history for simple replace workflows
+- project-scoped structured edit sessions for trajectory, tops, pressure observations, and drilling observations
 
 ### Monorepo Platform Skeleton
 
@@ -91,6 +92,7 @@ Use the harness as the validation target for:
 - better project browsing over wells, wellbores, collections, and assets
 - current vs superseded asset visibility
 - richer viewers for logs + trajectory + tops together
+- stronger structured editing UX on top of the new typed edit-session layer
 
 ### 4. Broader Ingest Adapters
 

@@ -10,7 +10,7 @@ Today, Lithos can:
 - import typed non-log wellbore datasets from structured files
 - persist optimized local asset packages
 - organize multiple linked assets under one `LithosProject`
-- discover and run typed compute/UDF functions against eligible log data
+- discover and run typed compute/UDF functions against eligible log and structured wellbore data
 - expose app-facing query and editing surfaces for desktop workflows
 
 The project is designed primarily for Rust desktop applications such as Tauri backends and local data tooling, while remaining interoperable with common data ecosystems.
@@ -48,7 +48,7 @@ Lithos therefore aims to provide:
 - an app-friendly runtime/query abstraction
 - optimized local single-asset package formats
 - a local-first project/catalog layer for assembling multiple linked assets coherently
-- a typed compute layer for derived assets and domain-aware transforms
+- a typed compute layer for derived assets and domain-aware transforms across logs, trajectory, tops, pressure, and drilling
 - a Rust-native SDK suitable for desktop subsurface applications
 
 The design philosophy is domain-first: APIs should reflect well-domain concepts and workflows rather than raw storage formats.
@@ -126,7 +126,7 @@ The current implementation still has its deepest maturity in the LAS/log slice, 
 - a strong LAS/log import and package/edit path
 - a local-first multi-well project/catalog layer
 - typed non-log asset packages and read/query APIs
-- a logs-first typed compute layer for derived assets
+- a typed compute layer for derived assets, with the richest surface currently in logs and family-specific transforms for structured assets
 - an internal desktop app that exercises those assets together
 
 Core components:
@@ -149,7 +149,7 @@ Core components:
 - optimized package format: `metadata.json + curves.parquet`
 - SQLite-backed project catalog for well, wellbore, collection, and asset discovery
 - Parquet-backed project-managed asset packages for non-log structured wellbore data
-- typed compute registry with semantic eligibility and derived sibling log assets
+- typed compute registry with semantic eligibility and derived sibling assets across supported families
 - CLI for import and inspection
 - local example corpus and parity tests against `lasio` non-v3 behavior
 
@@ -202,7 +202,7 @@ Key behaviors implemented:
 - metadata-only lazy package edits and save/save-as flows
 - first curve edits materialize directly from lazy backend session state rather than reopening through the eager SDK path
 - compute/UDF discovery is type-safe against semantic curve classifications rather than loose mnemonic matches
-- compute runs currently target log assets, create derived sibling log assets, and persist execution provenance on the derived asset manifest
+- compute runs target typed assets, create derived sibling assets in the same family, and persist execution provenance on the derived asset manifest
 - package write/read round-trip
 - mixed numeric/text curve column support
 
@@ -309,7 +309,7 @@ The raw files are generated first and then imported through the normal `LithosPr
 
 ## Typed Compute
 
-Lithos now has a logs-first compute layer in `lithos-compute`.
+Lithos now has a typed compute layer in `lithos-compute`.
 
 Current compute properties:
 
@@ -317,8 +317,10 @@ Current compute properties:
 - eligibility is driven by semantic curve types such as `GammaRay`, `BulkDensity`, `Sonic`, and `PVelocity`
 - functions only appear as available when the selected log asset actually contains compatible inputs
 - curve semantics are persisted on log asset manifests, and manual overrides can be stored when classification is uncertain
-- compute runs create derived sibling log assets under the same `LithosProject`
+- compute runs create derived sibling assets under the same `LithosProject`
 - derived assets record both `derived_from` lineage and a `compute_manifest` describing the execution
+- log assets support semantic curve binding plus editable parameter/mnemonic controls
+- trajectory, tops, pressure, and drilling assets support family-specific same-shape transforms that persist as derived sibling assets
 
 Current built-in function families:
 
@@ -594,7 +596,7 @@ Implemented foundations include:
 - internal first-party Tauri capability harness for exercising SDK flows end to end
 - `metadata.json + curves.parquet` package format
 - `LithosProject` catalog and typed single-asset packages for logs, trajectory, tops, pressure observations, and drilling observations
-- `lithos-compute` typed function registry and derived sibling log assets
+- `lithos-compute` typed function registry and derived sibling assets
 - synthetic multi-asset project-fixture generation for testing and app validation
 - non-v3 `lasio` parity coverage
 - package round-trip tests including mixed-type columns

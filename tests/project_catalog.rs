@@ -419,6 +419,76 @@ fn project_runs_compute_and_persists_derived_log_assets() {
     );
 }
 
+#[test]
+fn project_runs_structured_compute_and_persists_derived_assets() {
+    let root = temp_project_root("project_runs_structured_compute_and_persists_derived_assets");
+    let mut project = LithosProject::create(&root).unwrap();
+
+    let trajectory_csv = write_csv(
+        &root,
+        "trajectory_compute.csv",
+        "md,tvd,azimuth,inclination\n1000,950,-10,2.0\n1010,958,370,4.0\n1020,966,725,8.0\n",
+    );
+    let binding = AssetBindingInput {
+        well_name: "Well Alpha".to_string(),
+        wellbore_name: "Well Alpha".to_string(),
+        uwi: Some("UWI-001".to_string()),
+        api: None,
+        operator_aliases: vec!["Lithos".to_string()],
+    };
+
+    let trajectory = project
+        .import_trajectory_csv(&trajectory_csv, &binding, Some("survey-main"))
+        .unwrap();
+
+    let catalog = project.list_compute_catalog(&trajectory.asset.id).unwrap();
+    assert!(
+        catalog
+            .functions
+            .iter()
+            .any(|entry| entry.metadata.id == "trajectory:normalize_azimuth")
+    );
+
+    let result = project
+        .run_compute(&ProjectComputeRunRequest {
+            source_asset_id: trajectory.asset.id.clone(),
+            function_id: "trajectory:normalize_azimuth".to_string(),
+            curve_bindings: BTreeMap::new(),
+            parameters: BTreeMap::new(),
+            output_collection_name: None,
+            output_mnemonic: None,
+        })
+        .unwrap();
+
+    assert_eq!(result.asset.asset_kind, AssetKind::Trajectory);
+    assert_eq!(
+        result.asset.manifest.derived_from,
+        Some(trajectory.asset.logical_asset_id.clone())
+    );
+    assert!(result.asset.manifest.compute_manifest.is_some());
+
+    let rows = project
+        .read_trajectory_rows(&result.asset.id, None)
+        .unwrap();
+    assert_eq!(rows[0].azimuth_deg, Some(350.0));
+    assert_eq!(rows[1].azimuth_deg, Some(10.0));
+    assert_eq!(rows[2].azimuth_deg, Some(5.0));
+
+    let summaries = project
+        .asset_summaries(
+            &trajectory.resolution.wellbore_id,
+            Some(AssetKind::Trajectory),
+        )
+        .unwrap();
+    assert_eq!(
+        summaries
+            .iter()
+            .filter(|summary| summary.asset.collection_id == result.collection.id)
+            .count(),
+        1
+    );
+}
+
 fn temp_project_root(label: &str) -> PathBuf {
     let unique = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
     let nanos = SystemTime::now()

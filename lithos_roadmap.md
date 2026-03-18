@@ -7,7 +7,7 @@ Lithos is no longer just a LAS/log SDK. The current repo already contains:
 - a strong LAS/log import and package/edit foundation
 - a local-first `LithosProject` catalog
 - typed non-log asset families for trajectory, tops, pressure observations, and drilling observations
-- a logs-first typed compute layer with derived sibling assets
+- a typed compute layer with derived sibling assets across log and structured families
 - a project-first Tauri harness
 - synthetic multi-asset project fixtures for testing and app validation
 
@@ -77,12 +77,12 @@ The goal is to make Lithos predictable for everyday subsurface work rather than 
 
 ### 2. Broader Compute Surface
 
-The first compute slice is now in place for log assets. The next compute-specific steps are:
+The first compute slice is now in place for log and structured wellbore assets. The next compute-specific steps are:
 
 - deeper semantic classification and override workflows
 - more petrophysics / rock-physics functions
-- non-log asset-family compute only where it clearly fits the typed model
-- better app workflows for selecting bindings and inspecting derived assets
+- deepen non-log asset-family compute only where it clearly fits the typed model
+- richer app workflows for selecting bindings, editing parameters, and inspecting derived assets
 
 ### 3. Cross-Asset App Workflows
 

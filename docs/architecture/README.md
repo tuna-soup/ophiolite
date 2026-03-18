@@ -31,7 +31,7 @@ Current properties:
 - `PackageSession` is the backend-owned editable package session model
 - `LithosProject` is the local-first multi-well project/catalog root
 - project-managed typed asset families now include log, trajectory, tops, pressure observations, and drilling observations
-- `lithos-compute` now provides a logs-first typed compute/UDF registry
+- `lithos-compute` now provides a typed compute/UDF registry across log and structured asset families
 - `PackageBackend` and `PackageBackendState` are the current Tauri-ready backend adapter layer
 - `PackageCommandService` is the app-boundary transport layer above the shared backend state
 - `CurveTable` is the app-facing in-memory table abstraction
@@ -72,7 +72,7 @@ The current repo already implements the local-first core:
 - canonical log and typed wellbore asset models
 - single-asset packages
 - `LithosProject`
-- logs-first typed compute and derived sibling assets
+- typed compute and derived sibling assets, with the deepest eligibility/binding logic currently in logs
 - desktop app validation through the internal harness
 
 Later ecosystem layers remain intentionally separate from that core:
@@ -118,7 +118,7 @@ Current multi-well status:
 - CSV ingest for trajectory, tops, pressure observations, and drilling observations exists now
 - typed read/query helpers for those non-log families exist now
 - cross-asset depth-range discovery across one wellbore exists now
-- typed compute discovery/execution for log assets exists now and persists derived sibling assets with execution manifests
+- typed compute discovery/execution exists now for log, trajectory, tops, pressure, and drilling assets and persists derived sibling assets with execution manifests
 - synthetic project-fixture generation now exists for testing and app validation; it generates raw LAS/CSV sources and imports them into one coherent `LithosProject`
 - non-log asset editing is deferred
 

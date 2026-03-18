@@ -17,7 +17,7 @@ The missing capability was a type-safe way to run computation against the data w
 
 ## Decision
 
-Lithos adds a dedicated `lithos-compute` workspace crate and a logs-first typed compute layer.
+Lithos adds a dedicated `lithos-compute` workspace crate and a typed compute layer spanning log and structured asset families.
 
 The compute layer uses:
 
@@ -30,7 +30,7 @@ Current rules:
 
 - compute eligibility is driven by semantic curve types such as `GammaRay`, `BulkDensity`, `Sonic`, `PVelocity`, and `SVelocity`
 - log asset manifests persist curve semantics and may store explicit overrides
-- compute runs execute against one selected log asset at a time in the current phase
+- compute runs execute against one selected asset at a time in the current phase
 - outputs are persisted as derived sibling log assets in `LithosProject`
 - derived asset manifests record:
   - `derived_from`
@@ -49,6 +49,6 @@ Positive:
 
 Tradeoffs:
 
-- the first implementation is logs-first; non-log compute functions are deferred
+- logs still have the richest semantic binding and eligibility model, while trajectory/tops/pressure/drilling now support family-specific same-shape derived transforms
 - semantic classification still relies on current aliases, mnemonic heuristics, and explicit overrides where needed
 - compute currently materializes derived results as sibling assets rather than mutating the source package/session in place

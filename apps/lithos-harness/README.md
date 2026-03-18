@@ -13,7 +13,7 @@ It exists to validate that the current SDK can support a real local-first subsur
 - inspect asset collections and typed assets
 - import LAS and structured CSV assets
 - open selected log assets into live package sessions when editing is needed
-- list and run eligible compute/UDF functions for selected log assets
+- list and run eligible compute/UDF functions for selected log and structured assets
 
 The app is still intentionally utilitarian. It is a capability harness, not the final product UI.
 
@@ -45,7 +45,7 @@ The app is still intentionally utilitarian. It is a capability harness, not the 
    - logs open the package/session-backed log viewer
    - non-log assets render typed tabular views
 5. Run depth-range coverage queries for the selected wellbore.
-6. Run available compute functions for the selected log asset and inspect the derived sibling asset.
+6. Run available compute functions for the selected asset, adjust bindings/parameters when needed, and inspect the derived sibling asset.
 7. Save or Save As when a log asset session is open.
 
 ## UI Structure
@@ -119,7 +119,7 @@ bun tauri dev
    - import one structured non-log asset
    - browse the resulting well / wellbore / asset hierarchy
    - open the log asset and confirm the package/session-backed viewer loads
-   - run one available compute function and confirm a derived log asset appears
+   - run one available compute function and confirm a derived asset appears in the same asset family
    - run a depth-range coverage query and confirm multiple assets can be opened from the result list
 
 ## Manual Acceptance Checklist
@@ -130,5 +130,5 @@ bun tauri dev
 4. Import a trajectory, tops, pressure, or drilling CSV and confirm it is visible as a separate typed asset.
 5. Select the log asset and confirm session-backed package inspection works.
 6. Use `Save` and `Save As` with a selected log asset session.
-7. Run an available compute function from a selected log asset and confirm the derived asset appears in a derived collection.
+7. Run an available compute function from a selected asset and confirm the derived asset appears in a derived collection.
 8. Open `Depth Coverage`, enter a range, and confirm matching assets are listed.

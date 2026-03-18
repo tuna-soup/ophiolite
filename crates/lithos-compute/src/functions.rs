@@ -63,6 +63,44 @@ pub struct LogCurveData {
     pub values: Vec<Option<f64>>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TrajectoryDataRow {
+    pub measured_depth: f64,
+    pub true_vertical_depth: Option<f64>,
+    pub azimuth_deg: Option<f64>,
+    pub inclination_deg: Option<f64>,
+    pub northing_offset: Option<f64>,
+    pub easting_offset: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TopDataRow {
+    pub name: String,
+    pub top_depth: f64,
+    pub base_depth: Option<f64>,
+    pub source: Option<String>,
+    pub depth_reference: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PressureObservationDataRow {
+    pub measured_depth: Option<f64>,
+    pub pressure: f64,
+    pub phase: Option<String>,
+    pub test_kind: Option<String>,
+    pub timestamp: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DrillingObservationDataRow {
+    pub measured_depth: Option<f64>,
+    pub event_kind: String,
+    pub value: Option<f64>,
+    pub unit: Option<String>,
+    pub timestamp: Option<String>,
+    pub comment: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ComputedCurve {
     pub curve_name: String,

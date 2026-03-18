@@ -14,7 +14,8 @@ use crate::{
 };
 use lithos_compute::{
     ComputeCatalog, ComputeExecutionManifest, ComputeParameterValue, ComputeRegistry,
-    CurveSemanticDescriptor, CurveSemanticSource, CurveSemanticType, LogCurveData,
+    CurveSemanticDescriptor, CurveSemanticSource, CurveSemanticType, DrillingObservationDataRow,
+    LogCurveData, PressureObservationDataRow, TopDataRow, TrajectoryDataRow,
     classify_curve_semantic,
 };
 use lithos_core::{CurveItem, LasValue, SectionItems, derive_canonical_alias};
@@ -855,20 +856,28 @@ impl LithosProject {
 
     pub fn list_compute_catalog(&self, asset_id: &AssetId) -> Result<ComputeCatalog> {
         let asset = self.asset_by_id(asset_id)?;
-        require_asset_kind(&asset, AssetKind::Log)?;
-        let semantics = if asset.manifest.curve_semantics.is_empty() {
-            classify_log_curves_from_package(&asset.package_path)?
-        } else {
-            asset.manifest.curve_semantics.clone()
-        };
-        let package = open_package(&asset.package_path)?;
-        let numeric_curve_names = package
-            .file()
-            .curves
-            .iter()
-            .filter_map(|curve| curve.numeric_data().map(|_| curve.mnemonic.clone()))
-            .collect::<Vec<_>>();
-        Ok(ComputeRegistry::new().catalog_for_log_asset(&semantics, &numeric_curve_names))
+        let registry = ComputeRegistry::new();
+        match asset.asset_kind {
+            AssetKind::Log => {
+                let semantics = if asset.manifest.curve_semantics.is_empty() {
+                    classify_log_curves_from_package(&asset.package_path)?
+                } else {
+                    asset.manifest.curve_semantics.clone()
+                };
+                let package = open_package(&asset.package_path)?;
+                let numeric_curve_names = package
+                    .file()
+                    .curves
+                    .iter()
+                    .filter_map(|curve| curve.numeric_data().map(|_| curve.mnemonic.clone()))
+                    .collect::<Vec<_>>();
+                Ok(registry.catalog_for_log_asset(&semantics, &numeric_curve_names))
+            }
+            AssetKind::Trajectory => Ok(registry.catalog_for_trajectory_asset()),
+            AssetKind::TopSet => Ok(registry.catalog_for_top_set_asset()),
+            AssetKind::PressureObservation => Ok(registry.catalog_for_pressure_asset()),
+            AssetKind::DrillingObservation => Ok(registry.catalog_for_drilling_asset()),
+        }
     }
 
     pub fn run_compute(
@@ -876,27 +885,176 @@ impl LithosProject {
         request: &ProjectComputeRunRequest,
     ) -> Result<ProjectComputeRunResult> {
         let source_asset = self.asset_by_id(&request.source_asset_id)?;
-        require_asset_kind(&source_asset, AssetKind::Log)?;
-        let source_package = open_package(&source_asset.package_path)?;
-        let source_file = source_package.file();
-        let semantics = if source_asset.manifest.curve_semantics.is_empty() {
-            classify_log_curves_from_package(&source_asset.package_path)?
-        } else {
-            source_asset.manifest.curve_semantics.clone()
+        let source_collection = self.collection_by_id(&source_asset.collection_id)?;
+        let registry = ComputeRegistry::new();
+
+        let (collection, asset, execution) = match source_asset.asset_kind {
+            AssetKind::Log => {
+                let source_package = open_package(&source_asset.package_path)?;
+                let source_file = source_package.file();
+                let semantics = if source_asset.manifest.curve_semantics.is_empty() {
+                    classify_log_curves_from_package(&source_asset.package_path)?
+                } else {
+                    source_asset.manifest.curve_semantics.clone()
+                };
+                let log_curves = log_curve_data_for_compute(source_file, &semantics)?;
+                let (mut execution, computed_curve) = registry.run_log_compute(
+                    &request.function_id,
+                    &log_curves,
+                    &request.curve_bindings,
+                    &request.parameters,
+                    request.output_mnemonic.as_deref(),
+                )?;
+                execution.source_asset_id = source_asset.id.0.clone();
+                execution.source_logical_asset_id = source_asset.logical_asset_id.0.clone();
+                execution.executed_at_unix_seconds = now_unix_seconds();
+
+                let collection_name = request.output_collection_name.clone().unwrap_or_else(|| {
+                    format!(
+                        "{} / Derived / {}",
+                        source_collection.name, execution.function_name
+                    )
+                });
+                let collection = self.resolve_or_create_collection(
+                    &source_asset.wellbore_id,
+                    AssetKind::Log,
+                    &collection_name,
+                )?;
+                let storage_asset_id = AssetId(unique_id("asset"));
+                let package_rel_path = PathBuf::from("assets")
+                    .join(AssetKind::Log.asset_dir_name())
+                    .join(format!("{}.laspkg", storage_asset_id.0));
+                let package_root = self.root.join(&package_rel_path);
+                let derived_file = build_derived_log_file(
+                    source_file,
+                    &source_asset,
+                    &collection,
+                    &storage_asset_id,
+                    &computed_curve,
+                    &execution,
+                );
+                write_package_overwrite(&derived_file, &package_root)?;
+
+                let supersedes = self
+                    .latest_active_asset_for_collection(&collection.id)?
+                    .map(|asset| asset.id);
+                let manifest = derived_log_asset_manifest(
+                    &derived_file,
+                    &source_asset,
+                    &collection,
+                    &storage_asset_id,
+                    supersedes.clone(),
+                    &computed_curve,
+                    &execution,
+                );
+                write_asset_manifest(&package_root, &manifest)?;
+                if let Some(asset_id) = &supersedes {
+                    self.mark_asset_superseded(asset_id)?;
+                }
+                let asset = AssetRecord {
+                    id: storage_asset_id,
+                    logical_asset_id: collection.logical_asset_id.clone(),
+                    collection_id: collection.id.clone(),
+                    well_id: source_asset.well_id.clone(),
+                    wellbore_id: source_asset.wellbore_id.clone(),
+                    asset_kind: AssetKind::Log,
+                    status: AssetStatus::Bound,
+                    package_path: package_root.to_string_lossy().into_owned(),
+                    manifest,
+                };
+                self.insert_asset(&asset, &package_rel_path)?;
+                (collection, asset, execution)
+            }
+            AssetKind::Trajectory => {
+                let rows = self.read_trajectory_rows(&source_asset.id, None)?;
+                let compute_rows = trajectory_rows_for_compute(&rows);
+                let (execution, derived_rows) = registry.run_trajectory_compute(
+                    &request.function_id,
+                    &compute_rows,
+                    &request.parameters,
+                )?;
+                self.persist_structured_compute_result(
+                    &source_asset,
+                    &source_collection,
+                    request,
+                    execution,
+                    trajectory_rows_from_compute(&derived_rows),
+                    AssetKind::Trajectory,
+                )?
+            }
+            AssetKind::TopSet => {
+                let rows = self.read_tops(&source_asset.id)?;
+                let compute_rows = top_rows_for_compute(&rows);
+                let (execution, derived_rows) = registry.run_top_set_compute(
+                    &request.function_id,
+                    &compute_rows,
+                    &request.parameters,
+                )?;
+                self.persist_structured_compute_result(
+                    &source_asset,
+                    &source_collection,
+                    request,
+                    execution,
+                    top_rows_from_compute(&derived_rows),
+                    AssetKind::TopSet,
+                )?
+            }
+            AssetKind::PressureObservation => {
+                let rows = self.read_pressure_observations(&source_asset.id, None)?;
+                let compute_rows = pressure_rows_for_compute(&rows);
+                let (execution, derived_rows) = registry.run_pressure_compute(
+                    &request.function_id,
+                    &compute_rows,
+                    &request.parameters,
+                )?;
+                self.persist_structured_compute_result(
+                    &source_asset,
+                    &source_collection,
+                    request,
+                    execution,
+                    pressure_rows_from_compute(&derived_rows),
+                    AssetKind::PressureObservation,
+                )?
+            }
+            AssetKind::DrillingObservation => {
+                let rows = self.read_drilling_observations(&source_asset.id, None)?;
+                let compute_rows = drilling_rows_for_compute(&rows);
+                let (execution, derived_rows) = registry.run_drilling_compute(
+                    &request.function_id,
+                    &compute_rows,
+                    &request.parameters,
+                )?;
+                self.persist_structured_compute_result(
+                    &source_asset,
+                    &source_collection,
+                    request,
+                    execution,
+                    drilling_rows_from_compute(&derived_rows),
+                    AssetKind::DrillingObservation,
+                )?
+            }
         };
-        let log_curves = log_curve_data_for_compute(source_file, &semantics)?;
-        let (mut execution, computed_curve) = ComputeRegistry::new().run_log_compute(
-            &request.function_id,
-            &log_curves,
-            &request.curve_bindings,
-            &request.parameters,
-            request.output_mnemonic.as_deref(),
-        )?;
+
+        Ok(ProjectComputeRunResult {
+            collection,
+            asset,
+            execution,
+        })
+    }
+
+    fn persist_structured_compute_result(
+        &mut self,
+        source_asset: &AssetRecord,
+        source_collection: &AssetCollectionRecord,
+        request: &ProjectComputeRunRequest,
+        mut execution: ComputeExecutionManifest,
+        rows: StructuredComputedRows,
+        asset_kind: AssetKind,
+    ) -> Result<(AssetCollectionRecord, AssetRecord, ComputeExecutionManifest)> {
         execution.source_asset_id = source_asset.id.0.clone();
         execution.source_logical_asset_id = source_asset.logical_asset_id.0.clone();
         execution.executed_at_unix_seconds = now_unix_seconds();
 
-        let source_collection = self.collection_by_id(&source_asset.collection_id)?;
         let collection_name = request.output_collection_name.clone().unwrap_or_else(|| {
             format!(
                 "{} / Derived / {}",
@@ -905,36 +1063,30 @@ impl LithosProject {
         });
         let collection = self.resolve_or_create_collection(
             &source_asset.wellbore_id,
-            AssetKind::Log,
+            asset_kind.clone(),
             &collection_name,
         )?;
         let storage_asset_id = AssetId(unique_id("asset"));
         let package_rel_path = PathBuf::from("assets")
-            .join(AssetKind::Log.asset_dir_name())
-            .join(format!("{}.laspkg", storage_asset_id.0));
+            .join(asset_kind.asset_dir_name())
+            .join(match asset_kind {
+                AssetKind::Log => format!("{}.laspkg", storage_asset_id.0),
+                _ => format!("{}.lithos-asset", storage_asset_id.0),
+            });
         let package_root = self.root.join(&package_rel_path);
-        let derived_file = build_derived_log_file(
-            source_file,
-            &source_asset,
-            &collection,
-            &storage_asset_id,
-            &computed_curve,
-            &execution,
-        );
-        write_package_overwrite(&derived_file, &package_root)?;
-
         let supersedes = self
             .latest_active_asset_for_collection(&collection.id)?
             .map(|asset| asset.id);
-        let manifest = derived_log_asset_manifest(
-            &derived_file,
-            &source_asset,
+        let manifest = write_structured_compute_rows(
+            &package_root,
+            source_asset,
             &collection,
             &storage_asset_id,
             supersedes.clone(),
-            &computed_curve,
+            &rows,
             &execution,
-        );
+            asset_kind.clone(),
+        )?;
         write_asset_manifest(&package_root, &manifest)?;
         if let Some(asset_id) = &supersedes {
             self.mark_asset_superseded(asset_id)?;
@@ -945,17 +1097,13 @@ impl LithosProject {
             collection_id: collection.id.clone(),
             well_id: source_asset.well_id.clone(),
             wellbore_id: source_asset.wellbore_id.clone(),
-            asset_kind: AssetKind::Log,
+            asset_kind,
             status: AssetStatus::Bound,
             package_path: package_root.to_string_lossy().into_owned(),
             manifest,
         };
         self.insert_asset(&asset, &package_rel_path)?;
-        Ok(ProjectComputeRunResult {
-            collection,
-            asset,
-            execution,
-        })
+        Ok((collection, asset, execution))
     }
 
     pub fn assets_covering_depth_range(
@@ -1582,6 +1730,129 @@ fn log_curve_data_for_compute(
     Ok(result)
 }
 
+enum StructuredComputedRows {
+    Trajectory(Vec<TrajectoryRow>),
+    TopSet(Vec<TopRow>),
+    Pressure(Vec<PressureObservationRow>),
+    Drilling(Vec<DrillingObservationRow>),
+}
+
+fn trajectory_rows_for_compute(rows: &[TrajectoryRow]) -> Vec<TrajectoryDataRow> {
+    rows.iter()
+        .cloned()
+        .map(|row| TrajectoryDataRow {
+            measured_depth: row.measured_depth,
+            true_vertical_depth: row.true_vertical_depth,
+            azimuth_deg: row.azimuth_deg,
+            inclination_deg: row.inclination_deg,
+            northing_offset: row.northing_offset,
+            easting_offset: row.easting_offset,
+        })
+        .collect()
+}
+
+fn trajectory_rows_from_compute(rows: &[TrajectoryDataRow]) -> StructuredComputedRows {
+    StructuredComputedRows::Trajectory(
+        rows.iter()
+            .cloned()
+            .map(|row| TrajectoryRow {
+                measured_depth: row.measured_depth,
+                true_vertical_depth: row.true_vertical_depth,
+                azimuth_deg: row.azimuth_deg,
+                inclination_deg: row.inclination_deg,
+                northing_offset: row.northing_offset,
+                easting_offset: row.easting_offset,
+            })
+            .collect(),
+    )
+}
+
+fn top_rows_for_compute(rows: &[TopRow]) -> Vec<TopDataRow> {
+    rows.iter()
+        .cloned()
+        .map(|row| TopDataRow {
+            name: row.name,
+            top_depth: row.top_depth,
+            base_depth: row.base_depth,
+            source: row.source,
+            depth_reference: row.depth_reference,
+        })
+        .collect()
+}
+
+fn top_rows_from_compute(rows: &[TopDataRow]) -> StructuredComputedRows {
+    StructuredComputedRows::TopSet(
+        rows.iter()
+            .cloned()
+            .map(|row| TopRow {
+                name: row.name,
+                top_depth: row.top_depth,
+                base_depth: row.base_depth,
+                source: row.source,
+                depth_reference: row.depth_reference,
+            })
+            .collect(),
+    )
+}
+
+fn pressure_rows_for_compute(rows: &[PressureObservationRow]) -> Vec<PressureObservationDataRow> {
+    rows.iter()
+        .cloned()
+        .map(|row| PressureObservationDataRow {
+            measured_depth: row.measured_depth,
+            pressure: row.pressure,
+            phase: row.phase,
+            test_kind: row.test_kind,
+            timestamp: row.timestamp,
+        })
+        .collect()
+}
+
+fn pressure_rows_from_compute(rows: &[PressureObservationDataRow]) -> StructuredComputedRows {
+    StructuredComputedRows::Pressure(
+        rows.iter()
+            .cloned()
+            .map(|row| PressureObservationRow {
+                measured_depth: row.measured_depth,
+                pressure: row.pressure,
+                phase: row.phase,
+                test_kind: row.test_kind,
+                timestamp: row.timestamp,
+            })
+            .collect(),
+    )
+}
+
+fn drilling_rows_for_compute(rows: &[DrillingObservationRow]) -> Vec<DrillingObservationDataRow> {
+    rows.iter()
+        .cloned()
+        .map(|row| DrillingObservationDataRow {
+            measured_depth: row.measured_depth,
+            event_kind: row.event_kind,
+            value: row.value,
+            unit: row.unit,
+            timestamp: row.timestamp,
+            comment: row.comment,
+        })
+        .collect()
+}
+
+fn drilling_rows_from_compute(rows: &[DrillingObservationDataRow]) -> StructuredComputedRows {
+    StructuredComputedRows::Drilling(
+        rows.iter()
+            .cloned()
+            .map(|row| DrillingObservationRow {
+                measured_depth: row.measured_depth,
+                event_kind: row.event_kind,
+                value: row.value,
+                unit: row.unit,
+                timestamp: row.timestamp,
+                comment: row.comment,
+            })
+            .collect(),
+    )
+}
+
 fn build_derived_log_file(
     source_file: &LasFile,
     source_asset: &AssetRecord,
@@ -1807,6 +2078,124 @@ fn derived_log_asset_manifest(
     ];
     manifest.compute_manifest = Some(execution.clone());
     manifest
+}
+
+fn write_structured_compute_rows(
+    package_root: &Path,
+    source_asset: &AssetRecord,
+    collection: &AssetCollectionRecord,
+    storage_asset_id: &AssetId,
+    supersedes: Option<AssetId>,
+    rows: &StructuredComputedRows,
+    execution: &ComputeExecutionManifest,
+    asset_kind: AssetKind,
+) -> Result<AssetManifest> {
+    match rows {
+        StructuredComputedRows::Trajectory(rows) => {
+            write_trajectory_package(package_root, rows)?;
+            derived_structured_asset_manifest(
+                source_asset,
+                collection,
+                storage_asset_id,
+                supersedes,
+                execution,
+                asset_kind,
+                trajectory_metadata(rows),
+                structured_asset_extent(AssetKind::Trajectory, trajectory_extent(rows)),
+            )
+        }
+        StructuredComputedRows::TopSet(rows) => {
+            write_tops_package(package_root, rows)?;
+            derived_structured_asset_manifest(
+                source_asset,
+                collection,
+                storage_asset_id,
+                supersedes,
+                execution,
+                asset_kind,
+                tops_metadata(rows),
+                structured_asset_extent(AssetKind::TopSet, tops_extent(rows)),
+            )
+        }
+        StructuredComputedRows::Pressure(rows) => {
+            write_pressure_package(package_root, rows)?;
+            derived_structured_asset_manifest(
+                source_asset,
+                collection,
+                storage_asset_id,
+                supersedes,
+                execution,
+                asset_kind,
+                pressure_metadata(rows),
+                structured_asset_extent(AssetKind::PressureObservation, pressure_extent(rows)),
+            )
+        }
+        StructuredComputedRows::Drilling(rows) => {
+            write_drilling_package(package_root, rows)?;
+            derived_structured_asset_manifest(
+                source_asset,
+                collection,
+                storage_asset_id,
+                supersedes,
+                execution,
+                asset_kind,
+                drilling_metadata(rows),
+                structured_asset_extent(AssetKind::DrillingObservation, drilling_extent(rows)),
+            )
+        }
+    }
+}
+
+fn derived_structured_asset_manifest(
+    source_asset: &AssetRecord,
+    collection: &AssetCollectionRecord,
+    storage_asset_id: &AssetId,
+    supersedes: Option<AssetId>,
+    execution: &ComputeExecutionManifest,
+    asset_kind: AssetKind,
+    metadata: AssetTableMetadata,
+    extent: AssetExtent,
+) -> Result<AssetManifest> {
+    let imported_at = execution.executed_at_unix_seconds;
+    let mut manifest = AssetManifest {
+        asset_kind: asset_kind.clone(),
+        asset_schema_version: metadata.schema_version.clone(),
+        logical_asset_id: collection.logical_asset_id.clone(),
+        storage_asset_id: storage_asset_id.clone(),
+        well_id: source_asset.well_id.clone(),
+        wellbore_id: source_asset.wellbore_id.clone(),
+        asset_collection_id: collection.id.clone(),
+        source_artifacts: source_asset.manifest.source_artifacts.clone(),
+        provenance: Provenance {
+            source_path: source_asset.package_path.clone(),
+            original_filename: format!("derived-{}", execution.function_id),
+            source_fingerprint: revision_token_for_bytes("compute", &execution.function_id).0,
+            imported_at_unix_seconds: imported_at,
+        },
+        diagnostics: Vec::new(),
+        extents: extent,
+        bulk_data_descriptors: vec![
+            BulkDataDescriptor {
+                relative_path: "metadata.json".to_string(),
+                media_type: "application/json".to_string(),
+                role: "metadata".to_string(),
+            },
+            BulkDataDescriptor {
+                relative_path: data_filename().to_string(),
+                media_type: "application/vnd.apache.parquet".to_string(),
+                role: "bulk_data".to_string(),
+            },
+        ],
+        reference_metadata: source_asset.manifest.reference_metadata.clone(),
+        created_at_unix_seconds: imported_at,
+        imported_at_unix_seconds: imported_at,
+        supersedes,
+        derived_from: Some(source_asset.logical_asset_id.clone()),
+        curve_semantics: Vec::new(),
+        compute_manifest: Some(execution.clone()),
+    };
+    manifest.source_artifacts = source_asset.manifest.source_artifacts.clone();
+    Ok(manifest)
 }
 
 fn write_asset_manifest(root: &Path, manifest: &AssetManifest) -> Result<()> {

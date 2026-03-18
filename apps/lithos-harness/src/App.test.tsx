@@ -122,6 +122,80 @@ function installCommandMap() {
             metadata_json: "{}"
           }
         });
+      case "list_project_compute_catalog":
+        return Promise.resolve({
+          Ok: {
+            asset_family: request.asset_id === "asset-traj-1" ? "Trajectory" : "Log",
+            functions:
+              request.asset_id === "asset-traj-1"
+                ? [
+                    {
+                      metadata: {
+                        id: "trajectory:normalize_azimuth",
+                        provider: "trajectory",
+                        name: "Normalize Azimuth",
+                        category: "Trajectory",
+                        description: "Wrap azimuth values into the 0-360 degree interval.",
+                        default_output_mnemonic: "trajectory_normalize_azimuth",
+                        output_curve_type: "Computed",
+                        tags: ["trajectory"]
+                      },
+                      input_specs: [{ Trajectory: {} }],
+                      parameters: [],
+                      binding_candidates: [],
+                      availability: { Available: {} }
+                    }
+                  ]
+                : [
+                    {
+                      metadata: {
+                        id: "petro:vshale_linear",
+                        provider: "petro",
+                        name: "VShale (Linear)",
+                        category: "Petrophysics",
+                        description: "Calculate VShale (Linear) from gamma ray.",
+                        default_output_mnemonic: "VSH_LIN",
+                        output_curve_type: "VShale",
+                        tags: ["petro"]
+                      },
+                      input_specs: [{ SingleCurve: { parameter_name: "gr_curve", allowed_types: ["GammaRay"] } }],
+                      parameters: [{ Number: { name: "gr_min", label: "GR Clean", description: "Gamma ray in clean sand.", default: 30 } }],
+                      binding_candidates: [
+                        {
+                          parameter_name: "gr_curve",
+                          allowed_types: ["GammaRay"],
+                          matches: [{ curve_name: "GR", original_mnemonic: "GR", semantic_type: "GammaRay", unit: "gAPI" }]
+                        }
+                      ],
+                      availability: { Available: {} }
+                    }
+                  ]
+          }
+        });
+      case "run_project_compute":
+        return Promise.resolve({
+          Ok: {
+            collection: { id: "derived-collection-1", wellbore_id: "wellbore-1", asset_kind: request.source_asset_id === "asset-traj-1" ? "Trajectory" : "Log", name: "Derived", logical_asset_id: "logical-derived", status: "Bound" },
+            asset: {
+              id: request.source_asset_id === "asset-traj-1" ? "asset-traj-2" : "asset-log-2",
+              logical_asset_id: "logical-derived",
+              collection_id: "derived-collection-1",
+              well_id: "well-1",
+              wellbore_id: "wellbore-1",
+              asset_kind: request.source_asset_id === "asset-traj-1" ? "Trajectory" : "Log",
+              status: "Bound",
+              package_path: "C:\\projects\\alpha\\assets\\derived",
+              manifest: { extents: { start: 1000, stop: 2000, row_count: 2 } }
+            },
+            execution: {
+              function_id: request.function_id,
+              function_name: "Derived Compute",
+              provider: "test",
+              output_curve_name: "DERIVED",
+              output_curve_type: "Computed"
+            }
+          }
+        });
       case "read_project_trajectory_rows":
         return Promise.resolve({ Ok: [{ measured_depth: 1000, true_vertical_depth: 950 }, { measured_depth: 1100, true_vertical_depth: 1030 }] });
       case "project_assets_covering_depth_range":

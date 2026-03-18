@@ -9,6 +9,7 @@ import type {
   CommandErrorDto,
   ComputeCatalog,
   ComputeCatalogEntry,
+  ComputeParameterValue,
   CurveCatalogDto,
   CurveWindowDto,
   DrillingObservationRow,
@@ -55,10 +56,10 @@ type LogDetail = {
 };
 
 type StructuredDetail =
-  | { kind: "trajectory"; asset: AssetRecord; rows: TrajectoryRow[] }
-  | { kind: "tops"; asset: AssetRecord; rows: TopRow[] }
-  | { kind: "pressure"; asset: AssetRecord; rows: PressureObservationRow[] }
-  | { kind: "drilling"; asset: AssetRecord; rows: DrillingObservationRow[] };
+  | { kind: "trajectory"; asset: AssetRecord; rows: TrajectoryRow[]; computeCatalog: ComputeCatalog }
+  | { kind: "tops"; asset: AssetRecord; rows: TopRow[]; computeCatalog: ComputeCatalog }
+  | { kind: "pressure"; asset: AssetRecord; rows: PressureObservationRow[]; computeCatalog: ComputeCatalog }
+  | { kind: "drilling"; asset: AssetRecord; rows: DrillingObservationRow[]; computeCatalog: ComputeCatalog };
 
 type AssetDetail = LogDetail | StructuredDetail | null;
 
@@ -126,13 +127,29 @@ function defaultCurveBindings(entry: ComputeCatalogEntry) {
 }
 
 function defaultComputeParameters(entry: ComputeCatalogEntry) {
-  const parameters: Record<string, number | string | boolean> = {};
+  const parameters: Record<string, ComputeParameterValue> = {};
   for (const definition of entry.parameters) {
     if ("Number" in definition && definition.Number.default != null) {
       parameters[definition.Number.name] = definition.Number.default;
     }
   }
   return parameters;
+}
+
+type ComputeFormState = {
+  curveBindings: Record<string, string>;
+  parameters: Record<string, ComputeParameterValue>;
+  outputCollectionName: string;
+  outputMnemonic: string;
+};
+
+function defaultComputeForm(entry: ComputeCatalogEntry) {
+  return {
+    curveBindings: defaultCurveBindings(entry),
+    parameters: defaultComputeParameters(entry),
+    outputCollectionName: "",
+    outputMnemonic: entry.metadata.default_output_mnemonic ?? ""
+  } satisfies ComputeFormState;
 }
 
 function loadRecents(): string[] {
@@ -255,15 +272,31 @@ async function loadAssetDetail(workspace: ProjectWorkspace): Promise<AssetDetail
     return { kind: "log", asset, session, metadata, catalog, computeCatalog, window, files };
   }
   if (asset.asset_kind === "Trajectory") {
-    return { kind: "trajectory", asset, rows: await api.readProjectTrajectoryRows(workspace.project.root, asset.id, null, null) };
+    const [rows, computeCatalog] = await Promise.all([
+      api.readProjectTrajectoryRows(workspace.project.root, asset.id, null, null),
+      api.listProjectComputeCatalog(workspace.project.root, asset.id)
+    ]);
+    return { kind: "trajectory", asset, rows, computeCatalog };
   }
   if (asset.asset_kind === "TopSet") {
-    return { kind: "tops", asset, rows: await api.readProjectTops(workspace.project.root, asset.id) };
+    const [rows, computeCatalog] = await Promise.all([
+      api.readProjectTops(workspace.project.root, asset.id),
+      api.listProjectComputeCatalog(workspace.project.root, asset.id)
+    ]);
+    return { kind: "tops", asset, rows, computeCatalog };
   }
   if (asset.asset_kind === "PressureObservation") {
-    return { kind: "pressure", asset, rows: await api.readProjectPressureObservations(workspace.project.root, asset.id, null, null) };
+    const [rows, computeCatalog] = await Promise.all([
+      api.readProjectPressureObservations(workspace.project.root, asset.id, null, null),
+      api.listProjectComputeCatalog(workspace.project.root, asset.id)
+    ]);
+    return { kind: "pressure", asset, rows, computeCatalog };
   }
-  return { kind: "drilling", asset, rows: await api.readProjectDrillingObservations(workspace.project.root, asset.id, null, null) };
+  const [rows, computeCatalog] = await Promise.all([
+    api.readProjectDrillingObservations(workspace.project.root, asset.id, null, null),
+    api.listProjectComputeCatalog(workspace.project.root, asset.id)
+  ]);
+  return { kind: "drilling", asset, rows, computeCatalog };
 }
 
 function AppShell() {
@@ -557,21 +590,27 @@ function ProjectPage({
     await selectAsset(workspace.detail.asset.id);
   }
 
-  async function runCompute(entry: ComputeCatalogEntry) {
-    if (!workspace.detail || workspace.detail.kind !== "log") {
-      throw { kind: "NoSession", message: "Select a log asset first." };
+  async function runCompute(
+    entry: ComputeCatalogEntry,
+    curveBindings: Record<string, string>,
+    parameters: Record<string, ComputeParameterValue>,
+    outputCollectionName?: string,
+    outputMnemonic?: string
+  ) {
+    if (!workspace.detail) {
+      throw { kind: "NoSession", message: "Select an asset first." };
     }
     if (!computeIsAvailable(entry)) {
-      throw { kind: "ValidationFailed", message: "This compute function is not available for the selected log asset." };
+      throw { kind: "ValidationFailed", message: "This compute function is not available for the selected asset." };
     }
     const result = await api.runProjectCompute(
       workspace.project.root,
       workspace.detail.asset.id,
       entry.metadata.id,
-      defaultCurveBindings(entry),
-      defaultComputeParameters(entry),
-      null,
-      null
+      curveBindings,
+      parameters,
+      outputCollectionName ?? null,
+      workspace.detail.kind === "log" ? outputMnemonic ?? null : null
     );
     const refreshed = await loadProjectWorkspace(await api.openProject(workspace.project.root), {
       ...workspace,
@@ -668,7 +707,7 @@ function ProjectPage({
               <TreeButton key={asset.id} selected={workspace.selectedAssetId === asset.id} onClick={() => void run(() => selectAsset(asset.id))} title={assetKindLabel(asset.asset_kind)} subtitle={`${asset.id} | ${asset.manifest.extents.start ?? "?"} - ${asset.manifest.extents.stop ?? "?"}`} />
             ))}
           </SidebarCard>
-          <MainPanel workspace={workspace} setWorkspace={setWorkspace} onImport={() => void run(importAsset)} onRunCoverage={() => void run(runCoverage)} onSelectAsset={(assetId) => void run(() => selectAsset(assetId))} onRunCompute={(entry) => void run(() => runCompute(entry))} />
+          <MainPanel workspace={workspace} setWorkspace={setWorkspace} onImport={() => void run(importAsset)} onRunCoverage={() => void run(runCoverage)} onSelectAsset={(assetId) => void run(() => selectAsset(assetId))} onRunCompute={(entry, curveBindings, parameters, outputCollectionName, outputMnemonic) => void run(() => runCompute(entry, curveBindings, parameters, outputCollectionName, outputMnemonic))} />
           <InspectorPanel workspace={workspace} onRefresh={() => void run(() => reload())} />
         </div>
       </div>
@@ -710,7 +749,13 @@ function MainPanel({
   onImport: () => void;
   onRunCoverage: () => void;
   onSelectAsset: (assetId: string) => void;
-  onRunCompute: (entry: ComputeCatalogEntry) => void;
+  onRunCompute: (
+    entry: ComputeCatalogEntry,
+    curveBindings: Record<string, string>,
+    parameters: Record<string, ComputeParameterValue>,
+    outputCollectionName?: string,
+    outputMnemonic?: string
+  ) => void;
 }) {
   return (
     <Card className="overflow-hidden">
@@ -890,7 +935,13 @@ function AssetPanel({
   onRunCompute
 }: {
   detail: AssetDetail;
-  onRunCompute: (entry: ComputeCatalogEntry) => void;
+  onRunCompute: (
+    entry: ComputeCatalogEntry,
+    curveBindings: Record<string, string>,
+    parameters: Record<string, ComputeParameterValue>,
+    outputCollectionName?: string,
+    outputMnemonic?: string
+  ) => void;
 }) {
   if (!detail) return <div className="p-6 text-sm text-stone-600">Select an asset to inspect it.</div>;
   if (detail.kind === "log") {
@@ -944,42 +995,11 @@ function AssetPanel({
             </div>
           </TableShell>
           <div className="grid gap-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Compute</CardTitle>
-                <CardDescription>Type-safe derived-log functions available for this asset.</CardDescription>
-              </CardHeader>
-              <CardContent className="grid gap-3">
-                {detail.computeCatalog.functions.map((entry) => {
-                  const available = computeIsAvailable(entry);
-                  return (
-                    <div key={entry.metadata.id} className="rounded-2xl border border-stone-200 bg-stone-50/70 p-3">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="font-medium">{entry.metadata.name}</div>
-                          <div className="text-xs text-stone-600">{entry.metadata.description}</div>
-                          <div className="text-xs text-stone-500">
-                            {entry.binding_candidates.map((candidate) => `${candidate.parameter_name}: ${candidate.matches.map((item) => item.curve_name).join(", ") || "no match"}`).join(" | ")}
-                          </div>
-                        </div>
-                        <Button
-                          variant={available ? "default" : "outline"}
-                          disabled={!available}
-                          onClick={() => onRunCompute(entry)}
-                        >
-                          Run
-                        </Button>
-                      </div>
-                      {!available && "Unavailable" in entry.availability ? (
-                        <div className="mt-2 text-xs text-amber-800">
-                          {entry.availability.Unavailable.reasons.join("; ")}
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })}
-              </CardContent>
-            </Card>
+            <ComputeCatalogPanel
+              catalog={detail.computeCatalog}
+              assetKind={detail.asset.asset_kind}
+              onRunCompute={onRunCompute}
+            />
             <InfoBlock title="Session metadata" value={detail.metadata} />
             <InfoBlock title="Curve catalog" value={detail.catalog} />
             <InfoBlock title="Package files" value={detail.files} />
@@ -993,6 +1013,11 @@ function AssetPanel({
   return (
     <div className="grid gap-4 p-4">
       <InfoBlock title={`${assetKindLabel(detail.asset.asset_kind)} asset`} value={detail.asset} />
+      <ComputeCatalogPanel
+        catalog={detail.computeCatalog}
+        assetKind={detail.asset.asset_kind}
+        onRunCompute={onRunCompute}
+      />
       <TableShell>
         <div className="overflow-auto">
           <table className="min-w-full border-collapse text-sm">
@@ -1020,6 +1045,168 @@ function AssetPanel({
         </div>
       </TableShell>
     </div>
+  );
+}
+
+function ComputeCatalogPanel({
+  catalog,
+  assetKind,
+  onRunCompute
+}: {
+  catalog: ComputeCatalog;
+  assetKind: string;
+  onRunCompute: (
+    entry: ComputeCatalogEntry,
+    curveBindings: Record<string, string>,
+    parameters: Record<string, ComputeParameterValue>,
+    outputCollectionName?: string,
+    outputMnemonic?: string
+  ) => void;
+}) {
+  const [forms, setForms] = useState<Record<string, ComputeFormState>>({});
+
+  useEffect(() => {
+    setForms(
+      Object.fromEntries(
+        catalog.functions.map((entry) => [entry.metadata.id, defaultComputeForm(entry)])
+      )
+    );
+  }, [catalog]);
+
+  function updateForm(
+    functionId: string,
+    patch: Partial<ComputeFormState>
+  ) {
+    setForms((current) => ({
+      ...current,
+      [functionId]: {
+        ...(current[functionId] ?? defaultComputeForm(catalog.functions.find((entry) => entry.metadata.id === functionId)!)),
+        ...patch
+      }
+    }));
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Compute</CardTitle>
+        <CardDescription>Type-safe compute functions for the selected {assetKindLabel(assetKind)} asset.</CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        {catalog.functions.map((entry) => {
+          const form = forms[entry.metadata.id] ?? defaultComputeForm(entry);
+          const available = computeIsAvailable(entry);
+          return (
+            <div key={entry.metadata.id} className="rounded-2xl border border-stone-200 bg-stone-50/70 p-3">
+              <div className="space-y-1">
+                <div className="font-medium">{entry.metadata.name}</div>
+                <div className="text-xs text-stone-600">{entry.metadata.description}</div>
+              </div>
+              <div className="mt-3 grid gap-3">
+                {entry.binding_candidates.map((candidate) => (
+                  <Label key={`${entry.metadata.id}-${candidate.parameter_name}`}>
+                    {candidate.parameter_name}
+                    <select
+                      className="mt-1 w-full rounded-2xl border border-stone-300 bg-white px-3 py-2 text-sm"
+                      value={form.curveBindings[candidate.parameter_name] ?? ""}
+                      onChange={(event) =>
+                        updateForm(entry.metadata.id, {
+                          curveBindings: {
+                            ...form.curveBindings,
+                            [candidate.parameter_name]: event.target.value
+                          }
+                        })
+                      }
+                    >
+                      <option value="">Select curve</option>
+                      {candidate.matches.map((match) => (
+                        <option key={match.curve_name} value={match.curve_name}>
+                          {match.curve_name} ({match.semantic_type})
+                        </option>
+                      ))}
+                    </select>
+                  </Label>
+                ))}
+                {entry.parameters.map((definition) =>
+                  "Number" in definition ? (
+                    <Label key={`${entry.metadata.id}-${definition.Number.name}`}>
+                      {definition.Number.label}
+                      <Input
+                        aria-label={`${entry.metadata.name} ${definition.Number.label}`}
+                        type="number"
+                        value={String(form.parameters[definition.Number.name] ?? definition.Number.default ?? "")}
+                        onChange={(event) =>
+                          updateForm(entry.metadata.id, {
+                            parameters: {
+                              ...form.parameters,
+                              [definition.Number.name]:
+                                event.target.value === "" ? "" : Number(event.target.value)
+                            }
+                          })
+                        }
+                      />
+                    </Label>
+                  ) : null
+                )}
+                <Label>
+                  Output collection
+                  <Input
+                    aria-label={`${entry.metadata.name} output collection`}
+                    value={form.outputCollectionName}
+                    onChange={(event) =>
+                      updateForm(entry.metadata.id, { outputCollectionName: event.target.value })
+                    }
+                  />
+                </Label>
+                {assetKind === "Log" ? (
+                  <Label>
+                    Output mnemonic
+                    <Input
+                      aria-label={`${entry.metadata.name} output mnemonic`}
+                      value={form.outputMnemonic}
+                      onChange={(event) =>
+                        updateForm(entry.metadata.id, { outputMnemonic: event.target.value })
+                      }
+                    />
+                  </Label>
+                ) : null}
+              </div>
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <div className="text-xs text-stone-500">
+                  {entry.binding_candidates.length > 0
+                    ? entry.binding_candidates
+                        .map((candidate) => `${candidate.parameter_name}: ${candidate.matches.length} candidates`)
+                        .join(" | ")
+                    : "Family-level compute; no curve binding required."}
+                </div>
+                <Button
+                  variant={available ? "default" : "outline"}
+                  disabled={!available}
+                  onClick={() =>
+                    onRunCompute(
+                      entry,
+                      form.curveBindings,
+                      Object.fromEntries(
+                        Object.entries(form.parameters).filter(([, value]) => value !== "")
+                      ),
+                      form.outputCollectionName || undefined,
+                      form.outputMnemonic || undefined
+                    )
+                  }
+                >
+                  Run
+                </Button>
+              </div>
+              {!available && "Unavailable" in entry.availability ? (
+                <div className="mt-2 text-xs text-amber-800">
+                  {entry.availability.Unavailable.reasons.join("; ")}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
   );
 }
 

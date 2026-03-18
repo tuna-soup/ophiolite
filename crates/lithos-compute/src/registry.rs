@@ -1,6 +1,7 @@
 use crate::functions::{
     ComputeExecutionManifest, ComputeFunctionMetadata, ComputeInputBinding, ComputeParameterValue,
-    ComputedCurve, LogCurveData,
+    ComputedCurve, DrillingObservationDataRow, LogCurveData, PressureObservationDataRow,
+    TopDataRow, TrajectoryDataRow,
 };
 use crate::semantics::{
     AssetSemanticFamily, CurveBindingCandidate, CurveSemanticDescriptor, CurveSemanticType,
@@ -68,7 +69,7 @@ pub struct ComputeCatalog {
     pub functions: Vec<ComputeCatalogEntry>,
 }
 
-trait ComputeFunction: Send + Sync {
+trait LogComputeFunction: Send + Sync {
     fn metadata(&self) -> ComputeFunctionMetadata;
     fn input_specs(&self) -> Vec<ComputeInputSpec>;
     fn parameters(&self) -> Vec<ComputeParameterDefinition>;
@@ -86,15 +87,103 @@ trait ComputeFunction: Send + Sync {
     ) -> Result<ComputedCurve>;
 }
 
+trait TrajectoryComputeFunction: Send + Sync {
+    fn metadata(&self) -> ComputeFunctionMetadata;
+    fn parameters(&self) -> Vec<ComputeParameterDefinition>;
+    fn is_deterministic(&self) -> bool {
+        true
+    }
+    fn version(&self) -> &'static str {
+        "1.0.0"
+    }
+    fn execute(
+        &self,
+        rows: &[TrajectoryDataRow],
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<Vec<TrajectoryDataRow>>;
+}
+
+trait TopSetComputeFunction: Send + Sync {
+    fn metadata(&self) -> ComputeFunctionMetadata;
+    fn parameters(&self) -> Vec<ComputeParameterDefinition>;
+    fn is_deterministic(&self) -> bool {
+        true
+    }
+    fn version(&self) -> &'static str {
+        "1.0.0"
+    }
+    fn execute(
+        &self,
+        rows: &[TopDataRow],
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<Vec<TopDataRow>>;
+}
+
+trait PressureComputeFunction: Send + Sync {
+    fn metadata(&self) -> ComputeFunctionMetadata;
+    fn parameters(&self) -> Vec<ComputeParameterDefinition>;
+    fn is_deterministic(&self) -> bool {
+        true
+    }
+    fn version(&self) -> &'static str {
+        "1.0.0"
+    }
+    fn execute(
+        &self,
+        rows: &[PressureObservationDataRow],
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<Vec<PressureObservationDataRow>>;
+}
+
+trait DrillingComputeFunction: Send + Sync {
+    fn metadata(&self) -> ComputeFunctionMetadata;
+    fn parameters(&self) -> Vec<ComputeParameterDefinition>;
+    fn is_deterministic(&self) -> bool {
+        true
+    }
+    fn version(&self) -> &'static str {
+        "1.0.0"
+    }
+    fn execute(
+        &self,
+        rows: &[DrillingObservationDataRow],
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<Vec<DrillingObservationDataRow>>;
+}
+
 #[derive(Default)]
 pub struct ComputeRegistry {
-    functions: Vec<Box<dyn ComputeFunction>>,
+    log_functions: Vec<Box<dyn LogComputeFunction>>,
+    trajectory_functions: Vec<Box<dyn TrajectoryComputeFunction>>,
+    top_set_functions: Vec<Box<dyn TopSetComputeFunction>>,
+    pressure_functions: Vec<Box<dyn PressureComputeFunction>>,
+    drilling_functions: Vec<Box<dyn DrillingComputeFunction>>,
 }
+
+struct MovingAverageFunction;
+struct ZScoreNormalizeFunction;
+struct MinMaxScaleFunction;
+struct GapFlagFunction;
+struct VShaleLinearFunction;
+struct VShaleClavierFunction;
+struct VShaleSteiberFunction;
+struct SonicToVpFunction;
+struct ShearSonicToVsFunction;
+struct AcousticImpedanceFunction;
+struct PoissonsRatioFunction;
+struct TrajectorySmoothInclinationFunction;
+struct TrajectoryNormalizeAzimuthFunction;
+struct TopSortByDepthFunction;
+struct TopFillBaseFromNextTopFunction;
+struct PressureMovingAverageFunction;
+struct PressureNormalizePhaseFunction;
+struct DrillingMovingAverageValueFunction;
+struct DrillingNormalizeEventKindFunction;
 
 impl ComputeRegistry {
     pub fn new() -> Self {
         Self {
-            functions: vec![
+            log_functions: vec![
                 Box::new(MovingAverageFunction),
                 Box::new(ZScoreNormalizeFunction),
                 Box::new(MinMaxScaleFunction),
@@ -107,6 +196,22 @@ impl ComputeRegistry {
                 Box::new(AcousticImpedanceFunction),
                 Box::new(PoissonsRatioFunction),
             ],
+            trajectory_functions: vec![
+                Box::new(TrajectorySmoothInclinationFunction),
+                Box::new(TrajectoryNormalizeAzimuthFunction),
+            ],
+            top_set_functions: vec![
+                Box::new(TopSortByDepthFunction),
+                Box::new(TopFillBaseFromNextTopFunction),
+            ],
+            pressure_functions: vec![
+                Box::new(PressureMovingAverageFunction),
+                Box::new(PressureNormalizePhaseFunction),
+            ],
+            drilling_functions: vec![
+                Box::new(DrillingMovingAverageValueFunction),
+                Box::new(DrillingNormalizeEventKindFunction),
+            ],
         }
     }
 
@@ -115,17 +220,83 @@ impl ComputeRegistry {
         curves: &[CurveSemanticDescriptor],
         numeric_curve_names: &[String],
     ) -> ComputeCatalog {
-        let functions = self
-            .functions
-            .iter()
-            .map(|function| {
-                catalog_entry_for_function(function.as_ref(), curves, numeric_curve_names)
-            })
-            .collect();
-
         ComputeCatalog {
             asset_family: AssetSemanticFamily::Log,
-            functions,
+            functions: self
+                .log_functions
+                .iter()
+                .map(|function| {
+                    catalog_entry_for_log_function(function.as_ref(), curves, numeric_curve_names)
+                })
+                .collect(),
+        }
+    }
+
+    pub fn catalog_for_trajectory_asset(&self) -> ComputeCatalog {
+        ComputeCatalog {
+            asset_family: AssetSemanticFamily::Trajectory,
+            functions: self
+                .trajectory_functions
+                .iter()
+                .map(|function| {
+                    structured_entry(
+                        function.metadata(),
+                        function.parameters(),
+                        ComputeInputSpec::Trajectory,
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    pub fn catalog_for_top_set_asset(&self) -> ComputeCatalog {
+        ComputeCatalog {
+            asset_family: AssetSemanticFamily::TopSet,
+            functions: self
+                .top_set_functions
+                .iter()
+                .map(|function| {
+                    structured_entry(
+                        function.metadata(),
+                        function.parameters(),
+                        ComputeInputSpec::TopSet,
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    pub fn catalog_for_pressure_asset(&self) -> ComputeCatalog {
+        ComputeCatalog {
+            asset_family: AssetSemanticFamily::PressureObservation,
+            functions: self
+                .pressure_functions
+                .iter()
+                .map(|function| {
+                    structured_entry(
+                        function.metadata(),
+                        function.parameters(),
+                        ComputeInputSpec::PressureObservation,
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    pub fn catalog_for_drilling_asset(&self) -> ComputeCatalog {
+        ComputeCatalog {
+            asset_family: AssetSemanticFamily::DrillingObservation,
+            functions: self
+                .drilling_functions
+                .iter()
+                .map(|function| {
+                    structured_entry(
+                        function.metadata(),
+                        function.parameters(),
+                        ComputeInputSpec::DrillingObservation,
+                    )
+                })
+                .collect(),
         }
     }
 
@@ -138,7 +309,7 @@ impl ComputeRegistry {
         output_mnemonic: Option<&str>,
     ) -> Result<(ComputeExecutionManifest, ComputedCurve)> {
         let function = self
-            .functions
+            .log_functions
             .iter()
             .find(|item| item.metadata().id == function_id)
             .ok_or_else(|| {
@@ -219,6 +390,122 @@ impl ComputeRegistry {
             output,
         ))
     }
+
+    pub fn run_trajectory_compute(
+        &self,
+        function_id: &str,
+        rows: &[TrajectoryDataRow],
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<(ComputeExecutionManifest, Vec<TrajectoryDataRow>)> {
+        let function = self
+            .trajectory_functions
+            .iter()
+            .find(|item| item.metadata().id == function_id)
+            .ok_or_else(|| {
+                LasError::Validation(format!("unknown compute function '{function_id}'"))
+            })?;
+        validate_parameters(function.parameters(), parameters)?;
+        let metadata = function.metadata();
+        let output = function.execute(rows, parameters)?;
+        Ok((
+            structured_manifest(
+                metadata,
+                function.version(),
+                function.is_deterministic(),
+                parameters,
+                "trajectory_rows",
+                "trajectory",
+            ),
+            output,
+        ))
+    }
+
+    pub fn run_top_set_compute(
+        &self,
+        function_id: &str,
+        rows: &[TopDataRow],
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<(ComputeExecutionManifest, Vec<TopDataRow>)> {
+        let function = self
+            .top_set_functions
+            .iter()
+            .find(|item| item.metadata().id == function_id)
+            .ok_or_else(|| {
+                LasError::Validation(format!("unknown compute function '{function_id}'"))
+            })?;
+        validate_parameters(function.parameters(), parameters)?;
+        let metadata = function.metadata();
+        let output = function.execute(rows, parameters)?;
+        Ok((
+            structured_manifest(
+                metadata,
+                function.version(),
+                function.is_deterministic(),
+                parameters,
+                "tops_rows",
+                "tops",
+            ),
+            output,
+        ))
+    }
+
+    pub fn run_pressure_compute(
+        &self,
+        function_id: &str,
+        rows: &[PressureObservationDataRow],
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<(ComputeExecutionManifest, Vec<PressureObservationDataRow>)> {
+        let function = self
+            .pressure_functions
+            .iter()
+            .find(|item| item.metadata().id == function_id)
+            .ok_or_else(|| {
+                LasError::Validation(format!("unknown compute function '{function_id}'"))
+            })?;
+        validate_parameters(function.parameters(), parameters)?;
+        let metadata = function.metadata();
+        let output = function.execute(rows, parameters)?;
+        Ok((
+            structured_manifest(
+                metadata,
+                function.version(),
+                function.is_deterministic(),
+                parameters,
+                "pressure_rows",
+                "pressure",
+            ),
+            output,
+        ))
+    }
+
+    pub fn run_drilling_compute(
+        &self,
+        function_id: &str,
+        rows: &[DrillingObservationDataRow],
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<(ComputeExecutionManifest, Vec<DrillingObservationDataRow>)> {
+        let function = self
+            .drilling_functions
+            .iter()
+            .find(|item| item.metadata().id == function_id)
+            .ok_or_else(|| {
+                LasError::Validation(format!("unknown compute function '{function_id}'"))
+            })?;
+        validate_parameters(function.parameters(), parameters)?;
+        let metadata = function.metadata();
+        let output = function.execute(rows, parameters)?;
+        Ok((
+            structured_manifest(
+                metadata,
+                function.version(),
+                function.is_deterministic(),
+                parameters,
+                "drilling_rows",
+                "drilling",
+            ),
+            output,
+        ))
+    }
 }
 
 fn bind_curve_input<'a>(
@@ -248,8 +535,8 @@ fn bind_curve_input<'a>(
     Ok(())
 }
 
-fn catalog_entry_for_function(
-    function: &dyn ComputeFunction,
+fn catalog_entry_for_log_function(
+    function: &dyn LogComputeFunction,
     curves: &[CurveSemanticDescriptor],
     numeric_curve_names: &[String],
 ) -> ComputeCatalogEntry {
@@ -362,6 +649,48 @@ fn binding_candidates_for(
     }
 }
 
+fn structured_entry(
+    metadata: ComputeFunctionMetadata,
+    parameters: Vec<ComputeParameterDefinition>,
+    input_spec: ComputeInputSpec,
+) -> ComputeCatalogEntry {
+    ComputeCatalogEntry {
+        metadata,
+        input_specs: vec![input_spec],
+        parameters,
+        binding_candidates: Vec::new(),
+        availability: ComputeAvailability::Available,
+    }
+}
+
+fn structured_manifest(
+    metadata: ComputeFunctionMetadata,
+    function_version: &str,
+    deterministic: bool,
+    parameters: &BTreeMap<String, ComputeParameterValue>,
+    parameter_name: &str,
+    label: &str,
+) -> ComputeExecutionManifest {
+    ComputeExecutionManifest {
+        function_id: metadata.id,
+        provider: metadata.provider,
+        function_name: metadata.name,
+        function_version: function_version.to_string(),
+        deterministic,
+        source_asset_id: String::new(),
+        source_logical_asset_id: String::new(),
+        inputs: vec![ComputeInputBinding {
+            parameter_name: parameter_name.to_string(),
+            curve_name: label.to_string(),
+            semantic_type: CurveSemanticType::Computed,
+        }],
+        parameters: parameters.clone(),
+        output_curve_name: label.to_string(),
+        output_curve_type: metadata.output_curve_type,
+        executed_at_unix_seconds: 0,
+    }
+}
+
 fn validate_parameters(
     definitions: Vec<ComputeParameterDefinition>,
     parameters: &BTreeMap<String, ComputeParameterValue>,
@@ -385,21 +714,21 @@ fn validate_parameters(
                             name
                         ))
                     })?;
-                if let Some(minimum) = min {
-                    if value < minimum {
-                        return Err(LasError::Validation(format!(
-                            "parameter '{}' must be >= {}",
-                            name, minimum
-                        )));
-                    }
+                if let Some(minimum) = min
+                    && value < minimum
+                {
+                    return Err(LasError::Validation(format!(
+                        "parameter '{}' must be >= {}",
+                        name, minimum
+                    )));
                 }
-                if let Some(maximum) = max {
-                    if value > maximum {
-                        return Err(LasError::Validation(format!(
-                            "parameter '{}' must be <= {}",
-                            name, maximum
-                        )));
-                    }
+                if let Some(maximum) = max
+                    && value > maximum
+                {
+                    return Err(LasError::Validation(format!(
+                        "parameter '{}' must be <= {}",
+                        name, maximum
+                    )));
                 }
             }
         }
@@ -484,6 +813,29 @@ fn numeric_param_value(
         .ok_or_else(|| LasError::Validation(format!("parameter '{}' is required", name)))
 }
 
+fn moving_average_values(values: &[Option<f64>], window: usize) -> Vec<Option<f64>> {
+    let mut window = window.max(1);
+    if window % 2 == 0 {
+        window += 1;
+    }
+    let radius = window / 2;
+    (0..values.len())
+        .map(|index| {
+            let start = index.saturating_sub(radius);
+            let stop = (index + radius + 1).min(values.len());
+            let mut sum = 0.0;
+            let mut count = 0usize;
+            for value in &values[start..stop] {
+                if let Some(number) = value {
+                    sum += *number;
+                    count += 1;
+                }
+            }
+            (count > 0).then_some(sum / count as f64)
+        })
+        .collect()
+}
+
 fn slowness_to_velocity(slowness: f64) -> Option<f64> {
     if slowness <= 0.0 {
         return None;
@@ -495,19 +847,7 @@ fn slowness_to_velocity(slowness: f64) -> Option<f64> {
     }
 }
 
-struct MovingAverageFunction;
-struct ZScoreNormalizeFunction;
-struct MinMaxScaleFunction;
-struct GapFlagFunction;
-struct VShaleLinearFunction;
-struct VShaleClavierFunction;
-struct VShaleSteiberFunction;
-struct SonicToVpFunction;
-struct ShearSonicToVsFunction;
-struct AcousticImpedanceFunction;
-struct PoissonsRatioFunction;
-
-impl ComputeFunction for MovingAverageFunction {
+impl LogComputeFunction for MovingAverageFunction {
     fn metadata(&self) -> ComputeFunctionMetadata {
         ComputeFunctionMetadata {
             id: "core:moving_average".to_string(),
@@ -550,51 +890,26 @@ impl ComputeFunction for MovingAverageFunction {
         let curve = inputs.get("curve").ok_or_else(|| {
             LasError::Validation("moving average requires a bound input curve".to_string())
         })?;
-        let mut window = numeric_param_value(parameters, "window", Some(5.0))?.round() as usize;
-        if window == 0 {
-            window = 1;
-        }
-        if window % 2 == 0 {
-            window += 1;
-        }
-        let radius = window / 2;
-        let mut values = Vec::with_capacity(curve.values.len());
-        for index in 0..curve.values.len() {
-            let start = index.saturating_sub(radius);
-            let stop = (index + radius + 1).min(curve.values.len());
-            let mut sum = 0.0;
-            let mut count = 0usize;
-            for value in &curve.values[start..stop] {
-                if let Some(number) = value {
-                    sum += *number;
-                    count += 1;
-                }
-            }
-            values.push((count > 0).then_some(sum / count as f64));
-        }
+        let window = numeric_param_value(parameters, "window", Some(5.0))?.round() as usize;
         Ok(ComputedCurve {
             curve_name: output_mnemonic.unwrap_or("MA").to_string(),
             original_mnemonic: output_mnemonic.unwrap_or("MA").to_string(),
             unit: curve.unit.clone(),
-            description: Some(format!(
-                "Moving average ({window}-sample) of {}",
-                curve.curve_name
-            )),
+            description: Some(format!("Moving average of {}", curve.curve_name)),
             semantic_type: CurveSemanticType::Computed,
-            values,
+            values: moving_average_values(&curve.values, window),
         })
     }
 }
 
-impl ComputeFunction for ZScoreNormalizeFunction {
+impl LogComputeFunction for ZScoreNormalizeFunction {
     fn metadata(&self) -> ComputeFunctionMetadata {
         ComputeFunctionMetadata {
             id: "core:zscore_normalize".to_string(),
             provider: "core".to_string(),
             name: "Z-score Normalize".to_string(),
             category: "Transforms".to_string(),
-            description: "Normalize a numeric log curve to zero mean and unit variance."
-                .to_string(),
+            description: "Convert a numeric log curve to z-scores.".to_string(),
             default_output_mnemonic: "ZSCORE".to_string(),
             output_curve_type: CurveSemanticType::Computed,
             tags: vec!["transform".to_string(), "normalize".to_string()],
@@ -619,7 +934,7 @@ impl ComputeFunction for ZScoreNormalizeFunction {
         output_mnemonic: Option<&str>,
     ) -> Result<ComputedCurve> {
         let curve = inputs.get("curve").ok_or_else(|| {
-            LasError::Validation("z-score normalization requires a bound input curve".to_string())
+            LasError::Validation("z-score normalize requires a bound input curve".to_string())
         })?;
         let valid = curve.values.iter().flatten().copied().collect::<Vec<_>>();
         if valid.is_empty() {
@@ -635,19 +950,19 @@ impl ComputeFunction for ZScoreNormalizeFunction {
             .sum::<f64>()
             / valid.len() as f64;
         let std_dev = variance.sqrt();
-        let values = if std_dev == 0.0 {
-            curve
-                .values
-                .iter()
-                .map(|value| value.map(|_| 0.0))
-                .collect()
-        } else {
-            curve
-                .values
-                .iter()
-                .map(|value| value.map(|number| (number - mean) / std_dev))
-                .collect()
-        };
+        let values = curve
+            .values
+            .iter()
+            .map(|value| {
+                value.map(|number| {
+                    if std_dev.abs() < f64::EPSILON {
+                        0.0
+                    } else {
+                        (number - mean) / std_dev
+                    }
+                })
+            })
+            .collect();
         Ok(ComputedCurve {
             curve_name: output_mnemonic.unwrap_or("ZSCORE").to_string(),
             original_mnemonic: output_mnemonic.unwrap_or("ZSCORE").to_string(),
@@ -659,14 +974,14 @@ impl ComputeFunction for ZScoreNormalizeFunction {
     }
 }
 
-impl ComputeFunction for MinMaxScaleFunction {
+impl LogComputeFunction for MinMaxScaleFunction {
     fn metadata(&self) -> ComputeFunctionMetadata {
         ComputeFunctionMetadata {
-            id: "core:min_max_scale".to_string(),
+            id: "core:minmax_scale".to_string(),
             provider: "core".to_string(),
             name: "Min-Max Scale".to_string(),
             category: "Transforms".to_string(),
-            description: "Rescale a numeric log curve to a configurable interval.".to_string(),
+            description: "Scale a numeric log curve into a target numeric range.".to_string(),
             default_output_mnemonic: "SCALED".to_string(),
             output_curve_type: CurveSemanticType::Computed,
             tags: vec!["transform".to_string(), "scale".to_string()],
@@ -685,7 +1000,7 @@ impl ComputeFunction for MinMaxScaleFunction {
             number_param(
                 "target_min",
                 "Target Min",
-                "Lower bound of output.",
+                "Minimum output value.",
                 Some(0.0),
                 None,
                 None,
@@ -694,7 +1009,7 @@ impl ComputeFunction for MinMaxScaleFunction {
             number_param(
                 "target_max",
                 "Target Max",
-                "Upper bound of output.",
+                "Maximum output value.",
                 Some(1.0),
                 None,
                 None,
@@ -714,11 +1029,6 @@ impl ComputeFunction for MinMaxScaleFunction {
         })?;
         let target_min = numeric_param_value(parameters, "target_min", Some(0.0))?;
         let target_max = numeric_param_value(parameters, "target_max", Some(1.0))?;
-        if target_max <= target_min {
-            return Err(LasError::Validation(
-                "target_max must be greater than target_min".to_string(),
-            ));
-        }
         let valid = curve.values.iter().flatten().copied().collect::<Vec<_>>();
         if valid.is_empty() {
             return Err(LasError::Validation(format!(
@@ -761,7 +1071,7 @@ impl ComputeFunction for MinMaxScaleFunction {
     }
 }
 
-impl ComputeFunction for GapFlagFunction {
+impl LogComputeFunction for GapFlagFunction {
     fn metadata(&self) -> ComputeFunctionMetadata {
         ComputeFunctionMetadata {
             id: "core:gap_flag".to_string(),
@@ -812,7 +1122,7 @@ impl ComputeFunction for GapFlagFunction {
 
 macro_rules! impl_vshale {
     ($name:ident, $id:literal, $display:literal, $mnemonic:literal, $body:expr) => {
-        impl ComputeFunction for $name {
+        impl LogComputeFunction for $name {
             fn metadata(&self) -> ComputeFunctionMetadata {
                 ComputeFunctionMetadata {
                     id: $id.to_string(),
@@ -876,7 +1186,7 @@ macro_rules! impl_vshale {
                 let values = curve
                     .values
                     .iter()
-                    .map(|value| value.map(|number| $body(number, gr_min, span)))
+                    .map(|value| value.map(|number| $body(number, gr_min, span).clamp(0.0, 1.0)))
                     .collect();
                 Ok(ComputedCurve {
                     curve_name: output_mnemonic.unwrap_or($mnemonic).to_string(),
@@ -898,7 +1208,6 @@ impl_vshale!(
     "VSH_LIN",
     |number: f64, gr_min: f64, span: f64| { (number - gr_min) / span }
 );
-
 impl_vshale!(
     VShaleClavierFunction,
     "petro:vshale_clavier",
@@ -908,13 +1217,12 @@ impl_vshale!(
         let igr = (number - gr_min) / span;
         let inner = 3.38 - (igr + 0.7).powi(2);
         if inner >= 0.0 {
-            (1.7 - inner.sqrt()).clamp(0.0, 1.0)
+            1.7 - inner.sqrt()
         } else {
             1.0
         }
     }
 );
-
 impl_vshale!(
     VShaleSteiberFunction,
     "petro:vshale_steiber",
@@ -924,7 +1232,7 @@ impl_vshale!(
         let igr = ((number - gr_min) / span).clamp(0.0, 1.0);
         let denominator = 3.0 - 2.0 * igr;
         if denominator > 0.0 {
-            (igr / denominator).clamp(0.0, 1.0)
+            igr / denominator
         } else {
             1.0
         }
@@ -933,7 +1241,7 @@ impl_vshale!(
 
 macro_rules! impl_velocity_from_slowness {
     ($name:ident, $id:literal, $display:literal, $param:literal, $allowed:expr, $mnemonic:literal, $semantic:expr, $description:literal) => {
-        impl ComputeFunction for $name {
+        impl LogComputeFunction for $name {
             fn metadata(&self) -> ComputeFunctionMetadata {
                 ComputeFunctionMetadata {
                     id: $id.to_string(),
@@ -994,7 +1302,6 @@ impl_velocity_from_slowness!(
     CurveSemanticType::PVelocity,
     "Convert compressional slowness to P-wave velocity."
 );
-
 impl_velocity_from_slowness!(
     ShearSonicToVsFunction,
     "rock_physics:shear_sonic_to_vs",
@@ -1006,7 +1313,7 @@ impl_velocity_from_slowness!(
     "Convert shear slowness to S-wave velocity."
 );
 
-impl ComputeFunction for AcousticImpedanceFunction {
+impl LogComputeFunction for AcousticImpedanceFunction {
     fn metadata(&self) -> ComputeFunctionMetadata {
         ComputeFunctionMetadata {
             id: "rock_physics:acoustic_impedance".to_string(),
@@ -1045,15 +1352,6 @@ impl ComputeFunction for AcousticImpedanceFunction {
         let density = inputs
             .get("density_curve")
             .ok_or_else(|| LasError::Validation("density curve is required".to_string()))?;
-        let values = vp
-            .values
-            .iter()
-            .zip(&density.values)
-            .map(|(left, right)| match (left, right) {
-                (Some(vp), Some(rho)) => Some(vp * rho),
-                _ => None,
-            })
-            .collect();
         Ok(ComputedCurve {
             curve_name: output_mnemonic.unwrap_or("AI").to_string(),
             original_mnemonic: output_mnemonic.unwrap_or("AI").to_string(),
@@ -1063,12 +1361,20 @@ impl ComputeFunction for AcousticImpedanceFunction {
                 vp.curve_name, density.curve_name
             )),
             semantic_type: CurveSemanticType::AcousticImpedance,
-            values,
+            values: vp
+                .values
+                .iter()
+                .zip(&density.values)
+                .map(|(left, right)| match (left, right) {
+                    (Some(vp), Some(rho)) => Some(vp * rho),
+                    _ => None,
+                })
+                .collect(),
         })
     }
 }
 
-impl ComputeFunction for PoissonsRatioFunction {
+impl LogComputeFunction for PoissonsRatioFunction {
     fn metadata(&self) -> ComputeFunctionMetadata {
         ComputeFunctionMetadata {
             id: "rock_physics:poissons_ratio".to_string(),
@@ -1107,19 +1413,6 @@ impl ComputeFunction for PoissonsRatioFunction {
         let vs = inputs
             .get("vs_curve")
             .ok_or_else(|| LasError::Validation("vs curve is required".to_string()))?;
-        let values = vp
-            .values
-            .iter()
-            .zip(&vs.values)
-            .map(|(left, right)| match (left, right) {
-                (Some(vp_value), Some(vs_value)) if *vp_value > 0.0 && *vs_value > 0.0 => {
-                    let ratio_sq = (vp_value / vs_value).powi(2);
-                    let denominator = 2.0 * (ratio_sq - 1.0);
-                    (denominator.abs() > f64::EPSILON).then_some((ratio_sq - 2.0) / denominator)
-                }
-                _ => None,
-            })
-            .collect();
         Ok(ComputedCurve {
             curve_name: output_mnemonic.unwrap_or("PR").to_string(),
             original_mnemonic: output_mnemonic.unwrap_or("PR").to_string(),
@@ -1129,8 +1422,340 @@ impl ComputeFunction for PoissonsRatioFunction {
                 vp.curve_name, vs.curve_name
             )),
             semantic_type: CurveSemanticType::PoissonsRatio,
-            values,
+            values: vp
+                .values
+                .iter()
+                .zip(&vs.values)
+                .map(|(left, right)| match (left, right) {
+                    (Some(vp_value), Some(vs_value)) if *vp_value > 0.0 && *vs_value > 0.0 => {
+                        let ratio_sq = (vp_value / vs_value).powi(2);
+                        let denominator = 2.0 * (ratio_sq - 1.0);
+                        (denominator.abs() > f64::EPSILON).then_some((ratio_sq - 2.0) / denominator)
+                    }
+                    _ => None,
+                })
+                .collect(),
         })
+    }
+}
+
+impl TrajectoryComputeFunction for TrajectorySmoothInclinationFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "trajectory:smooth_inclination".to_string(),
+            provider: "trajectory".to_string(),
+            name: "Smooth Inclination".to_string(),
+            category: "Trajectory".to_string(),
+            description: "Apply a moving average to trajectory inclination.".to_string(),
+            default_output_mnemonic: "trajectory_smooth_inclination".to_string(),
+            output_curve_type: CurveSemanticType::Computed,
+            tags: vec!["trajectory".to_string(), "smoothing".to_string()],
+        }
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        vec![number_param(
+            "window",
+            "Window",
+            "Centered moving-average window in rows.",
+            Some(5.0),
+            Some(1.0),
+            Some(101.0),
+            Some("rows"),
+        )]
+    }
+
+    fn execute(
+        &self,
+        rows: &[TrajectoryDataRow],
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<Vec<TrajectoryDataRow>> {
+        let window = numeric_param_value(parameters, "window", Some(5.0))?.round() as usize;
+        let smoothed = moving_average_values(
+            &rows
+                .iter()
+                .map(|row| row.inclination_deg)
+                .collect::<Vec<_>>(),
+            window,
+        );
+        Ok(rows
+            .iter()
+            .cloned()
+            .zip(smoothed)
+            .map(|(mut row, inclination)| {
+                row.inclination_deg = inclination;
+                row
+            })
+            .collect())
+    }
+}
+
+impl TrajectoryComputeFunction for TrajectoryNormalizeAzimuthFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "trajectory:normalize_azimuth".to_string(),
+            provider: "trajectory".to_string(),
+            name: "Normalize Azimuth".to_string(),
+            category: "Trajectory".to_string(),
+            description: "Wrap azimuth values into the 0-360 degree interval.".to_string(),
+            default_output_mnemonic: "trajectory_normalize_azimuth".to_string(),
+            output_curve_type: CurveSemanticType::Computed,
+            tags: vec!["trajectory".to_string(), "normalization".to_string()],
+        }
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        Vec::new()
+    }
+
+    fn execute(
+        &self,
+        rows: &[TrajectoryDataRow],
+        _parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<Vec<TrajectoryDataRow>> {
+        Ok(rows
+            .iter()
+            .cloned()
+            .map(|mut row| {
+                row.azimuth_deg = row.azimuth_deg.map(|value| value.rem_euclid(360.0));
+                row
+            })
+            .collect())
+    }
+}
+
+impl TopSetComputeFunction for TopSortByDepthFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "tops:sort_by_depth".to_string(),
+            provider: "tops".to_string(),
+            name: "Sort Tops by Depth".to_string(),
+            category: "Interpretation".to_string(),
+            description: "Sort top markers by ascending top depth.".to_string(),
+            default_output_mnemonic: "tops_sort_by_depth".to_string(),
+            output_curve_type: CurveSemanticType::Computed,
+            tags: vec!["tops".to_string(), "ordering".to_string()],
+        }
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        Vec::new()
+    }
+
+    fn execute(
+        &self,
+        rows: &[TopDataRow],
+        _parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<Vec<TopDataRow>> {
+        let mut result = rows.to_vec();
+        result.sort_by(|left, right| left.top_depth.total_cmp(&right.top_depth));
+        Ok(result)
+    }
+}
+
+impl TopSetComputeFunction for TopFillBaseFromNextTopFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "tops:fill_base_from_next_top".to_string(),
+            provider: "tops".to_string(),
+            name: "Fill Base Depths".to_string(),
+            category: "Interpretation".to_string(),
+            description: "Fill missing base depths from the next top in depth order.".to_string(),
+            default_output_mnemonic: "tops_fill_base".to_string(),
+            output_curve_type: CurveSemanticType::Computed,
+            tags: vec!["tops".to_string(), "intervals".to_string()],
+        }
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        Vec::new()
+    }
+
+    fn execute(
+        &self,
+        rows: &[TopDataRow],
+        _parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<Vec<TopDataRow>> {
+        let mut result = rows.to_vec();
+        result.sort_by(|left, right| left.top_depth.total_cmp(&right.top_depth));
+        for index in 0..result.len() {
+            if result[index].base_depth.is_none() {
+                result[index].base_depth = result.get(index + 1).map(|next| next.top_depth);
+            }
+        }
+        Ok(result)
+    }
+}
+
+impl PressureComputeFunction for PressureMovingAverageFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "pressure:moving_average".to_string(),
+            provider: "pressure".to_string(),
+            name: "Smooth Pressure".to_string(),
+            category: "Pressure".to_string(),
+            description: "Apply a moving average to pressure observations.".to_string(),
+            default_output_mnemonic: "pressure_moving_average".to_string(),
+            output_curve_type: CurveSemanticType::Computed,
+            tags: vec!["pressure".to_string(), "smoothing".to_string()],
+        }
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        vec![number_param(
+            "window",
+            "Window",
+            "Centered moving-average window in rows.",
+            Some(3.0),
+            Some(1.0),
+            Some(51.0),
+            Some("rows"),
+        )]
+    }
+
+    fn execute(
+        &self,
+        rows: &[PressureObservationDataRow],
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<Vec<PressureObservationDataRow>> {
+        let window = numeric_param_value(parameters, "window", Some(3.0))?.round() as usize;
+        let smoothed = moving_average_values(
+            &rows
+                .iter()
+                .map(|row| Some(row.pressure))
+                .collect::<Vec<_>>(),
+            window,
+        );
+        Ok(rows
+            .iter()
+            .cloned()
+            .zip(smoothed)
+            .map(|(mut row, pressure)| {
+                row.pressure = pressure.unwrap_or(row.pressure);
+                row
+            })
+            .collect())
+    }
+}
+
+impl PressureComputeFunction for PressureNormalizePhaseFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "pressure:normalize_phase_labels".to_string(),
+            provider: "pressure".to_string(),
+            name: "Normalize Phase Labels".to_string(),
+            category: "Pressure".to_string(),
+            description: "Normalize phase strings into uppercase labels.".to_string(),
+            default_output_mnemonic: "pressure_normalize_phase".to_string(),
+            output_curve_type: CurveSemanticType::Computed,
+            tags: vec!["pressure".to_string(), "cleanup".to_string()],
+        }
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        Vec::new()
+    }
+
+    fn execute(
+        &self,
+        rows: &[PressureObservationDataRow],
+        _parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<Vec<PressureObservationDataRow>> {
+        Ok(rows
+            .iter()
+            .cloned()
+            .map(|mut row| {
+                row.phase = row.phase.map(|phase| phase.trim().to_ascii_uppercase());
+                row
+            })
+            .collect())
+    }
+}
+
+impl DrillingComputeFunction for DrillingMovingAverageValueFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "drilling:moving_average_value".to_string(),
+            provider: "drilling".to_string(),
+            name: "Smooth Observation Values".to_string(),
+            category: "Drilling".to_string(),
+            description: "Apply a moving average to drilling observation values.".to_string(),
+            default_output_mnemonic: "drilling_moving_average".to_string(),
+            output_curve_type: CurveSemanticType::Computed,
+            tags: vec!["drilling".to_string(), "smoothing".to_string()],
+        }
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        vec![number_param(
+            "window",
+            "Window",
+            "Centered moving-average window in rows.",
+            Some(3.0),
+            Some(1.0),
+            Some(51.0),
+            Some("rows"),
+        )]
+    }
+
+    fn execute(
+        &self,
+        rows: &[DrillingObservationDataRow],
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<Vec<DrillingObservationDataRow>> {
+        let window = numeric_param_value(parameters, "window", Some(3.0))?.round() as usize;
+        let smoothed = moving_average_values(
+            &rows.iter().map(|row| row.value).collect::<Vec<_>>(),
+            window,
+        );
+        Ok(rows
+            .iter()
+            .cloned()
+            .zip(smoothed)
+            .map(|(mut row, value)| {
+                row.value = value;
+                row
+            })
+            .collect())
+    }
+}
+
+impl DrillingComputeFunction for DrillingNormalizeEventKindFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "drilling:normalize_event_kind".to_string(),
+            provider: "drilling".to_string(),
+            name: "Normalize Event Kind".to_string(),
+            category: "Drilling".to_string(),
+            description: "Normalize drilling event labels into uppercase underscore form."
+                .to_string(),
+            default_output_mnemonic: "drilling_normalize_event".to_string(),
+            output_curve_type: CurveSemanticType::Computed,
+            tags: vec!["drilling".to_string(), "cleanup".to_string()],
+        }
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        Vec::new()
+    }
+
+    fn execute(
+        &self,
+        rows: &[DrillingObservationDataRow],
+        _parameters: &BTreeMap<String, ComputeParameterValue>,
+    ) -> Result<Vec<DrillingObservationDataRow>> {
+        Ok(rows
+            .iter()
+            .cloned()
+            .map(|mut row| {
+                row.event_kind = row
+                    .event_kind
+                    .trim()
+                    .to_ascii_uppercase()
+                    .replace([' ', '-'], "_");
+                row
+            })
+            .collect())
     }
 }
 
@@ -1253,5 +1878,56 @@ mod tests {
             )
             .unwrap_err();
         assert!(error.to_string().contains("depth index diverges"));
+    }
+
+    #[test]
+    fn structured_compute_catalogs_are_family_specific() {
+        let registry = ComputeRegistry::new();
+        let catalog = registry.catalog_for_trajectory_asset();
+        assert_eq!(catalog.asset_family, AssetSemanticFamily::Trajectory);
+        assert!(
+            catalog
+                .functions
+                .iter()
+                .any(|entry| entry.metadata.id == "trajectory:smooth_inclination")
+        );
+    }
+
+    #[test]
+    fn structured_compute_runs_and_preserves_shape() {
+        let registry = ComputeRegistry::new();
+        let mut parameters = BTreeMap::new();
+        parameters.insert("window".to_string(), ComputeParameterValue::Number(3.0));
+        let (_, rows) = registry
+            .run_pressure_compute(
+                "pressure:moving_average",
+                &[
+                    PressureObservationDataRow {
+                        measured_depth: Some(1000.0),
+                        pressure: 4500.0,
+                        phase: Some("oil".to_string()),
+                        test_kind: Some("mdt".to_string()),
+                        timestamp: None,
+                    },
+                    PressureObservationDataRow {
+                        measured_depth: Some(1001.0),
+                        pressure: 4800.0,
+                        phase: Some("oil".to_string()),
+                        test_kind: Some("mdt".to_string()),
+                        timestamp: None,
+                    },
+                    PressureObservationDataRow {
+                        measured_depth: Some(1002.0),
+                        pressure: 5100.0,
+                        phase: Some("oil".to_string()),
+                        test_kind: Some("mdt".to_string()),
+                        timestamp: None,
+                    },
+                ],
+                &parameters,
+            )
+            .unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows[1].pressure > 4700.0 && rows[1].pressure < 4900.0);
     }
 }

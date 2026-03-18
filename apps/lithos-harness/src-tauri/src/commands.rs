@@ -1443,6 +1443,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn project_commands_run_structured_compute() {
+        let project_dir = temp_package_dir("harness-project-structured-compute");
+        let project_root = project_dir.display().to_string();
+        expect_ok(create_project_impl(super::ProjectPathRequest {
+            path: project_root.clone(),
+        }));
+
+        let binding = AssetBindingInput {
+            well_name: String::from("Well Alpha"),
+            wellbore_name: String::from("Well Alpha WB1"),
+            uwi: Some(String::from("UWI-001")),
+            api: None,
+            operator_aliases: vec![String::from("Lithos Energy")],
+        };
+
+        let trajectory_csv = temp_csv(
+            "trajectory-compute",
+            "measured_depth,true_vertical_depth,azimuth_deg,inclination_deg\n1000,900,-10,2\n1010,909,370,2.1\n",
+        );
+
+        let trajectory = expect_ok(import_project_trajectory_csv_impl(
+            super::ImportStructuredAssetRequest {
+                project_root: project_root.clone(),
+                csv_path: trajectory_csv.display().to_string(),
+                binding,
+                collection_name: Some(String::from("Survey 1")),
+            },
+        ));
+
+        let catalog = expect_ok(super::list_project_compute_catalog_impl(super::ProjectAssetRequest {
+            project_root: project_root.clone(),
+            asset_id: trajectory.asset.id.0.clone(),
+        }));
+        assert!(catalog
+            .functions
+            .iter()
+            .any(|entry| entry.metadata.id == "trajectory:normalize_azimuth"));
+
+        let result = expect_ok(super::run_project_compute_impl(
+            super::ProjectComputeRunCommandRequest {
+                project_root: project_root.clone(),
+                source_asset_id: trajectory.asset.id.0.clone(),
+                function_id: String::from("trajectory:normalize_azimuth"),
+                curve_bindings: std::collections::BTreeMap::new(),
+                parameters: std::collections::BTreeMap::new(),
+                output_collection_name: None,
+                output_mnemonic: None,
+            },
+        ));
+
+        assert_eq!(result.asset.asset_kind, AssetKind::Trajectory);
+        assert_eq!(
+            result.asset
+                .manifest
+                .compute_manifest
+                .as_ref()
+                .unwrap()
+                .function_id,
+            "trajectory:normalize_azimuth"
+        );
+    }
+
     fn expect_ok<T>(response: CommandResponse<T>) -> T {
         match response {
             CommandResponse::Ok(value) => value,

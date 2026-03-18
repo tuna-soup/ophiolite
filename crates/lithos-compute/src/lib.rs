@@ -4,7 +4,8 @@ mod semantics;
 
 pub use functions::{
     ComputeExecutionManifest, ComputeFunctionMetadata, ComputeInputBinding, ComputeParameterValue,
-    ComputedCurve, LogCurveData,
+    ComputedCurve, DrillingObservationDataRow, LogCurveData, PressureObservationDataRow,
+    TopDataRow, TrajectoryDataRow,
 };
 pub use registry::{
     ComputeAvailability, ComputeBindingCandidate, ComputeCatalog, ComputeCatalogEntry,

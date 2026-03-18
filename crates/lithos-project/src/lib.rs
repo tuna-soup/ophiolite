@@ -3,7 +3,8 @@ pub use lithos_compute::{
     ComputeCatalogEntry, ComputeExecutionManifest, ComputeFunctionMetadata, ComputeInputBinding,
     ComputeInputSpec, ComputeParameterDefinition, ComputeParameterValue, ComputeRegistry,
     ComputedCurve, CurveBindingCandidate, CurveSemanticDescriptor, CurveSemanticSource,
-    CurveSemanticType, LogCurveData, classify_curve_semantic, default_curve_semantics,
+    CurveSemanticType, DrillingObservationDataRow, LogCurveData, PressureObservationDataRow,
+    TopDataRow, TrajectoryDataRow, classify_curve_semantic, default_curve_semantics,
 };
 pub use lithos_core::{
     IndexKind, IngestIssue, LasError, LasFile, Provenance, Result, WellInfo, package_metadata_for,

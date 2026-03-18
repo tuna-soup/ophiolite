@@ -130,7 +130,7 @@ Current session properties:
 
 - a package can be opened through metadata-only read paths or through an editable `PackageSession`
 - editable session open reuses one shared backend session per package path by default
-- `PackageSession` owns package identity, session identity, current in-memory `LasFile` state, dirty-state, and a revision token
+- `PackageSession` owns package identity, session identity, current in-memory `LasFile` state, dirty-state, and the current head revision token
 - backend session open validates package metadata and parquet footer without eagerly decoding all sample rows
 - backend-session lazy loading is intentionally scoped: session open avoids full sample decode, read-only session queries decode only requested columns and row windows, metadata-only edits and metadata-only save/save-as remain lazy, and curve/sample edits trigger full materialization
 - backend session queries now support both row-window and depth-range access; depth-range requests resolve against the monotonic numeric index curve and then reuse the projected parquet window path
@@ -143,6 +143,7 @@ Current session properties:
 - first curve/sample materialization is built directly from the current lazy session metadata and cached parquet descriptors rather than reopening through the eager SDK package path
 - edits are applied to the session snapshot in memory
 - `save` persists the current session snapshot back to the same package using last-save-wins overwrite semantics
+- `save` also creates a new immutable local package revision in a hidden `.lithos/revisions/` store
 - `save_as` persists the current session snapshot to a new package root and updates the session baseline
 - session summaries and session-context DTOs expose the currently bound package root
 - sessions remain alive until explicitly closed in the current desktop MVP
@@ -150,6 +151,7 @@ Current session properties:
 - windowed reads are part of the frontend contract and avoid forcing full frontend materialization
 - rejected edit requests must not partially mutate session state
 - save/save-as verifies enough to confirm the written package is readable and internally coherent before treating the write as successful
+- package revision records carry parent linkage, blob refs, and domain-level diff summaries for metadata, curve, and row/value changes
 
 Session invariants:
 
@@ -253,6 +255,7 @@ Only after those are stable should the project tighten runtime/package behavior 
 - `ADR-0009-future-ecosystem-boundaries.md`
 - `ADR-0010-typed-compute-and-derived-assets.md`
 - `ADR-0011-structured-asset-edit-sessions.md`
+- `ADR-0012-revisioned-last-save-wins.md`
 
 ## Related Docs
 

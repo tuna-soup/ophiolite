@@ -24,9 +24,12 @@ use parquet::arrow::arrow_writer::ArrowWriter;
 use parquet::basic::Compression;
 use parquet::file::metadata::SortingColumn;
 use parquet::file::properties::{EnabledStatistics, WriterProperties};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::iter;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -38,6 +41,52 @@ const METADATA_FILENAME: &str = "metadata.json";
 const CURVES_FILENAME: &str = "curves.parquet";
 const CURVES_ROW_GROUP_ROW_COUNT: usize = 16_384;
 const CURVES_DATA_PAGE_ROW_COUNT_LIMIT: usize = 4_096;
+const PACKAGE_HISTORY_DIRNAME: &str = ".lithos";
+const PACKAGE_HISTORY_HEAD_FILENAME: &str = "head.json";
+const PACKAGE_HISTORY_REVISIONS_DIRNAME: &str = "revisions";
+const PACKAGE_HISTORY_REVISION_FILENAME: &str = "revision.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PackageBlobRef {
+    pub relative_path: String,
+    pub media_type: String,
+    pub byte_count: u64,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CurveValueDiffSummary {
+    pub curve_name: String,
+    pub changed_value_count: usize,
+    pub first_changed_row: Option<usize>,
+    pub last_changed_row: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PackageDiffSummary {
+    pub metadata_changed: bool,
+    pub row_count_changed: bool,
+    pub curve_count_changed: bool,
+    pub curves_added: Vec<String>,
+    pub curves_removed: Vec<String>,
+    pub modified_curves: Vec<CurveValueDiffSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PackageRevisionRecord {
+    pub revision_id: RevisionToken,
+    pub parent_revision_id: Option<RevisionToken>,
+    pub package_root: String,
+    pub created_at_unix_seconds: u64,
+    pub metadata_blob: PackageBlobRef,
+    pub parquet_blob: PackageBlobRef,
+    pub diff_summary: PackageDiffSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct PackageRevisionHead {
+    pub current_revision_id: RevisionToken,
+}
 
 #[derive(Debug, Clone)]
 pub struct PackageSession {
@@ -607,6 +656,10 @@ impl PackageSession {
         &self.root
     }
 
+    pub fn revisions(&self) -> Result<Vec<PackageRevisionRecord>> {
+        list_package_revisions(&self.root)
+    }
+
     fn replace_from_saved(&mut self, mut reopened: PackageSession, session_id: SessionId) {
         reopened.session_id = session_id;
         reopened.dirty = false;
@@ -758,9 +811,18 @@ fn write_package_internal(
     overwrite: bool,
 ) -> Result<PackageSession> {
     validate_edit_state(file)?;
+    let previous_file = if overwrite && output_dir.exists() {
+        open_package(output_dir)
+            .ok()
+            .map(|session| session.file().clone())
+    } else {
+        None
+    };
+    let parent_revision = current_package_head_revision(output_dir).ok();
+
     if output_dir.exists() {
         if overwrite {
-            fs::remove_dir_all(output_dir)?;
+            clear_package_payload(output_dir)?;
         } else {
             return Err(LasError::Storage(format!(
                 "output directory '{}' already exists",
@@ -774,12 +836,16 @@ fn write_package_internal(
 
     let table = file.data();
     let metadata = package_metadata_for(file, PACKAGE_VERSION);
+    let metadata_json = serde_json::to_string_pretty(&metadata)?;
 
-    fs::write(
-        metadata_path(output_dir),
-        serde_json::to_string_pretty(&metadata)?,
-    )?;
+    fs::write(metadata_path(output_dir), &metadata_json)?;
     write_parquet_batch(curves_path(output_dir), &table, Some(&file.index.curve_id))?;
+    record_package_revision(
+        output_dir,
+        &metadata_json,
+        &diff_package_files(previous_file.as_ref(), file),
+        parent_revision.as_ref(),
+    )?;
 
     open_package(output_dir)
 }
@@ -790,6 +856,18 @@ fn metadata_path(root: &Path) -> PathBuf {
 
 fn curves_path(root: &Path) -> PathBuf {
     root.join(CURVES_FILENAME)
+}
+
+fn package_history_root(root: &Path) -> PathBuf {
+    root.join(PACKAGE_HISTORY_DIRNAME)
+}
+
+fn package_history_head_path(root: &Path) -> PathBuf {
+    package_history_root(root).join(PACKAGE_HISTORY_HEAD_FILENAME)
+}
+
+fn package_history_revisions_dir(root: &Path) -> PathBuf {
+    package_history_root(root).join(PACKAGE_HISTORY_REVISIONS_DIRNAME)
 }
 
 fn read_package_metadata(root: &Path) -> Result<PackageMetadata> {
@@ -1343,6 +1421,9 @@ fn las_value_option(value: &LasValue) -> Option<String> {
 }
 
 fn package_revision(root: &Path) -> Result<RevisionToken> {
+    if let Ok(head) = read_package_revision_head(root) {
+        return Ok(head.current_revision_id);
+    }
     let metadata_text = fs::read_to_string(metadata_path(root))?;
     let parquet = fs::metadata(curves_path(root))?;
     let modified = parquet
@@ -1353,6 +1434,40 @@ fn package_revision(root: &Path) -> Result<RevisionToken> {
         .unwrap_or_else(|| String::from("0"));
     let payload = format!("{}:{}:{}", metadata_text, parquet.len(), modified);
     Ok(revision_token_for_bytes("package-revision", &payload))
+}
+
+fn current_package_head_revision(root: &Path) -> Result<RevisionToken> {
+    Ok(read_package_revision_head(root)?.current_revision_id)
+}
+
+fn read_package_revision_head(root: &Path) -> Result<PackageRevisionHead> {
+    let path = package_history_head_path(root);
+    let text = fs::read_to_string(&path)?;
+    serde_json::from_str(&text).map_err(Into::into)
+}
+
+pub fn list_package_revisions(root: impl AsRef<Path>) -> Result<Vec<PackageRevisionRecord>> {
+    let revisions_dir = package_history_revisions_dir(root.as_ref());
+    if !revisions_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut revisions = Vec::new();
+    for entry in fs::read_dir(revisions_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let revision_path = entry.path().join(PACKAGE_HISTORY_REVISION_FILENAME);
+        if !revision_path.exists() {
+            continue;
+        }
+        let text = fs::read_to_string(revision_path)?;
+        let revision = serde_json::from_str::<PackageRevisionRecord>(&text)?;
+        revisions.push(revision);
+    }
+    revisions.sort_by_key(|item| item.created_at_unix_seconds);
+    Ok(revisions)
 }
 
 fn new_session_id(root: &Path) -> SessionId {
@@ -1370,6 +1485,182 @@ fn package_path_key(root: &Path) -> String {
         .unwrap_or_else(|_| root.to_path_buf())
         .display()
         .to_string()
+}
+
+fn clear_package_payload(root: &Path) -> Result<()> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if file_name == PACKAGE_HISTORY_DIRNAME || file_name == "asset_manifest.json" {
+            continue;
+        }
+        if path.is_dir() {
+            fs::remove_dir_all(path)?;
+        } else {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
+}
+
+fn record_package_revision(
+    root: &Path,
+    metadata_json: &str,
+    diff_summary: &PackageDiffSummary,
+    parent_revision_id: Option<&RevisionToken>,
+) -> Result<PackageRevisionRecord> {
+    let created_at_unix_seconds = now_unix_seconds();
+    let metadata_bytes = metadata_json.as_bytes();
+    let parquet_bytes = fs::read(curves_path(root))?;
+    let metadata_blob = PackageBlobRef {
+        relative_path: METADATA_FILENAME.to_string(),
+        media_type: "application/json".to_string(),
+        byte_count: metadata_bytes.len() as u64,
+        content_hash: stable_blob_hash("metadata-blob", metadata_bytes),
+    };
+    let parquet_blob = PackageBlobRef {
+        relative_path: CURVES_FILENAME.to_string(),
+        media_type: "application/vnd.apache.parquet".to_string(),
+        byte_count: parquet_bytes.len() as u64,
+        content_hash: stable_blob_hash("parquet-blob", &parquet_bytes),
+    };
+    let revision_id = revision_token_for_bytes(
+        "package-revision",
+        &format!(
+            "{}:{}:{}",
+            metadata_blob.content_hash, parquet_blob.content_hash, created_at_unix_seconds
+        ),
+    );
+    let record = PackageRevisionRecord {
+        revision_id: revision_id.clone(),
+        parent_revision_id: parent_revision_id.cloned(),
+        package_root: root.display().to_string(),
+        created_at_unix_seconds,
+        metadata_blob,
+        parquet_blob,
+        diff_summary: diff_summary.clone(),
+    };
+    let revision_root = package_history_revisions_dir(root).join(&revision_id.0);
+    fs::create_dir_all(&revision_root)?;
+    fs::copy(metadata_path(root), revision_root.join(METADATA_FILENAME))?;
+    fs::copy(curves_path(root), revision_root.join(CURVES_FILENAME))?;
+    fs::write(
+        revision_root.join(PACKAGE_HISTORY_REVISION_FILENAME),
+        serde_json::to_vec_pretty(&record)?,
+    )?;
+    fs::create_dir_all(package_history_root(root))?;
+    fs::write(
+        package_history_head_path(root),
+        serde_json::to_vec_pretty(&PackageRevisionHead {
+            current_revision_id: revision_id,
+        })?,
+    )?;
+    Ok(record)
+}
+
+fn diff_package_files(previous: Option<&LasFile>, current: &LasFile) -> PackageDiffSummary {
+    let Some(previous) = previous else {
+        return PackageDiffSummary::default();
+    };
+
+    let current_metadata = package_metadata_for(current, PACKAGE_VERSION);
+    let previous_metadata = package_metadata_for(previous, PACKAGE_VERSION);
+    let previous_curves = previous
+        .curves
+        .iter()
+        .map(|curve| (curve.mnemonic.clone(), curve))
+        .collect::<BTreeMap<_, _>>();
+    let current_curves = current
+        .curves
+        .iter()
+        .map(|curve| (curve.mnemonic.clone(), curve))
+        .collect::<BTreeMap<_, _>>();
+
+    let curves_added = current_curves
+        .keys()
+        .filter(|name| !previous_curves.contains_key(*name))
+        .cloned()
+        .collect::<Vec<_>>();
+    let curves_removed = previous_curves
+        .keys()
+        .filter(|name| !current_curves.contains_key(*name))
+        .cloned()
+        .collect::<Vec<_>>();
+    let modified_curves = current_curves
+        .iter()
+        .filter_map(|(name, current_curve)| {
+            let previous_curve = previous_curves.get(name)?;
+            let summary = diff_curve_values(name, previous_curve, current_curve);
+            (summary.changed_value_count > 0).then_some(summary)
+        })
+        .collect::<Vec<_>>();
+
+    PackageDiffSummary {
+        metadata_changed: serde_json::to_string(&current_metadata.canonical).ok()
+            != serde_json::to_string(&previous_metadata.canonical).ok()
+            || serde_json::to_string(&current_metadata.raw).ok()
+                != serde_json::to_string(&previous_metadata.raw).ok(),
+        row_count_changed: current.row_count() != previous.row_count(),
+        curve_count_changed: current.curves.len() != previous.curves.len(),
+        curves_added,
+        curves_removed,
+        modified_curves,
+    }
+}
+
+fn diff_curve_values(
+    curve_name: &str,
+    previous: &CurveItem,
+    current: &CurveItem,
+) -> CurveValueDiffSummary {
+    let max_len = previous.data.len().max(current.data.len());
+    let mut changed = 0usize;
+    let mut first = None;
+    let mut last = None;
+
+    for row in 0..max_len {
+        let previous_value = previous.data.get(row);
+        let current_value = current.data.get(row);
+        if las_values_equal(previous_value, current_value) {
+            continue;
+        }
+        changed += 1;
+        first.get_or_insert(row);
+        last = Some(row);
+    }
+
+    CurveValueDiffSummary {
+        curve_name: curve_name.to_string(),
+        changed_value_count: changed,
+        first_changed_row: first,
+        last_changed_row: last,
+    }
+}
+
+fn las_values_equal(previous: Option<&LasValue>, current: Option<&LasValue>) -> bool {
+    match (previous, current) {
+        (Some(LasValue::Number(left)), Some(LasValue::Number(right))) => {
+            (left.is_nan() && right.is_nan()) || left == right
+        }
+        (Some(left), Some(right)) => left == right,
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn stable_blob_hash(scope: &str, bytes: &[u8]) -> String {
+    let mut hasher = DefaultHasher::new();
+    scope.hash(&mut hasher);
+    bytes.hash(&mut hasher);
+    format!("{scope}-{:016x}", hasher.finish())
+}
+
+fn now_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(0)
 }
 
 fn write_parquet_batch(

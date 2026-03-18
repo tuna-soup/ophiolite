@@ -22,7 +22,7 @@ Multiple frontend windows talk to the same in-memory session state in this phase
 - session identity
 - the current in-memory `LasFile` snapshot
 - dirty-state
-- the current revision token used as a package snapshot/version fingerprint
+- the current head revision token for the saved package snapshot
 
 Conceptually, it should continue to be treated as:
 
@@ -83,7 +83,7 @@ Public command error kinds should remain small and caller-actionable rather than
 
 - package editing behavior should be described in terms of `PackageSession`, not ad hoc package helpers
 - documentation must distinguish metadata-only/read-only flows from editable session flows
-- dirty-state and revision fingerprint handling are now part of the supported backend contract
+- dirty-state and head-revision handling are now part of the supported backend contract
 - metadata-only opens are an explicit architectural behavior, not an accidental implementation detail
 - windowed reads are part of the frontend contract even though full lazy sample-table loading is still an evolving internal concern
 - backend session reads may reuse Arrow/Parquet projection and row-selection internally without changing the public runtime abstraction
@@ -115,6 +115,8 @@ Session invariants for the current model:
 - `save_as` preserves session identity and rebinds the currently bound package root on success
 - clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
 - metadata-only dirty lazy sessions may rewrite `metadata.json` and save/save-as without materializing sample data
+- successful package saves create a new immutable local revision in a hidden `.lithos/revisions/` store while the visible package path remains the stable current head
+- package revision records include parent linkage, blob refs, and domain-level diff summaries for metadata and curve changes
 - once a backend session materializes, it does not transition back to lazy in the current phase
 - failed `save` and `save_as` leave the session open with unchanged identity, dirty-state, bound root, and in-memory document snapshot
 - failed materialization leaves the session open with unchanged identity, dirty-state, bound root, and no partial mutation applied
@@ -148,7 +150,7 @@ This ADR does not imply:
 - duplicate or forked live-session semantics
 - a hard `tauri` dependency in this repo yet
 
-Revision tokens are informational snapshot/version fingerprints, not merge or distributed-synchronization coordination tokens.
+Revision tokens identify the current saved head revision. They are not merge or distributed-synchronization coordination tokens.
 
 Those remain future layers on top of the current session contract.
 

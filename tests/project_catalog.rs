@@ -134,6 +134,9 @@ fn project_reimport_supersedes_storage_instance_but_keeps_logical_asset() {
             .iter()
             .any(|asset| asset.status == AssetStatus::Superseded)
     );
+
+    let revisions = project.asset_revisions(&second.asset.id).unwrap();
+    assert_eq!(revisions.len(), 1);
 }
 
 #[test]
@@ -292,6 +295,85 @@ fn project_supports_non_log_asset_imports_and_cross_asset_queries() {
             .iter()
             .any(|asset| asset.asset_kind == AssetKind::DrillingObservation)
     );
+}
+
+#[test]
+fn structured_asset_edits_create_revision_history() {
+    let root = temp_project_root("structured_asset_edits_create_revision_history");
+    let mut project = LithosProject::create(&root).unwrap();
+    let csv_path = write_csv(
+        &root,
+        "tops.csv",
+        "name,top_depth,base_depth,source,depth_reference\nTop A,100,101,interp,MD\n",
+    );
+    let binding = AssetBindingInput {
+        well_name: "Well A".to_string(),
+        wellbore_name: "WB-1".to_string(),
+        uwi: Some("UWI-1".to_string()),
+        api: None,
+        operator_aliases: Vec::new(),
+    };
+    let imported = project
+        .import_tops_csv(&csv_path, &binding, Some("tops"))
+        .unwrap();
+
+    let initial_revisions = project.asset_revisions(&imported.asset.id).unwrap();
+    assert_eq!(initial_revisions.len(), 1);
+
+    let updated_rows = vec![lithos_las::TopRow {
+        name: "Top B".to_string(),
+        top_depth: 110.0,
+        base_depth: Some(111.0),
+        source: Some("interp".to_string()),
+        depth_reference: Some("MD".to_string()),
+    }];
+    project
+        .overwrite_tops_asset(&imported.asset.id, &updated_rows)
+        .unwrap();
+
+    let revisions = project.asset_revisions(&imported.asset.id).unwrap();
+    assert_eq!(revisions.len(), 2);
+    assert!(revisions[1].parent_revision_id.is_some());
+}
+
+#[test]
+fn project_can_sync_log_asset_head_after_package_edits() {
+    let root = temp_project_root("project_can_sync_log_asset_head_after_package_edits");
+    let mut project = LithosProject::create(&root).unwrap();
+    let imported = project
+        .import_las(examples::path("6038187_v1.2_short.las"), Some("logs"))
+        .unwrap();
+
+    let mut session = lithos_las::open_package(&imported.asset.package_path).unwrap();
+    let curve_name = session
+        .file()
+        .curve_names()
+        .into_iter()
+        .find(|name| name != &session.file().index.curve_id)
+        .unwrap();
+    let original = session.file().curve(&curve_name).unwrap().clone();
+    let mut data = original.data.clone();
+    data[0] = lithos_las::LasValue::Number(999.0);
+    session
+        .apply_curve_edit(&lithos_las::CurveEditRequest::Upsert(
+            lithos_las::CurveUpdateRequest {
+                mnemonic: curve_name,
+                original_mnemonic: Some(original.original_mnemonic.clone()),
+                unit: original.unit.clone(),
+                header_value: original.value.clone(),
+                description: original.description.clone(),
+                data,
+            },
+        ))
+        .unwrap();
+    session.save_checked().unwrap();
+
+    let revision = project
+        .sync_log_asset_head_revision(&imported.asset.id)
+        .unwrap();
+    let revisions = project.asset_revisions(&imported.asset.id).unwrap();
+    assert_eq!(revisions.len(), 2);
+    assert_eq!(revisions.last().unwrap().revision_id, revision.revision_id);
 }
 
 #[test]

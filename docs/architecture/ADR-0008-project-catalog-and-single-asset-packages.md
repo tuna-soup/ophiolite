@@ -57,6 +57,7 @@ Current ingest/query status:
 - project-managed assets use a shared `AssetManifest` contract
 - asset collections group related or versioned assets under one wellbore
 - compute outputs fit the same pattern by persisting as derived sibling assets rather than mutating the source asset in place
+- manual saves and imports now also produce immutable local asset revisions in a hidden project-local revision store while keeping the visible asset package path stable as the current head
 - the catalog is for discovery and relationships; the package is the authoritative storage unit for the asset itself
 - the first multi-well slice still focuses primarily on project creation, import, binding, search, and read/query, but it now includes bounded in-family edit sessions for the first structured asset families
 - synthetic fixtures should validate the real import path and the project/catalog linkage rather than writing package internals directly

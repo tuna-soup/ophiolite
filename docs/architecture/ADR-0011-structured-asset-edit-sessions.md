@@ -28,11 +28,11 @@ They do not:
 - convert one asset family into another
 - expose generic arbitrary-column mutation
 - introduce `save_as` in the first phase
-- create derived/superseded history for manual edits by default
+- create derived sibling assets for manual edits by default
 
 Persistence rule:
 
-- successful save overwrites the current active structured asset package in place
+- successful save overwrites the current active structured asset package in place and advances a new immutable local asset revision
 - failed save leaves the edit session open and dirty
 - compute-derived structured assets remain separate sibling assets and can also be edited as normal structured assets later
 
@@ -53,7 +53,7 @@ Persistence rule:
   - pressure requires finite pressure values
   - drilling requires event kind
 - Tauri/app integrations can expose edit mode for structured assets without pretending all asset families are generic tables
-- manual structured edits overwrite the active asset package in place, while compute still produces derived sibling assets
+- manual structured edits overwrite the active asset package in place, create revision history in the hidden project-local revision store, and leave compute-derived sibling assets as a separate workflow
 
 ## Scope Boundaries
 

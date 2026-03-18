@@ -23,7 +23,9 @@ use lithos_package::open_package;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,6 +34,8 @@ const PROJECT_SCHEMA_VERSION: &str = "0.1.0";
 const PROJECT_MANIFEST_FILENAME: &str = "lithos-project.json";
 const PROJECT_CATALOG_FILENAME: &str = "catalog.sqlite";
 const ASSET_MANIFEST_FILENAME: &str = "asset_manifest.json";
+const PROJECT_REVISION_STORE_DIRNAME: &str = ".lithos";
+const PROJECT_ASSET_REVISION_STORE_DIRNAME: &str = "asset-revisions";
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -52,6 +56,9 @@ pub struct AssetCollectionId(pub String);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AssetId(pub String);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AssetRevisionId(pub String);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AssetKind {
@@ -185,6 +192,64 @@ pub struct BulkDataDescriptor {
     pub relative_path: String,
     pub media_type: String,
     pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetBlobRef {
+    pub relative_path: String,
+    pub media_type: String,
+    pub byte_count: u64,
+    pub content_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CurveValueChangeSummary {
+    pub curve_name: String,
+    pub changed_value_count: usize,
+    pub first_changed_row: Option<usize>,
+    pub last_changed_row: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct LogAssetDiffSummary {
+    pub metadata_changed: bool,
+    pub row_count_changed: bool,
+    pub curve_count_changed: bool,
+    pub curves_added: Vec<String>,
+    pub curves_removed: Vec<String>,
+    pub modified_curves: Vec<CurveValueChangeSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct StructuredAssetDiffSummary {
+    pub rows_added: usize,
+    pub rows_removed: usize,
+    pub rows_updated: usize,
+    pub extent_changed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AssetDiffSummary {
+    Log(LogAssetDiffSummary),
+    Trajectory(StructuredAssetDiffSummary),
+    TopSet(StructuredAssetDiffSummary),
+    PressureObservation(StructuredAssetDiffSummary),
+    DrillingObservation(StructuredAssetDiffSummary),
+    MetadataOnly { changed_fields: Vec<String> },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AssetRevisionRecord {
+    pub revision_id: AssetRevisionId,
+    pub asset_id: AssetId,
+    pub logical_asset_id: AssetId,
+    pub asset_kind: AssetKind,
+    pub parent_revision_id: Option<AssetRevisionId>,
+    pub package_snapshot_rel_path: String,
+    pub created_at_unix_seconds: u64,
+    pub metadata_blob: AssetBlobRef,
+    pub data_blob: AssetBlobRef,
+    pub diff_summary: AssetDiffSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -695,6 +760,11 @@ impl LithosProject {
             manifest: manifest.clone(),
         };
         self.insert_asset(&asset, &package_rel_path)?;
+        self.record_asset_revision_from_head(
+            &asset,
+            None,
+            AssetDiffSummary::Log(Default::default()),
+        )?;
         Ok(LogAssetImportResult {
             resolution: ImportResolution {
                 status: AssetStatus::Bound,
@@ -820,6 +890,34 @@ impl LithosProject {
         self.asset_by_id(asset_id)
     }
 
+    pub fn asset_revisions(&self, asset_id: &AssetId) -> Result<Vec<AssetRevisionRecord>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT revision_json
+                 FROM asset_revisions
+                 WHERE asset_id = ?1
+                 ORDER BY created_at_unix_seconds",
+            )
+            .map_err(sqlite_error)?;
+        let rows = statement
+            .query_map([&asset_id.0], |row| {
+                serde_json::from_str::<AssetRevisionRecord>(&row.get::<_, String>(0)?)
+                    .map_err(sql_json_error)
+            })
+            .map_err(sqlite_error)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sqlite_error)
+    }
+
+    pub fn current_asset_revision(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<Option<AssetRevisionRecord>> {
+        let mut revisions = self.asset_revisions(asset_id)?;
+        Ok(revisions.pop())
+    }
+
     pub fn overwrite_trajectory_asset(
         &mut self,
         asset_id: &AssetId,
@@ -827,12 +925,30 @@ impl LithosProject {
     ) -> Result<AssetRecord> {
         let mut asset = self.asset_by_id(asset_id)?;
         require_asset_kind(&asset, AssetKind::Trajectory)?;
+        let previous_rows = self.read_trajectory_rows(asset_id, None)?;
+        let parent_revision = self
+            .current_asset_revision(asset_id)?
+            .map(|item| item.revision_id);
         write_trajectory_package(Path::new(&asset.package_path), rows)?;
         asset.manifest.asset_schema_version = trajectory_metadata(rows).schema_version;
         asset.manifest.extents =
             structured_asset_extent(AssetKind::Trajectory, trajectory_extent(rows));
         write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
         self.update_asset_manifest(&asset)?;
+        self.record_asset_revision_from_head(
+            &asset,
+            parent_revision.as_ref(),
+            diff_structured_rows(
+                AssetKind::Trajectory,
+                previous_rows.as_slice(),
+                rows,
+                asset.manifest.extents
+                    != structured_asset_extent(
+                        AssetKind::Trajectory,
+                        trajectory_extent(&previous_rows),
+                    ),
+            ),
+        )?;
         Ok(asset)
     }
 
@@ -843,11 +959,27 @@ impl LithosProject {
     ) -> Result<AssetRecord> {
         let mut asset = self.asset_by_id(asset_id)?;
         require_asset_kind(&asset, AssetKind::TopSet)?;
+        let previous_rows = self.read_tops(asset_id)?;
+        let previous_extent =
+            structured_asset_extent(AssetKind::TopSet, tops_extent(&previous_rows));
+        let parent_revision = self
+            .current_asset_revision(asset_id)?
+            .map(|item| item.revision_id);
         write_tops_package(Path::new(&asset.package_path), rows)?;
         asset.manifest.asset_schema_version = tops_metadata(rows).schema_version;
         asset.manifest.extents = structured_asset_extent(AssetKind::TopSet, tops_extent(rows));
         write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
         self.update_asset_manifest(&asset)?;
+        self.record_asset_revision_from_head(
+            &asset,
+            parent_revision.as_ref(),
+            diff_structured_rows(
+                AssetKind::TopSet,
+                previous_rows.as_slice(),
+                rows,
+                previous_extent != asset.manifest.extents,
+            ),
+        )?;
         Ok(asset)
     }
 
@@ -858,12 +990,30 @@ impl LithosProject {
     ) -> Result<AssetRecord> {
         let mut asset = self.asset_by_id(asset_id)?;
         require_asset_kind(&asset, AssetKind::PressureObservation)?;
+        let previous_rows = self.read_pressure_observations(asset_id, None)?;
+        let previous_extent = structured_asset_extent(
+            AssetKind::PressureObservation,
+            pressure_extent(&previous_rows),
+        );
+        let parent_revision = self
+            .current_asset_revision(asset_id)?
+            .map(|item| item.revision_id);
         write_pressure_package(Path::new(&asset.package_path), rows)?;
         asset.manifest.asset_schema_version = pressure_metadata(rows).schema_version;
         asset.manifest.extents =
             structured_asset_extent(AssetKind::PressureObservation, pressure_extent(rows));
         write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
         self.update_asset_manifest(&asset)?;
+        self.record_asset_revision_from_head(
+            &asset,
+            parent_revision.as_ref(),
+            diff_structured_rows(
+                AssetKind::PressureObservation,
+                previous_rows.as_slice(),
+                rows,
+                previous_extent != asset.manifest.extents,
+            ),
+        )?;
         Ok(asset)
     }
 
@@ -874,12 +1024,30 @@ impl LithosProject {
     ) -> Result<AssetRecord> {
         let mut asset = self.asset_by_id(asset_id)?;
         require_asset_kind(&asset, AssetKind::DrillingObservation)?;
+        let previous_rows = self.read_drilling_observations(asset_id, None)?;
+        let previous_extent = structured_asset_extent(
+            AssetKind::DrillingObservation,
+            drilling_extent(&previous_rows),
+        );
+        let parent_revision = self
+            .current_asset_revision(asset_id)?
+            .map(|item| item.revision_id);
         write_drilling_package(Path::new(&asset.package_path), rows)?;
         asset.manifest.asset_schema_version = drilling_metadata(rows).schema_version;
         asset.manifest.extents =
             structured_asset_extent(AssetKind::DrillingObservation, drilling_extent(rows));
         write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
         self.update_asset_manifest(&asset)?;
+        self.record_asset_revision_from_head(
+            &asset,
+            parent_revision.as_ref(),
+            diff_structured_rows(
+                AssetKind::DrillingObservation,
+                previous_rows.as_slice(),
+                rows,
+                previous_extent != asset.manifest.extents,
+            ),
+        )?;
         Ok(asset)
     }
 
@@ -897,6 +1065,10 @@ impl LithosProject {
     ) -> Result<AssetRecord> {
         let mut asset = self.asset_by_id(asset_id)?;
         require_asset_kind(&asset, AssetKind::Log)?;
+        let previous_semantics = asset.manifest.curve_semantics.clone();
+        let parent_revision = self
+            .current_asset_revision(asset_id)?
+            .map(|item| item.revision_id);
 
         let mut curve_semantics = if asset.manifest.curve_semantics.is_empty() {
             classify_log_curves_from_package(&asset.package_path)?
@@ -918,7 +1090,40 @@ impl LithosProject {
         asset.manifest.curve_semantics = curve_semantics;
         write_asset_manifest(Path::new(&asset.package_path), &asset.manifest)?;
         self.update_asset_manifest(&asset)?;
+        let changed_fields =
+            semantic_diff_fields(&previous_semantics, &asset.manifest.curve_semantics);
+        self.record_asset_revision_from_head(
+            &asset,
+            parent_revision.as_ref(),
+            AssetDiffSummary::MetadataOnly { changed_fields },
+        )?;
         Ok(asset)
+    }
+
+    pub fn sync_log_asset_head_revision(
+        &mut self,
+        asset_id: &AssetId,
+    ) -> Result<AssetRevisionRecord> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::Log)?;
+        let current = open_package(&asset.package_path)?;
+        let parent = self.current_asset_revision(asset_id)?;
+        let diff_summary = if let Some(previous) = &parent {
+            let snapshot_root = self.root.join(&previous.package_snapshot_rel_path);
+            if snapshot_root.exists() {
+                let previous_package = open_package(&snapshot_root)?;
+                AssetDiffSummary::Log(diff_log_files(previous_package.file(), current.file()))
+            } else {
+                default_asset_diff_summary(&AssetKind::Log)
+            }
+        } else {
+            default_asset_diff_summary(&AssetKind::Log)
+        };
+        self.record_asset_revision_from_head(
+            &asset,
+            parent.as_ref().map(|item| &item.revision_id),
+            diff_summary,
+        )
     }
 
     pub fn list_compute_catalog(&self, asset_id: &AssetId) -> Result<ComputeCatalog> {
@@ -1030,6 +1235,11 @@ impl LithosProject {
                     manifest,
                 };
                 self.insert_asset(&asset, &package_rel_path)?;
+                self.record_asset_revision_from_head(
+                    &asset,
+                    None,
+                    AssetDiffSummary::Log(Default::default()),
+                )?;
                 (collection, asset, execution)
             }
             AssetKind::Trajectory => {
@@ -1170,6 +1380,11 @@ impl LithosProject {
             manifest,
         };
         self.insert_asset(&asset, &package_rel_path)?;
+        self.record_asset_revision_from_head(
+            &asset,
+            None,
+            default_asset_diff_summary(&asset.asset_kind),
+        )?;
         Ok((collection, asset, execution))
     }
 
@@ -1256,6 +1471,11 @@ impl LithosProject {
             manifest,
         };
         self.insert_asset(&asset, &package_rel_path)?;
+        self.record_asset_revision_from_head(
+            &asset,
+            None,
+            default_asset_diff_summary(&asset.asset_kind),
+        )?;
         Ok(ProjectAssetImportResult {
             resolution: ImportResolution {
                 status: AssetStatus::Bound,
@@ -1655,6 +1875,261 @@ impl LithosProject {
 
         Ok(None)
     }
+
+    fn insert_asset_revision(&self, revision: &AssetRevisionRecord) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO asset_revisions
+                 (id, asset_id, logical_asset_id, asset_kind, parent_revision_id, revision_json, created_at_unix_seconds)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    revision.revision_id.0,
+                    revision.asset_id.0,
+                    revision.logical_asset_id.0,
+                    revision.asset_kind.as_str(),
+                    revision
+                        .parent_revision_id
+                        .as_ref()
+                        .map(|value| value.0.clone()),
+                    serde_json::to_string(revision)?,
+                    revision.created_at_unix_seconds as i64,
+                ],
+            )
+            .map_err(sqlite_error)?;
+        Ok(())
+    }
+
+    fn record_asset_revision_from_head(
+        &self,
+        asset: &AssetRecord,
+        parent_revision_id: Option<&AssetRevisionId>,
+        diff_summary: AssetDiffSummary,
+    ) -> Result<AssetRevisionRecord> {
+        let created_at_unix_seconds = now_unix_seconds();
+        let manifest_path = Path::new(&asset.package_path).join(ASSET_MANIFEST_FILENAME);
+        let data_path = Path::new(&asset.package_path).join(asset_data_filename(&asset.asset_kind));
+        let manifest_bytes = fs::read(&manifest_path)?;
+        let data_bytes = fs::read(&data_path)?;
+        let metadata_blob = AssetBlobRef {
+            relative_path: ASSET_MANIFEST_FILENAME.to_string(),
+            media_type: "application/json".to_string(),
+            byte_count: manifest_bytes.len() as u64,
+            content_hash: stable_project_blob_hash("asset-manifest", &manifest_bytes),
+        };
+        let data_blob = AssetBlobRef {
+            relative_path: asset_data_filename(&asset.asset_kind).to_string(),
+            media_type: "application/vnd.apache.parquet".to_string(),
+            byte_count: data_bytes.len() as u64,
+            content_hash: stable_project_blob_hash("asset-data", &data_bytes),
+        };
+        let revision_id = AssetRevisionId(
+            revision_token_for_bytes(
+                "asset-revision",
+                &format!(
+                    "{}:{}:{}",
+                    metadata_blob.content_hash, data_blob.content_hash, created_at_unix_seconds
+                ),
+            )
+            .0,
+        );
+        let snapshot_rel_path = project_asset_revision_store_rel_path(&asset.id, &revision_id);
+        let snapshot_root = self.root.join(&snapshot_rel_path);
+        fs::create_dir_all(&snapshot_root)?;
+        copy_if_exists(
+            &Path::new(&asset.package_path).join("metadata.json"),
+            &snapshot_root.join("metadata.json"),
+        )?;
+        fs::copy(&manifest_path, snapshot_root.join(ASSET_MANIFEST_FILENAME))?;
+        fs::copy(
+            &data_path,
+            snapshot_root.join(asset_data_filename(&asset.asset_kind)),
+        )?;
+        let revision = AssetRevisionRecord {
+            revision_id,
+            asset_id: asset.id.clone(),
+            logical_asset_id: asset.logical_asset_id.clone(),
+            asset_kind: asset.asset_kind.clone(),
+            parent_revision_id: parent_revision_id.cloned(),
+            package_snapshot_rel_path: snapshot_rel_path.to_string_lossy().to_string(),
+            created_at_unix_seconds,
+            metadata_blob,
+            data_blob,
+            diff_summary,
+        };
+        self.insert_asset_revision(&revision)?;
+        Ok(revision)
+    }
+}
+
+fn copy_if_exists(source: &Path, target: &Path) -> Result<()> {
+    if source.exists() {
+        fs::copy(source, target)?;
+    }
+    Ok(())
+}
+
+fn project_asset_revision_store_rel_path(
+    asset_id: &AssetId,
+    revision_id: &AssetRevisionId,
+) -> PathBuf {
+    PathBuf::from(PROJECT_REVISION_STORE_DIRNAME)
+        .join(PROJECT_ASSET_REVISION_STORE_DIRNAME)
+        .join(&asset_id.0)
+        .join(&revision_id.0)
+}
+
+fn asset_data_filename(asset_kind: &AssetKind) -> &'static str {
+    match asset_kind {
+        AssetKind::Log => "curves.parquet",
+        _ => data_filename(),
+    }
+}
+
+fn stable_project_blob_hash(scope: &str, bytes: &[u8]) -> String {
+    let mut hasher = DefaultHasher::new();
+    scope.hash(&mut hasher);
+    bytes.hash(&mut hasher);
+    format!("{scope}-{:016x}", hasher.finish())
+}
+
+fn default_asset_diff_summary(asset_kind: &AssetKind) -> AssetDiffSummary {
+    match asset_kind {
+        AssetKind::Log => AssetDiffSummary::Log(LogAssetDiffSummary::default()),
+        AssetKind::Trajectory => {
+            AssetDiffSummary::Trajectory(StructuredAssetDiffSummary::default())
+        }
+        AssetKind::TopSet => AssetDiffSummary::TopSet(StructuredAssetDiffSummary::default()),
+        AssetKind::PressureObservation => {
+            AssetDiffSummary::PressureObservation(StructuredAssetDiffSummary::default())
+        }
+        AssetKind::DrillingObservation => {
+            AssetDiffSummary::DrillingObservation(StructuredAssetDiffSummary::default())
+        }
+    }
+}
+
+fn diff_structured_rows<T: PartialEq>(
+    asset_kind: AssetKind,
+    previous_rows: &[T],
+    current_rows: &[T],
+    extent_changed: bool,
+) -> AssetDiffSummary {
+    let rows_updated = previous_rows
+        .iter()
+        .zip(current_rows.iter())
+        .filter(|(left, right)| left != right)
+        .count();
+    let summary = StructuredAssetDiffSummary {
+        rows_added: current_rows.len().saturating_sub(previous_rows.len()),
+        rows_removed: previous_rows.len().saturating_sub(current_rows.len()),
+        rows_updated,
+        extent_changed,
+    };
+    match asset_kind {
+        AssetKind::Trajectory => AssetDiffSummary::Trajectory(summary),
+        AssetKind::TopSet => AssetDiffSummary::TopSet(summary),
+        AssetKind::PressureObservation => AssetDiffSummary::PressureObservation(summary),
+        AssetKind::DrillingObservation => AssetDiffSummary::DrillingObservation(summary),
+        AssetKind::Log => AssetDiffSummary::Log(LogAssetDiffSummary::default()),
+    }
+}
+
+fn semantic_diff_fields(
+    previous: &[CurveSemanticDescriptor],
+    current: &[CurveSemanticDescriptor],
+) -> Vec<String> {
+    current
+        .iter()
+        .filter_map(|descriptor| {
+            let previous_descriptor = previous
+                .iter()
+                .find(|item| item.curve_name == descriptor.curve_name)?;
+            (previous_descriptor.semantic_type != descriptor.semantic_type
+                || previous_descriptor.source != descriptor.source)
+                .then(|| format!("curve_semantics.{}", descriptor.curve_name))
+        })
+        .collect()
+}
+
+fn diff_log_files(previous: &LasFile, current: &LasFile) -> LogAssetDiffSummary {
+    let previous_curves = previous
+        .curves
+        .iter()
+        .map(|curve| (curve.mnemonic.clone(), curve))
+        .collect::<BTreeMap<_, _>>();
+    let current_curves = current
+        .curves
+        .iter()
+        .map(|curve| (curve.mnemonic.clone(), curve))
+        .collect::<BTreeMap<_, _>>();
+    let curves_added = current_curves
+        .keys()
+        .filter(|name| !previous_curves.contains_key(*name))
+        .cloned()
+        .collect::<Vec<_>>();
+    let curves_removed = previous_curves
+        .keys()
+        .filter(|name| !current_curves.contains_key(*name))
+        .cloned()
+        .collect::<Vec<_>>();
+    let modified_curves = current_curves
+        .iter()
+        .filter_map(|(name, current_curve)| {
+            let previous_curve = previous_curves.get(name)?;
+            let summary = diff_log_curve_values(name, previous_curve, current_curve);
+            (summary.changed_value_count > 0).then_some(summary)
+        })
+        .collect::<Vec<_>>();
+
+    LogAssetDiffSummary {
+        metadata_changed: serde_json::to_string(&package_metadata_for(current, 1).canonical).ok()
+            != serde_json::to_string(&package_metadata_for(previous, 1).canonical).ok(),
+        row_count_changed: current.row_count() != previous.row_count(),
+        curve_count_changed: current.curves.len() != previous.curves.len(),
+        curves_added,
+        curves_removed,
+        modified_curves,
+    }
+}
+
+fn diff_log_curve_values(
+    curve_name: &str,
+    previous: &CurveItem,
+    current: &CurveItem,
+) -> CurveValueChangeSummary {
+    let max_len = previous.data.len().max(current.data.len());
+    let mut changed_value_count = 0usize;
+    let mut first_changed_row = None;
+    let mut last_changed_row = None;
+
+    for row_index in 0..max_len {
+        let previous_value = previous.data.get(row_index);
+        let current_value = current.data.get(row_index);
+        if log_values_equal(previous_value, current_value) {
+            continue;
+        }
+        changed_value_count += 1;
+        first_changed_row.get_or_insert(row_index);
+        last_changed_row = Some(row_index);
+    }
+
+    CurveValueChangeSummary {
+        curve_name: curve_name.to_string(),
+        changed_value_count,
+        first_changed_row,
+        last_changed_row,
+    }
+}
+
+fn log_values_equal(previous: Option<&LasValue>, current: Option<&LasValue>) -> bool {
+    match (previous, current) {
+        (Some(LasValue::Number(left)), Some(LasValue::Number(right))) => {
+            (left.is_nan() && right.is_nan()) || left == right
+        }
+        (Some(left), Some(right)) => left == right,
+        (None, None) => true,
+        _ => false,
+    }
 }
 
 fn initialize_project_schema(connection: &Connection) -> Result<()> {
@@ -1705,6 +2180,15 @@ fn initialize_project_schema(connection: &Connection) -> Result<()> {
             created_at_unix_seconds INTEGER NOT NULL,
             source_path TEXT,
             source_fingerprint TEXT
+        );
+        CREATE TABLE IF NOT EXISTS asset_revisions (
+            id TEXT PRIMARY KEY,
+            asset_id TEXT NOT NULL,
+            logical_asset_id TEXT NOT NULL,
+            asset_kind TEXT NOT NULL,
+            parent_revision_id TEXT,
+            revision_json TEXT NOT NULL,
+            created_at_unix_seconds INTEGER NOT NULL
         );
         ",
         )

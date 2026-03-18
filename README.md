@@ -291,6 +291,13 @@ The current rule is:
 
 The first multi-well slice is still log-first in editing maturity, but it is no longer read-only outside logs. Structured assets now support bounded in-family row/field editing with explicit save and last-save-wins overwrite of the active asset package.
 
+Those structured saves are revisioned too:
+
+- every successful structured save creates a new immutable asset revision
+- the active asset package path remains the stable current head
+- historical structured revisions are stored in a hidden project-local revision store
+- each revision records a typed diff summary such as row adds/removes/updates and extent changes
+
 For test and app-validation workflows, Lithos can also generate a coherent synthetic project fixture:
 
 ```text
@@ -379,14 +386,14 @@ The current backend contract distinguishes:
 - session identity
 - the current in-memory `LasFile` snapshot
 - dirty-state
-- the current revision token used as a package snapshot/version fingerprint
+- the current head revision token for the saved package snapshot
 
 Current session semantics:
 
 - editable session open reuses one shared backend session per package path by default
 - edits are applied to the in-memory session snapshot
 - edit requests are atomic at the request level
-- `save` writes the current snapshot back to the original package using last-save-wins semantics
+- `save` writes the current snapshot back to the original package using last-save-wins semantics and advances the package head to a new immutable local revision
 - `save_as` writes the current snapshot to a new package path and updates the current session baseline
 - session-backed DTOs carry the current bound package root so clients can observe rebinding after `save_as`
 - successful save clears dirty-state
@@ -402,7 +409,10 @@ Current session semantics:
 - metadata-only dirty lazy sessions can rewrite `metadata.json` and save/save-as without materializing sample data
 - the first accepted curve/sample edit and any later save/save-as path that needs the canonical snapshot materializes the eager in-memory `PackageSession`
 - first curve/sample materialization is constructed directly from the current lazy session metadata and cached parquet descriptors rather than reopening the package through the eager SDK path
-- revision tokens are informational package snapshot/version fingerprints used for summaries, provenance, and cache invalidation rather than blocking saves
+- package saves do not patch Parquet in place; they rewrite the affected payload and record a new immutable local revision snapshot
+- local package revision history lives in a hidden `.lithos/revisions/` store under the package root while the visible package path remains the stable current head
+- package revision records include parent linkage, blob refs, and a domain-level diff summary for metadata changes, curve additions/removals, and curve value edits
+- revision tokens identify the current saved head; they still do not block saves or act as merge/conflict tokens
 
 Session invariants:
 
@@ -535,6 +545,7 @@ Architecture and design decisions are documented in:
 - `docs/architecture/ADR-0009-future-ecosystem-boundaries.md`
 - `docs/architecture/ADR-0010-typed-compute-and-derived-assets.md`
 - `docs/architecture/ADR-0011-structured-asset-edit-sessions.md`
+- `docs/architecture/ADR-0012-revisioned-last-save-wins.md`
 - `lithos_roadmap.md`
 - `docs/lasio_non_v3_parity.md`
 - `lasio-basic-example.md`

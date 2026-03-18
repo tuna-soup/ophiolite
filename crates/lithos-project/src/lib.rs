@@ -23,11 +23,13 @@ mod project_edit;
 mod synthetic_fixtures;
 
 pub use project::{
-    AssetCollectionId, AssetCollectionRecord, AssetCollectionSummary, AssetExtent, AssetId,
-    AssetKind, AssetManifest, AssetRecord, AssetReferenceMetadata, AssetStatus, BulkDataDescriptor,
-    CoordinateReference, DepthReference, ImportResolution, LithosProject, LithosProjectManifest,
-    LogAssetImportResult, ProjectAssetImportResult, ProjectAssetSummary, ProjectComputeRunRequest,
-    ProjectComputeRunResult, ProjectSummary, SourceArtifactRef, UnitSystem, VerticalDatum, WellId,
+    AssetBlobRef, AssetCollectionId, AssetCollectionRecord, AssetCollectionSummary,
+    AssetDiffSummary, AssetExtent, AssetId, AssetKind, AssetManifest, AssetRecord,
+    AssetReferenceMetadata, AssetRevisionId, AssetRevisionRecord, AssetStatus, BulkDataDescriptor,
+    CoordinateReference, CurveValueChangeSummary, DepthReference, ImportResolution, LithosProject,
+    LithosProjectManifest, LogAssetDiffSummary, LogAssetImportResult, ProjectAssetImportResult,
+    ProjectAssetSummary, ProjectComputeRunRequest, ProjectComputeRunResult, ProjectSummary,
+    SourceArtifactRef, StructuredAssetDiffSummary, UnitSystem, VerticalDatum, WellId,
     WellIdentifierSet, WellRecord, WellSummary, WellboreId, WellboreRecord, WellboreSummary,
 };
 pub use project_assets::{

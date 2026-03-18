@@ -500,6 +500,7 @@ dependencies = [
  "lithos-core",
  "lithos-table",
  "parquet",
+ "serde",
  "serde_json",
  "tracing",
 ]

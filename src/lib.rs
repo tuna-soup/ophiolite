@@ -45,8 +45,10 @@ pub use lithos_ingest::{
     import_trajectory_csv_asset,
 };
 pub use lithos_package::{
-    PackageSession, PackageSessionStore, StoredLasFile, open_package, open_package_metadata,
-    open_package_summary, validate_package, write_bundle, write_package, write_package_overwrite,
+    CurveValueDiffSummary, PackageBlobRef, PackageDiffSummary, PackageRevisionRecord,
+    PackageSession, PackageSessionStore, StoredLasFile, list_package_revisions, open_package,
+    open_package_metadata, open_package_summary, validate_package, write_bundle, write_package,
+    write_package_overwrite,
 };
 pub use lithos_parser::examples;
 pub use lithos_parser::{
@@ -58,11 +60,13 @@ pub use lithos_project::{
     DrillingObservationRow, PressureObservationRow, TopRow, TrajectoryRow,
 };
 pub use lithos_project::{
-    AssetCollectionId, AssetCollectionRecord, AssetCollectionSummary, AssetExtent, AssetId,
-    AssetKind, AssetManifest, AssetRecord, AssetReferenceMetadata, AssetStatus, BulkDataDescriptor,
-    CoordinateReference, DepthReference, ImportResolution, LithosProject, LithosProjectManifest,
-    LogAssetImportResult, ProjectAssetImportResult, ProjectAssetSummary, ProjectComputeRunRequest,
-    ProjectComputeRunResult, ProjectSummary, SourceArtifactRef, UnitSystem, VerticalDatum, WellId,
+    AssetBlobRef, AssetCollectionId, AssetCollectionRecord, AssetCollectionSummary,
+    AssetDiffSummary, AssetExtent, AssetId, AssetKind, AssetManifest, AssetRecord,
+    AssetReferenceMetadata, AssetRevisionId, AssetRevisionRecord, AssetStatus, BulkDataDescriptor,
+    CoordinateReference, CurveValueChangeSummary, DepthReference, ImportResolution, LithosProject,
+    LithosProjectManifest, LogAssetDiffSummary, LogAssetImportResult, ProjectAssetImportResult,
+    ProjectAssetSummary, ProjectComputeRunRequest, ProjectComputeRunResult, ProjectSummary,
+    SourceArtifactRef, StructuredAssetDiffSummary, UnitSystem, VerticalDatum, WellId,
     WellIdentifierSet, WellRecord, WellSummary, WellboreId, WellboreRecord, WellboreSummary,
 };
 pub use lithos_project::{

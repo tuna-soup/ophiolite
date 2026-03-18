@@ -1,7 +1,8 @@
 use lithos_las::{
     CurveEditRequest, CurveUpdateRequest, CurveWindowRequest, HeaderItemUpdate, LasError, LasValue,
     MetadataSectionDto, MetadataUpdateRequest, PackageSessionStore, ValidationKind, examples,
-    open_package, open_package_metadata, open_package_summary, validate_package, write_package,
+    list_package_revisions, open_package, open_package_metadata, open_package_summary,
+    validate_package, write_package,
 };
 use parquet::basic::Compression;
 use parquet::file::reader::{FileReader, SerializedFileReader};
@@ -252,6 +253,43 @@ fn package_session_tracks_dirty_state_and_uses_last_save_wins() {
             .value
             .display_string(),
         "FIRST EDIT"
+    );
+}
+
+#[test]
+fn package_save_records_revision_history_and_curve_diff_summary() {
+    let las = examples::open("sample.las", &Default::default()).unwrap();
+    let package_dir = temp_package_dir("package-revision-history");
+    let mut stored = write_package(&las, &package_dir).unwrap();
+
+    stored
+        .apply_curve_edit(&CurveEditRequest::Upsert(CurveUpdateRequest {
+            mnemonic: String::from("DT"),
+            original_mnemonic: Some(String::from("DT")),
+            unit: String::from("US/M"),
+            header_value: LasValue::Empty,
+            description: String::from("sonic"),
+            data: vec![
+                LasValue::Number(140.0),
+                LasValue::Number(141.0),
+                LasValue::Number(142.0),
+            ],
+        }))
+        .unwrap();
+    stored.save_checked().unwrap();
+
+    let revisions = list_package_revisions(&package_dir).unwrap();
+    assert_eq!(revisions.len(), 2);
+    assert!(
+        revisions
+            .iter()
+            .any(|revision| revision.parent_revision_id.is_some())
+    );
+    assert!(
+        revisions
+            .iter()
+            .flat_map(|revision| revision.diff_summary.modified_curves.iter())
+            .any(|curve| curve.curve_name == "DT" && curve.changed_value_count > 0)
     );
 }
 

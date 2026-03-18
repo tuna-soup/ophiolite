@@ -28,6 +28,7 @@ The current goal is:
 - lazy backend reads and depth-range log queries
 - structured command and DTO boundary for desktop app use
 - last-save-wins package/session persistence
+- immutable local package revisions with hidden revision stores and domain-level diff summaries
 
 ### Multi-Asset Project Layer
 
@@ -47,6 +48,7 @@ The current goal is:
 - cross-asset depth-range discovery for one wellbore
 - current/superseded asset history for simple replace workflows
 - project-scoped structured edit sessions for trajectory, tops, pressure observations, and drilling observations
+- immutable local asset revisions for structured edits, imports, compute outputs, and synced log package heads
 
 ### Monorepo Platform Skeleton
 

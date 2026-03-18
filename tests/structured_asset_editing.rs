@@ -1,7 +1,7 @@
 use lithos_las::{
     AssetBindingInput, LithosProject, OpenStructuredAssetEditSessionRequest,
-    StructuredAssetEditSessionStore, StructuredAssetSessionRequest, TopRowPatch,
-    TopSetEditRequest, TrajectoryEditRequest, TrajectoryRowPatch,
+    StructuredAssetEditSessionStore, StructuredAssetSessionRequest, TopRowPatch, TopSetEditRequest,
+    TrajectoryEditRequest, TrajectoryRowPatch,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -26,7 +26,9 @@ fn structured_edit_session_updates_and_saves_tops() {
         api: None,
         operator_aliases: Vec::new(),
     };
-    let imported = project.import_tops_csv(&csv_path, &binding, Some("tops")).unwrap();
+    let imported = project
+        .import_tops_csv(&csv_path, &binding, Some("tops"))
+        .unwrap();
 
     let mut store = StructuredAssetEditSessionStore::default();
     let summary = store
@@ -46,7 +48,10 @@ fn structured_edit_session_updates_and_saves_tops() {
                 patch: TopRowPatch {
                     name: Some("Top B".to_string()),
                     top_depth: Some(110.0),
-                    base_depth: Some(lithos_las::OptionalFieldPatch { set: Some(111.0), clear: false }),
+                    base_depth: Some(lithos_las::OptionalFieldPatch {
+                        set: Some(111.0),
+                        clear: false,
+                    }),
                     ..Default::default()
                 },
             },
@@ -114,9 +119,11 @@ fn structured_edit_session_rejects_invalid_trajectory_save_without_touching_disk
             session_id: summary.session_id.clone(),
         })
         .unwrap_err();
-    assert!(error
-        .to_string()
-        .contains("trajectory rows must be monotonic"));
+    assert!(
+        error
+            .to_string()
+            .contains("trajectory rows must be monotonic")
+    );
 
     let session = store
         .session_summary(&StructuredAssetSessionRequest {
@@ -126,7 +133,9 @@ fn structured_edit_session_rejects_invalid_trajectory_save_without_touching_disk
     assert!(session.dirty);
 
     let reopened = LithosProject::open(&root).unwrap();
-    let rows = reopened.read_trajectory_rows(&imported.asset.id, None).unwrap();
+    let rows = reopened
+        .read_trajectory_rows(&imported.asset.id, None)
+        .unwrap();
     assert_eq!(rows[1].measured_depth, 110.0);
 }
 

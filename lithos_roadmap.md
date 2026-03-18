@@ -1,305 +1,168 @@
-# Lithos Roadmap: From LAS SDK to Local-First Subsurface Platform
+# Lithos Roadmap
 
 ## Overview
 
-This roadmap captures the next practical steps for evolving Lithos from a strong LAS and log-asset SDK into a local-first foundation for real subsurface applications.
+Lithos is no longer just a LAS/log SDK. The current repo already contains:
 
-The key principle is:
+- a strong LAS/log import and package/edit foundation
+- a local-first `LithosProject` catalog
+- typed non-log asset families for trajectory, tops, pressure observations, and drilling observations
+- a project-first Tauri harness
+- synthetic multi-asset project fixtures for testing and app validation
 
-> Validate the architecture through real application workflows, not by expanding abstractions in isolation.
+So the roadmap should start from that truth.
 
-Lithos is no longer at the stage of asking whether a multi-well architecture should exist. The repo already has the first concrete slice of that architecture. The roadmap now needs to focus on validating, hardening, and extending it.
+The current goal is:
 
----
+> Turn the existing multi-asset foundation into a stable platform layer for building subsurface applications.
 
-## Current State
+## Implemented Foundations
 
-Lithos already provides:
+### Log and Package Engine
 
-- LAS ingestion and parsing
-- canonical LAS domain model (`LasFile`)
-- optimized single-asset packages (`metadata.json + curves.parquet`)
-- editable package sessions and save/save-as semantics
-- depth-range and row-window query paths for log curves
-- backend + command service + Tauri harness
-- local-first `LithosProject` with SQLite catalog
-- project-managed asset packages for:
-  - logs
+- tolerant LAS ingestion and parsing
+- canonical `LasFile` model
+- optimized log package format: `metadata.json + curves.parquet`
+- `PackageSession` editing and save/save-as model
+- lazy backend reads and depth-range log queries
+- structured command and DTO boundary for desktop app use
+
+### Multi-Asset Project Layer
+
+- `LithosProject`
+- well, wellbore, asset collection, and asset identities
+- logical vs storage asset identity
+- project catalog in SQLite
+- project-managed single-asset packages
+- typed asset families:
+  - log
   - trajectory
   - tops
   - pressure observations
   - drilling observations
-- logical asset identity plus per-package storage identity
+- typed read/query APIs for those families
 - cross-asset depth-range discovery for one wellbore
 
-This means Lithos already has:
+### Validation Surface
 
-- a strong log engine
-- a first multi-well/project slice
-- a usable internal desktop validation surface
+- internal project-first Tauri harness
+- synthetic multi-asset project fixture generation
+- parity and package/editing regression coverage
 
-What it does not yet have is a fully validated, end-to-end multi-asset application workflow or a hardened import-governance layer.
+## Next Platform-Core Milestones
 
----
+These are the highest-value missing pieces for turning the current foundation into a durable application platform.
 
-## Current Gaps
+### 1. Import Governance and Reconciliation
 
-The highest-value missing pieces are now:
+Add a first-class reconciliation layer for:
 
-- project-centric app workflows across multiple asset families
-- stronger import reconciliation and asset binding rules
-- asset lifecycle and review flows for ambiguous imports
-- richer cross-asset query and visualization use cases
-- broader ingest coverage after the project model is proven
-- mature non-log editing workflows
+- duplicate detection
+- ambiguous well / wellbore matching
+- unresolved imports
+- review queue flows
+- explicit accept / reject / bind behavior
+- supersession workflows
 
-The next steps should reflect that ordering.
+This is the biggest current gap between “multi-asset storage” and “application platform.”
 
----
+### 2. Project-Facing Platform API
 
-# Roadmap
+Stabilize a cleaner project-facing summary/service layer above raw catalog internals:
 
----
+- well summaries
+- wellbore summaries
+- asset collection summaries
+- asset summaries by type and status
+- review queue summaries
+- cross-asset coverage queries
 
-## Near Term 1 - Validate the Multi-Asset Application Workflow
+The goal is to give apps a durable platform surface instead of making them bind directly to lower-level catalog details.
 
-### Goal
-Use the Tauri app as the first real consumer of the project/catalog architecture.
+### 3. Monorepo Platform Skeleton
 
-### Deliverables
+Make the platform shape explicit in the workspace by extracting:
 
-#### 1. Make the app project-centric
+- `crates/lithos-project`
+  - catalog
+  - manifests
+  - typed asset queries
+  - synthetic project fixtures
+- `crates/lithos-ingest`
+  - import orchestration
+  - source binding/reconciliation
+  - future ingest adapters
 
-- create/open `LithosProject`
-- browse wells and wellbores
-- browse asset collections and assets by type/status
-- open project-managed assets from the app rather than treating packages as the only primary entry point
+Keep `lithos_las` as the compatibility facade over the workspace crates.
 
-#### 2. Add first real cross-asset workflows
+### 4. Cross-Asset App Workflows
 
-- inspect one wellbore across logs + tops + trajectory
-- inspect pressure observations alongside wellbore context
-- show which assets cover a selected depth interval
-- use the depth-range query path as the default log-viewer interaction model
+Use the harness as the validation target for:
 
-#### 3. Add asset-aware viewers in the harness
+- unresolved import review
+- duplicate / supersession UI
+- better project browsing over wells, wellbores, collections, and assets
+- richer viewers for logs + trajectory + tops together
 
-- log track / curve viewer
-- tops list / interval view
-- trajectory table/profile view
-- pressure observation view
-- drilling observation view
+## Application-Validation Milestones
 
-#### 4. Validate the current SDK ergonomics through the app
+Once the platform-core skeleton is in place, validate it through real workflows:
 
-- confirm naming and DTO/query shape are usable from a real frontend
-- identify missing summary APIs, filters, and cross-asset joins
-- refine the app boundary where usage exposes real friction
+- open a project and browse multiple wells / wellbores
+- inspect logs, tops, trajectory, pressure, and drilling together
+- review unresolved imports
+- confirm duplicate/supersession behavior
+- exercise synthetic project fixtures as a default demo/test path
 
-### Outcome
+The rule is:
 
-- Lithos proves it can support a real multi-asset desktop workflow
-- the next API changes are driven by application use, not speculation
+> validate the platform through real application workflows as early as possible.
 
----
+## Later Ecosystem Direction
 
-## Near Term 2 - Harden Import Reconciliation and Asset Governance
+These are intentionally later than the current platform-core work.
 
-### Goal
-Prevent the project/catalog layer from becoming inconsistent as more assets are imported.
+### Compute Layer
 
-### Deliverables
+Add a separate computation layer for:
 
-#### 1. Add explicit import resolution and binding rules
+- pure functions / UDFs
+- derived asset generation
+- stateless transformations over assets
 
-- how a source maps to `Well`
-- how a source maps to `Wellbore`
-- which identifiers are trusted first
-- how duplicate detection works
-- how unmatched or ambiguous imports are staged
+This should sit above Lithos Core rather than inside the catalog/package layer.
 
-#### 2. Add asset lifecycle states to the catalog
+### Sync / Distribution Layer
 
-- `Imported`
-- `Validated`
-- `Bound`
-- `NeedsReview`
-- `Rejected`
-- `Superseded`
+Add an optional sync layer for:
 
-#### 3. Add review-oriented project APIs
+- push / pull of project state or asset packages
+- version exchange
+- conflict resolution
 
-- unresolved asset listing
-- duplicate candidates
-- asset supersession history
-- rebind/review actions for ambiguous imports
+This remains outside the current local-first core.
 
-#### 4. Keep the authority split explicit
+### Broader Ingest and Asset Expansion
 
-- SQLite remains the discovery/relationship layer
-- asset packages remain the authoritative storage unit for asset-local data and manifests
+After governance and app validation:
 
-### Outcome
+- deeper LAS 3 extraction
+- broader structured import adapters
+- later DLIS/LIS support
+- additional asset families such as completion, well plan, or well activity
 
-- imports become governable rather than ad hoc
-- projects stay clean as multiple wells and repeated deliveries are introduced
+## Principles
 
----
+- optimize for enabling applications, not only for storage elegance
+- keep packages single-asset and local-first
+- keep OSDU alignment conceptual, not schema-literal
+- validate architecture through real apps, not just backend abstractions
+- keep core, app, compute, and sync concerns separate even if they remain in one monorepo for now
 
-## Near Term 3 - Expand Cross-Asset Query and Read Use Cases
+## Current Checkpoint
 
-### Goal
-Make Lithos useful for actual subsurface workflows, not just asset storage.
+Lithos is now best described as:
 
-### Deliverables
+> a local-first subsurface well-data platform foundation with a particularly strong LAS/log engine
 
-#### 1. Add higher-level project queries
-
-- list assets by well / wellbore / kind / status
-- query all assets covering a requested depth range
-- find wells with specific asset combinations
-- locate observations near a log or trajectory interval
-
-#### 2. Tighten shared semantic reference types
-
-- `DepthReference`
-- `VerticalDatum`
-- `CoordinateReference`
-- `UnitSystem`
-- `WellIdentifierSet`
-
-#### 3. Add cross-asset consistency checks
-
-- datum mismatches
-- unit mismatches
-- coverage inconsistencies
-- identifier conflicts
-
-### Outcome
-
-- the project model becomes useful as an analysis/query substrate
-- cross-asset workflows become safer and more predictable
-
----
-
-## Medium Term - Broaden Ingest Once the Project Model is Proven
-
-### Goal
-Expand source coverage only after the project/catalog and reconciliation model is validated.
-
-### Deliverables
-
-#### 1. Deeper LAS 3 extraction
-
-- trajectory/inclinometry sections
-- tops/marker sections
-- test/pressure-like sections
-- drilling-related structured sections
-
-#### 2. Stronger structured import adapters
-
-- CSV and Parquet import hardening for existing non-log asset families
-- clearer import contracts for schema mapping, units, and references
-
-#### 3. Later source support
-
-- DLIS/LIS and other richer wireline sources
-
-### Outcome
-
-- Lithos expands source coverage on top of a stable well-domain foundation
-- ingest breadth no longer outruns the project model
-
----
-
-## Longer Term - Selective Editing Expansion
-
-### Goal
-Extend editing carefully beyond logs once read/query and reconciliation workflows are stable.
-
-### Deliverables
-
-- tops editing
-- trajectory editing
-- pressure observation correction/annotation flows
-- drilling observation correction/annotation flows
-
-Keep this intentionally later than the read/query and import-governance work. Log/package editing remains the mature editing path until these models are validated independently.
-
-### Outcome
-
-- Lithos moves from read-mostly non-log support into selective, domain-appropriate editing
-
----
-
-## Not the Next Step
-
-Do not prioritize these before the roadmap above:
-
-- redesigning single-asset packages into multi-well containers
-- cloud/object-store/Iceberg/Postgres architecture
-- collaborative editing or sync
-- mirroring OSDU schemas directly in public Rust types
-- broad storage redesign without a concrete app-driven need
-
-OSDU remains a useful reference for domain boundaries and discoverability patterns, but not a schema source of truth for Lithos.
-
----
-
-## Validation Milestones
-
-### Milestone A
-
-> A project can be opened in the Tauri app, browsed by well/wellbore, and used to inspect log + tops + trajectory together for one wellbore.
-
-### Milestone B
-
-> Ambiguous or duplicate imports can be surfaced, reviewed, and bound without polluting the catalog.
-
-### Milestone C
-
-> Cross-asset queries over depth ranges and asset coverage become a normal application workflow.
-
-### Milestone D
-
-> Broader source support can be added without destabilizing the project/catalog model.
-
----
-
-## Final Summary
-
-### Already Done
-
-- canonical LAS/log foundation
-- package/session/edit model
-- depth-range optimized log querying
-- Tauri app shell
-- multi-well project/catalog foundation
-- typed multi-asset package families
-
-### Next
-
-- validate the architecture through the Tauri app
-- harden import reconciliation and lifecycle governance
-- deepen cross-asset query/use-case support
-
-### After That
-
-- broaden ingest support
-- expand editing carefully beyond logs
-
----
-
-## Closing Thought
-
-You are no longer primarily building:
-
-> a better LAS package SDK
-
-You are now building:
-
-> a local-first subsurface application foundation
-
-The fastest way to validate that claim is:
-
-> make the multi-asset application workflow first-class and let it drive the next round of SDK hardening
+The next step is not to rebuild the foundation. It is to make the current foundation governable, app-facing, and easy to build on.

@@ -486,6 +486,9 @@ Architecture and design decisions are documented in:
 - `docs/architecture/ADR-0005-staged-workspace-split-and-table-boundary.md`
 - `docs/architecture/ADR-0006-package-session-and-dto-boundary.md`
 - `docs/architecture/ADR-0007-canonical-schema-target.md`
+- `docs/architecture/ADR-0008-project-catalog-and-single-asset-packages.md`
+- `docs/architecture/ADR-0009-future-ecosystem-boundaries.md`
+- `lithos_roadmap.md`
 - `docs/lasio_non_v3_parity.md`
 - `lasio-basic-example.md`
 
@@ -529,9 +532,9 @@ Instead, Lithos focuses on:
 - efficient local asset packaging
 - local-first multi-well project organization
 
-## Roadmap
+## Roadmap Snapshot
 
-### Done
+Implemented foundations include:
 
 - canonical `LasFile` model and tolerant LAS parser
 - typed canonical metadata layer and explicit package metadata contract
@@ -555,27 +558,23 @@ Instead, Lithos focuses on:
 - non-v3 `lasio` parity coverage
 - package round-trip tests including mixed-type columns
 
-### Next
+Current next priorities are:
 
 - deepen validation coverage and diagnostic rules now that structured reports exist
 - harden cross-asset import/reconciliation and project workflows
+- extract clearer `project` and `ingest` platform boundaries in the monorepo
 - keep the command service thin and transport-focused while the app boundary settles
 - extend lazy backend-session reads beyond metadata-only flows only where they do not complicate sample-edit semantics or stale-session correctness
-- keep consolidating architecture guidance under `docs/architecture/` rather than root-level notes
+- use the Tauri harness as the validation surface for richer multi-asset workflows
 
-### After That
+Later directions include:
 
-- move toward fuller canonical-schema alignment
-- introduce canonical index naming rules and stricter package guarantees
-- deepen Arrow/Parquet only after canonical metadata and query contracts stabilize
-- add optional computation adapters such as `ndarray` without making them core dependencies
-
-### Later
-
-- LAS 3 support
-- larger local-library and indexing workflows
-- controlled export and round-trip support
+- compute/UDF layers above the core platform
+- optional sync/distribution layers
+- broader ingest and asset-family expansion
 - broader subsurface asset families and richer cross-asset application workflows
+
+For the full status-based roadmap, see [lithos_roadmap.md](/C:/Users/crooijmanss/dev/lithos/lithos_roadmap.md).
 
 ## Contributing
 

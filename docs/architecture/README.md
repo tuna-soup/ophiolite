@@ -62,6 +62,27 @@ Current properties:
 
 This separation is intentional: the SDK owns well-domain semantics, DTOs own transfer shapes, and storage formats remain replaceable implementation details.
 
+## Current Focus vs Later Ecosystem
+
+The current repo already implements the local-first core:
+
+- source import
+- canonical log and typed wellbore asset models
+- single-asset packages
+- `LithosProject`
+- desktop app validation through the internal harness
+
+Later ecosystem layers remain intentionally separate from that core:
+
+- compute / UDF execution
+- sync / distribution
+- broader deployment or enterprise packaging concerns
+
+Those are roadmap items, not current architecture. See:
+
+- `../../lithos_roadmap.md`
+- `ADR-0009-future-ecosystem-boundaries.md`
+
 ## Multi-Well Layer
 
 `lithos` now has an explicit layer above single-asset packages:
@@ -221,6 +242,7 @@ Only after those are stable should the project tighten runtime/package behavior 
 - `ADR-0006-package-session-and-dto-boundary.md`
 - `ADR-0007-canonical-schema-target.md`
 - `ADR-0008-project-catalog-and-single-asset-packages.md`
+- `ADR-0009-future-ecosystem-boundaries.md`
 
 ## Related Docs
 

@@ -8,26 +8,25 @@ The goal is that someone new to the codebase can read this directory and underst
 - which design choices are intentional
 - which documents describe current behavior versus target-state behavior
 - where Arrow/Parquet fit in the roadmap
-- how the new project/catalog layer fits above single-asset packages
+- how the project/catalog layer fits above single-asset packages
+- how LAS/log data relates to the broader multi-asset well-domain model
 
 ## System Today
 
 ```text
-LAS file
-  -> parser/importer
-  -> LasFile
-  -> CurveTable
-  -> DTO/query layer
-  -> optional package:
-       metadata.json
-       curves.parquet
+source artifacts
+  -> LAS / CSV importers
+  -> canonical log + typed asset models
+  -> single-asset packages
+  -> LithosProject catalog
+  -> DTO/query/edit layers
 ```
 
 Current properties:
 
 - the repo now uses a staged workspace split with `lithos-core`, `lithos-parser`, `lithos-table`, `lithos-package`, and `lithos-cli`
 - the root `lithos_las` crate is a compatibility facade over those workspace crates
-- `LasFile` is the canonical public domain object
+- `LasFile` is the canonical public domain object for the log/LAS slice
 - `PackageSession` is the backend-owned editable package session model
 - `LithosProject` is the local-first multi-well project/catalog root
 - project-managed typed asset families now include log, trajectory, tops, pressure observations, and drilling observations
@@ -35,32 +34,33 @@ Current properties:
 - `PackageCommandService` is the app-boundary transport layer above the shared backend state
 - `CurveTable` is the app-facing in-memory table abstraction
 - DTOs are the intended frontend/backend transfer boundary
-- package storage uses `metadata.json + curves.parquet`
+- package storage uses `metadata.json + curves.parquet` for log assets and `metadata.json + data.parquet + asset_manifest.json` for typed non-log assets
 - packages remain single-asset storage units; the project catalog organizes them into well-domain relationships
 - `metadata.json` now groups package identity, document metadata, storage descriptors, raw preserved sections, and diagnostics explicitly
 - Arrow/Parquet are internal storage/package details, and now also power backend-session lazy window reads and depth-range query execution
 - non-v3 `lasio` read/model parity is the main compatibility baseline
 
-## Project Architecture
+## Layered Architecture
 
 ```text
                 Applications
       (Tauri UI, CLI tools, pipelines)
 
-                 Lithos SDK API
-         (LasFile, DTOs, package access)
+                  Lithos SDK API
+    (LithosProject, PackageSession, LasFile, DTOs)
 
-              Canonical Domain Model
-                 (LAS semantics)
+            Canonical Domain + Asset Model
+     (wells, wellbores, logs, trajectory, tops,
+       pressure, drilling, provenance, diagnostics)
 
-        Runtime Data Representation Layer
-         (CurveTable and windowed access)
+           Runtime / Query / Editing Layer
+      (CurveTable, typed reads, package sessions)
 
-              Storage / Interchange
-      LAS files | metadata.json + curves.parquet
+             Storage / Interchange Layer
+     LAS | CSV | single-asset package conventions
 ```
 
-This separation is intentional: the SDK owns LAS semantics, DTOs own transfer shapes, and storage formats remain replaceable implementation details.
+This separation is intentional: the SDK owns well-domain semantics, DTOs own transfer shapes, and storage formats remain replaceable implementation details.
 
 ## Multi-Well Layer
 

@@ -14,6 +14,8 @@ The optimized local artifact format is:
   curves.parquet
 ```
 
+This ADR describes the log-asset package format specifically. The broader multi-asset system now uses the same single-asset packaging principle for other asset families, but with type-specific manifests and bulk-data descriptors.
+
 `metadata.json` stores:
 
 - source/provenance

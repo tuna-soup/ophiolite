@@ -8,6 +8,8 @@ Accepted
 
 `lithos` uses an explicit backend-owned package session model for package-backed inspection and editing.
 
+This ADR is intentionally scoped to package-backed asset editing, which is currently most mature for log assets. The broader `LithosProject` catalog and typed non-log asset families sit above this layer and use separate read/query flows today.
+
 The current session type is `PackageSession`.
 
 By default, editable package open reuses one shared backend session per package path.

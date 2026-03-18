@@ -8,6 +8,8 @@ Accepted
 
 `lithos` exposes a domain-first LAS model rather than a storage-first API.
 
+This ADR governs the log/LAS slice of the system. In the current architecture, that slice sits inside a broader well-domain SDK that also includes project/catalog organization and typed non-log asset families.
+
 The public surface centers on:
 
 - `LasFile`

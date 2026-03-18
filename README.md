@@ -1,14 +1,22 @@
 # lithos
 
-Status: Early development. The canonical LAS model and optimized package schema are still evolving.
+Status: Early development. The project/domain model, asset package conventions, and editing workflows are still evolving.
 
-`lithos` is a Rust-first LAS and well-data SDK for desktop and local-tooling workflows. It reads raw LAS files into a canonical domain model, exposes an application-facing table abstraction for curve data, can persist optimized local asset packages split into `metadata.json` and `curves.parquet`, and now also supports a local multi-well project/catalog layer above those packages.
+`lithos` is a Rust-first subsurface well-data SDK for desktop applications and local tooling. It began from a strong LAS/log foundation, but now also supports a local-first multi-well project/catalog layer and typed asset families for logs, trajectory, tops, pressure observations, and drilling observations.
+
+Today, Lithos can:
+
+- parse and model raw LAS log data
+- import typed non-log wellbore datasets from structured files
+- persist optimized local asset packages
+- organize multiple linked assets under one `LithosProject`
+- expose app-facing query and editing surfaces for desktop workflows
 
 The project is designed primarily for Rust desktop applications such as Tauri backends and local data tooling, while remaining interoperable with common data ecosystems.
 
 ## Why Lithos Exists
 
-The LAS ecosystem currently has:
+Lithos started from a real gap in the LAS ecosystem:
 
 - parsers such as Python `lasio`
 - proprietary vendor implementations
@@ -21,18 +29,31 @@ What it does not have widely is:
 - a clean separation between LAS semantics and storage formats
 - an optimized packaging format suitable for local analytics and ML workflows
 
-Lithos aims to fill that gap with:
+But the long-term need is broader than LAS alone. Real subsurface applications need a coherent way to work with:
+
+- well and wellbore identities
+- log curves
+- trajectories
+- tops
+- pressure observations
+- drilling observations
+- related provenance, diagnostics, and package/query workflows
+
+Lithos therefore aims to provide:
 
 - a robust LAS parser
-- a canonical LAS domain model
-- an app-friendly runtime table abstraction
-- an optimized local package format
-- a Rust-native SDK suitable for desktop applications
-- a local-first project/catalog layer for assembling multiple wellbore assets coherently
+- a canonical log-domain model for LAS-derived data
+- typed non-log asset families for other wellbore datasets
+- an app-friendly runtime/query abstraction
+- optimized local single-asset package formats
+- a local-first project/catalog layer for assembling multiple linked assets coherently
+- a Rust-native SDK suitable for desktop subsurface applications
 
-The design philosophy is domain-first, meaning the API reflects LAS concepts rather than storage formats.
+The design philosophy is domain-first: APIs should reflect well-domain concepts and workflows rather than raw storage formats.
 
-## Quick Example
+## Quick Examples
+
+Log/LAS access:
 
 ```rust
 use lithos_las::read_path;
@@ -58,32 +79,52 @@ This example demonstrates:
 
 The caller does not need to know whether the data originated from a LAS file or an optimized package.
 
+Multi-asset project access:
+
+```rust
+use lithos_las::LithosProject;
+
+fn main() -> Result<(), lithos_las::LasError> {
+    let project = LithosProject::open("examples/my-study")?;
+    let wells = project.list_wells()?;
+
+    println!("Wells: {}", wells.len());
+    Ok(())
+}
+```
+
 ## Project Architecture
 
-Lithos separates LAS semantics, runtime access, and storage formats into distinct layers.
+Lithos separates source-file import, well-domain concepts, runtime/query access, and storage formats into distinct layers.
 
 ```text
-                Applications
-      (Tauri UI, CLI tools, pipelines)
+                 Applications
+       (Tauri UI, CLI tools, pipelines)
 
-                 Lithos SDK API
-         (LasFile, DTOs, package access)
+                  Lithos SDK API
+   (LithosProject, PackageSession, LasFile, DTOs)
 
-              Canonical Domain Model
-                 (LAS semantics)
+             Canonical Domain + Asset Model
+   (wells, wellbores, logs, trajectory, tops, pressure,
+               drilling, provenance, diagnostics)
 
-        Runtime Data Representation Layer
-         (CurveTable and windowed access)
+          Runtime / Query / Editing Layer
+      (CurveTable, typed reads, package sessions)
 
-              Storage / Interchange
-      LAS files | metadata.json + curves.parquet
+            Storage / Interchange Layer
+    LAS | CSV | metadata.json + parquet asset packages
 ```
 
 This layered architecture allows Lithos to evolve storage and runtime implementations without breaking the domain API.
 
 ## Current State
 
-The current implementation focuses on LAS read/model parity for non-v3 LAS files and a staged runtime/package architecture.
+The current implementation still has its deepest maturity in the LAS/log slice, but the SDK is no longer only log-centric. It now combines:
+
+- a strong LAS/log import and package/edit path
+- a local-first multi-well project/catalog layer
+- typed non-log asset packages and read/query APIs
+- an internal desktop app that exercises those assets together
 
 Core components:
 
@@ -113,13 +154,12 @@ Arrow/Parquet currently exist at the storage boundary and now also back backend-
 ## Current Architecture
 
 ```text
-LAS file
-  -> parser/importer
-  -> LasFile (canonical domain model)
-  -> CurveTable (app-facing in-memory table)
-  -> optional package:
-       metadata.json
-       curves.parquet
+source artifacts
+  -> LAS / CSV importers
+  -> canonical log + typed asset models
+  -> single-asset packages
+  -> LithosProject catalog + linked assets
+  -> app/query/edit workflows
 ```
 
 Current workspace wiring:
@@ -156,9 +196,9 @@ Key behaviors implemented:
 - package write/read round-trip
 - mixed numeric/text curve column support
 
-## Package Format
+## Asset Packages
 
-Lithos can persist LAS data into an optimized local package.
+Lithos persists asset data into optimized local single-asset packages.
 
 Example layout:
 
@@ -168,7 +208,7 @@ well_123.laspkg/
   curves.parquet
 ```
 
-`metadata.json` contains:
+For log assets, `metadata.json` contains:
 
 - package identity and metadata schema version
 - document summary, provenance, and encoding
@@ -194,6 +234,8 @@ DEPT      DT      RHOB    NPHI
 ```
 
 This keeps metadata and sampled data cleanly separated while remaining easy to inspect from other tools.
+
+For non-log wellbore assets, Lithos uses the same general pattern but with a typed `asset_manifest.json`, `metadata.json`, and `data.parquet` inside a project-managed asset package.
 
 ## LithosProject
 
@@ -254,7 +296,7 @@ synthetic_well_project/
 
 The raw files are generated first and then imported through the normal `LithosProject` APIs, so the fixture validates the real import pipeline rather than bypassing it.
 
-## CurveTable
+## Runtime Query Surface
 
 `CurveTable` is the application-facing abstraction for sampled curve data.
 
@@ -267,6 +309,8 @@ Capabilities include:
 
 Internally this abstraction may evolve toward a more Arrow-backed runtime, but the public API remains storage-agnostic.
 Direct `open_package(...)` and public `PackageSession` access remain eager/materialized in the current phase. The new lazy path is currently backend-session-only.
+
+For non-log assets, Lithos currently exposes typed project-level read/query APIs rather than one generic table abstraction.
 
 ## Package Sessions and DTOs
 
@@ -389,7 +433,7 @@ Post-write validation is bounded: save/save-as verifies enough to confirm the wr
 
 ## Interoperability
 
-Because curve samples are stored in Parquet, Lithos packages can interoperate with common data tools.
+Because Lithos stores bulk asset payloads in Parquet-backed packages, project-managed assets can interoperate with common data tools.
 
 Example workflows:
 
@@ -415,7 +459,7 @@ import polars as pl
 df = pl.read_parquet("curves.parquet")
 ```
 
-This lets Lithos packages fit naturally into analytics pipelines and ML workflows while keeping LAS semantics intact in the SDK layer.
+This lets Lithos asset packages fit naturally into analytics pipelines and ML workflows while keeping well-domain semantics intact in the SDK layer.
 
 ## CLI
 
@@ -428,8 +472,7 @@ cargo run -- generate-fixture-packages test_data/logs test_data/logs/packages
 cargo run -- generate-synthetic-project test_data/projects/synthetic_well_project
 ```
 
-The CLI currently provides basic import, inspection, and package introspection functionality.
-It can also regenerate a synthetic multi-asset `LithosProject` fixture with linked log, trajectory, tops, pressure, and drilling assets for manual inspection.
+The CLI currently provides import, inspection, package introspection, and synthetic project-fixture generation functionality.
 
 ## Design Docs
 
@@ -454,14 +497,14 @@ Lithos follows several core principles:
 - storage formats are implementation details
 - simple, inspectable artifacts rather than opaque binaries
 - strong Rust ergonomics and safety
-- clear separation between parsing, runtime models, DTOs, and packaging
+- clear separation between importers, runtime models, DTOs, packaging, and project/catalog concerns
 
 ## Comparison to Other Tools
 
 | Tool | Language | Scope |
 | --- | --- | --- |
 | `lasio` | Python | LAS parser and utilities |
-| `lithos` | Rust | LAS SDK with canonical model, DTO boundary, and packaging |
+| `lithos` | Rust | Local-first subsurface well-data SDK with logs, typed wellbore assets, packaging, and project catalog |
 | Vendor software | Various | Integrated interpretation platforms |
 
 Lithos focuses on developer-facing infrastructure rather than end-user interpretation tools.
@@ -480,10 +523,11 @@ Lithos currently does not aim to be:
 
 Instead, Lithos focuses on:
 
-- robust LAS parsing
-- canonical LAS domain modeling
-- application-friendly runtime APIs
-- efficient local data packaging
+- robust source-file import
+- canonical and typed well-domain modeling
+- application-friendly runtime/query APIs
+- efficient local asset packaging
+- local-first multi-well project organization
 
 ## Roadmap
 
@@ -506,12 +550,15 @@ Instead, Lithos focuses on:
 - direct first curve-edit materialization from lazy backend session state
 - internal first-party Tauri capability harness for exercising SDK flows end to end
 - `metadata.json + curves.parquet` package format
+- `LithosProject` catalog and typed single-asset packages for logs, trajectory, tops, pressure observations, and drilling observations
+- synthetic multi-asset project-fixture generation for testing and app validation
 - non-v3 `lasio` parity coverage
 - package round-trip tests including mixed-type columns
 
 ### Next
 
 - deepen validation coverage and diagnostic rules now that structured reports exist
+- harden cross-asset import/reconciliation and project workflows
 - keep the command service thin and transport-focused while the app boundary settles
 - extend lazy backend-session reads beyond metadata-only flows only where they do not complicate sample-edit semantics or stale-session correctness
 - keep consolidating architecture guidance under `docs/architecture/` rather than root-level notes
@@ -528,7 +575,7 @@ Instead, Lithos focuses on:
 - LAS 3 support
 - larger local-library and indexing workflows
 - controlled export and round-trip support
-- broader subsurface abstractions beyond LAS
+- broader subsurface asset families and richer cross-asset application workflows
 
 ## Contributing
 
@@ -539,6 +586,7 @@ Areas likely to benefit from contributions:
 - LAS corpus testing
 - parser robustness improvements
 - metadata validation rules
+- project/catalog and multi-asset workflow hardening
 - CLI tooling
 - documentation improvements
 - future LAS 3 support

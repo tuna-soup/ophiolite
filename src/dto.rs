@@ -142,16 +142,6 @@ pub struct CurveCatalogDto {
     pub curves: Vec<CurveCatalogEntryDto>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SaveConflictDto {
-    pub dto_contract_version: String,
-    pub package_id: PackageId,
-    pub session_id: SessionId,
-    pub expected_revision: RevisionToken,
-    pub actual_revision: RevisionToken,
-    pub path: String,
-}
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum CommandGroup {
     Inspect,
@@ -163,7 +153,6 @@ pub enum CommandGroup {
 pub enum CommandErrorKind {
     OpenFailed,
     ValidationFailed,
-    SaveConflict,
     SessionNotFound,
     Internal,
 }
@@ -176,7 +165,6 @@ pub struct CommandErrorDto {
     pub message: String,
     pub session_id: Option<SessionId>,
     pub validation: Option<ValidationReportDto>,
-    pub save_conflict: Option<SaveConflictDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,7 +186,6 @@ pub struct SessionRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SaveSessionResponseDto {
     Saved(SavePackageResultDto),
-    Conflict(SaveConflictDto),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -755,23 +742,6 @@ pub fn session_window_dto(
     }
 }
 
-pub fn save_conflict_dto(
-    package_id: PackageId,
-    session_id: SessionId,
-    expected_revision: RevisionToken,
-    actual_revision: RevisionToken,
-    path: String,
-) -> SaveConflictDto {
-    SaveConflictDto {
-        dto_contract_version: String::from(DTO_CONTRACT_VERSION),
-        package_id,
-        session_id,
-        expected_revision,
-        actual_revision,
-        path,
-    }
-}
-
 pub fn package_validation_report(errors: Vec<String>) -> ValidationReportDto {
     validation_report_from_messages(ValidationKind::Package, errors)
 }
@@ -1088,7 +1058,6 @@ pub fn command_error_dto(
         message: message.into(),
         session_id: None,
         validation: None,
-        save_conflict: None,
     }
 }
 

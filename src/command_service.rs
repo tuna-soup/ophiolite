@@ -162,9 +162,6 @@ impl PackageCommandService {
     pub fn save_session(&self, request: &SessionRequest) -> CommandResponse<SavePackageResultDto> {
         match self.state.save_session(request) {
             Ok(SaveSessionResponseDto::Saved(saved)) => CommandResponse::Ok(saved),
-            Ok(SaveSessionResponseDto::Conflict(conflict)) => {
-                CommandResponse::Err(self.save_conflict_error(CommandGroup::EditPersist, conflict))
-            }
             Err(error) => self.map_save_error(Some(request.session_id.clone()), error),
         }
     }
@@ -175,9 +172,6 @@ impl PackageCommandService {
     ) -> CommandResponse<SavePackageResultDto> {
         match self.state.save_session_as(request) {
             Ok(SaveSessionResponseDto::Saved(saved)) => CommandResponse::Ok(saved),
-            Ok(SaveSessionResponseDto::Conflict(conflict)) => {
-                CommandResponse::Err(self.save_conflict_error(CommandGroup::EditPersist, conflict))
-            }
             Err(error) => self.map_save_error(Some(request.session_id.clone()), error),
         }
     }
@@ -209,21 +203,6 @@ impl PackageCommandService {
         error: LasError,
     ) -> CommandResponse<T> {
         CommandResponse::Err(command_error_for_save(session_id, error))
-    }
-
-    fn save_conflict_error(
-        &self,
-        group: CommandGroup,
-        conflict: crate::SaveConflictDto,
-    ) -> CommandErrorDto {
-        let mut error = command_error_dto(group, CommandErrorKind::SaveConflict, "save conflict");
-        error.session_id = Some(conflict.session_id.clone());
-        error.save_conflict = Some(conflict.clone());
-        error.message = format!(
-            "save conflict for session '{}': expected {}, found {}",
-            conflict.session_id.0, conflict.expected_revision.0, conflict.actual_revision.0
-        );
-        error
     }
 }
 

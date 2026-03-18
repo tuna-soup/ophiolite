@@ -224,9 +224,6 @@ fn backend_save_flows_preserve_session_identity_and_rebind_save_as() {
     let saved = backend.save_session(&session_id).unwrap();
     let save_result = match saved {
         SaveSessionResponseDto::Saved(result) => result,
-        SaveSessionResponseDto::Conflict(conflict) => {
-            panic!("unexpected save conflict: {}", conflict.actual_revision.0)
-        }
     };
     assert_eq!(save_result.session_id, session_id);
     assert_eq!(save_result.root, package_dir.display().to_string());
@@ -240,12 +237,6 @@ fn backend_save_flows_preserve_session_identity_and_rebind_save_as() {
     let saved_as = backend.save_session_as(&session_id, &copy_dir).unwrap();
     let save_as_result = match saved_as {
         SaveSessionResponseDto::Saved(result) => result,
-        SaveSessionResponseDto::Conflict(conflict) => {
-            panic!(
-                "unexpected save-as conflict: {}",
-                conflict.actual_revision.0
-            )
-        }
     };
     assert_eq!(save_as_result.session_id, session_id);
     assert_eq!(save_as_result.root, copy_dir.display().to_string());
@@ -394,9 +385,6 @@ fn backend_clean_lazy_save_stays_lazy_and_preserves_session_state() {
     let saved = backend.save_session(&session.session_id).unwrap();
     let save_result = match saved {
         SaveSessionResponseDto::Saved(result) => result,
-        SaveSessionResponseDto::Conflict(conflict) => {
-            panic!("unexpected save conflict: {}", conflict.actual_revision.0)
-        }
     };
 
     assert_eq!(save_result.session_id, session.session_id);
@@ -462,9 +450,6 @@ fn backend_metadata_only_edit_and_save_stay_lazy() {
     let saved = backend.save_session(&session_id).unwrap();
     let save_result = match saved {
         SaveSessionResponseDto::Saved(result) => result,
-        SaveSessionResponseDto::Conflict(conflict) => {
-            panic!("unexpected save conflict: {}", conflict.actual_revision.0)
-        }
     };
     assert_eq!(save_result.session_id, session_id);
 
@@ -521,12 +506,6 @@ fn backend_metadata_only_save_as_stays_lazy_and_rebinds_root() {
     let saved = backend.save_session_as(&session_id, &copy_dir).unwrap();
     let save_result = match saved {
         SaveSessionResponseDto::Saved(result) => result,
-        SaveSessionResponseDto::Conflict(conflict) => {
-            panic!(
-                "unexpected save-as conflict: {}",
-                conflict.actual_revision.0
-            )
-        }
     };
     assert_eq!(save_result.session_id, session_id);
     assert_eq!(save_result.root, copy_dir.display().to_string());

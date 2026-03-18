@@ -91,7 +91,7 @@ fn command_service_preserves_validation_errors() {
 }
 
 #[test]
-fn command_service_preserves_save_conflicts() {
+fn command_service_uses_last_save_wins_for_external_changes() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("adapter-conflict");
     write_package(&las, &package_dir).unwrap();
@@ -130,14 +130,22 @@ fn command_service_preserves_save_conflicts() {
         .unwrap();
     external.save_with_result().unwrap();
 
-    let conflict = service.save_session(&SessionRequest {
+    let saved = unwrap_ok(service.save_session(&SessionRequest {
         session_id: session.session_id.clone(),
-    });
-    let error = unwrap_err(conflict);
+    }));
 
-    assert_eq!(error.kind, CommandErrorKind::SaveConflict);
-    assert_eq!(error.session_id, Some(session.session_id));
-    assert!(error.save_conflict.is_some());
+    assert_eq!(saved.session_id, session.session_id);
+    let reopened = open_package(&package_dir).unwrap();
+    assert_eq!(
+        reopened
+            .file()
+            .well
+            .get("COMP")
+            .unwrap()
+            .value
+            .display_string(),
+        "ADAPTER EDIT"
+    );
 }
 
 #[test]

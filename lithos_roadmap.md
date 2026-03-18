@@ -26,6 +26,7 @@ The current goal is:
 - `PackageSession` editing and save/save-as model
 - lazy backend reads and depth-range log queries
 - structured command and DTO boundary for desktop app use
+- last-save-wins package/session persistence
 
 ### Multi-Asset Project Layer
 
@@ -42,6 +43,7 @@ The current goal is:
   - drilling observations
 - typed read/query APIs for those families
 - cross-asset depth-range discovery for one wellbore
+- current/superseded asset history for simple replace workflows
 
 ### Validation Surface
 
@@ -53,20 +55,7 @@ The current goal is:
 
 These are the highest-value missing pieces for turning the current foundation into a durable application platform.
 
-### 1. Import Governance and Reconciliation
-
-Add a first-class reconciliation layer for:
-
-- duplicate detection
-- ambiguous well / wellbore matching
-- unresolved imports
-- review queue flows
-- explicit accept / reject / bind behavior
-- supersession workflows
-
-This is the biggest current gap between “multi-asset storage” and “application platform.”
-
-### 2. Project-Facing Platform API
+### 1. Project-Facing Platform API
 
 Stabilize a cleaner project-facing summary/service layer above raw catalog internals:
 
@@ -74,12 +63,11 @@ Stabilize a cleaner project-facing summary/service layer above raw catalog inter
 - wellbore summaries
 - asset collection summaries
 - asset summaries by type and status
-- review queue summaries
 - cross-asset coverage queries
 
 The goal is to give apps a durable platform surface instead of making them bind directly to lower-level catalog details.
 
-### 3. Monorepo Platform Skeleton
+### 2. Monorepo Platform Skeleton
 
 Make the platform shape explicit in the workspace by extracting:
 
@@ -90,18 +78,28 @@ Make the platform shape explicit in the workspace by extracting:
   - synthetic project fixtures
 - `crates/lithos-ingest`
   - import orchestration
-  - source binding/reconciliation
+  - source import adapters
   - future ingest adapters
 
 Keep `lithos_las` as the compatibility facade over the workspace crates.
+
+### 3. Simpler Import and Versioning Workflows
+
+Keep the operational model simple and local-first:
+
+- last save wins for package/session persistence
+- latest import becomes the current asset in a collection by default
+- previous asset versions remain traceable as superseded history
+- provenance stays available without forcing review-heavy workflows
+
+The goal is to make Lithos predictable for everyday subsurface work rather than Git-like.
 
 ### 4. Cross-Asset App Workflows
 
 Use the harness as the validation target for:
 
-- unresolved import review
-- duplicate / supersession UI
 - better project browsing over wells, wellbores, collections, and assets
+- current vs superseded asset visibility
 - richer viewers for logs + trajectory + tops together
 
 ## Application-Validation Milestones
@@ -110,8 +108,7 @@ Once the platform-core skeleton is in place, validate it through real workflows:
 
 - open a project and browse multiple wells / wellbores
 - inspect logs, tops, trajectory, pressure, and drilling together
-- review unresolved imports
-- confirm duplicate/supersession behavior
+- reimport and confirm last-save-wins/supersession behavior
 - exercise synthetic project fixtures as a default demo/test path
 
 The rule is:
@@ -138,13 +135,13 @@ Add an optional sync layer for:
 
 - push / pull of project state or asset packages
 - version exchange
-- conflict resolution
+- simple replication, export/import, or distribution workflows
 
 This remains outside the current local-first core.
 
 ### Broader Ingest and Asset Expansion
 
-After governance and app validation:
+After platform-core and app validation:
 
 - deeper LAS 3 extraction
 - broader structured import adapters
@@ -158,6 +155,7 @@ After governance and app validation:
 - keep OSDU alignment conceptual, not schema-literal
 - validate architecture through real apps, not just backend abstractions
 - keep core, app, compute, and sync concerns separate even if they remain in one monorepo for now
+- prefer simple overwrite/supersede workflows over conflict-resolution-heavy collaboration models
 
 ## Current Checkpoint
 
@@ -165,4 +163,4 @@ Lithos is now best described as:
 
 > a local-first subsurface well-data platform foundation with a particularly strong LAS/log engine
 
-The next step is not to rebuild the foundation. It is to make the current foundation governable, app-facing, and easy to build on.
+The next step is not to rebuild the foundation. It is to make the current foundation app-facing, structurally clear in the monorepo, and easy to build on.

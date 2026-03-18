@@ -27,6 +27,7 @@ Future ecosystem layers are recognized, but not treated as part of the current c
 
 - the repo already contains a strong local-first core and should keep hardening that first
 - the app, compute, and sync concerns have different lifecycles and should not distort the core data model prematurely
+- future sync/distribution work should start from simple replication and export/import workflows rather than conflict-resolution-heavy collaboration models
 - recognizing these future layers now helps keep boundaries clean without forcing an early repo split
 - the roadmap needs one durable place to say that these layers are future direction rather than current architecture
 

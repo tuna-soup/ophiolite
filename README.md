@@ -183,7 +183,7 @@ Key behaviors implemented:
 - typed canonical metadata derivation and explicit package metadata schema versioning
 - package-backed edit/save and save-as flows
 - versioned DTO/query contract for frontend-safe access
-- package session dirty-state, identity, and optimistic save-conflict detection
+- package session dirty-state, identity, and last-save-wins persistence
 - session summaries and session-backed DTOs report the current bound package root
 - Tauri-oriented backend session/query adapter
 - separate command-boundary transport service with structured command errors
@@ -335,14 +335,14 @@ The current backend contract distinguishes:
 - session identity
 - the current in-memory `LasFile` snapshot
 - dirty-state
-- the current revision token used for optimistic save conflict checks
+- the current revision token used as a package snapshot/version fingerprint
 
 Current session semantics:
 
 - editable session open reuses one shared backend session per package path by default
 - edits are applied to the in-memory session snapshot
 - edit requests are atomic at the request level
-- `save` writes the current snapshot back to the original package if the revision still matches
+- `save` writes the current snapshot back to the original package using last-save-wins semantics
 - `save_as` writes the current snapshot to a new package path and updates the current session baseline
 - session-backed DTOs carry the current bound package root so clients can observe rebinding after `save_as`
 - successful save clears dirty-state
@@ -358,7 +358,7 @@ Current session semantics:
 - metadata-only dirty lazy sessions can rewrite `metadata.json` and save/save-as without materializing sample data
 - the first accepted curve/sample edit and any later save/save-as path that needs the canonical snapshot materializes the eager in-memory `PackageSession`
 - first curve/sample materialization is constructed directly from the current lazy session metadata and cached parquet descriptors rather than reopening the package through the eager SDK path
-- revision tokens are for persistence conflict detection against the currently bound package baseline/root, not collaborative synchronization
+- revision tokens are informational package snapshot/version fingerprints used for summaries, provenance, and cache invalidation rather than blocking saves
 
 Session invariants:
 
@@ -426,7 +426,7 @@ bun tauri dev
 ```
 The command service is intentionally thin and transport-focused. It should not become a second place where domain or save semantics live.
 At the app boundary, commands use `CommandResponse<T> = Ok(T) | Err(CommandErrorDto)`.
-The public command error kinds are intentionally small and caller-actionable: `OpenFailed`, `ValidationFailed`, `SaveConflict`, `SessionNotFound`, and `Internal`.
+The public command error kinds are intentionally small and caller-actionable: `OpenFailed`, `ValidationFailed`, `SessionNotFound`, and `Internal`.
 Validation reports now carry structured diagnostic issues with code, severity, message, and optional target context.
 Save and save-as validation failures report as save-scoped validation rather than generic edit failures.
 Post-write validation is bounded: save/save-as verifies enough to confirm the written package is readable and internally coherent, rather than promising an arbitrary full roundtrip guarantee.

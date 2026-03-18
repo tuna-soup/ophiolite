@@ -139,7 +139,7 @@ Current session properties:
 - the first accepted curve/sample edit and any later save/save-as path that needs the canonical snapshot materializes a real eager `PackageSession`
 - first curve/sample materialization is built directly from the current lazy session metadata and cached parquet descriptors rather than reopening through the eager SDK package path
 - edits are applied to the session snapshot in memory
-- `save` persists the current session snapshot back to the same package using optimistic revision checks
+- `save` persists the current session snapshot back to the same package using last-save-wins overwrite semantics
 - `save_as` persists the current session snapshot to a new package root and updates the session baseline
 - session summaries and session-context DTOs expose the currently bound package root
 - sessions remain alive until explicitly closed in the current desktop MVP
@@ -168,7 +168,7 @@ DTOs are transport shapes for this contract. They do not replace the canonical d
 Current DTO families:
 
 - read DTOs: package summary, metadata, curve catalog, curve windows, session summary
-- edit DTOs: metadata edits, curve edits, dirty-state, validation reports, save results, save conflicts
+- edit DTOs: metadata edits, curve edits, dirty-state, validation reports, and save results
 - `PackageBackendState` is the shared-state wrapper used by the internal Tauri capability harness and intended for further Tauri command registration
 - `PackageCommandService` is the thin, transport-focused service that converts command calls into structured transport responses
 - session-backed metadata, catalog, and window reads now carry explicit session context and DTO contract versions
@@ -185,8 +185,7 @@ Current validation layers:
 
 - package validity: is the package structurally readable and coherent
 - edit validity: is the requested mutation allowed against the current in-memory snapshot
-- save validity/conflict: can the current snapshot be persisted safely now
-- save conflict detection is against the currently bound package baseline/root and its revision fingerprint
+- save validity: can the current snapshot be persisted and reopened coherently now
 - validation reports are structured for app consumers rather than only exposing raw message lists
 
 At the command boundary, save and save-as validation failures are reported as save-scoped validation rather than generic edit validation.

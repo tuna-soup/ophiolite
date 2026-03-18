@@ -7,14 +7,13 @@ use lithos_core::{
     CurveWindowDto, CurveWindowRequest, DTO_CONTRACT_VERSION, DepthWindowRequest, DirtyStateDto,
     HeaderItem, IndexInfo, LasError, LasFile, LasFileSummary, LasValue, MetadataDto,
     MetadataSectionDto, MetadataUpdateRequest, PackageId, PackageMetadata, ParameterInfo, Result,
-    RevisionToken, SaveConflictDto, SavePackageResultDto, SaveSessionResponseDto, SectionItems,
-    SessionId, SessionMetadataDto, SessionSummaryDto, SessionWindowDto, ValidationReportDto,
-    VersionInfo, WellInfo, apply_curve_edit, apply_metadata_update, asset_summary_dto,
-    curve_catalog_dto, curve_catalog_result_dto, curve_window_dto, depth_window_request_for_values,
-    dirty_state_dto, metadata_dto, package_id_for_path, package_metadata_for,
-    package_validation_report, parse_package_metadata, revision_token_for_bytes, save_conflict_dto,
-    session_metadata_dto, session_summary_dto, session_window_dto, validate_edit_state,
-    validate_package_metadata, validation_report_dto,
+    RevisionToken, SavePackageResultDto, SaveSessionResponseDto, SectionItems, SessionId,
+    SessionMetadataDto, SessionSummaryDto, SessionWindowDto, ValidationReportDto, VersionInfo,
+    WellInfo, apply_curve_edit, apply_metadata_update, asset_summary_dto, curve_catalog_dto,
+    curve_catalog_result_dto, curve_window_dto, depth_window_request_for_values, dirty_state_dto,
+    metadata_dto, package_id_for_path, package_metadata_for, package_validation_report,
+    parse_package_metadata, revision_token_for_bytes, session_metadata_dto, session_summary_dto,
+    session_window_dto, validate_edit_state, validate_package_metadata, validation_report_dto,
 };
 use lithos_table::CurveColumnDescriptor;
 use parquet::arrow::ProjectionMask;
@@ -204,9 +203,8 @@ impl PackageBackendSessionStore {
         let response = self
             .session_mut(session_id)?
             .save_as_checked_in_place(output_dir.as_ref())?;
-        if let SaveSessionResponseDto::Saved(saved) = &response {
-            self.rebind_path(session_id, &old_root, Path::new(&saved.root));
-        }
+        let SaveSessionResponseDto::Saved(saved) = &response;
+        self.rebind_path(session_id, &old_root, Path::new(&saved.root));
         Ok(response)
     }
 
@@ -387,17 +385,6 @@ impl BackendPackageSession {
 
     fn save_checked(&mut self) -> Result<SaveSessionResponseDto> {
         if let Self::Lazy(session) = self {
-            let current_revision = package_revision(&session.root)?;
-            if current_revision != session.revision {
-                return Ok(SaveSessionResponseDto::Conflict(save_conflict_dto(
-                    session.package_id.clone(),
-                    session.session_id.clone(),
-                    session.revision.clone(),
-                    current_revision,
-                    session.root.display().to_string(),
-                )));
-            }
-
             if !session.dirty {
                 return Ok(SaveSessionResponseDto::Saved(SavePackageResultDto {
                     dto_contract_version: String::from(DTO_CONTRACT_VERSION),
@@ -416,25 +403,13 @@ impl BackendPackageSession {
             ));
         }
 
-        match self.materialize_for_edit()?.save_checked()? {
-            Ok(saved) => Ok(SaveSessionResponseDto::Saved(saved)),
-            Err(conflict) => Ok(SaveSessionResponseDto::Conflict(conflict)),
-        }
+        Ok(SaveSessionResponseDto::Saved(
+            self.materialize_for_edit()?.save_checked()?,
+        ))
     }
 
     fn save_as_checked_in_place(&mut self, output_dir: &Path) -> Result<SaveSessionResponseDto> {
         if let Self::Lazy(session) = self {
-            let current_revision = package_revision(&session.root)?;
-            if current_revision != session.revision {
-                return Ok(SaveSessionResponseDto::Conflict(save_conflict_dto(
-                    session.package_id.clone(),
-                    session.session_id.clone(),
-                    session.revision.clone(),
-                    current_revision,
-                    session.root.display().to_string(),
-                )));
-            }
-
             return Ok(SaveSessionResponseDto::Saved(
                 save_lazy_session_as_in_place(session, output_dir)?,
             ));
@@ -561,29 +536,10 @@ impl PackageSession {
     }
 
     pub fn save(&mut self) -> Result<()> {
-        match self.save_checked()? {
-            Ok(_) => Ok(()),
-            Err(conflict) => Err(LasError::Validation(format!(
-                "save conflict for session '{}': expected {}, found {}",
-                conflict.session_id.0, conflict.expected_revision.0, conflict.actual_revision.0
-            ))),
-        }
+        self.save_checked().map(|_| ())
     }
 
-    pub fn save_checked(
-        &mut self,
-    ) -> Result<std::result::Result<SavePackageResultDto, SaveConflictDto>> {
-        let current_revision = package_revision(&self.root)?;
-        if current_revision != self.revision {
-            return Ok(Err(save_conflict_dto(
-                self.package_id.clone(),
-                self.session_id.clone(),
-                self.revision.clone(),
-                current_revision,
-                self.root.display().to_string(),
-            )));
-        }
-
+    pub fn save_checked(&mut self) -> Result<SavePackageResultDto> {
         let session_id = self.session_id.clone();
         // Only replace the in-memory session once the rewritten package can be reopened
         // coherently; failed writes must not partially mutate the current session state.
@@ -599,17 +555,11 @@ impl PackageSession {
             dirty_cleared: true,
             summary: self.summary_dto(),
         };
-        Ok(Ok(result))
+        Ok(result)
     }
 
     pub fn save_with_result(&mut self) -> Result<SavePackageResultDto> {
-        match self.save_checked()? {
-            Ok(result) => Ok(result),
-            Err(conflict) => Err(LasError::Validation(format!(
-                "save conflict for session '{}': expected {}, found {}",
-                conflict.session_id.0, conflict.expected_revision.0, conflict.actual_revision.0
-            ))),
-        }
+        self.save_checked()
     }
 
     pub fn save_as(&self, output_dir: impl AsRef<Path>) -> Result<PackageSession> {

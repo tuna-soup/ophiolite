@@ -100,7 +100,6 @@ fn command_state_applies_atomic_edits_and_save_flows() {
         .unwrap();
     match saved {
         SaveSessionResponseDto::Saved(result) => assert_eq!(result.session_id, session.session_id),
-        SaveSessionResponseDto::Conflict(_) => panic!("unexpected save conflict"),
     }
 
     let saved_as = state
@@ -111,7 +110,6 @@ fn command_state_applies_atomic_edits_and_save_flows() {
         .unwrap();
     match saved_as {
         SaveSessionResponseDto::Saved(result) => assert_eq!(result.session_id, session.session_id),
-        SaveSessionResponseDto::Conflict(_) => panic!("unexpected save-as conflict"),
     }
 }
 

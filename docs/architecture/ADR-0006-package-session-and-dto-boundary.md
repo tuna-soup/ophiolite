@@ -22,7 +22,7 @@ Multiple frontend windows talk to the same in-memory session state in this phase
 - session identity
 - the current in-memory `LasFile` snapshot
 - dirty-state
-- the current revision token used for optimistic save conflict checks
+- the current revision token used as a package snapshot/version fingerprint
 
 Conceptually, it should continue to be treated as:
 
@@ -47,7 +47,6 @@ The package contract is split conceptually into:
   - dirty-state
   - validation reports
   - save/save-as results
-  - save conflict results
 
 At the app boundary, commands follow a single envelope pattern:
 
@@ -77,14 +76,14 @@ Public command error kinds should remain small and caller-actionable rather than
 - package-backed desktop workflows need a clear owner for pending edits and save semantics
 - session identity and revision tracking are required once multiple queries and edits can occur against the same open package
 - separating read DTOs from edit DTOs keeps the frontend/backend contract easier to reason about
-- optimistic save conflict handling is safer than silent last-writer-wins behavior
+- last-save-wins persistence better matches current local-first desktop workflows than merge/conflict-centric behavior
 - keeping DTOs distinct from the domain model preserves the domain-first architecture
 
 ## Consequences
 
 - package editing behavior should be described in terms of `PackageSession`, not ad hoc package helpers
 - documentation must distinguish metadata-only/read-only flows from editable session flows
-- dirty-state and revision handling are now part of the supported backend contract
+- dirty-state and revision fingerprint handling are now part of the supported backend contract
 - metadata-only opens are an explicit architectural behavior, not an accidental implementation detail
 - windowed reads are part of the frontend contract even though full lazy sample-table loading is still an evolving internal concern
 - backend session reads may reuse Arrow/Parquet projection and row-selection internally without changing the public runtime abstraction
@@ -131,12 +130,11 @@ Backend-session parquet metadata caches are session-local in the current phase. 
 
 1. package validity
 2. edit validity
-3. save validity or save conflict
+3. save validity
 
 These concerns should remain distinct in result shapes and error reporting.
 In particular, save/save-as validation failures should not be reported as generic edit validation.
 Post-write validation should remain bounded to confirming that the written package is readable and internally coherent.
-Save conflict detection is against the currently bound package baseline/root and its revision fingerprint.
 Validation DTOs should be structured enough that desktop clients can render diagnostics without string matching.
 
 ## Deferred Work
@@ -150,7 +148,7 @@ This ADR does not imply:
 - duplicate or forked live-session semantics
 - a hard `tauri` dependency in this repo yet
 
-Revision tokens are used for persistence conflict checks, not live distributed synchronization.
+Revision tokens are informational snapshot/version fingerprints, not merge or distributed-synchronization coordination tokens.
 
 Those remain future layers on top of the current session contract.
 

@@ -198,7 +198,7 @@ fn package_supports_metadata_only_open_and_validation_views() {
 }
 
 #[test]
-fn package_session_tracks_dirty_state_and_conflicts() {
+fn package_session_tracks_dirty_state_and_uses_last_save_wins() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("session-conflict");
     let mut first = write_package(&las, &package_dir).unwrap();
@@ -238,11 +238,21 @@ fn package_session_tracks_dirty_state_and_conflicts() {
     assert!(second_save.dirty_cleared);
     assert_ne!(second_save.revision, first_revision);
 
-    let conflict = first.save_checked().unwrap().unwrap_err();
-    assert_eq!(conflict.expected_revision, first_revision);
-    assert_eq!(conflict.actual_revision, second_save.revision);
-    assert_eq!(conflict.package_id, first.package_id().clone());
-    assert_eq!(conflict.session_id, first.session_id().clone());
+    let first_save = first.save_checked().unwrap();
+    assert!(first_save.dirty_cleared);
+    assert_ne!(first_save.revision, first_revision);
+
+    let reopened = open_package(&package_dir).unwrap();
+    assert_eq!(
+        reopened
+            .file()
+            .well
+            .get("COMP")
+            .unwrap()
+            .value
+            .display_string(),
+        "FIRST EDIT"
+    );
 }
 
 #[test]

@@ -1,0 +1,17 @@
+:root {
+  --sl-color-accent-low: #dbe6ff;
+  --sl-color-accent: #2457d6;
+  --sl-color-accent-high: #11389d;
+}
+
+:root[data-theme="dark"] {
+  --sl-color-accent-low: #112047;
+  --sl-color-accent: #78a6ff;
+  --sl-color-accent-high: #d9e5ff;
+}
+
+.hero {
+  background:
+    radial-gradient(circle at top left, rgba(36, 87, 214, 0.14), transparent 38%),
+    radial-gradient(circle at bottom right, rgba(17, 56, 157, 0.16), transparent 32%);
+}

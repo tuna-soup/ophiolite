@@ -4,6 +4,14 @@ Status: Early development. The project/domain model, asset package conventions, 
 
 `lithos` is a Rust-first subsurface well-data SDK for desktop applications and local tooling. It began from a strong LAS/log foundation, but now also supports a local-first multi-well project/catalog layer and typed asset families for logs, trajectory, tops, pressure observations, and drilling observations.
 
+Public docs site source now lives in:
+
+- `apps/lithos-docs`
+
+The intended public host is:
+
+- `https://lithos.dev`
+
 Today, Lithos can:
 
 - parse and model raw LAS log data

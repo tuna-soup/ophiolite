@@ -1,0 +1,49 @@
+name: Docs Site
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "apps/lithos-docs/**"
+      - ".github/workflows/docs-site.yml"
+      - "README.md"
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: docs-site
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/configure-pages@v5
+      - name: Install docs dependencies
+        working-directory: apps/lithos-docs
+        run: bun install --frozen-lockfile
+      - name: Build docs site
+        working-directory: apps/lithos-docs
+        run: bun run build
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/lithos-docs/dist
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,4 +1,4 @@
-use lithos_las::parse_header_line;
+use ophiolite::parse_header_line;
 
 #[test]
 fn parses_time_string_and_colon_in_description() {

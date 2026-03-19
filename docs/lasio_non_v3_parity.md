@@ -4,7 +4,7 @@ This project targets semantic parity with `lasio` for read and in-memory model b
 
 ## Implemented
 
-| lasio area | lithos coverage |
+| lasio area | ophiolite coverage |
 | --- | --- |
 | `test_read_header_line.py` | `tests/header_line_parity.rs` covers time values, colon disambiguation, dotted mnemonics, units beginning with `.`, units with spaces, and no-period lines |
 | `test_api.py` | `tests/model_parity.rs`, `tests/read_parity.rs`, and `tests/input_parity.rs` cover key lookup, indexed access, mutation, replacement, stacking, file/string/reader inputs, and examples helpers |

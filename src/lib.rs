@@ -5,7 +5,7 @@ mod command_service;
 pub use backend::{PackageBackend, dto_contract_version};
 pub use backend_commands::PackageBackendState;
 pub use command_service::PackageCommandService;
-pub use lithos_compute::{
+pub use ophiolite_compute::{
     AssetSemanticFamily, ComputeAvailability, ComputeBindingCandidate, ComputeCatalog,
     ComputeCatalogEntry, ComputeExecutionManifest, ComputeFunctionMetadata, ComputeInputBinding,
     ComputeInputSpec, ComputeParameterDefinition, ComputeParameterValue, ComputeRegistry,
@@ -13,7 +13,7 @@ pub use lithos_compute::{
     CurveSemanticType, DrillingObservationDataRow, LogCurveData, PressureObservationDataRow,
     TopDataRow, TrajectoryDataRow, classify_curve_semantic, default_curve_semantics,
 };
-pub use lithos_core::{
+pub use ophiolite_core::{
     AssetSummaryDto, CanonicalAlias, CanonicalMetadata, CloseSessionResultDto, CommandErrorDto,
     CommandErrorKind, CommandGroup, CommandResponse, CurveCatalogDto, CurveCatalogEntryDto,
     CurveColumn, CurveColumnDescriptor, CurveColumnMetadata, CurveEditRequest, CurveInfo,
@@ -40,43 +40,44 @@ pub use lithos_core::{
     validate_edit_state, validate_package_metadata, validation_issue_for_message,
     validation_report_dto, validation_report_from_issues, validation_report_from_messages,
 };
-pub use lithos_ingest::{
+pub use ophiolite_ingest::{
     import_drilling_csv_asset, import_las_asset, import_pressure_csv_asset, import_tops_csv_asset,
     import_trajectory_csv_asset,
 };
-pub use lithos_package::{
+pub use ophiolite_package::{
     CurveValueDiffSummary, PackageBlobRef, PackageDiffSummary, PackageRevisionRecord,
     PackageSession, PackageSessionStore, StoredLasFile, list_package_revisions, open_package,
     open_package_metadata, open_package_summary, validate_package, write_bundle, write_package,
     write_package_overwrite,
 };
-pub use lithos_parser::examples;
-pub use lithos_parser::{
+pub use ophiolite_parser::examples;
+pub use ophiolite_parser::{
     DType, DTypeSpec, DecodedText, NullPolicy, NullRule, ParsedHeaderLine, ReadOptions, ReadPolicy,
     decode_bytes, import_las_file, parse_header_line, read_path, read_reader, read_string,
 };
-pub use lithos_project::{
+pub use ophiolite_project::{
     AssetBindingInput, AssetColumnMetadata, AssetColumnType, AssetTableMetadata, DepthRangeQuery,
     DrillingObservationRow, PressureObservationRow, TopRow, TrajectoryRow,
 };
-pub use lithos_project::{
+pub use ophiolite_project::{
     AssetBlobRef, AssetCollectionId, AssetCollectionRecord, AssetCollectionSummary,
     AssetDiffSummary, AssetExtent, AssetId, AssetKind, AssetManifest, AssetRecord,
     AssetReferenceMetadata, AssetRevisionId, AssetRevisionRecord, AssetStatus, BulkDataDescriptor,
-    CoordinateReference, CurveValueChangeSummary, DepthReference, ImportResolution, LithosProject,
-    LithosProjectManifest, LogAssetDiffSummary, LogAssetImportResult, ProjectAssetImportResult,
-    ProjectAssetSummary, ProjectComputeRunRequest, ProjectComputeRunResult, ProjectSummary,
-    SourceArtifactRef, StructuredAssetDiffSummary, UnitSystem, VerticalDatum, WellId,
-    WellIdentifierSet, WellRecord, WellSummary, WellboreId, WellboreRecord, WellboreSummary,
+    CoordinateReference, CurveValueChangeSummary, DepthReference, ImportResolution,
+    LogAssetDiffSummary, LogAssetImportResult, OphioliteProject, OphioliteProjectManifest,
+    ProjectAssetImportResult, ProjectAssetSummary, ProjectComputeRunRequest,
+    ProjectComputeRunResult, ProjectSummary, SourceArtifactRef, StructuredAssetDiffSummary,
+    UnitSystem, VerticalDatum, WellId, WellIdentifierSet, WellRecord, WellSummary, WellboreId,
+    WellboreRecord, WellboreSummary,
 };
-pub use lithos_project::{
+pub use ophiolite_project::{
     DrillingObservationEditRequest, DrillingObservationRowPatch,
     OpenStructuredAssetEditSessionRequest, OptionalFieldPatch, PressureObservationEditRequest,
     PressureObservationRowPatch, StructuredAssetEditSessionId, StructuredAssetEditSessionStore,
     StructuredAssetEditSessionSummary, StructuredAssetSaveResult, StructuredAssetSessionRequest,
     TopRowPatch, TopSetEditRequest, TrajectoryEditRequest, TrajectoryRowPatch,
 };
-pub use lithos_project::{
+pub use ophiolite_project::{
     SyntheticProjectAssetIds, SyntheticProjectFixture, SyntheticProjectSourcePaths,
     generate_synthetic_project_fixture,
 };

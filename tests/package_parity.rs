@@ -1,4 +1,4 @@
-use lithos_las::{ReadOptions, examples, import_las_file, open_package, write_package};
+use ophiolite::{ReadOptions, examples, import_las_file, open_package, write_package};
 use std::fs;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -77,7 +77,7 @@ fn temp_package_dir(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("lithos-{prefix}-{unique}"));
+    let path = std::env::temp_dir().join(format!("ophiolite-{prefix}-{unique}"));
     if path.exists() {
         fs::remove_dir_all(&path).unwrap();
     }

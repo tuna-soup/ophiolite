@@ -1,6 +1,6 @@
 # Architecture Overview
 
-This folder captures the durable architectural decisions for `lithos`.
+This folder captures the durable architectural decisions for `ophiolite`.
 
 The goal is that someone new to the codebase can read this directory and understand:
 
@@ -18,20 +18,20 @@ source artifacts
   -> LAS / CSV importers
   -> canonical log + typed asset models
   -> single-asset packages
-  -> LithosProject catalog
+  -> OphioliteProject catalog
   -> typed compute / derived assets
   -> DTO/query/edit layers
 ```
 
 Current properties:
 
-- the repo now uses a staged workspace split with `lithos-core`, `lithos-parser`, `lithos-table`, `lithos-package`, and `lithos-cli`
-- the root `lithos_las` crate is a compatibility facade over those workspace crates
+- the repo now uses a staged workspace split with `ophiolite-core`, `ophiolite-parser`, `ophiolite-table`, `ophiolite-package`, and `ophiolite-cli`
+- the root `ophiolite` crate is a compatibility facade over those workspace crates
 - `LasFile` is the canonical public domain object for the log/LAS slice
 - `PackageSession` is the backend-owned editable package session model
-- `LithosProject` is the local-first multi-well project/catalog root
+- `OphioliteProject` is the local-first multi-well project/catalog root
 - project-managed typed asset families now include log, trajectory, tops, pressure observations, and drilling observations
-- `lithos-compute` now provides a typed compute/UDF registry across log and structured asset families
+- `ophiolite-compute` now provides a typed compute/UDF registry across log and structured asset families
 - `PackageBackend` and `PackageBackendState` are the current Tauri-ready backend adapter layer
 - `PackageCommandService` is the app-boundary transport layer above the shared backend state
 - `CurveTable` is the app-facing in-memory table abstraction
@@ -48,8 +48,8 @@ Current properties:
                 Applications
       (Tauri UI, CLI tools, pipelines)
 
-                  Lithos SDK API
-    (LithosProject, PackageSession, LasFile, DTOs)
+                  Ophiolite SDK API
+    (OphioliteProject, PackageSession, LasFile, DTOs)
 
             Canonical Domain + Asset Model
      (wells, wellbores, logs, trajectory, tops,
@@ -71,7 +71,7 @@ The current repo already implements the local-first core:
 - source import
 - canonical log and typed wellbore asset models
 - single-asset packages
-- `LithosProject`
+- `OphioliteProject`
 - typed compute and derived sibling assets, with the deepest eligibility/binding logic currently in logs
 - desktop app validation through the internal harness
 
@@ -82,15 +82,15 @@ Later ecosystem layers remain intentionally separate from that core:
 
 Sync/distribution and broader deployment remain roadmap items rather than current architecture. See:
 
-- `../../lithos_roadmap.md`
+- `../../ophiolite_roadmap.md`
 - `ADR-0009-future-ecosystem-boundaries.md`
 
 ## Multi-Well Layer
 
-`lithos` now has an explicit layer above single-asset packages:
+`ophiolite` now has an explicit layer above single-asset packages:
 
 ```text
-LithosProject
+OphioliteProject
   -> catalog.sqlite
   -> wells
   -> wellbores
@@ -100,7 +100,7 @@ LithosProject
 
 Current properties of this layer:
 
-- `LithosProject` is the user-facing/root concept
+- `OphioliteProject` is the user-facing/root concept
 - SQLite stores discovery, identities, relationships, package paths, and lightweight status
 - single-asset packages remain the authoritative storage unit for asset-local metadata and bulk data
 - log assets are the first project-managed asset family
@@ -119,7 +119,7 @@ Current multi-well status:
 - typed read/query helpers for those non-log families exist now
 - cross-asset depth-range discovery across one wellbore exists now
 - typed compute discovery/execution exists now for log, trajectory, tops, pressure, and drilling assets and persists derived sibling assets with execution manifests
-- synthetic project-fixture generation now exists for testing and app validation; it generates raw LAS/CSV sources and imports them into one coherent `LithosProject`
+- synthetic project-fixture generation now exists for testing and app validation; it generates raw LAS/CSV sources and imports them into one coherent `OphioliteProject`
 - trajectory, tops, pressure observations, and drilling observations now also support bounded project-scoped edit sessions with explicit save and in-place overwrite of the active asset package
 
 ## Package Session Contract
@@ -143,7 +143,7 @@ Current session properties:
 - first curve/sample materialization is built directly from the current lazy session metadata and cached parquet descriptors rather than reopening through the eager SDK package path
 - edits are applied to the session snapshot in memory
 - `save` persists the current session snapshot back to the same package using overwrite-oriented save semantics
-- `save` also creates a new immutable local package revision in a hidden `.lithos/revisions/` store
+- `save` also creates a new immutable local package revision in a hidden `.ophiolite/revisions/` store
 - the hidden revision store is canonical; the visible package root is a materialized current-head view
 - `save_as` persists the current session snapshot to a new package root and updates the session baseline
 - session summaries and session-context DTOs expose the currently bound package root
@@ -199,23 +199,23 @@ At the command boundary, save and save-as validation failures are reported as sa
 ## Workspace Layout
 
 ```text
-root compatibility crate: lithos_las
-  -> lithos-core
-  -> lithos-parser
-  -> lithos-table
-  -> lithos-package
-  -> lithos-project
-  -> lithos-ingest
-  -> lithos-compute
-  -> lithos-cli
+root compatibility crate: ophiolite
+  -> ophiolite-core
+  -> ophiolite-parser
+  -> ophiolite-table
+  -> ophiolite-package
+  -> ophiolite-project
+  -> ophiolite-ingest
+  -> ophiolite-compute
+  -> ophiolite-cli
 ```
 
 Current staged compromise:
 
-- `lithos-project` now owns the multi-asset catalog, asset manifests, typed project queries, summary APIs, and synthetic project fixtures
-- `lithos-ingest` now provides the first explicit ingest-oriented crate boundary over project import flows
-- `lithos-compute` now owns the typed compute registry, semantic curve eligibility, and execution-manifest model for derived assets
-- the root `lithos_las` crate remains the compatibility facade that re-exports the workspace surface
+- `ophiolite-project` now owns the multi-asset catalog, asset manifests, typed project queries, summary APIs, and synthetic project fixtures
+- `ophiolite-ingest` now provides the first explicit ingest-oriented crate boundary over project import flows
+- `ophiolite-compute` now owns the typed compute registry, semantic curve eligibility, and execution-manifest model for derived assets
+- the root `ophiolite` crate remains the compatibility facade that re-exports the workspace surface
 - the runtime table boundary has its own crate, but `CurveTable` still originates from the core layer in this phase to preserve the current `LasFile::data()` API
 - Arrow/Parquet conversion now lives in the package crate rather than the runtime table type
 - direct SDK package opens remain eager; only backend session reads are lazy in this phase
@@ -234,7 +234,7 @@ Current staged compromise:
 
 Arrow/Parquet is already in use for package persistence, but it is not yet the full canonical runtime model.
 
-Before deepening Arrow/Parquet integration, `lithos` should first stabilize:
+Before deepening Arrow/Parquet integration, `ophiolite` should first stabilize:
 
 1. Tauri/backend DTOs and query semantics
 2. package-session lifecycle and save semantics

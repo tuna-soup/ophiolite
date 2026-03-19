@@ -1,4 +1,4 @@
-use lithos_las::{
+use ophiolite::{
     CurveEditRequest, CurveUpdateRequest, CurveWindowRequest, HeaderItemUpdate, LasError, LasValue,
     MetadataSectionDto, MetadataUpdateRequest, PackageSessionStore, ValidationKind, examples,
     list_package_revisions, open_package, open_package_metadata, open_package_summary,
@@ -368,14 +368,14 @@ fn temp_package_dir(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("lithos-{prefix}-{unique}"));
+    let path = std::env::temp_dir().join(format!("ophiolite-{prefix}-{unique}"));
     if path.exists() {
         fs::remove_dir_all(&path).unwrap();
     }
     path
 }
 
-fn expanded_example_las(row_count: usize) -> lithos_las::LasFile {
+fn expanded_example_las(row_count: usize) -> ophiolite::LasFile {
     let mut las = examples::open("sample.las", &Default::default()).unwrap();
     let index_curve_id = las.index.curve_id.clone();
     let template_curves = las.curves.iter().cloned().collect::<Vec<_>>();

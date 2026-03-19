@@ -1,4 +1,4 @@
-use lithos_las::{ReadOptions, examples, read_path, read_reader, read_string};
+use ophiolite::{ReadOptions, examples, read_path, read_reader, read_string};
 use std::fs;
 use std::fs::File;
 use std::path::PathBuf;

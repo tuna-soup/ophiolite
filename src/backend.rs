@@ -5,7 +5,7 @@ use crate::{
     SessionWindowDto, ValidationReportDto, close_session_result_dto, open_package_metadata,
     open_package_summary, validate_package,
 };
-use lithos_package::PackageBackendSessionStore;
+use ophiolite_package::PackageBackendSessionStore;
 use std::path::Path;
 
 #[derive(Debug, Default)]

@@ -1,4 +1,4 @@
-use lithos_las::{
+use ophiolite::{
     CurveStorageKind, PACKAGE_METADATA_SCHEMA_VERSION, PackageMetadata, examples, import_las_file,
     open_package_metadata, write_package,
 };
@@ -130,14 +130,14 @@ fn reads_legacy_flat_package_metadata_shape() {
 struct LegacyPackageMetadata {
     package_version: u32,
     metadata_schema_version: String,
-    summary: lithos_las::LasFileSummary,
-    provenance: lithos_las::Provenance,
+    summary: ophiolite::LasFileSummary,
+    provenance: ophiolite::Provenance,
     encoding: Option<String>,
-    index: lithos_las::IndexDescriptor,
-    canonical: lithos_las::CanonicalMetadata,
-    curve_columns: Vec<lithos_las::CurveColumnMetadata>,
-    raw_sections: lithos_las::RawMetadataSections,
-    issues: Vec<lithos_las::IngestIssue>,
+    index: ophiolite::IndexDescriptor,
+    canonical: ophiolite::CanonicalMetadata,
+    curve_columns: Vec<ophiolite::CurveColumnMetadata>,
+    raw_sections: ophiolite::RawMetadataSections,
+    issues: Vec<ophiolite::IngestIssue>,
     index_unit: Option<String>,
 }
 
@@ -164,7 +164,7 @@ fn temp_package_dir(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("lithos-{prefix}-{unique}"));
+    let path = std::env::temp_dir().join(format!("ophiolite-{prefix}-{unique}"));
     if path.exists() {
         fs::remove_dir_all(&path).unwrap();
     }

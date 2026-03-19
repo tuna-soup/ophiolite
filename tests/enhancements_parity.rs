@@ -1,4 +1,4 @@
-use lithos_las::{MnemonicCase, ReadOptions, examples};
+use ophiolite::{MnemonicCase, ReadOptions, examples};
 
 #[test]
 fn preserves_non_standard_header_sections() {

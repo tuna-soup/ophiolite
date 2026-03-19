@@ -1,4 +1,4 @@
-use lithos_las::{
+use ophiolite::{
     CurveItem, CurveSelector, HeaderItem, LasValue, MnemonicCase, SectionItems, examples,
     import_las_file,
 };

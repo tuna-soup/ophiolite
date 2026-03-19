@@ -1,5 +1,5 @@
 use crate::{
-    AssetBindingInput, AssetId, DepthRangeQuery, LithosProject, Result, WellId, WellboreId,
+    AssetBindingInput, AssetId, DepthRangeQuery, OphioliteProject, Result, WellId, WellboreId,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 const WELL_NAME: &str = "SYNTHETIC-1";
 const UWI: &str = "SYN-UWI-001";
 const API: &str = "SYN-API-001";
-const COMPANY: &str = "Lithos Synthetic Energy";
+const COMPANY: &str = "Ophiolite Synthetic Energy";
 const LOG_COLLECTION_NAME: &str = "synthetic-log";
 const TRAJECTORY_COLLECTION_NAME: &str = "synthetic-survey";
 const TOPS_COLLECTION_NAME: &str = "synthetic-tops";
@@ -55,7 +55,7 @@ pub fn generate_synthetic_project_fixture(
     fs::create_dir_all(output_root)?;
 
     let sources = write_source_files(output_root)?;
-    let mut project = LithosProject::create(output_root)?;
+    let mut project = OphioliteProject::create(output_root)?;
 
     let log = project.import_las(&sources.log_las, Some(LOG_COLLECTION_NAME))?;
     let binding = AssetBindingInput {

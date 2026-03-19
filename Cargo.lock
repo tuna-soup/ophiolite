@@ -457,110 +457,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lithos-cli"
-version = "0.1.0"
-dependencies = [
- "lithos-core",
- "lithos-package",
- "lithos-parser",
- "serde_json",
-]
-
-[[package]]
-name = "lithos-compute"
-version = "0.1.0"
-dependencies = [
- "lithos-core",
- "serde",
-]
-
-[[package]]
-name = "lithos-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "lithos-ingest"
-version = "0.1.0"
-dependencies = [
- "lithos-core",
- "lithos-project",
-]
-
-[[package]]
-name = "lithos-package"
-version = "0.1.0"
-dependencies = [
- "arrow-array",
- "arrow-schema",
- "lithos-core",
- "lithos-table",
- "parquet",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
-name = "lithos-parser"
-version = "0.1.0"
-dependencies = [
- "encoding_rs",
- "lithos-core",
- "regex",
- "serde",
-]
-
-[[package]]
-name = "lithos-project"
-version = "0.1.0"
-dependencies = [
- "arrow-array",
- "arrow-schema",
- "csv",
- "lithos-compute",
- "lithos-core",
- "lithos-package",
- "lithos-parser",
- "parquet",
- "rusqlite",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "lithos-table"
-version = "0.1.0"
-dependencies = [
- "lithos-core",
-]
-
-[[package]]
-name = "lithos_las"
-version = "0.1.0"
-dependencies = [
- "arrow-array",
- "arrow-schema",
- "csv",
- "lithos-cli",
- "lithos-compute",
- "lithos-core",
- "lithos-ingest",
- "lithos-package",
- "lithos-parser",
- "lithos-project",
- "lithos-table",
- "parquet",
- "rusqlite",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "log"
 version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -634,6 +530,110 @@ name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
+
+[[package]]
+name = "ophiolite"
+version = "0.1.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "csv",
+ "ophiolite-cli",
+ "ophiolite-compute",
+ "ophiolite-core",
+ "ophiolite-ingest",
+ "ophiolite-package",
+ "ophiolite-parser",
+ "ophiolite-project",
+ "ophiolite-table",
+ "parquet",
+ "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ophiolite-cli"
+version = "0.1.0"
+dependencies = [
+ "ophiolite-core",
+ "ophiolite-package",
+ "ophiolite-parser",
+ "serde_json",
+]
+
+[[package]]
+name = "ophiolite-compute"
+version = "0.1.0"
+dependencies = [
+ "ophiolite-core",
+ "serde",
+]
+
+[[package]]
+name = "ophiolite-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ophiolite-ingest"
+version = "0.1.0"
+dependencies = [
+ "ophiolite-core",
+ "ophiolite-project",
+]
+
+[[package]]
+name = "ophiolite-package"
+version = "0.1.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "ophiolite-core",
+ "ophiolite-table",
+ "parquet",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "ophiolite-parser"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "ophiolite-core",
+ "regex",
+ "serde",
+]
+
+[[package]]
+name = "ophiolite-project"
+version = "0.1.0"
+dependencies = [
+ "arrow-array",
+ "arrow-schema",
+ "csv",
+ "ophiolite-compute",
+ "ophiolite-core",
+ "ophiolite-package",
+ "ophiolite-parser",
+ "parquet",
+ "rusqlite",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "ophiolite-table"
+version = "0.1.0"
+dependencies = [
+ "ophiolite-core",
+]
 
 [[package]]
 name = "ordered-float"

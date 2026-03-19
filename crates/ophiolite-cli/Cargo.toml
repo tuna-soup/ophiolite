@@ -1,0 +1,10 @@
+[package]
+name = "ophiolite-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ophiolite-core = { path = "../ophiolite-core" }
+ophiolite-parser = { path = "../ophiolite-parser" }
+ophiolite-package = { path = "../ophiolite-package" }
+serde_json = { workspace = true }

@@ -6,18 +6,18 @@ Accepted
 
 ## Decision
 
-`lithos` now uses a staged Cargo workspace split:
+`ophiolite` now uses a staged Cargo workspace split:
 
-- `lithos-core`
-- `lithos-parser`
-- `lithos-table`
-- `lithos-package`
-- `lithos-cli`
-- root compatibility facade: `lithos_las`
+- `ophiolite-core`
+- `ophiolite-parser`
+- `ophiolite-table`
+- `ophiolite-package`
+- `ophiolite-cli`
+- root compatibility facade: `ophiolite`
 
 This split is intentionally incomplete in one specific area:
 
-- `lithos-table` exists as its own crate boundary now
+- `ophiolite-table` exists as its own crate boundary now
 - `CurveTable` still originates from the core layer in this phase
 - `LasFile::data()` continues to work because the runtime table type remains colocated with the `LasFile` owner
 
@@ -43,7 +43,7 @@ This compromise should be revisited after:
 2. package edit/save semantics stabilize
 3. package schema/version guarantees stabilize
 
-At that point, `lithos` should choose one of:
+At that point, `ophiolite` should choose one of:
 
 - a redesigned accessor boundary for runtime table access
 - a trait-based/runtime-view approach

@@ -1,31 +1,31 @@
-# lithos
+# ophiolite
 
 Status: Early development. The project/domain model, asset package conventions, and editing workflows are still evolving.
 
-`lithos` is a Rust-first subsurface well-data SDK for desktop applications and local tooling. It began from a strong LAS/log foundation, but now also supports a local-first multi-well project/catalog layer and typed asset families for logs, trajectory, tops, pressure observations, and drilling observations.
+`ophiolite` is a Rust-first subsurface well-data SDK for desktop applications and local tooling. It began from a strong LAS/log foundation, but now also supports a local-first multi-well project/catalog layer and typed asset families for logs, trajectory, tops, pressure observations, and drilling observations.
 
 Public docs site source now lives in:
 
-- `apps/lithos-docs`
+- `apps/ophiolite-docs`
 
 The intended public host is:
 
-- `https://lithos.dev`
+- `https://ophiolite.dev`
 
-Today, Lithos can:
+Today, Ophiolite can:
 
 - parse and model raw LAS log data
 - import typed non-log wellbore datasets from structured files
 - persist optimized local asset packages
-- organize multiple linked assets under one `LithosProject`
+- organize multiple linked assets under one `OphioliteProject`
 - discover and run typed compute/UDF functions against eligible log and structured wellbore data
 - expose app-facing query and editing surfaces for desktop workflows
 
 The project is designed primarily for Rust desktop applications such as Tauri backends and local data tooling, while remaining interoperable with common data ecosystems.
 
-## Why Lithos Exists
+## Why Ophiolite Exists
 
-Lithos started from a real gap in the LAS ecosystem:
+Ophiolite started from a real gap in the LAS ecosystem:
 
 - parsers such as Python `lasio`
 - proprietary vendor implementations
@@ -48,7 +48,7 @@ But the long-term need is broader than LAS alone. Real subsurface applications n
 - drilling observations
 - related provenance, diagnostics, and package/query workflows
 
-Lithos therefore aims to provide:
+Ophiolite therefore aims to provide:
 
 - a robust LAS parser
 - a canonical log-domain model for LAS-derived data
@@ -66,9 +66,9 @@ The design philosophy is domain-first: APIs should reflect well-domain concepts 
 Log/LAS access:
 
 ```rust
-use lithos_las::read_path;
+use ophiolite::read_path;
 
-fn main() -> Result<(), lithos_las::LasError> {
+fn main() -> Result<(), ophiolite::LasError> {
     let las = read_path("examples/sample.las", &Default::default())?;
 
     println!("Well name: {:?}", las.well_info().well);
@@ -92,10 +92,10 @@ The caller does not need to know whether the data originated from a LAS file or 
 Multi-asset project access:
 
 ```rust
-use lithos_las::LithosProject;
+use ophiolite::OphioliteProject;
 
-fn main() -> Result<(), lithos_las::LasError> {
-    let project = LithosProject::open("examples/my-study")?;
+fn main() -> Result<(), ophiolite::LasError> {
+    let project = OphioliteProject::open("examples/my-study")?;
     let wells = project.list_wells()?;
 
     println!("Wells: {}", wells.len());
@@ -105,14 +105,14 @@ fn main() -> Result<(), lithos_las::LasError> {
 
 ## Project Architecture
 
-Lithos separates source-file import, well-domain concepts, runtime/query access, and storage formats into distinct layers.
+Ophiolite separates source-file import, well-domain concepts, runtime/query access, and storage formats into distinct layers.
 
 ```text
                  Applications
        (Tauri UI, CLI tools, pipelines)
 
-                  Lithos SDK API
-   (LithosProject, PackageSession, LasFile, DTOs)
+                  Ophiolite SDK API
+   (OphioliteProject, PackageSession, LasFile, DTOs)
 
              Canonical Domain + Asset Model
    (wells, wellbores, logs, trajectory, tops, pressure,
@@ -125,7 +125,7 @@ Lithos separates source-file import, well-domain concepts, runtime/query access,
     LAS | CSV | metadata.json + parquet asset packages
 ```
 
-This layered architecture allows Lithos to evolve storage and runtime implementations without breaking the domain API.
+This layered architecture allows Ophiolite to evolve storage and runtime implementations without breaking the domain API.
 
 ## Current State
 
@@ -139,16 +139,16 @@ The current implementation still has its deepest maturity in the LAS/log slice, 
 
 Core components:
 
-- workspace crates: `lithos-core`, `lithos-parser`, `lithos-table`, `lithos-package`, `lithos-project`, `lithos-ingest`, `lithos-compute`, `lithos-cli`
-- root compatibility crate: `lithos_las`
+- workspace crates: `ophiolite-core`, `ophiolite-parser`, `ophiolite-table`, `ophiolite-package`, `ophiolite-project`, `ophiolite-ingest`, `ophiolite-compute`, `ophiolite-cli`
+- root compatibility crate: `ophiolite`
 - canonical domain object: `LasFile`
 - explicit editable package session model: `PackageSession`
-- local multi-well project/catalog root: `LithosProject`
+- local multi-well project/catalog root: `OphioliteProject`
 - typed multi-well asset families: log, trajectory, tops, pressure observations, and drilling observations
 - Tauri/backend adapter surface: `PackageBackend`
 - Tauri-ready shared backend state wrapper: `PackageBackendState`
 - app-boundary command service: `PackageCommandService`
-- internal Tauri capability harness: `apps/lithos-harness`
+- internal Tauri capability harness: `apps/ophiolite-harness`
 - the internal Tauri capability harness now prefers depth-range curve queries for the workspace curve inspector and falls back to row windows when no valid depth range is available
 - typed canonical metadata view: `CanonicalMetadata`, `VersionInfo`, `WellInfo`, `IndexInfo`, `CurveInfo`
 - explicit grouped package metadata schema: `package`, `document`, `storage`, `raw`, and `diagnostics`
@@ -170,7 +170,7 @@ source artifacts
   -> LAS / CSV importers
   -> canonical log + typed asset models
   -> single-asset packages
-  -> LithosProject catalog + linked assets
+  -> OphioliteProject catalog + linked assets
   -> type-safe compute / derived assets
   -> app/query/edit workflows
 ```
@@ -178,15 +178,15 @@ source artifacts
 Current workspace wiring:
 
 ```text
-root compatibility crate: lithos_las
-  -> lithos-core
-  -> lithos-parser
-  -> lithos-table
-  -> lithos-package
-  -> lithos-project
-  -> lithos-ingest
-  -> lithos-compute
-  -> lithos-cli
+root compatibility crate: ophiolite
+  -> ophiolite-core
+  -> ophiolite-parser
+  -> ophiolite-table
+  -> ophiolite-package
+  -> ophiolite-project
+  -> ophiolite-ingest
+  -> ophiolite-compute
+  -> ophiolite-cli
 ```
 
 Key behaviors implemented:
@@ -217,7 +217,7 @@ Key behaviors implemented:
 
 ## Asset Packages
 
-Lithos persists asset data into optimized local single-asset packages.
+Ophiolite persists asset data into optimized local single-asset packages.
 
 Example layout:
 
@@ -254,17 +254,17 @@ DEPT      DT      RHOB    NPHI
 
 This keeps metadata and sampled data cleanly separated while remaining easy to inspect from other tools.
 
-For non-log wellbore assets, Lithos uses the same general pattern but with a typed `asset_manifest.json`, `metadata.json`, and `data.parquet` inside a project-managed asset package.
+For non-log wellbore assets, Ophiolite uses the same general pattern but with a typed `asset_manifest.json`, `metadata.json`, and `data.parquet` inside a project-managed asset package.
 
-## LithosProject
+## OphioliteProject
 
-Lithos now also has a local-first project/catalog layer for multi-well organization.
+Ophiolite now also has a local-first project/catalog layer for multi-well organization.
 
 Illustrative shape:
 
 ```text
 my-study/
-  lithos-project.json
+  ophiolite-project.json
   catalog.sqlite
   assets/
     logs/
@@ -279,7 +279,7 @@ The current rule is:
 - the catalog is for discovery and relationships
 - the package is the authoritative storage unit for the asset itself
 
-`LithosProject` currently provides:
+`OphioliteProject` currently provides:
 
 - project creation/open
 - well and wellbore discovery
@@ -307,11 +307,11 @@ Those structured saves are revisioned too:
 - the hidden revision store is canonical; the visible asset/package path is a materialized current-head view
 - each revision records a typed machine diff plus a readable change summary such as row adds/removes/updates and extent changes
 
-For test and app-validation workflows, Lithos can also generate a coherent synthetic project fixture:
+For test and app-validation workflows, Ophiolite can also generate a coherent synthetic project fixture:
 
 ```text
 synthetic_well_project/
-  lithos-project.json
+  ophiolite-project.json
   catalog.sqlite
   sources/
     logs/synthetic_well.las
@@ -323,11 +323,11 @@ synthetic_well_project/
     ...
 ```
 
-The raw files are generated first and then imported through the normal `LithosProject` APIs, so the fixture validates the real import pipeline rather than bypassing it.
+The raw files are generated first and then imported through the normal `OphioliteProject` APIs, so the fixture validates the real import pipeline rather than bypassing it.
 
 ## Typed Compute
 
-Lithos now has a typed compute layer in `lithos-compute`.
+Ophiolite now has a typed compute layer in `ophiolite-compute`.
 
 Current compute properties:
 
@@ -335,7 +335,7 @@ Current compute properties:
 - eligibility is driven by semantic curve types such as `GammaRay`, `BulkDensity`, `Sonic`, and `PVelocity`
 - functions only appear as available when the selected log asset actually contains compatible inputs
 - curve semantics are persisted on log asset manifests, and manual overrides can be stored when classification is uncertain
-- compute runs create derived sibling assets under the same `LithosProject`
+- compute runs create derived sibling assets under the same `OphioliteProject`
 - derived assets record both `derived_from` lineage and a `compute_manifest` describing the execution
 - log assets support semantic curve binding plus editable parameter/mnemonic controls
 - trajectory, tops, pressure, and drilling assets support family-specific same-shape transforms that persist as derived sibling assets
@@ -370,7 +370,7 @@ Capabilities include:
 Internally this abstraction may evolve toward a more Arrow-backed runtime, but the public API remains storage-agnostic.
 Direct `open_package(...)` and public `PackageSession` access remain eager/materialized in the current phase. The new lazy path is currently backend-session-only.
 
-For non-log assets, Lithos currently exposes typed project-level read/query APIs rather than one generic table abstraction.
+For non-log assets, Ophiolite currently exposes typed project-level read/query APIs rather than one generic table abstraction.
 
 ## Package Sessions and DTOs
 
@@ -419,7 +419,7 @@ Current session semantics:
 - the first accepted curve/sample edit and any later save/save-as path that needs the canonical snapshot materializes the eager in-memory `PackageSession`
 - first curve/sample materialization is constructed directly from the current lazy session metadata and cached parquet descriptors rather than reopening the package through the eager SDK path
 - package saves do not patch Parquet in place; they rewrite the affected payload and record a new immutable local revision snapshot
-- local package revision history lives in a hidden `.lithos/revisions/` store under the package root while the visible package path remains the stable current head
+- local package revision history lives in a hidden `.ophiolite/revisions/` store under the package root while the visible package path remains the stable current head
 - package revision records include parent linkage, blob refs, a typed machine diff, and a readable change summary for metadata changes, curve additions/removals, and curve value edits
 - revision tokens identify the current saved head; they still do not block saves or act as merge/conflict tokens
 
@@ -444,13 +444,13 @@ The DTO contract is versioned with a lightweight `dto_contract_version` field. S
 
 ## Internal Tauri Harness
 
-`apps/lithos-harness` is now a first-party internal Tauri + React desktop shell over the current SDK contract.
+`apps/ophiolite-harness` is now a first-party internal Tauri + React desktop shell over the current SDK contract.
 
 It is now project-first rather than package-first:
 
 - `Home`
-  - create `LithosProject`
-  - open existing `LithosProject`
+  - create `OphioliteProject`
+  - open existing `OphioliteProject`
   - recent projects
 - `Workspace`
   - browse wells
@@ -469,19 +469,19 @@ The harness keeps the SDK concepts explicit:
 Current harness behavior:
 
 - creating or opening a project lands in a project browser rather than a single-package editor
-- wells, wellbores, collections, and assets are browsed directly from `LithosProject`
+- wells, wellbores, collections, and assets are browsed directly from `OphioliteProject`
 - selecting a log asset opens the existing package/session-backed log inspection path
 - selecting a non-log asset loads typed trajectory, tops, pressure, or drilling rows through the project query APIs
 - selected non-log assets can also be opened into structured edit sessions for typed row/field changes and explicit save
 - LAS and structured CSV asset imports happen from the project workspace
 - save/save-as remain available for selected log sessions from both the visible toolbar and the native File menu
 
-This means Lithos now has a real multi-asset desktop validation surface in-repo. The next gaps are mostly workflow hardening, richer cross-asset viewers, stronger import/reconciliation governance, and broader acceptance coverage.
+This means Ophiolite now has a real multi-asset desktop validation surface in-repo. The next gaps are mostly workflow hardening, richer cross-asset viewers, stronger import/reconciliation governance, and broader acceptance coverage.
 
 Harness verification commands:
 
 ```powershell
-cd apps/lithos-harness
+cd apps/ophiolite-harness
 bun install
 bun run test
 bun run build
@@ -497,7 +497,7 @@ Post-write validation is bounded: save/save-as verifies enough to confirm the wr
 
 ## Interoperability
 
-Because Lithos stores bulk asset payloads in Parquet-backed packages, project-managed assets can interoperate with common data tools.
+Because Ophiolite stores bulk asset payloads in Parquet-backed packages, project-managed assets can interoperate with common data tools.
 
 Example workflows:
 
@@ -523,7 +523,7 @@ import polars as pl
 df = pl.read_parquet("curves.parquet")
 ```
 
-This lets Lithos asset packages fit naturally into analytics pipelines and ML workflows while keeping well-domain semantics intact in the SDK layer.
+This lets Ophiolite asset packages fit naturally into analytics pipelines and ML workflows while keeping well-domain semantics intact in the SDK layer.
 
 ## CLI
 
@@ -555,13 +555,13 @@ Architecture and design decisions are documented in:
 - `docs/architecture/ADR-0010-typed-compute-and-derived-assets.md`
 - `docs/architecture/ADR-0011-structured-asset-edit-sessions.md`
 - `docs/architecture/ADR-0012-revisioned-last-save-wins.md`
-- `lithos_roadmap.md`
+- `ophiolite_roadmap.md`
 - `docs/lasio_non_v3_parity.md`
 - `lasio-basic-example.md`
 
 ## Design Philosophy
 
-Lithos follows several core principles:
+Ophiolite follows several core principles:
 
 - domain-first APIs rather than storage-format APIs
 - storage formats are implementation details
@@ -574,14 +574,14 @@ Lithos follows several core principles:
 | Tool | Language | Scope |
 | --- | --- | --- |
 | `lasio` | Python | LAS parser and utilities |
-| `lithos` | Rust | Local-first subsurface well-data SDK with logs, typed wellbore assets, packaging, and project catalog |
+| `ophiolite` | Rust | Local-first subsurface well-data SDK with logs, typed wellbore assets, packaging, and project catalog |
 | Vendor software | Various | Integrated interpretation platforms |
 
-Lithos focuses on developer-facing infrastructure rather than end-user interpretation tools.
+Ophiolite focuses on developer-facing infrastructure rather than end-user interpretation tools.
 
 ## Non-Goals
 
-Lithos currently does not aim to be:
+Ophiolite currently does not aim to be:
 
 - a full geoscience interpretation platform
 - a GUI visualization system
@@ -591,7 +591,7 @@ Lithos currently does not aim to be:
 - duplicate or forked live-session semantics
 - a crate with a hard `tauri` dependency at this stage
 
-Instead, Lithos focuses on:
+Instead, Ophiolite focuses on:
 
 - robust source-file import
 - canonical and typed well-domain modeling
@@ -620,8 +620,8 @@ Implemented foundations include:
 - direct first curve-edit materialization from lazy backend session state
 - internal first-party Tauri capability harness for exercising SDK flows end to end
 - `metadata.json + curves.parquet` package format
-- `LithosProject` catalog and typed single-asset packages for logs, trajectory, tops, pressure observations, and drilling observations
-- `lithos-compute` typed function registry and derived sibling assets
+- `OphioliteProject` catalog and typed single-asset packages for logs, trajectory, tops, pressure observations, and drilling observations
+- `ophiolite-compute` typed function registry and derived sibling assets
 - synthetic multi-asset project-fixture generation for testing and app validation
 - non-v3 `lasio` parity coverage
 - project-scoped structured asset edit sessions for trajectory, tops, pressure, and drilling data
@@ -642,11 +642,11 @@ Later directions include:
 - broader ingest and asset-family expansion
 - broader subsurface asset families and richer cross-asset application workflows
 
-For the full status-based roadmap, see [lithos_roadmap.md](/C:/Users/crooijmanss/dev/lithos/lithos_roadmap.md).
+For the full status-based roadmap, see [ophiolite_roadmap.md](/C:/Users/crooijmanss/dev/ophiolite/ophiolite_roadmap.md).
 
 ## Contributing
 
-Lithos is in early development and contributions are welcome.
+Ophiolite is in early development and contributions are welcome.
 
 Areas likely to benefit from contributions:
 
@@ -658,14 +658,14 @@ Areas likely to benefit from contributions:
 - documentation improvements
 - future LAS 3 support
 
-Before contributing large changes, open an issue first to discuss direction. Lithos uses architecture decision records to document major design decisions.
+Before contributing large changes, open an issue first to discuss direction. Ophiolite uses architecture decision records to document major design decisions.
 
 ## Repository Layout
 
 ```text
 src/                    root compatibility crate and thin CLI entrypoint
 crates/                 workspace crates for core, parser, table, package, and CLI
-apps/lithos-harness/    internal Tauri + React capability harness
+apps/ophiolite-harness/    internal Tauri + React capability harness
 docs/                   architecture notes and ADRs
 examples/               LAS example corpus
 tests/                  parity and package/editing integration tests

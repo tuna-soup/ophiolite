@@ -1,4 +1,4 @@
-use lithos_las::{DepthRangeQuery, LithosProject, generate_synthetic_project_fixture};
+use ophiolite::{DepthRangeQuery, OphioliteProject, generate_synthetic_project_fixture};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,7 +11,7 @@ fn generates_coherent_synthetic_project_fixture_in_temp_directory() {
     let root = temp_fixture_root("synthetic_project_fixture");
     let fixture = generate_synthetic_project_fixture(&root).unwrap();
 
-    assert!(fixture.project_root.join("lithos-project.json").exists());
+    assert!(fixture.project_root.join("ophiolite-project.json").exists());
     assert!(fixture.project_root.join("catalog.sqlite").exists());
     assert!(fixture.sources.log_las.exists());
     assert!(fixture.sources.trajectory_csv.exists());
@@ -19,7 +19,7 @@ fn generates_coherent_synthetic_project_fixture_in_temp_directory() {
     assert!(fixture.sources.pressure_csv.exists());
     assert!(fixture.sources.drilling_csv.exists());
 
-    let project = LithosProject::open(&fixture.project_root).unwrap();
+    let project = OphioliteProject::open(&fixture.project_root).unwrap();
     let wells = project.list_wells().unwrap();
     assert_eq!(wells.len(), 1);
     let wellbores = project.list_wellbores(&wells[0].id).unwrap();
@@ -81,7 +81,7 @@ fn generates_synthetic_project_fixture_under_test_data() {
         .join("synthetic_well_project");
 
     let fixture = generate_synthetic_project_fixture(&output_root).unwrap();
-    let project = LithosProject::open(&fixture.project_root).unwrap();
+    let project = OphioliteProject::open(&fixture.project_root).unwrap();
 
     assert!(fixture.project_root.join("assets").exists());
     assert!(fixture.project_root.join("sources").exists());
@@ -101,7 +101,7 @@ fn temp_fixture_root(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_nanos())
         .unwrap_or(0);
-    let root = std::env::temp_dir().join(format!("lithos_{label}_{nanos}_{unique}"));
+    let root = std::env::temp_dir().join(format!("ophiolite_{label}_{nanos}_{unique}"));
     if root.exists() {
         fs::remove_dir_all(&root).unwrap();
     }

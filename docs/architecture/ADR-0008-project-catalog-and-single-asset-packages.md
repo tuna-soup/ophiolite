@@ -6,7 +6,7 @@ Accepted
 
 ## Decision
 
-`lithos` keeps single-asset packages as the authoritative storage unit and adds a local-first `LithosProject` layer above them for multi-well organization.
+`ophiolite` keeps single-asset packages as the authoritative storage unit and adds a local-first `OphioliteProject` layer above them for multi-well organization.
 
 The project layer owns:
 
@@ -52,8 +52,8 @@ Current ingest/query status:
 
 ## Consequences
 
-- `LithosProject` becomes the multi-well entry point without turning `.laspkg` into a multi-well container
-- the monorepo now carries an explicit `lithos-project` crate for this layer and a separate `lithos-ingest` crate boundary for import-oriented orchestration
+- `OphioliteProject` becomes the multi-well entry point without turning `.laspkg` into a multi-well container
+- the monorepo now carries an explicit `ophiolite-project` crate for this layer and a separate `ophiolite-ingest` crate boundary for import-oriented orchestration
 - project-managed assets use a shared `AssetManifest` contract
 - asset collections group related or versioned assets under one wellbore
 - compute outputs fit the same pattern by persisting as derived sibling assets rather than mutating the source asset in place

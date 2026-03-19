@@ -1,5 +1,5 @@
 use crate::{
-    AssetId, AssetKind, AssetRecord, DrillingObservationRow, LasError, LithosProject,
+    AssetId, AssetKind, AssetRecord, DrillingObservationRow, LasError, OphioliteProject,
     PressureObservationRow, Result, TopRow, TrajectoryRow,
 };
 use serde::{Deserialize, Serialize};
@@ -195,7 +195,7 @@ impl StructuredAssetEditSessionStore {
         &mut self,
         request: &OpenStructuredAssetEditSessionRequest,
     ) -> Result<StructuredAssetEditSessionSummary> {
-        let project = LithosProject::open(&request.project_root)?;
+        let project = OphioliteProject::open(&request.project_root)?;
         let asset = project.asset_record(&request.asset_id)?;
         let rows = match asset.asset_kind {
             AssetKind::Trajectory => {
@@ -363,7 +363,7 @@ impl StructuredAssetEditSessionStore {
         let snapshot = self.session(request)?.clone();
         validate_rows(&snapshot.rows)?;
 
-        let mut project = LithosProject::open(&snapshot.project_root)?;
+        let mut project = OphioliteProject::open(&snapshot.project_root)?;
         let asset = match &snapshot.rows {
             StructuredRows::Trajectory(rows) => {
                 project.overwrite_trajectory_asset(&snapshot.asset_id, rows)?
@@ -693,7 +693,7 @@ mod tests {
     #[test]
     fn structured_edit_store_updates_and_saves_tops() {
         let root = temp_project_root("structured_edit_store_updates_and_saves_tops");
-        let mut project = LithosProject::create(&root).unwrap();
+        let mut project = OphioliteProject::create(&root).unwrap();
         let csv_path = write_csv(
             &root,
             "tops.csv",
@@ -740,7 +740,7 @@ mod tests {
             .unwrap();
 
         assert!(!saved.session.dirty);
-        let reopened = LithosProject::open(&root).unwrap();
+        let reopened = OphioliteProject::open(&root).unwrap();
         let rows = reopened.read_tops(&imported.asset.id).unwrap();
         assert_eq!(rows[0].name, "Top B");
         assert_eq!(rows[0].top_depth, 110.0);
@@ -749,7 +749,7 @@ mod tests {
     #[test]
     fn structured_edit_store_rejects_invalid_trajectory_save() {
         let root = temp_project_root("structured_edit_store_rejects_invalid_trajectory_save");
-        let mut project = LithosProject::create(&root).unwrap();
+        let mut project = OphioliteProject::create(&root).unwrap();
         let csv_path = write_csv(
             &root,
             "trajectory.csv",
@@ -800,7 +800,7 @@ mod tests {
                 .contains("trajectory rows must be monotonic")
         );
 
-        let reopened = LithosProject::open(&root).unwrap();
+        let reopened = OphioliteProject::open(&root).unwrap();
         let rows = reopened
             .read_trajectory_rows(&imported.asset.id, None)
             .unwrap();
@@ -812,7 +812,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("lithos_{label}_{unique}"));
+        let root = std::env::temp_dir().join(format!("ophiolite_{label}_{unique}"));
         if root.exists() {
             fs::remove_dir_all(&root).unwrap();
         }

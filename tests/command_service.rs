@@ -1,4 +1,4 @@
-use lithos_las::{
+use ophiolite::{
     CommandErrorKind, CommandResponse, CurveEditRequest, CurveUpdateRequest, HeaderItemUpdate,
     LasValue, MetadataSectionDto, MetadataUpdateRequest, PackageCommandService, PackagePathRequest,
     SessionCurveEditRequest, SessionDepthWindowRequest, SessionMetadataEditRequest, SessionRequest,
@@ -253,7 +253,7 @@ fn command_service_keeps_metadata_only_save_flows_lazy() {
 
     let err = unwrap_err(service.read_curve_window(&SessionWindowRequest {
         session_id: session.session_id.clone(),
-        window: lithos_las::CurveWindowRequest {
+        window: ophiolite::CurveWindowRequest {
             curve_names: vec![String::from("DT")],
             start_row: 0,
             row_count: 1,
@@ -295,7 +295,7 @@ fn command_service_supports_depth_window_queries() {
     }));
     let row_window = unwrap_ok(service.read_curve_window(&SessionWindowRequest {
         session_id: session.session_id.clone(),
-        window: lithos_las::CurveWindowRequest {
+        window: ophiolite::CurveWindowRequest {
             curve_names: vec![String::from("DEPT"), String::from("DT")],
             start_row: 0,
             row_count: 3,
@@ -309,7 +309,7 @@ fn command_service_supports_depth_window_queries() {
 
     let depth_window = unwrap_ok(service.read_depth_window(&SessionDepthWindowRequest {
         session_id: session.session_id.clone(),
-        window: lithos_las::DepthWindowRequest {
+        window: ophiolite::DepthWindowRequest {
             curve_names: vec![String::from("DEPT"), String::from("DT")],
             depth_min: depth_values[0].min(depth_values[1]),
             depth_max: depth_values[0].max(depth_values[1]),
@@ -345,7 +345,7 @@ fn unwrap_ok<T>(response: CommandResponse<T>) -> T {
     }
 }
 
-fn unwrap_err<T>(response: CommandResponse<T>) -> lithos_las::CommandErrorDto {
+fn unwrap_err<T>(response: CommandResponse<T>) -> ophiolite::CommandErrorDto {
     match response {
         CommandResponse::Ok(_) => panic!("expected error response"),
         CommandResponse::Err(error) => error,
@@ -357,7 +357,7 @@ fn temp_package_dir(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("lithos-{prefix}-{unique}"));
+    let path = std::env::temp_dir().join(format!("ophiolite-{prefix}-{unique}"));
     if path.exists() {
         fs::remove_dir_all(&path).unwrap();
     }

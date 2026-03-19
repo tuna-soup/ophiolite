@@ -1,5 +1,5 @@
-use lithos_cli::generate_fixture_packages;
-use lithos_las::open_package_summary;
+use ophiolite::open_package_summary;
+use ophiolite_cli::generate_fixture_packages;
 
 #[test]
 #[ignore = "generates inspectable packages under test_data/logs/packages"]

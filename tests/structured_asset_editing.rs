@@ -1,5 +1,5 @@
-use lithos_las::{
-    AssetBindingInput, LithosProject, OpenStructuredAssetEditSessionRequest,
+use ophiolite::{
+    AssetBindingInput, OpenStructuredAssetEditSessionRequest, OphioliteProject,
     StructuredAssetEditSessionStore, StructuredAssetSessionRequest, TopRowPatch, TopSetEditRequest,
     TrajectoryEditRequest, TrajectoryRowPatch,
 };
@@ -13,7 +13,7 @@ static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
 #[test]
 fn structured_edit_session_updates_and_saves_tops() {
     let root = temp_project_root("structured_edit_session_updates_and_saves_tops");
-    let mut project = LithosProject::create(&root).unwrap();
+    let mut project = OphioliteProject::create(&root).unwrap();
     let csv_path = write_csv(
         &root,
         "tops.csv",
@@ -48,7 +48,7 @@ fn structured_edit_session_updates_and_saves_tops() {
                 patch: TopRowPatch {
                     name: Some("Top B".to_string()),
                     top_depth: Some(110.0),
-                    base_depth: Some(lithos_las::OptionalFieldPatch {
+                    base_depth: Some(ophiolite::OptionalFieldPatch {
                         set: Some(111.0),
                         clear: false,
                     }),
@@ -65,7 +65,7 @@ fn structured_edit_session_updates_and_saves_tops() {
         .unwrap();
 
     assert!(!saved.session.dirty);
-    let reopened = LithosProject::open(&root).unwrap();
+    let reopened = OphioliteProject::open(&root).unwrap();
     let rows = reopened.read_tops(&imported.asset.id).unwrap();
     assert_eq!(rows[0].name, "Top B");
     assert_eq!(rows[0].top_depth, 110.0);
@@ -74,7 +74,7 @@ fn structured_edit_session_updates_and_saves_tops() {
 #[test]
 fn structured_edit_session_rejects_invalid_trajectory_save_without_touching_disk() {
     let root = temp_project_root("structured_edit_session_rejects_invalid_trajectory_save");
-    let mut project = LithosProject::create(&root).unwrap();
+    let mut project = OphioliteProject::create(&root).unwrap();
     let csv_path = write_csv(
         &root,
         "trajectory.csv",
@@ -132,7 +132,7 @@ fn structured_edit_session_rejects_invalid_trajectory_save_without_touching_disk
         .unwrap();
     assert!(session.dirty);
 
-    let reopened = LithosProject::open(&root).unwrap();
+    let reopened = OphioliteProject::open(&root).unwrap();
     let rows = reopened
         .read_trajectory_rows(&imported.asset.id, None)
         .unwrap();
@@ -145,7 +145,7 @@ fn temp_project_root(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_nanos())
         .unwrap_or(0);
-    let root = std::env::temp_dir().join(format!("lithos_{label}_{nanos}_{unique}"));
+    let root = std::env::temp_dir().join(format!("ophiolite_{label}_{nanos}_{unique}"));
     if root.exists() {
         fs::remove_dir_all(&root).unwrap();
     }

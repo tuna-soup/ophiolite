@@ -6,9 +6,9 @@ Accepted
 
 ## Decision
 
-`lithos` uses an explicit backend-owned package session model for package-backed inspection and editing.
+`ophiolite` uses an explicit backend-owned package session model for package-backed inspection and editing.
 
-This ADR is intentionally scoped to package-backed asset editing, which remains the deepest model for log assets. The broader `LithosProject` catalog and typed non-log asset families sit above this layer; those structured families now use separate project-scoped typed edit sessions rather than `PackageSession`.
+This ADR is intentionally scoped to package-backed asset editing, which remains the deepest model for log assets. The broader `OphioliteProject` catalog and typed non-log asset families sit above this layer; those structured families now use separate project-scoped typed edit sessions rather than `PackageSession`.
 
 The current session type is `PackageSession`.
 
@@ -115,7 +115,7 @@ Session invariants for the current model:
 - `save_as` preserves session identity and rebinds the currently bound package root on success
 - clean `save` on an unchanged lazy session is a no-op success path that preserves lazy state
 - metadata-only dirty lazy sessions may rewrite `metadata.json` and save/save-as without materializing sample data
-- successful package saves create a new immutable local revision in a hidden `.lithos/revisions/` store while the visible package path remains a materialized stable current head
+- successful package saves create a new immutable local revision in a hidden `.ophiolite/revisions/` store while the visible package path remains a materialized stable current head
 - package revision records include parent linkage, blob refs, typed machine diffs, and readable change summaries for metadata and curve changes
 - once a backend session materializes, it does not transition back to lazy in the current phase
 - failed `save` and `save_as` leave the session open with unchanged identity, dirty-state, bound root, and in-memory document snapshot
@@ -128,7 +128,7 @@ Backend-session parquet metadata caches are session-local in the current phase. 
 
 ## Validation Boundaries
 
-`lithos` now recognizes three separate validation concerns:
+`ophiolite` now recognizes three separate validation concerns:
 
 1. package validity
 2. edit validity

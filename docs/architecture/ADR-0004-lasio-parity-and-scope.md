@@ -6,7 +6,7 @@ Accepted
 
 ## Decision
 
-`lithos` targets semantic parity with `lasio` for non-v3 LAS read/model behavior.
+`ophiolite` targets semantic parity with `lasio` for non-v3 LAS read/model behavior.
 
 In scope:
 

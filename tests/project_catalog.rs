@@ -1,6 +1,6 @@
-use lithos_las::{
+use ophiolite::{
     AssetBindingInput, AssetKind, AssetStatus, ComputeAvailability, ComputeParameterValue,
-    CurveSemanticType, DepthRangeQuery, LithosProject, ProjectComputeRunRequest, examples,
+    CurveSemanticType, DepthRangeQuery, OphioliteProject, ProjectComputeRunRequest, examples,
     import_las_asset,
 };
 use std::collections::BTreeMap;
@@ -14,7 +14,7 @@ static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
 #[test]
 fn project_import_creates_catalog_entities_and_asset_manifest() {
     let root = temp_project_root("project_import_creates_catalog_entities_and_asset_manifest");
-    let mut project = LithosProject::create(&root).unwrap();
+    let mut project = OphioliteProject::create(&root).unwrap();
 
     let result =
         import_las_asset(&mut project, examples::path("6038187_v1.2_short.las"), None).unwrap();
@@ -52,14 +52,14 @@ fn project_import_creates_catalog_entities_and_asset_manifest() {
         collections[0].logical_asset_id
     );
 
-    let reopened = LithosProject::open(&root).unwrap();
+    let reopened = OphioliteProject::open(&root).unwrap();
     assert!(reopened.catalog_path().exists());
 }
 
 #[test]
 fn project_exposes_summary_api_for_apps() {
     let root = temp_project_root("project_exposes_summary_api_for_apps");
-    let mut project = LithosProject::create(&root).unwrap();
+    let mut project = OphioliteProject::create(&root).unwrap();
 
     project
         .import_las(examples::path("6038187_v1.2_short.las"), Some("logs"))
@@ -101,7 +101,7 @@ fn project_exposes_summary_api_for_apps() {
 fn project_reimport_supersedes_storage_instance_but_keeps_logical_asset() {
     let root =
         temp_project_root("project_reimport_supersedes_storage_instance_but_keeps_logical_asset");
-    let mut project = LithosProject::create(&root).unwrap();
+    let mut project = OphioliteProject::create(&root).unwrap();
 
     let first = project
         .import_las(examples::path("6038187_v1.2_short.las"), Some("short-run"))
@@ -142,7 +142,7 @@ fn project_reimport_supersedes_storage_instance_but_keeps_logical_asset() {
 #[test]
 fn project_reuses_well_and_wellbore_for_related_log_assets() {
     let root = temp_project_root("project_reuses_well_and_wellbore_for_related_log_assets");
-    let mut project = LithosProject::create(&root).unwrap();
+    let mut project = OphioliteProject::create(&root).unwrap();
 
     project
         .import_las(examples::path("6038187_v1.2.las"), Some("full-run"))
@@ -162,7 +162,7 @@ fn project_reuses_well_and_wellbore_for_related_log_assets() {
 #[test]
 fn project_supports_non_log_asset_imports_and_cross_asset_queries() {
     let root = temp_project_root("project_supports_non_log_asset_imports_and_cross_asset_queries");
-    let mut project = LithosProject::create(&root).unwrap();
+    let mut project = OphioliteProject::create(&root).unwrap();
 
     let log = project
         .import_las(examples::path("6038187_v1.2_short.las"), Some("logs"))
@@ -300,7 +300,7 @@ fn project_supports_non_log_asset_imports_and_cross_asset_queries() {
 #[test]
 fn structured_asset_edits_create_revision_history() {
     let root = temp_project_root("structured_asset_edits_create_revision_history");
-    let mut project = LithosProject::create(&root).unwrap();
+    let mut project = OphioliteProject::create(&root).unwrap();
     let csv_path = write_csv(
         &root,
         "tops.csv",
@@ -320,7 +320,7 @@ fn structured_asset_edits_create_revision_history() {
     let initial_revisions = project.asset_revisions(&imported.asset.id).unwrap();
     assert_eq!(initial_revisions.len(), 1);
 
-    let updated_rows = vec![lithos_las::TopRow {
+    let updated_rows = vec![ophiolite::TopRow {
         name: "Top B".to_string(),
         top_depth: 110.0,
         base_depth: Some(111.0),
@@ -339,12 +339,12 @@ fn structured_asset_edits_create_revision_history() {
 #[test]
 fn project_can_sync_log_asset_head_after_package_edits() {
     let root = temp_project_root("project_can_sync_log_asset_head_after_package_edits");
-    let mut project = LithosProject::create(&root).unwrap();
+    let mut project = OphioliteProject::create(&root).unwrap();
     let imported = project
         .import_las(examples::path("6038187_v1.2_short.las"), Some("logs"))
         .unwrap();
 
-    let mut session = lithos_las::open_package(&imported.asset.package_path).unwrap();
+    let mut session = ophiolite::open_package(&imported.asset.package_path).unwrap();
     let curve_name = session
         .file()
         .curve_names()
@@ -353,10 +353,10 @@ fn project_can_sync_log_asset_head_after_package_edits() {
         .unwrap();
     let original = session.file().curve(&curve_name).unwrap().clone();
     let mut data = original.data.clone();
-    data[0] = lithos_las::LasValue::Number(999.0);
+    data[0] = ophiolite::LasValue::Number(999.0);
     session
-        .apply_curve_edit(&lithos_las::CurveEditRequest::Upsert(
-            lithos_las::CurveUpdateRequest {
+        .apply_curve_edit(&ophiolite::CurveEditRequest::Upsert(
+            ophiolite::CurveUpdateRequest {
                 mnemonic: curve_name,
                 original_mnemonic: Some(original.original_mnemonic.clone()),
                 unit: original.unit.clone(),
@@ -379,7 +379,7 @@ fn project_can_sync_log_asset_head_after_package_edits() {
 #[test]
 fn project_lists_type_safe_compute_catalog_for_log_assets() {
     let root = temp_project_root("project_lists_type_safe_compute_catalog_for_log_assets");
-    let mut project = LithosProject::create(&root).unwrap();
+    let mut project = OphioliteProject::create(&root).unwrap();
 
     let log = project
         .import_las(examples::path("6038187_v1.2_short.las"), Some("logs"))
@@ -417,7 +417,7 @@ fn project_lists_type_safe_compute_catalog_for_log_assets() {
 #[test]
 fn project_runs_compute_and_persists_derived_log_assets() {
     let root = temp_project_root("project_runs_compute_and_persists_derived_log_assets");
-    let mut project = LithosProject::create(&root).unwrap();
+    let mut project = OphioliteProject::create(&root).unwrap();
 
     let log = project
         .import_las(examples::path("6038187_v1.2_short.las"), Some("logs"))
@@ -504,7 +504,7 @@ fn project_runs_compute_and_persists_derived_log_assets() {
 #[test]
 fn project_runs_structured_compute_and_persists_derived_assets() {
     let root = temp_project_root("project_runs_structured_compute_and_persists_derived_assets");
-    let mut project = LithosProject::create(&root).unwrap();
+    let mut project = OphioliteProject::create(&root).unwrap();
 
     let trajectory_csv = write_csv(
         &root,
@@ -516,7 +516,7 @@ fn project_runs_structured_compute_and_persists_derived_assets() {
         wellbore_name: "Well Alpha".to_string(),
         uwi: Some("UWI-001".to_string()),
         api: None,
-        operator_aliases: vec!["Lithos".to_string()],
+        operator_aliases: vec!["Ophiolite".to_string()],
     };
 
     let trajectory = project
@@ -577,7 +577,7 @@ fn temp_project_root(label: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .map(|value| value.as_nanos())
         .unwrap_or(0);
-    let root = std::env::temp_dir().join(format!("lithos_{label}_{nanos}_{unique}"));
+    let root = std::env::temp_dir().join(format!("ophiolite_{label}_{nanos}_{unique}"));
     if root.exists() {
         fs::remove_dir_all(&root).unwrap();
     }

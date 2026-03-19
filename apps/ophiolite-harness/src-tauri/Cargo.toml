@@ -1,0 +1,24 @@
+[package]
+name = "ophiolite-harness"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.tauri-winres]
+ProductName = "Ophiolite Harness"
+FileDescription = "Internal Ophiolite Tauri capability harness"
+
+[workspace]
+
+[lib]
+name = "ophiolite_harness_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.3", features = [] }
+
+[dependencies]
+ophiolite = { path = "../../.." }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri = { version = "2.9.5", features = [] }
+tauri-plugin-dialog = "2"

@@ -1,4 +1,4 @@
-use lithos_las::{DType, DTypeSpec, LasValue, NullPolicy, ReadOptions, examples, import_las_file};
+use ophiolite::{DType, DTypeSpec, LasValue, NullPolicy, ReadOptions, examples, import_las_file};
 
 #[test]
 fn reads_sample_file_and_curve_keys() {
@@ -75,7 +75,7 @@ fn supports_text_columns_when_dtype_forced() {
                 DType::Integer,
                 DType::Float,
             ]),
-            read_policy: lithos_las::ReadPolicy::None,
+            read_policy: ophiolite::ReadPolicy::None,
             ..ReadOptions::default()
         },
     )

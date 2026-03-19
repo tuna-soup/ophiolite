@@ -12,14 +12,14 @@ use crate::{
     TrajectoryRow, WellInfo, package_metadata_for, read_path, revision_token_for_bytes,
     write_package_overwrite,
 };
-use lithos_compute::{
+use ophiolite_compute::{
     ComputeCatalog, ComputeExecutionManifest, ComputeParameterValue, ComputeRegistry,
     CurveSemanticDescriptor, CurveSemanticSource, CurveSemanticType, DrillingObservationDataRow,
     LogCurveData, PressureObservationDataRow, TopDataRow, TrajectoryDataRow,
     classify_curve_semantic,
 };
-use lithos_core::{CurveItem, LasValue, SectionItems, derive_canonical_alias};
-use lithos_package::open_package;
+use ophiolite_core::{CurveItem, LasValue, SectionItems, derive_canonical_alias};
+use ophiolite_package::open_package;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -31,17 +31,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const PROJECT_SCHEMA_VERSION: &str = "0.1.0";
-const PROJECT_MANIFEST_FILENAME: &str = "lithos-project.json";
+const PROJECT_MANIFEST_FILENAME: &str = "ophiolite-project.json";
 const PROJECT_CATALOG_FILENAME: &str = "catalog.sqlite";
 const ASSET_MANIFEST_FILENAME: &str = "asset_manifest.json";
-const PROJECT_REVISION_STORE_DIRNAME: &str = ".lithos";
+const PROJECT_REVISION_STORE_DIRNAME: &str = ".ophiolite";
 const PROJECT_ASSET_REVISION_STORE_DIRNAME: &str = "asset-revisions";
 const PROJECT_STAGING_DIRNAME: &str = "staging";
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct LithosProjectManifest {
+pub struct OphioliteProjectManifest {
     pub schema_version: String,
     pub created_at_unix_seconds: u64,
 }
@@ -414,17 +414,17 @@ pub struct ProjectComputeRunResult {
     pub execution: ComputeExecutionManifest,
 }
 
-pub struct LithosProject {
+pub struct OphioliteProject {
     root: PathBuf,
     catalog_path: PathBuf,
     connection: Connection,
 }
 
-impl LithosProject {
+impl OphioliteProject {
     pub fn create(path: impl AsRef<Path>) -> Result<Self> {
         let root = path.as_ref().to_path_buf();
         fs::create_dir_all(root.join("assets"))?;
-        let manifest = LithosProjectManifest {
+        let manifest = OphioliteProjectManifest {
             schema_version: PROJECT_SCHEMA_VERSION.to_string(),
             created_at_unix_seconds: now_unix_seconds(),
         };
@@ -453,7 +453,8 @@ impl LithosProject {
                 manifest_path.display()
             )));
         }
-        let _: LithosProjectManifest = serde_json::from_str(&fs::read_to_string(manifest_path)?)?;
+        let _: OphioliteProjectManifest =
+            serde_json::from_str(&fs::read_to_string(manifest_path)?)?;
         let catalog_path = root.join(PROJECT_CATALOG_FILENAME);
         let connection = Connection::open(&catalog_path).map_err(|error| {
             LasError::Storage(format!("failed to open project catalog: {error}"))
@@ -1381,7 +1382,7 @@ impl LithosProject {
             .join(asset_kind.asset_dir_name())
             .join(match asset_kind {
                 AssetKind::Log => format!("{}.laspkg", storage_asset_id.0),
-                _ => format!("{}.lithos-asset", storage_asset_id.0),
+                _ => format!("{}.ophiolite-asset", storage_asset_id.0),
             });
         let package_root = self.root.join(&package_rel_path);
         let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
@@ -1472,7 +1473,7 @@ impl LithosProject {
         let storage_asset_id = AssetId(unique_id("asset"));
         let package_rel_path = PathBuf::from("assets")
             .join(asset_kind.asset_dir_name())
-            .join(format!("{}.lithos-asset", storage_asset_id.0));
+            .join(format!("{}.ophiolite-asset", storage_asset_id.0));
         let package_root = self.root.join(&package_rel_path);
         let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
         writer(&staged.root)?;
@@ -2679,7 +2680,7 @@ fn build_derived_log_file(
     source_asset: &AssetRecord,
     collection: &AssetCollectionRecord,
     storage_asset_id: &AssetId,
-    computed_curve: &lithos_compute::ComputedCurve,
+    computed_curve: &ophiolite_compute::ComputedCurve,
     execution: &ComputeExecutionManifest,
 ) -> LasFile {
     let mut derived = source_file.clone();
@@ -2860,7 +2861,7 @@ fn derived_log_asset_manifest(
     collection: &AssetCollectionRecord,
     storage_asset_id: &AssetId,
     supersedes: Option<AssetId>,
-    computed_curve: &lithos_compute::ComputedCurve,
+    computed_curve: &ophiolite_compute::ComputedCurve,
     execution: &ComputeExecutionManifest,
 ) -> AssetManifest {
     let mut manifest = log_asset_manifest(

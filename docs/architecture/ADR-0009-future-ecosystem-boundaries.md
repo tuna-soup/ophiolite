@@ -6,14 +6,14 @@ Accepted
 
 ## Decision
 
-`lithos` keeps the current monorepo and local-first platform core as the present implementation center, while treating desktop interaction, compute, and sync/distribution as separate ecosystem concerns with distinct boundaries.
+`ophiolite` keeps the current monorepo and local-first platform core as the present implementation center, while treating desktop interaction, compute, and sync/distribution as separate ecosystem concerns with distinct boundaries.
 
 The current implementation center is:
 
 - source import
 - canonical log and typed wellbore asset models
 - single-asset package conventions
-- `LithosProject`
+- `OphioliteProject`
 - package sessions for the mature log-editing path
 - app-facing DTO/query boundaries
 - the logs-first typed compute layer

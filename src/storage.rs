@@ -1,7 +1,7 @@
 use arrow_array::Array;
 use arrow_array::{ArrayRef, Float64Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
-use lithos_core::{
+use ophiolite_core::{
     AssetSummaryDto, CanonicalMetadata, CurveCatalogDto, CurveCatalogEntryDto, CurveColumnMetadata,
     CurveEditRequest, CurveInfo, CurveItem, CurveStorageKind, CurveTable, CurveWindowColumnDto,
     CurveWindowDto, CurveWindowRequest, DTO_CONTRACT_VERSION, DepthWindowRequest, DirtyStateDto,
@@ -15,7 +15,7 @@ use lithos_core::{
     parse_package_metadata, revision_token_for_bytes, session_metadata_dto, session_summary_dto,
     session_window_dto, validate_edit_state, validate_package_metadata, validation_report_dto,
 };
-use lithos_table::CurveColumnDescriptor;
+use ophiolite_table::CurveColumnDescriptor;
 use parquet::arrow::ProjectionMask;
 use parquet::arrow::arrow_reader::{
     ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder, RowSelection,
@@ -41,7 +41,7 @@ const METADATA_FILENAME: &str = "metadata.json";
 const CURVES_FILENAME: &str = "curves.parquet";
 const CURVES_ROW_GROUP_ROW_COUNT: usize = 16_384;
 const CURVES_DATA_PAGE_ROW_COUNT_LIMIT: usize = 4_096;
-const PACKAGE_HISTORY_DIRNAME: &str = ".lithos";
+const PACKAGE_HISTORY_DIRNAME: &str = ".ophiolite";
 const PACKAGE_HISTORY_HEAD_FILENAME: &str = "head.json";
 const PACKAGE_HISTORY_REVISIONS_DIRNAME: &str = "revisions";
 const PACKAGE_HISTORY_STAGING_DIRNAME: &str = "staging";
@@ -1143,7 +1143,7 @@ fn regular_depth_window_request_from_metadata(
     metadata: &PackageMetadata,
     request: &DepthWindowRequest,
 ) -> Result<Option<CurveWindowRequest>> {
-    if metadata.canonical.index.kind != lithos_core::IndexKind::Depth {
+    if metadata.canonical.index.kind != ophiolite_core::IndexKind::Depth {
         return Ok(None);
     }
 

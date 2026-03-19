@@ -1,4 +1,4 @@
-use lithos_las::{ReadOptions, examples, read_path};
+use ophiolite::{ReadOptions, examples, read_path};
 
 #[test]
 fn detects_utf8_and_utf8_bom_examples() {

@@ -6,10 +6,10 @@ Accepted
 
 ## Context
 
-Lithos already has:
+Ophiolite already has:
 
 - single-asset log packages
-- `LithosProject` for well/wellbore/asset organization
+- `OphioliteProject` for well/wellbore/asset organization
 - typed non-log asset families
 - a Tauri harness that can browse and inspect those assets
 
@@ -17,7 +17,7 @@ The missing capability was a type-safe way to run computation against the data w
 
 ## Decision
 
-Lithos adds a dedicated `lithos-compute` workspace crate and a typed compute layer spanning log and structured asset families.
+Ophiolite adds a dedicated `ophiolite-compute` workspace crate and a typed compute layer spanning log and structured asset families.
 
 The compute layer uses:
 
@@ -31,7 +31,7 @@ Current rules:
 - compute eligibility is driven by semantic curve types such as `GammaRay`, `BulkDensity`, `Sonic`, `PVelocity`, and `SVelocity`
 - log asset manifests persist curve semantics and may store explicit overrides
 - compute runs execute against one selected asset at a time in the current phase
-- outputs are persisted as derived sibling log assets in `LithosProject`
+- outputs are persisted as derived sibling log assets in `OphioliteProject`
 - derived asset manifests record:
   - `derived_from`
   - `compute_manifest`

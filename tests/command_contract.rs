@@ -1,4 +1,4 @@
-use lithos_las::{
+use ophiolite::{
     CurveEditRequest, CurveUpdateRequest, CurveWindowRequest, HeaderItemUpdate, LasError, LasValue,
     MetadataSectionDto, MetadataUpdateRequest, PackageBackendState, PackagePathRequest,
     SaveSessionResponseDto, SessionCurveEditRequest, SessionMetadataEditRequest, SessionRequest,
@@ -142,7 +142,7 @@ fn temp_package_dir(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("lithos-{prefix}-{unique}"));
+    let path = std::env::temp_dir().join(format!("ophiolite-{prefix}-{unique}"));
     if path.exists() {
         fs::remove_dir_all(&path).unwrap();
     }

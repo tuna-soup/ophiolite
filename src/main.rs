@@ -12,7 +12,7 @@ fn main() {
             std::process::exit(1);
         }
 
-        match lithos_las::generate_synthetic_project_fixture(&args[2]) {
+        match ophiolite::generate_synthetic_project_fixture(&args[2]) {
             Ok(summary) => match serde_json::to_string_pretty(&summary) {
                 Ok(text) => println!("{text}"),
                 Err(error) => {
@@ -28,5 +28,5 @@ fn main() {
         return;
     }
 
-    lithos_cli::main_entry();
+    ophiolite_cli::main_entry();
 }

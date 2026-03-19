@@ -6,7 +6,7 @@ Accepted
 
 ## Decision
 
-Lithos keeps a simple **overwrite-oriented** local edit model, but every successful save now creates a new **immutable local revision**.
+Ophiolite keeps a simple **overwrite-oriented** local edit model, but every successful save now creates a new **immutable local revision**.
 
 This applies to:
 
@@ -18,8 +18,8 @@ This applies to:
 Historical saved states live in hidden local revision stores, and those hidden stores are canonical.
 The visible package or asset path remains a materialized current-head view:
 
-- package roots use `.lithos/revisions/`
-- `LithosProject` uses a hidden project-local asset revision store
+- package roots use `.ophiolite/revisions/`
+- `OphioliteProject` uses a hidden project-local asset revision store
 
 Each revision record captures:
 
@@ -34,7 +34,7 @@ Derivation provenance for compute or other derived assets remains separate from 
 
 ## Why
 
-- Parquet is treated as immutable saved payload data rather than something Lithos patches in place
+- Parquet is treated as immutable saved payload data rather than something Ophiolite patches in place
 - users want simple overwrite-oriented workflows rather than merge/conflict-heavy desktop behavior
 - future sync still needs lineage and diff information
 - revision history and diff inspection should not require changing the normal save UX

@@ -1,10 +1,10 @@
 use encoding_rs::{Encoding, UTF_8, UTF_16BE, UTF_16LE, WINDOWS_1252};
-use lithos_core::{
+use ophiolite_core::{
     CurveItem, HeaderItem, IndexDescriptor, IngestIssue, IssueSeverity, LasFile, LasFileSummary,
     LasValue, MnemonicCase, Provenance, SectionItem, SectionItems, bundle_manifest_path,
     derive_index_kind, normalized_depth_unit,
 };
-use lithos_core::{LasError, Result};
+use ophiolite_core::{LasError, Result};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

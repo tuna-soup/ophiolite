@@ -6,7 +6,7 @@ Accepted
 
 ## Decision
 
-`lithos` adds project-scoped typed edit sessions for the first structured wellbore asset families:
+`ophiolite` adds project-scoped typed edit sessions for the first structured wellbore asset families:
 
 - trajectory
 - tops

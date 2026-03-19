@@ -1,4 +1,4 @@
-use lithos_las::{
+use ophiolite::{
     CurveEditRequest, CurveUpdateRequest, CurveWindowRequest, DepthWindowRequest, HeaderItemUpdate,
     LasError, LasValue, MetadataSectionDto, MetadataUpdateRequest, PackageBackend,
     SaveSessionResponseDto, examples, open_package,
@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 fn backend_supports_read_inspection_and_shared_session_queries() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-shared");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let summary = backend.inspect_package_summary(&package_dir).unwrap();
@@ -49,7 +49,7 @@ fn backend_supports_read_inspection_and_shared_session_queries() {
 fn backend_depth_window_matches_row_window_and_survives_materialization() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-depth-window");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
@@ -135,7 +135,7 @@ fn backend_depth_window_matches_row_window_and_survives_materialization() {
 fn backend_rejected_curve_edits_are_atomic() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-atomic");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
@@ -197,7 +197,7 @@ fn backend_save_flows_preserve_session_identity_and_rebind_save_as() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-save");
     let copy_dir = temp_package_dir("backend-save-copy");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
@@ -270,7 +270,7 @@ fn backend_failed_save_as_keeps_existing_session_binding() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-save-as-fail");
     let existing_dir = temp_package_dir("backend-save-as-existing");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
     fs::create_dir_all(&existing_dir).unwrap();
 
     let mut backend = PackageBackend::new();
@@ -324,7 +324,7 @@ fn backend_failed_save_as_keeps_existing_session_binding() {
 fn backend_metadata_inspection_does_not_require_parquet_samples() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-metadata-only");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
     fs::remove_file(package_dir.join("curves.parquet")).unwrap();
 
     let mut backend = PackageBackend::new();
@@ -344,7 +344,7 @@ fn backend_metadata_inspection_does_not_require_parquet_samples() {
 fn backend_session_open_keeps_metadata_queries_available_without_preloading_samples() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-lazy-open");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
@@ -378,7 +378,7 @@ fn backend_session_open_keeps_metadata_queries_available_without_preloading_samp
 fn backend_clean_lazy_save_stays_lazy_and_preserves_session_state() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-clean-lazy-save");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
@@ -424,7 +424,7 @@ fn backend_clean_lazy_save_stays_lazy_and_preserves_session_state() {
 fn backend_metadata_only_edit_and_save_stay_lazy() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-lazy-metadata-save");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
@@ -481,7 +481,7 @@ fn backend_metadata_only_save_as_stays_lazy_and_rebinds_root() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-lazy-metadata-save-as");
     let copy_dir = temp_package_dir("backend-lazy-metadata-save-as-copy");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
@@ -541,7 +541,7 @@ fn backend_metadata_only_save_as_stays_lazy_and_rebinds_root() {
 fn backend_first_successful_curve_edit_materializes_and_stays_materialized() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-materialized-after-curve-edit");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
@@ -614,7 +614,7 @@ fn backend_first_successful_curve_edit_materializes_and_stays_materialized() {
 fn backend_failed_materialization_keeps_lazy_session_open_and_unchanged() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-failed-materialize");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
@@ -695,7 +695,7 @@ fn backend_failed_materialization_keeps_lazy_session_open_and_unchanged() {
 fn backend_curve_edit_after_lazy_metadata_edit_saves_both_changes() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-mixed-lazy-curve-save");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
@@ -764,7 +764,7 @@ fn backend_curve_edit_after_lazy_metadata_edit_saves_both_changes() {
 fn backend_lazy_window_reads_reject_stale_sessions_after_external_change() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-stale-lazy");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
@@ -807,7 +807,7 @@ fn backend_lazy_window_reads_reject_stale_sessions_after_external_change() {
 fn backend_requires_explicit_close_for_session_cleanup() {
     let las = examples::open("sample.las", &Default::default()).unwrap();
     let package_dir = temp_package_dir("backend-close");
-    lithos_las::write_package(&las, &package_dir).unwrap();
+    ophiolite::write_package(&las, &package_dir).unwrap();
 
     let mut backend = PackageBackend::new();
     let session = backend.open_package_session(&package_dir).unwrap();
@@ -824,7 +824,7 @@ fn temp_package_dir(prefix: &str) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("lithos-{prefix}-{unique}"));
+    let path = std::env::temp_dir().join(format!("ophiolite-{prefix}-{unique}"));
     if path.exists() {
         fs::remove_dir_all(&path).unwrap();
     }

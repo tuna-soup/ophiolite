@@ -6,7 +6,7 @@ Accepted
 
 ## Decision
 
-`lithos` keeps a target-state canonical schema direction, but does not claim full conformance to that target yet.
+`ophiolite` keeps a target-state canonical schema direction, but does not claim full conformance to that target yet.
 
 The current implementation already provides:
 
@@ -39,7 +39,7 @@ Arrow/Parquet may support this target internally, but they do not define the pub
 
 ## Prerequisites Before Full Alignment
 
-Before `lithos` should claim fuller canonical-schema conformance, it should first stabilize:
+Before `ophiolite` should claim fuller canonical-schema conformance, it should first stabilize:
 
 1. package schema and version guarantees
 2. Tauri/backend DTO and query contracts

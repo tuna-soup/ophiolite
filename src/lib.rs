@@ -42,7 +42,7 @@ pub use ophiolite_core::{
 };
 pub use ophiolite_ingest::{
     import_drilling_csv_asset, import_las_asset, import_pressure_csv_asset, import_tops_csv_asset,
-    import_trajectory_csv_asset,
+    import_seismic_volume_store_asset, import_trajectory_csv_asset,
 };
 pub use ophiolite_package::{
     CurveValueDiffSummary, PackageBlobRef, PackageDiffSummary, PackageRevisionRecord,
@@ -63,11 +63,12 @@ pub use ophiolite_project::{
     AssetBlobRef, AssetCollectionId, AssetCollectionRecord, AssetCollectionSummary,
     AssetDiffSummary, AssetExtent, AssetId, AssetKind, AssetManifest, AssetRecord,
     AssetReferenceMetadata, AssetRevisionId, AssetRevisionRecord, AssetStatus, BulkDataDescriptor,
-    CoordinateReference, CurveValueChangeSummary, DepthReference, ImportResolution,
-    LogAssetDiffSummary, LogAssetImportResult, OphioliteProject, OphioliteProjectManifest,
-    ProjectAssetImportResult, ProjectAssetSummary, ProjectComputeRunRequest,
-    ProjectComputeRunResult, ProjectSummary, SourceArtifactRef, StructuredAssetDiffSummary,
-    UnitSystem, VerticalDatum, WellId, WellIdentifierSet, WellRecord, WellSummary, WellboreId,
+    CoordinateReference, CurveValueChangeSummary, DepthReference, DirectoryAssetDiffSummary,
+    ImportResolution, LogAssetDiffSummary, LogAssetImportResult, OphioliteProject,
+    OphioliteProjectManifest, ProjectAssetImportResult, ProjectAssetSummary,
+    ProjectComputeRunRequest, ProjectComputeRunResult, ProjectSummary, SeismicAssetImportResult,
+    SeismicAssetMetadata, SourceArtifactRef, StructuredAssetDiffSummary, UnitSystem,
+    VerticalDatum, WellId, WellIdentifierSet, WellRecord, WellSummary, WellboreId,
     WellboreRecord, WellboreSummary,
 };
 pub use ophiolite_project::{
@@ -80,4 +81,42 @@ pub use ophiolite_project::{
 pub use ophiolite_project::{
     SyntheticProjectAssetIds, SyntheticProjectFixture, SyntheticProjectSourcePaths,
     generate_synthetic_project_fixture,
+};
+pub use ophiolite_seismic::{
+    SeismicAssetFamily, SeismicAssetId, SeismicColorMap, SeismicDisplayDefaults,
+    SeismicIndexAxis, SeismicInterpretationPoint, SeismicPolarity, SeismicProbe,
+    SeismicProcessingParameters, SeismicRenderMode, SeismicSampleAxis, SeismicSampleDomain,
+    SeismicSectionAxis, SeismicSectionCoordinate, SeismicSectionRequest, SeismicSectionTileRequest,
+    SeismicSectionView, SeismicTrace, SeismicTraceDescriptor, SeismicTraceSetDescriptor,
+    SeismicTraceSetView, SeismicUnits, SeismicVolumeDescriptor, SeismicVolumeGeometry,
+};
+pub use ophiolite_seismic::{
+    DatasetId, DatasetSummary, IPC_SCHEMA_VERSION, ImportDatasetRequest, ImportDatasetResponse,
+    InterpretationPoint, OpenDatasetRequest, OpenDatasetResponse, PreviewCommand, PreviewResponse,
+    PreviewView, ProcessingParameters, SectionAxis, SectionColorMap, SectionCoordinate,
+    SectionDisplayDefaults, SectionInteractionChanged, SectionMetadata, SectionPolarity,
+    SectionPrimaryMode, SectionProbe, SectionProbeChanged, SectionRenderMode, SectionRequest,
+    SectionTileRequest, SectionUnits, SectionView, SectionViewport, SectionViewportChanged,
+    SuggestedImportAction, SurveyPreflightRequest, SurveyPreflightResponse, VolumeDescriptor,
+};
+pub use ophiolite_seismic_io::{
+    ChunkProcessingError, ChunkReadConfig, Cube, Endianness, FileSummary, FixtureCase,
+    GeometryClassification, GeometryCoordinate, GeometryOptions, GeometryReport, HeaderColumn,
+    HeaderField, HeaderLoadConfig, HeaderMapping, HeaderTable, HeaderValueType,
+    Hdf5CubeLayout, Hdf5CubeWriteError, Hdf5CubeWriter, InspectError, InspectOptions,
+    IntervalOptions, IoStrategy, PrimaryTraceHeader, ReadError, ReaderOptions, SampleFormat,
+    SampleIntervalSource, SampleIntervalUnit, SegyReader, SegyRevision, SegyWarning,
+    TextualHeader, TextualHeaderEncoding, TraceBlock, TraceBlockInfo, TraceChunk, TraceChunkIter,
+    TraceChunkRef, TraceSelection, ValidationMode, curated_fixtures, inspect_file,
+    inspect_file_with_options, load_trace_headers, load_trace_headers_with_config, open,
+};
+pub use ophiolite_seismic_runtime::{
+    DatasetKind, GeometryProvenance, HeaderFieldSpec, InterpMethod, PreflightAction,
+    PreflightGeometry, ProcessingLineage, ProcessingOperation, RegularizationProvenance,
+    SeisGeometryOptions, SegyInspection, SeismicStoreError, SourceIdentity, SourceVolume,
+    SparseSurveyPolicy, StoreHandle, SurveyPreflight, TbvolManifest, VolumeAxes, VolumeMetadata,
+    create_tbvol_store, describe_store, ingest_segy, inspect_segy, load_array, load_occupancy,
+    load_source_volume, load_source_volume_with_options, open_store, preflight_segy,
+    read_section_plane, recommended_chunk_shape, render_section_csv,
+    render_section_csv_for_request, section_view,
 };

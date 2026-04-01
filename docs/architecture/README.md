@@ -25,8 +25,9 @@ source artifacts
 
 Current properties:
 
-- the repo now uses a staged workspace split with `ophiolite-core`, `ophiolite-parser`, `ophiolite-table`, `ophiolite-package`, and `ophiolite-cli`
+- the repo now uses a staged workspace split with `ophiolite-core`, `ophiolite-parser`, `ophiolite-table`, `ophiolite-package`, `ophiolite-seismic`, and `ophiolite-cli`
 - the root `ophiolite` crate is a compatibility facade over those workspace crates
+- `ophiolite-seismic`, `ophiolite-seismic-io`, and `ophiolite-seismic-runtime` now provide the shared seismic core for canonical descriptors, SEG-Y IO, and runtime/store execution
 - `LasFile` is the canonical public domain object for the log/LAS slice
 - `PackageSession` is the backend-owned editable package session model
 - `OphioliteProject` is the local-first multi-well project/catalog root
@@ -70,6 +71,7 @@ The current repo already implements the local-first core:
 
 - source import
 - canonical log and typed wellbore asset models
+- initial shared seismic descriptors and boundary DTOs
 - single-asset packages
 - `OphioliteProject`
 - typed compute and derived sibling assets, with the deepest eligibility/binding logic currently in logs
@@ -84,6 +86,7 @@ Sync/distribution and broader deployment remain roadmap items rather than curren
 
 - `../../ophiolite_roadmap.md`
 - `ADR-0009-future-ecosystem-boundaries.md`
+- `ADR-0013-shared-subsurface-core-and-seismic-expansion.md`
 
 ## Multi-Well Layer
 
@@ -207,6 +210,7 @@ root compatibility crate: ophiolite
   -> ophiolite-project
   -> ophiolite-ingest
   -> ophiolite-compute
+  -> ophiolite-seismic
   -> ophiolite-cli
 ```
 
@@ -215,6 +219,9 @@ Current staged compromise:
 - `ophiolite-project` now owns the multi-asset catalog, asset manifests, typed project queries, summary APIs, and synthetic project fixtures
 - `ophiolite-ingest` now provides the first explicit ingest-oriented crate boundary over project import flows
 - `ophiolite-compute` now owns the typed compute registry, semantic curve eligibility, and execution-manifest model for derived assets
+- `ophiolite-seismic` now owns the first shared seismic descriptor and section/trace contract layer intended to replace duplicated product-only seismic model ownership over time
+- `ophiolite-seismic-io` now owns shared SEG-Y inspection and ingest-oriented IO
+- `ophiolite-seismic-runtime` now owns the shared runtime/store backend, including the canonical `tbvol` path
 - the root `ophiolite` crate remains the compatibility facade that re-exports the workspace surface
 - the runtime table boundary has its own crate, but `CurveTable` still originates from the core layer in this phase to preserve the current `LasFile::data()` API
 - Arrow/Parquet conversion now lives in the package crate rather than the runtime table type
@@ -257,6 +264,7 @@ Only after those are stable should the project tighten runtime/package behavior 
 - `ADR-0010-typed-compute-and-derived-assets.md`
 - `ADR-0011-structured-asset-edit-sessions.md`
 - `ADR-0012-revisioned-last-save-wins.md`
+- `ADR-0013-shared-subsurface-core-and-seismic-expansion.md`
 
 ## Related Docs
 

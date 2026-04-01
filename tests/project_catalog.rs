@@ -1,7 +1,9 @@
+use ndarray::Array3;
 use ophiolite::{
     AssetBindingInput, AssetKind, AssetStatus, ComputeAvailability, ComputeParameterValue,
-    CurveSemanticType, DepthRangeQuery, OphioliteProject, ProjectComputeRunRequest, examples,
-    import_las_asset,
+    CurveSemanticType, DatasetKind, DepthRangeQuery, GeometryProvenance, HeaderFieldSpec,
+    OphioliteProject, ProjectComputeRunRequest, SourceIdentity, TbvolManifest, VolumeAxes,
+    VolumeMetadata, create_tbvol_store, examples, import_las_asset,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -298,6 +300,56 @@ fn project_supports_non_log_asset_imports_and_cross_asset_queries() {
 }
 
 #[test]
+fn project_imports_seismic_volume_store_and_tracks_it_in_catalog() {
+    let root = temp_project_root("project_imports_seismic_volume_store_and_tracks_it_in_catalog");
+    let source_root = root.join("source").join("survey.tbvol");
+    let manifest = sample_store_manifest();
+    let data = Array3::from_shape_fn((2, 3, 4), |(iline, xline, sample)| {
+        iline as f32 * 100.0 + xline as f32 * 10.0 + sample as f32
+    });
+    create_tbvol_store(&source_root, manifest, &data, None).unwrap();
+
+    let mut project = OphioliteProject::create(root.join("project")).unwrap();
+    let binding = AssetBindingInput {
+        well_name: "Well Seis".to_string(),
+        wellbore_name: "Well Seis".to_string(),
+        uwi: Some("SEIS-UWI-001".to_string()),
+        api: None,
+        operator_aliases: vec!["Ophiolite".to_string()],
+    };
+
+    let imported = project
+        .import_seismic_volume_store(&source_root, &binding, Some("survey-main"))
+        .unwrap();
+
+    assert_eq!(imported.asset.asset_kind, AssetKind::SeismicVolume);
+    assert_eq!(imported.asset.manifest.bulk_data_descriptors.len(), 1);
+    assert_eq!(
+        imported.asset.manifest.bulk_data_descriptors[0].relative_path,
+        "store"
+    );
+
+    let assets = project
+        .list_assets(&imported.resolution.wellbore_id, Some(AssetKind::SeismicVolume))
+        .unwrap();
+    assert_eq!(assets.len(), 1);
+    assert_eq!(assets[0].status, AssetStatus::Bound);
+
+    let package_root = PathBuf::from(&assets[0].package_path);
+    assert!(package_root.join("metadata.json").exists());
+    assert!(package_root.join("asset_manifest.json").exists());
+    assert!(package_root.join("store").join("manifest.json").exists());
+
+    let descriptor = ophiolite::describe_store(package_root.join("store")).unwrap();
+    assert_eq!(descriptor.shape, [2, 3, 4]);
+    assert_eq!(descriptor.chunk_shape, [2, 3, 4]);
+
+    let metadata_json = fs::read_to_string(package_root.join("metadata.json")).unwrap();
+    assert!(metadata_json.contains("\"family\": \"Volume\""));
+    assert!(metadata_json.contains("\"label\": \"survey\""));
+}
+
+#[test]
 fn structured_asset_edits_create_revision_history() {
     let root = temp_project_root("structured_asset_edits_create_revision_history");
     let mut project = OphioliteProject::create(&root).unwrap();
@@ -588,4 +640,44 @@ fn write_csv(root: &std::path::Path, name: &str, contents: &str) -> PathBuf {
     let path = root.join(name);
     fs::write(&path, contents).unwrap();
     path
+}
+
+fn sample_store_manifest() -> TbvolManifest {
+    TbvolManifest::new(
+        VolumeMetadata {
+            kind: DatasetKind::Source,
+            source: SourceIdentity {
+                source_path: PathBuf::from("survey.sgy"),
+                file_size: 1024,
+                trace_count: 6,
+                samples_per_trace: 4,
+                sample_interval_us: 2000,
+                sample_format_code: 5,
+                geometry: GeometryProvenance {
+                    inline_field: HeaderFieldSpec {
+                        name: "INLINE_3D".to_string(),
+                        start_byte: 189,
+                        value_type: "I32".to_string(),
+                    },
+                    crossline_field: HeaderFieldSpec {
+                        name: "CROSSLINE_3D".to_string(),
+                        start_byte: 193,
+                        value_type: "I32".to_string(),
+                    },
+                    third_axis_field: None,
+                },
+                regularization: None,
+            },
+            shape: [2, 3, 4],
+            axes: VolumeAxes {
+                ilines: vec![1000.0, 1001.0],
+                xlines: vec![2000.0, 2001.0, 2002.0],
+                sample_axis_ms: vec![0.0, 2.0, 4.0, 6.0],
+            },
+            created_by: "project_catalog_test".to_string(),
+            processing_lineage: None,
+        },
+        [2, 3, 4],
+        false,
+    )
 }

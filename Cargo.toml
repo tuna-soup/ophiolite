@@ -8,6 +8,9 @@ members = [
     "crates/ophiolite-project",
     "crates/ophiolite-ingest",
     "crates/ophiolite-compute",
+    "crates/ophiolite-seismic",
+    "crates/ophiolite-seismic-io",
+    "crates/ophiolite-seismic-runtime",
     "crates/ophiolite-cli",
 ]
 exclude = ["apps/ophiolite-harness/src-tauri"]
@@ -23,6 +26,8 @@ regex = "1.11"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+schemars = "0.8"
+ts-rs = "10.1"
 thiserror = "2.0.18"
 tracing = "0.1.44"
 
@@ -42,6 +47,9 @@ ophiolite-package = { path = "crates/ophiolite-package" }
 ophiolite-project = { path = "crates/ophiolite-project" }
 ophiolite-ingest = { path = "crates/ophiolite-ingest" }
 ophiolite-compute = { path = "crates/ophiolite-compute" }
+ophiolite-seismic = { path = "crates/ophiolite-seismic" }
+ophiolite-seismic-io = { path = "crates/ophiolite-seismic-io" }
+ophiolite-seismic-runtime = { path = "crates/ophiolite-seismic-runtime" }
 ophiolite-cli = { path = "crates/ophiolite-cli" }
 parquet = { workspace = true }
 rusqlite = { workspace = true }
@@ -49,6 +57,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+ndarray = "0.17"
 parquet = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

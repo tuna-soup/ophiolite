@@ -8,6 +8,7 @@ Ophiolite is no longer just a LAS/log SDK. The current repo already contains:
 - a local-first `OphioliteProject` catalog
 - typed non-log asset families for trajectory, tops, pressure observations, and drilling observations
 - a typed compute layer with derived sibling assets across log and structured families
+- an initial shared seismic core crate for canonical seismic descriptors and section/trace boundary models
 - a project-first Tauri harness
 - synthetic multi-asset project fixtures for testing and app validation
 
@@ -55,6 +56,7 @@ The current goal is:
 - `ophiolite-project` workspace crate for project/catalog, manifests, typed queries, and synthetic fixtures
 - `ophiolite-ingest` workspace crate for import-oriented orchestration boundaries
 - `ophiolite-compute` workspace crate for semantic compute eligibility, function registry, and derived-asset execution
+- `ophiolite-seismic` workspace crate for shared seismic descriptors and app-boundary section/trace models
 - `ophiolite` preserved as the compatibility facade over the workspace crates
 
 ### Validation Surface
@@ -104,6 +106,14 @@ Deepen the explicit ingest layer after the crate extraction:
 - stronger CSV adapter coverage
 - richer LAS 3 section extraction into non-log asset families
 - cleaner import entry points for apps and automation
+
+### 5. Seismic Core Expansion
+
+Use the new `ophiolite-seismic` crate as the first extraction point for shared seismic platform code:
+
+- add canonical seismic asset families such as volume, section, and trace-set
+- move reusable SEG-Y and seismic package concerns under the shared core over time
+- keep product workflow/session orchestration in consuming app repos rather than forcing it into the core
 
 ## Application-Validation Milestones
 

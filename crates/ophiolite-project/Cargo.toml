@@ -8,6 +8,8 @@ ophiolite-core = { path = "../ophiolite-core" }
 ophiolite-parser = { path = "../ophiolite-parser" }
 ophiolite-package = { path = "../ophiolite-package" }
 ophiolite-compute = { path = "../ophiolite-compute" }
+ophiolite-seismic = { path = "../ophiolite-seismic" }
+ophiolite-seismic-runtime = { path = "../ophiolite-seismic-runtime" }
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 csv = { workspace = true }

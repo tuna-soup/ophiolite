@@ -20,6 +20,8 @@ use ophiolite_compute::{
 };
 use ophiolite_core::{CurveItem, LasValue, SectionItems, derive_canonical_alias};
 use ophiolite_package::open_package;
+use ophiolite_seismic::{SeismicAssetFamily, VolumeDescriptor};
+use ophiolite_seismic_runtime::{TbvolManifest, describe_store, open_store};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -68,6 +70,9 @@ pub enum AssetKind {
     TopSet,
     PressureObservation,
     DrillingObservation,
+    SeismicVolume,
+    SeismicSection,
+    SeismicTraceSet,
 }
 
 impl AssetKind {
@@ -78,6 +83,9 @@ impl AssetKind {
             Self::TopSet => "top_set",
             Self::PressureObservation => "pressure_observation",
             Self::DrillingObservation => "drilling_observation",
+            Self::SeismicVolume => "seismic_volume",
+            Self::SeismicSection => "seismic_section",
+            Self::SeismicTraceSet => "seismic_trace_set",
         }
     }
 
@@ -88,6 +96,9 @@ impl AssetKind {
             Self::TopSet => "tops",
             Self::PressureObservation => "pressure",
             Self::DrillingObservation => "drilling",
+            Self::SeismicVolume => "seismic-volumes",
+            Self::SeismicSection => "seismic-sections",
+            Self::SeismicTraceSet => "seismic-trace-sets",
         }
     }
 
@@ -98,6 +109,9 @@ impl AssetKind {
             "top_set" => Ok(Self::TopSet),
             "pressure_observation" => Ok(Self::PressureObservation),
             "drilling_observation" => Ok(Self::DrillingObservation),
+            "seismic_volume" => Ok(Self::SeismicVolume),
+            "seismic_section" => Ok(Self::SeismicSection),
+            "seismic_trace_set" => Ok(Self::SeismicTraceSet),
             _ => Err(LasError::Validation(format!(
                 "unknown asset kind '{value}' in project catalog"
             ))),
@@ -229,6 +243,12 @@ pub struct StructuredAssetDiffSummary {
     pub extent_changed: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct DirectoryAssetDiffSummary {
+    pub entry_count_changed: bool,
+    pub changed_path_count: usize,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AssetDiffSummary {
     Log(LogAssetDiffSummary),
@@ -236,6 +256,9 @@ pub enum AssetDiffSummary {
     TopSet(StructuredAssetDiffSummary),
     PressureObservation(StructuredAssetDiffSummary),
     DrillingObservation(StructuredAssetDiffSummary),
+    SeismicVolume(DirectoryAssetDiffSummary),
+    SeismicSection(DirectoryAssetDiffSummary),
+    SeismicTraceSet(DirectoryAssetDiffSummary),
     MetadataOnly { changed_fields: Vec<String> },
 }
 
@@ -396,6 +419,14 @@ pub struct LogAssetImportResult {
 }
 
 pub type ProjectAssetImportResult = LogAssetImportResult;
+pub type SeismicAssetImportResult = ProjectAssetImportResult;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeismicAssetMetadata {
+    pub family: SeismicAssetFamily,
+    pub descriptor: VolumeDescriptor,
+    pub store: TbvolManifest,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectComputeRunRequest {
@@ -862,6 +893,32 @@ impl OphioliteProject {
         )
     }
 
+    pub fn import_seismic_volume_store(
+        &mut self,
+        store_root: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<SeismicAssetImportResult> {
+        let store_root = store_root.as_ref();
+        let descriptor = describe_store(store_root)
+            .map_err(|error| LasError::Storage(format!("failed to describe seismic store: {error}")))?;
+        let handle = open_store(store_root)
+            .map_err(|error| LasError::Storage(format!("failed to open seismic store: {error}")))?;
+        let metadata = SeismicAssetMetadata {
+            family: SeismicAssetFamily::Volume,
+            descriptor,
+            store: handle.manifest,
+        };
+
+        self.import_seismic_asset(
+            store_root,
+            binding,
+            AssetKind::SeismicVolume,
+            collection_name,
+            &metadata,
+        )
+    }
+
     pub fn read_trajectory_rows(
         &self,
         asset_id: &AssetId,
@@ -1180,6 +1237,11 @@ impl OphioliteProject {
             AssetKind::TopSet => Ok(registry.catalog_for_top_set_asset()),
             AssetKind::PressureObservation => Ok(registry.catalog_for_pressure_asset()),
             AssetKind::DrillingObservation => Ok(registry.catalog_for_drilling_asset()),
+            AssetKind::SeismicVolume | AssetKind::SeismicSection | AssetKind::SeismicTraceSet => {
+                Err(LasError::Validation(
+                    "compute catalog is not implemented for seismic assets yet".to_string(),
+                ))
+            }
         }
     }
 
@@ -1344,6 +1406,11 @@ impl OphioliteProject {
                     AssetKind::DrillingObservation,
                 )?
             }
+            AssetKind::SeismicVolume | AssetKind::SeismicSection | AssetKind::SeismicTraceSet => {
+                return Err(LasError::Validation(
+                    "compute execution is not implemented for seismic assets yet".to_string(),
+                ));
+            }
         };
 
         Ok(ProjectComputeRunResult {
@@ -1497,6 +1564,92 @@ impl OphioliteProject {
         if let Some(asset_id) = &supersedes {
             self.mark_asset_superseded(asset_id)?;
         }
+        let asset = AssetRecord {
+            id: storage_asset_id,
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: well.id.clone(),
+            wellbore_id: wellbore.id.clone(),
+            asset_kind,
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest,
+        };
+        let revision = self.build_asset_revision_from_snapshot(
+            &asset,
+            None,
+            default_asset_diff_summary(&asset.asset_kind),
+            &staged,
+        )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.insert_asset(&asset, &package_rel_path)?;
+        Ok(ProjectAssetImportResult {
+            resolution: ImportResolution {
+                status: AssetStatus::Bound,
+                well_id: well.id,
+                wellbore_id: wellbore.id,
+                created_well,
+                created_wellbore,
+            },
+            collection,
+            asset,
+        })
+    }
+
+    fn import_seismic_asset(
+        &mut self,
+        source_root: &Path,
+        binding: &AssetBindingInput,
+        asset_kind: AssetKind,
+        collection_name: Option<&str>,
+        metadata: &SeismicAssetMetadata,
+    ) -> Result<SeismicAssetImportResult> {
+        let identifiers = identifiers_from_binding(binding);
+        let (well, created_well) = self.resolve_or_create_well(&identifiers)?;
+        let (wellbore, created_wellbore) =
+            self.resolve_or_create_wellbore_for_binding(&well.id, binding)?;
+        let collection_name = collection_name
+            .map(str::to_owned)
+            .or_else(|| {
+                source_root
+                    .file_stem()
+                    .map(|value| value.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| asset_kind.as_str().to_string());
+        let collection =
+            self.resolve_or_create_collection(&wellbore.id, asset_kind.clone(), &collection_name)?;
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(asset_kind.asset_dir_name())
+            .join(format!("{}.ophiolite-asset", storage_asset_id.0));
+        let package_root = self.root.join(&package_rel_path);
+        let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
+        copy_path(source_root, &staged.root.join("store"))?;
+        fs::write(
+            staged.root.join("metadata.json"),
+            serde_json::to_vec_pretty(metadata)?,
+        )?;
+
+        let supersedes = self
+            .latest_active_asset_for_collection(&collection.id)?
+            .map(|asset| asset.id);
+        let manifest = seismic_asset_manifest(
+            source_root,
+            metadata,
+            &well.id,
+            &wellbore.id,
+            &collection.id,
+            &collection.logical_asset_id,
+            &storage_asset_id,
+            asset_kind.clone(),
+            identifiers.clone(),
+            supersedes.clone(),
+        )?;
+        write_asset_manifest(&staged.root, &manifest)?;
+        if let Some(asset_id) = &supersedes {
+            self.mark_asset_superseded(asset_id)?;
+        }
+
         let asset = AssetRecord {
             id: storage_asset_id,
             logical_asset_id: collection.logical_asset_id.clone(),
@@ -1948,23 +2101,14 @@ impl OphioliteProject {
     ) -> Result<AssetRevisionRecord> {
         let created_at_unix_seconds = now_unix_seconds();
         let manifest_path = staged_snapshot.root.join(ASSET_MANIFEST_FILENAME);
-        let data_path = staged_snapshot
-            .root
-            .join(asset_data_filename(&asset.asset_kind));
         let manifest_bytes = fs::read(&manifest_path)?;
-        let data_bytes = fs::read(&data_path)?;
         let metadata_blob = AssetBlobRef {
             relative_path: ASSET_MANIFEST_FILENAME.to_string(),
             media_type: "application/json".to_string(),
             byte_count: manifest_bytes.len() as u64,
             content_hash: stable_project_blob_hash("asset-manifest", &manifest_bytes),
         };
-        let data_blob = AssetBlobRef {
-            relative_path: asset_data_filename(&asset.asset_kind).to_string(),
-            media_type: "application/vnd.apache.parquet".to_string(),
-            byte_count: data_bytes.len() as u64,
-            content_hash: stable_project_blob_hash("asset-data", &data_bytes),
-        };
+        let data_blob = asset_primary_blob_ref(&asset.manifest, &staged_snapshot.root)?;
         let revision_id = AssetRevisionId(
             revision_token_for_bytes(
                 "asset-revision",
@@ -2026,28 +2170,28 @@ impl OphioliteProject {
     ) -> Result<()> {
         let revision_root = self.root.join(&revision.package_snapshot_rel_path);
         fs::create_dir_all(&asset.package_path)?;
-        materialize_project_visible_files(
-            &self.root,
-            &[
-                (
-                    revision_root.join("metadata.json"),
-                    Path::new(&asset.package_path).join("metadata.json"),
-                ),
-                (
-                    revision_root.join(ASSET_MANIFEST_FILENAME),
-                    Path::new(&asset.package_path).join(ASSET_MANIFEST_FILENAME),
-                ),
-                (
-                    revision_root.join(asset_data_filename(&asset.asset_kind)),
-                    Path::new(&asset.package_path).join(asset_data_filename(&asset.asset_kind)),
-                ),
-            ],
-        )
+        materialize_project_visible_files(&self.root, &artifact_mappings_for_asset(asset, &revision_root))
     }
 }
 
 fn copy_if_exists(source: &Path, target: &Path) -> Result<()> {
     if source.exists() {
+        copy_path(source, target)?;
+    }
+    Ok(())
+}
+
+fn copy_path(source: &Path, target: &Path) -> Result<()> {
+    if source.is_dir() {
+        fs::create_dir_all(target)?;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            copy_path(&entry.path(), &target.join(entry.file_name()))?;
+        }
+    } else {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
         fs::copy(source, target)?;
     }
     Ok(())
@@ -2071,18 +2215,12 @@ fn stage_project_asset_root(root: &Path, asset_id: &AssetId) -> Result<StagedAss
 
 fn stage_existing_asset_root(root: &Path, asset: &AssetRecord) -> Result<StagedAssetSnapshot> {
     let staged = stage_project_asset_root(root, &asset.id)?;
-    copy_if_exists(
-        &Path::new(&asset.package_path).join("metadata.json"),
-        &staged.root.join("metadata.json"),
-    )?;
-    copy_if_exists(
-        &Path::new(&asset.package_path).join(ASSET_MANIFEST_FILENAME),
-        &staged.root.join(ASSET_MANIFEST_FILENAME),
-    )?;
-    copy_if_exists(
-        &Path::new(&asset.package_path).join(asset_data_filename(&asset.asset_kind)),
-        &staged.root.join(asset_data_filename(&asset.asset_kind)),
-    )?;
+    for relative_path in asset_visible_relative_paths(&asset.manifest) {
+        copy_if_exists(
+            &Path::new(&asset.package_path).join(&relative_path),
+            &staged.root.join(relative_path),
+        )?;
+    }
     Ok(staged)
 }
 
@@ -2096,18 +2234,104 @@ fn project_asset_revision_store_rel_path(
         .join(&revision_id.0)
 }
 
-fn asset_data_filename(asset_kind: &AssetKind) -> &'static str {
-    match asset_kind {
-        AssetKind::Log => "curves.parquet",
-        _ => data_filename(),
-    }
-}
-
 fn stable_project_blob_hash(scope: &str, bytes: &[u8]) -> String {
     let mut hasher = DefaultHasher::new();
     scope.hash(&mut hasher);
     bytes.hash(&mut hasher);
     format!("{scope}-{:016x}", hasher.finish())
+}
+
+fn stable_project_path_hash(scope: &str, path: &Path) -> Result<String> {
+    let mut hasher = DefaultHasher::new();
+    scope.hash(&mut hasher);
+    hash_path_into(path, path, &mut hasher)?;
+    Ok(format!("{scope}-{:016x}", hasher.finish()))
+}
+
+fn hash_path_into(root: &Path, path: &Path, hasher: &mut DefaultHasher) -> Result<()> {
+    let relative = path
+        .strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/");
+    relative.hash(hasher);
+    if path.is_dir() {
+        "dir".hash(hasher);
+        let mut entries = fs::read_dir(path)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            hash_path_into(root, &entry.path(), hasher)?;
+        }
+    } else {
+        "file".hash(hasher);
+        fs::read(path)?.hash(hasher);
+    }
+    Ok(())
+}
+
+fn path_byte_count(path: &Path) -> Result<u64> {
+    if path.is_dir() {
+        let mut total = 0u64;
+        for entry in fs::read_dir(path)? {
+            total += path_byte_count(&entry?.path())?;
+        }
+        Ok(total)
+    } else {
+        Ok(fs::metadata(path)?.len())
+    }
+}
+
+fn remove_path(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if path.is_dir() {
+        fs::remove_dir_all(path)?;
+    } else {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+fn asset_primary_blob_ref(manifest: &AssetManifest, root: &Path) -> Result<AssetBlobRef> {
+    let descriptor = manifest
+        .bulk_data_descriptors
+        .iter()
+        .find(|descriptor| descriptor.role != "metadata")
+        .or_else(|| manifest.bulk_data_descriptors.first())
+        .ok_or_else(|| LasError::Validation("asset manifest is missing bulk data descriptors".to_string()))?;
+    let data_path = root.join(&descriptor.relative_path);
+    Ok(AssetBlobRef {
+        relative_path: descriptor.relative_path.clone(),
+        media_type: descriptor.media_type.clone(),
+        byte_count: path_byte_count(&data_path)?,
+        content_hash: stable_project_path_hash("asset-data", &data_path)?,
+    })
+}
+
+fn asset_visible_relative_paths(manifest: &AssetManifest) -> Vec<String> {
+    let mut paths = Vec::with_capacity(manifest.bulk_data_descriptors.len() + 1);
+    paths.push("metadata.json".to_string());
+    paths.push(ASSET_MANIFEST_FILENAME.to_string());
+    for descriptor in &manifest.bulk_data_descriptors {
+        if !paths.iter().any(|path| path == &descriptor.relative_path) {
+            paths.push(descriptor.relative_path.clone());
+        }
+    }
+    paths
+}
+
+fn artifact_mappings_for_asset(asset: &AssetRecord, revision_root: &Path) -> Vec<(PathBuf, PathBuf)> {
+    asset_visible_relative_paths(&asset.manifest)
+        .into_iter()
+        .map(|relative_path| {
+            (
+                revision_root.join(&relative_path),
+                Path::new(&asset.package_path).join(relative_path),
+            )
+        })
+        .collect()
 }
 
 fn materialize_project_visible_files(root: &Path, mappings: &[(PathBuf, PathBuf)]) -> Result<()> {
@@ -2128,9 +2352,9 @@ fn materialize_project_visible_files(root: &Path, mappings: &[(PathBuf, PathBuf)
             fs::create_dir_all(parent)?;
         }
         if destination.exists() {
-            fs::copy(
+            copy_path(
                 destination,
-                backup_root.join(
+                &backup_root.join(
                     destination
                         .file_name()
                         .map(|value| value.to_string_lossy().into_owned())
@@ -2142,9 +2366,10 @@ fn materialize_project_visible_files(root: &Path, mappings: &[(PathBuf, PathBuf)
 
     for (source, destination) in mappings {
         let temp_path = destination.with_extension("next");
-        fs::copy(source, &temp_path)?;
+        remove_path(&temp_path)?;
+        copy_path(source, &temp_path)?;
         if destination.exists() {
-            fs::remove_file(destination)?;
+            remove_path(destination)?;
         }
         if let Err(error) = fs::rename(&temp_path, destination) {
             restore_project_visible_files(&backup_root, mappings)?;
@@ -2168,22 +2393,19 @@ fn restore_project_visible_files(root: &Path, mappings: &[(PathBuf, PathBuf)]) -
         );
         if backup_path.exists() {
             if destination.exists() {
-                fs::remove_file(destination)?;
+                remove_path(destination)?;
             }
-            fs::copy(&backup_path, destination)?;
+            copy_path(&backup_path, destination)?;
         }
     }
     Ok(())
 }
 
 fn clear_project_visible_files(asset: &AssetRecord) -> Result<()> {
-    for path in [
-        Path::new(&asset.package_path).join("metadata.json"),
-        Path::new(&asset.package_path).join(ASSET_MANIFEST_FILENAME),
-        Path::new(&asset.package_path).join(asset_data_filename(&asset.asset_kind)),
-    ] {
+    for relative_path in asset_visible_relative_paths(&asset.manifest) {
+        let path = Path::new(&asset.package_path).join(relative_path);
         if path.exists() {
-            fs::remove_file(path)?;
+            remove_path(&path)?;
         }
     }
     Ok(())
@@ -2201,6 +2423,15 @@ fn default_asset_diff_summary(asset_kind: &AssetKind) -> AssetDiffSummary {
         }
         AssetKind::DrillingObservation => {
             AssetDiffSummary::DrillingObservation(StructuredAssetDiffSummary::default())
+        }
+        AssetKind::SeismicVolume => {
+            AssetDiffSummary::SeismicVolume(DirectoryAssetDiffSummary::default())
+        }
+        AssetKind::SeismicSection => {
+            AssetDiffSummary::SeismicSection(DirectoryAssetDiffSummary::default())
+        }
+        AssetKind::SeismicTraceSet => {
+            AssetDiffSummary::SeismicTraceSet(DirectoryAssetDiffSummary::default())
         }
     }
 }
@@ -2228,6 +2459,15 @@ fn diff_structured_rows<T: PartialEq>(
         AssetKind::PressureObservation => AssetDiffSummary::PressureObservation(summary),
         AssetKind::DrillingObservation => AssetDiffSummary::DrillingObservation(summary),
         AssetKind::Log => AssetDiffSummary::Log(LogAssetDiffSummary::default()),
+        AssetKind::SeismicVolume => {
+            AssetDiffSummary::SeismicVolume(DirectoryAssetDiffSummary::default())
+        }
+        AssetKind::SeismicSection => {
+            AssetDiffSummary::SeismicSection(DirectoryAssetDiffSummary::default())
+        }
+        AssetKind::SeismicTraceSet => {
+            AssetDiffSummary::SeismicTraceSet(DirectoryAssetDiffSummary::default())
+        }
     }
 }
 
@@ -2331,6 +2571,15 @@ fn summarize_asset_diff(asset_kind: &AssetKind, diff: &AssetDiffSummary) -> Stri
         AssetDiffSummary::DrillingObservation(summary) => {
             summarize_structured_asset_diff("drilling observations", summary)
         }
+        AssetDiffSummary::SeismicVolume(summary) => {
+            summarize_directory_asset_diff("seismic volumes", summary)
+        }
+        AssetDiffSummary::SeismicSection(summary) => {
+            summarize_directory_asset_diff("seismic sections", summary)
+        }
+        AssetDiffSummary::SeismicTraceSet(summary) => {
+            summarize_directory_asset_diff("seismic trace sets", summary)
+        }
         AssetDiffSummary::MetadataOnly { changed_fields } => {
             if changed_fields.is_empty() {
                 format!("updated {} metadata", asset_kind.as_str())
@@ -2384,6 +2633,21 @@ fn summarize_structured_asset_diff(label: &str, diff: &StructuredAssetDiffSummar
     }
     if diff.extent_changed {
         parts.push(String::from("extent changed"));
+    }
+    if parts.is_empty() {
+        format!("initial {label} asset revision")
+    } else {
+        parts.join("; ")
+    }
+}
+
+fn summarize_directory_asset_diff(label: &str, diff: &DirectoryAssetDiffSummary) -> String {
+    let mut parts = Vec::new();
+    if diff.entry_count_changed {
+        parts.push(String::from("entry count changed"));
+    }
+    if diff.changed_path_count > 0 {
+        parts.push(format!("updated {} paths", diff.changed_path_count));
     }
     if parts.is_empty() {
         format!("initial {label} asset revision")
@@ -2855,6 +3119,70 @@ fn structured_asset_manifest(
     })
 }
 
+fn seismic_asset_manifest(
+    source_root: &Path,
+    metadata: &SeismicAssetMetadata,
+    well_id: &WellId,
+    wellbore_id: &WellboreId,
+    collection_id: &AssetCollectionId,
+    logical_asset_id: &AssetId,
+    storage_asset_id: &AssetId,
+    asset_kind: AssetKind,
+    identifiers: WellIdentifierSet,
+    supersedes: Option<AssetId>,
+) -> Result<AssetManifest> {
+    let imported_at = now_unix_seconds();
+    let source_fingerprint = stable_project_path_hash("seismic-source", source_root)?;
+    let provenance = Provenance {
+        source_path: source_root.display().to_string(),
+        original_filename: source_root
+            .file_name()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_else(|| asset_kind.as_str().to_string()),
+        source_fingerprint,
+        imported_at_unix_seconds: imported_at,
+    };
+    Ok(AssetManifest {
+        asset_kind,
+        asset_schema_version: "0.1.0".to_string(),
+        logical_asset_id: logical_asset_id.clone(),
+        storage_asset_id: storage_asset_id.clone(),
+        well_id: well_id.clone(),
+        wellbore_id: wellbore_id.clone(),
+        asset_collection_id: collection_id.clone(),
+        source_artifacts: vec![SourceArtifactRef {
+            source_path: provenance.source_path.clone(),
+            original_filename: provenance.original_filename.clone(),
+            source_fingerprint: provenance.source_fingerprint.clone(),
+        }],
+        provenance,
+        diagnostics: Vec::new(),
+        extents: seismic_asset_extent(metadata),
+        bulk_data_descriptors: vec![BulkDataDescriptor {
+            relative_path: "store".to_string(),
+            media_type: "application/vnd.ophiolite.tbvol".to_string(),
+            role: "seismic_store".to_string(),
+        }],
+        reference_metadata: AssetReferenceMetadata {
+            identifiers,
+            coordinate_reference: None,
+            vertical_datum: None,
+            depth_reference: DepthReference::Unknown,
+            unit_system: UnitSystem {
+                depth_unit: None,
+                coordinate_unit: None,
+                pressure_unit: None,
+            },
+        },
+        created_at_unix_seconds: imported_at,
+        imported_at_unix_seconds: imported_at,
+        supersedes,
+        derived_from: None,
+        curve_semantics: Vec::new(),
+        compute_manifest: None,
+    })
+}
+
 fn derived_log_asset_manifest(
     file: &LasFile,
     source_asset: &AssetRecord,
@@ -3062,10 +3390,23 @@ fn structured_asset_extent(
             | AssetKind::PressureObservation
             | AssetKind::DrillingObservation => Some(IndexKind::Depth),
             AssetKind::Log => Some(IndexKind::Depth),
+            AssetKind::SeismicVolume
+            | AssetKind::SeismicSection
+            | AssetKind::SeismicTraceSet => Some(IndexKind::Time),
         },
         start: extent.0,
         stop: extent.1,
         row_count: extent.2,
+    }
+}
+
+fn seismic_asset_extent(metadata: &SeismicAssetMetadata) -> AssetExtent {
+    let sample_axis = &metadata.store.volume.axes.sample_axis_ms;
+    AssetExtent {
+        index_kind: Some(IndexKind::Time),
+        start: sample_axis.first().copied().map(f64::from),
+        stop: sample_axis.last().copied().map(f64::from),
+        row_count: Some(metadata.store.volume.shape[0] * metadata.store.volume.shape[1]),
     }
 }
 

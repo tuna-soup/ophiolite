@@ -1,0 +1,396 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use ndarray::{Array2, Array3};
+use ophiolite_seismic::{
+    DatasetId, SectionAxis, SectionColorMap, SectionCoordinate, SectionDisplayDefaults,
+    SectionMetadata, SectionPolarity, SectionRenderMode, SectionUnits, SectionView,
+    VolumeDescriptor,
+};
+
+use crate::error::SeismicStoreError;
+use crate::storage::section_assembler;
+use crate::storage::tbvol::{TbvolManifest, TbvolReader, TbvolWriter};
+use crate::storage::tile_geometry::TileCoord;
+use crate::storage::volume_store::{VolumeStoreReader, VolumeStoreWriter, write_dense_volume};
+
+#[derive(Debug, Clone)]
+pub struct StoreHandle {
+    pub root: PathBuf,
+    pub manifest: TbvolManifest,
+}
+
+#[derive(Debug, Clone)]
+pub struct SectionPlane {
+    pub axis: SectionAxis,
+    pub coordinate_index: usize,
+    pub coordinate_value: f64,
+    pub traces: usize,
+    pub samples: usize,
+    pub horizontal_axis: Vec<f64>,
+    pub sample_axis_ms: Vec<f32>,
+    pub amplitudes: Vec<f32>,
+    pub occupancy: Option<Vec<u8>>,
+}
+
+impl StoreHandle {
+    pub fn manifest_path(&self) -> PathBuf {
+        self.root.join("manifest.json")
+    }
+
+    pub fn dataset_id(&self) -> DatasetId {
+        DatasetId(dataset_id_string(&self.root))
+    }
+
+    pub fn volume_descriptor(&self) -> VolumeDescriptor {
+        VolumeDescriptor {
+            id: self.dataset_id(),
+            label: dataset_label(&self.root),
+            shape: self.manifest.volume.shape,
+            chunk_shape: self.manifest.tile_shape,
+            sample_interval_ms: self.manifest.volume.source.sample_interval_us as f32 / 1000.0,
+        }
+    }
+
+    pub fn section_view(
+        &self,
+        axis: SectionAxis,
+        index: usize,
+    ) -> Result<SectionView, SeismicStoreError> {
+        let plane = self.read_section_plane(axis, index)?;
+        Ok(self.section_view_from_plane(&plane))
+    }
+
+    pub fn read_section_plane(
+        &self,
+        axis: SectionAxis,
+        index: usize,
+    ) -> Result<SectionPlane, SeismicStoreError> {
+        let reader = TbvolReader::open(&self.root)?;
+        section_assembler::read_section_plane(&reader, axis, index)
+    }
+
+    pub fn section_view_from_plane(&self, plane: &SectionPlane) -> SectionView {
+        SectionView {
+            dataset_id: self.dataset_id(),
+            axis: plane.axis,
+            coordinate: SectionCoordinate {
+                index: plane.coordinate_index,
+                value: plane.coordinate_value,
+            },
+            traces: plane.traces,
+            samples: plane.samples,
+            horizontal_axis_f64le: f64_vec_to_le_bytes(&plane.horizontal_axis),
+            inline_axis_f64le: None,
+            xline_axis_f64le: None,
+            sample_axis_f32le: f32_vec_to_le_bytes(&plane.sample_axis_ms),
+            amplitudes_f32le: f32_vec_to_le_bytes(&plane.amplitudes),
+            units: Some(SectionUnits {
+                horizontal: Some(match plane.axis {
+                    SectionAxis::Inline => "xline".to_string(),
+                    SectionAxis::Xline => "inline".to_string(),
+                }),
+                sample: Some("ms".to_string()),
+                amplitude: Some("amplitude".to_string()),
+            }),
+            metadata: Some(SectionMetadata {
+                store_id: Some(self.dataset_id().0),
+                derived_from: self
+                    .manifest
+                    .volume
+                    .processing_lineage
+                    .as_ref()
+                    .map(|lineage| lineage.parent_store.to_string_lossy().into_owned()),
+                notes: vec![format!("kind:{:?}", self.manifest.volume.kind)],
+            }),
+            display_defaults: Some(SectionDisplayDefaults {
+                gain: 1.0,
+                clip_min: None,
+                clip_max: None,
+                render_mode: SectionRenderMode::Heatmap,
+                colormap: SectionColorMap::Grayscale,
+                polarity: SectionPolarity::Normal,
+            }),
+        }
+    }
+}
+
+pub fn create_tbvol_store(
+    root: impl AsRef<Path>,
+    manifest: TbvolManifest,
+    data: &Array3<f32>,
+    occupancy: Option<&Array2<u8>>,
+) -> Result<StoreHandle, SeismicStoreError> {
+    let writer = TbvolWriter::create(
+        root.as_ref(),
+        manifest.volume.clone(),
+        manifest.tile_shape,
+        manifest.has_occupancy,
+    )?;
+    write_dense_volume(&writer, data, occupancy)?;
+    writer.finalize()?;
+    open_store(root)
+}
+
+pub fn open_store(root: impl AsRef<Path>) -> Result<StoreHandle, SeismicStoreError> {
+    let root = root.as_ref().to_path_buf();
+    let manifest_path = root.join("manifest.json");
+    if !manifest_path.exists() {
+        return Err(SeismicStoreError::MissingManifest(manifest_path));
+    }
+    let manifest = serde_json::from_slice::<TbvolManifest>(&fs::read(&manifest_path)?)?;
+    Ok(StoreHandle { root, manifest })
+}
+
+pub fn describe_store(root: impl AsRef<Path>) -> Result<VolumeDescriptor, SeismicStoreError> {
+    Ok(open_store(root)?.volume_descriptor())
+}
+
+pub fn section_view(
+    root: impl AsRef<Path>,
+    axis: SectionAxis,
+    index: usize,
+) -> Result<SectionView, SeismicStoreError> {
+    open_store(root)?.section_view(axis, index)
+}
+
+pub fn read_section_plane(
+    root: impl AsRef<Path>,
+    axis: SectionAxis,
+    index: usize,
+) -> Result<SectionPlane, SeismicStoreError> {
+    open_store(root)?.read_section_plane(axis, index)
+}
+
+pub fn load_array(handle: &StoreHandle) -> Result<Array3<f32>, SeismicStoreError> {
+    let reader = TbvolReader::open(&handle.root)?;
+    load_array_from_reader(&reader)
+}
+
+pub fn load_occupancy(handle: &StoreHandle) -> Result<Option<Array2<u8>>, SeismicStoreError> {
+    let reader = TbvolReader::open(&handle.root)?;
+    load_occupancy_from_reader(&reader)
+}
+
+fn load_array_from_reader<R: VolumeStoreReader>(
+    reader: &R,
+) -> Result<Array3<f32>, SeismicStoreError> {
+    let shape = reader.volume().shape;
+    let mut data = Array3::<f32>::zeros((shape[0], shape[1], shape[2]));
+    let tile_shape = reader.tile_geometry().tile_shape();
+
+    for tile in reader.tile_geometry().iter_tiles() {
+        let values = reader.read_tile(tile)?;
+        let values = values.as_slice();
+        let effective = reader.tile_geometry().effective_tile_shape(tile);
+        let origin = reader.tile_geometry().tile_origin(tile);
+        for local_i in 0..effective[0] {
+            for local_x in 0..effective[1] {
+                let src = ((local_i * tile_shape[1]) + local_x) * tile_shape[2];
+                for sample in 0..effective[2] {
+                    data[[origin[0] + local_i, origin[1] + local_x, sample]] =
+                        values[src + sample];
+                }
+            }
+        }
+    }
+
+    Ok(data)
+}
+
+fn load_occupancy_from_reader<R: VolumeStoreReader>(
+    reader: &R,
+) -> Result<Option<Array2<u8>>, SeismicStoreError> {
+    let Some(_) = reader.read_tile_occupancy(TileCoord { tile_i: 0, tile_x: 0 })? else {
+        return Ok(None);
+    };
+    let shape = reader.volume().shape;
+    let mut data = Array2::<u8>::zeros((shape[0], shape[1]));
+    let tile_shape = reader.tile_geometry().tile_shape();
+
+    for tile in reader.tile_geometry().iter_tiles() {
+        let Some(values) = reader.read_tile_occupancy(tile)? else {
+            continue;
+        };
+        let values = values.as_slice();
+        let effective = reader.tile_geometry().effective_tile_shape(tile);
+        let origin = reader.tile_geometry().tile_origin(tile);
+        for local_i in 0..effective[0] {
+            for local_x in 0..effective[1] {
+                let src = local_i * tile_shape[1] + local_x;
+                data[[origin[0] + local_i, origin[1] + local_x]] = values[src];
+            }
+        }
+    }
+
+    Ok(Some(data))
+}
+
+fn dataset_leaf_name(root: &Path) -> String {
+    let raw = root.to_string_lossy();
+    raw.rsplit(['/', '\\'])
+        .find(|segment| !segment.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| raw.into_owned())
+}
+
+fn dataset_id_string(root: &Path) -> String {
+    dataset_leaf_name(root)
+}
+
+fn dataset_label(root: &Path) -> String {
+    Path::new(&dataset_leaf_name(root))
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| dataset_id_string(root))
+}
+
+fn f64_vec_to_le_bytes(values: &[f64]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(values.len() * std::mem::size_of::<f64>());
+    for value in values {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+fn f32_vec_to_le_bytes(values: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(values.len() * std::mem::size_of::<f32>());
+    for value in values {
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+    bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+    use crate::metadata::{
+        DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, VolumeAxes,
+        VolumeMetadata,
+    };
+    use ndarray::Array3;
+    use tempfile::tempdir;
+
+    fn fixture_manifest(shape: [usize; 3]) -> TbvolManifest {
+        TbvolManifest::new(
+            VolumeMetadata {
+                kind: DatasetKind::Source,
+                source: SourceIdentity {
+                    source_path: PathBuf::from("input.sgy"),
+                    file_size: 1,
+                    trace_count: 1,
+                    samples_per_trace: shape[2],
+                    sample_interval_us: 2000,
+                    sample_format_code: 5,
+                    geometry: GeometryProvenance {
+                        inline_field: HeaderFieldSpec {
+                            name: "INLINE_3D".to_string(),
+                            start_byte: 189,
+                            value_type: "I32".to_string(),
+                        },
+                        crossline_field: HeaderFieldSpec {
+                            name: "CROSSLINE_3D".to_string(),
+                            start_byte: 193,
+                            value_type: "I32".to_string(),
+                        },
+                        third_axis_field: None,
+                    },
+                    regularization: None,
+                },
+                shape,
+                axes: VolumeAxes {
+                    ilines: vec![100.0, 101.0, 102.0],
+                    xlines: vec![200.0, 201.0, 202.0, 203.0],
+                    sample_axis_ms: vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0],
+                },
+                created_by: "test".to_string(),
+                processing_lineage: None,
+            },
+            [2, 2, 6],
+            false,
+        )
+    }
+
+    #[test]
+    fn volume_descriptor_uses_shared_domain_type() {
+        let handle = StoreHandle {
+            root: PathBuf::from("C:\\data\\survey.tbvol"),
+            manifest: fixture_manifest([3, 4, 6]),
+        };
+        let descriptor = handle.volume_descriptor();
+
+        assert_eq!(descriptor.id.0, "survey.tbvol");
+        assert_eq!(descriptor.label, "survey");
+        assert_eq!(descriptor.shape, [3, 4, 6]);
+        assert_eq!(descriptor.chunk_shape, [2, 2, 6]);
+        assert_eq!(descriptor.sample_interval_ms, 2.0);
+    }
+
+    #[test]
+    fn section_view_uses_shared_view_type() {
+        let temp_dir = tempdir().expect("temp dir");
+        let root = temp_dir.path().join("survey.tbvol");
+        let manifest = fixture_manifest([3, 4, 6]);
+        let data = Array3::from_shape_fn((3, 4, 6), |(iline, xline, sample)| {
+            iline as f32 * 100.0 + xline as f32 * 10.0 + sample as f32
+        });
+        create_tbvol_store(&root, manifest, &data, None).expect("store should be created");
+        let handle = open_store(&root).expect("store should open");
+        let view = handle
+            .section_view(SectionAxis::Inline, 1)
+            .expect("inline section should be valid");
+
+        assert_eq!(view.dataset_id.0, "survey.tbvol");
+        assert_eq!(view.axis, SectionAxis::Inline);
+        assert_eq!(view.coordinate.index, 1);
+        assert_eq!(view.coordinate.value, 101.0);
+        assert_eq!(view.traces, 4);
+        assert_eq!(view.samples, 6);
+        assert_eq!(view.horizontal_axis_f64le.len(), 4 * 8);
+        assert_eq!(view.sample_axis_f32le.len(), 6 * 4);
+        assert_eq!(view.amplitudes_f32le.len(), 4 * 6 * 4);
+
+        fs::remove_dir_all(&root).expect("temp store should be removable");
+    }
+
+    #[test]
+    fn read_section_plane_reads_subset_without_loading_full_volume() {
+        let temp_dir = tempdir().expect("temp dir");
+        let root = temp_dir.path().join("survey.tbvol");
+        let manifest = fixture_manifest([3, 4, 6]);
+        let data = Array3::from_shape_fn((3, 4, 6), |(iline, xline, sample)| {
+            iline as f32 * 100.0 + xline as f32 * 10.0 + sample as f32
+        });
+        create_tbvol_store(&root, manifest, &data, None).expect("store should be created");
+        let handle = open_store(&root).expect("store should open");
+
+        let inline = handle
+            .read_section_plane(SectionAxis::Inline, 1)
+            .expect("inline section plane should be valid");
+        assert_eq!(inline.traces, 4);
+        assert_eq!(inline.samples, 6);
+        assert_eq!(inline.coordinate_index, 1);
+        assert_eq!(inline.coordinate_value, 101.0);
+        assert_eq!(inline.amplitudes.len(), 4 * 6);
+        assert_eq!(inline.amplitudes[0], 100.0);
+        assert_eq!(inline.amplitudes[1], 101.0);
+        assert_eq!(inline.amplitudes[6], 110.0);
+
+        let xline = handle
+            .read_section_plane(SectionAxis::Xline, 2)
+            .expect("xline section plane should be valid");
+        assert_eq!(xline.traces, 3);
+        assert_eq!(xline.samples, 6);
+        assert_eq!(xline.coordinate_index, 2);
+        assert_eq!(xline.coordinate_value, 202.0);
+        assert_eq!(xline.amplitudes.len(), 3 * 6);
+        assert_eq!(xline.amplitudes[0], 20.0);
+        assert_eq!(xline.amplitudes[6], 120.0);
+        assert_eq!(xline.amplitudes[12], 220.0);
+
+        fs::remove_dir_all(&root).expect("temp store should be removable");
+    }
+}

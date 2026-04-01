@@ -2,7 +2,7 @@
 
 Status: Early development. The project/domain model, asset package conventions, and editing workflows are still evolving.
 
-`ophiolite` is a Rust-first subsurface well-data SDK for desktop applications and local tooling. It began from a strong LAS/log foundation, but now also supports a local-first multi-well project/catalog layer and typed asset families for logs, trajectory, tops, pressure observations, and drilling observations.
+`ophiolite` is a Rust-first subsurface data SDK for desktop applications and local tooling. It began from a strong LAS/log foundation, but now also supports a local-first multi-well project/catalog layer, typed well-domain asset families, and a shared seismic core that owns seismic contracts, IO, runtime/store, and compute-facing section/trace workflows.
 
 Public docs site source now lives in:
 
@@ -46,6 +46,7 @@ But the long-term need is broader than LAS alone. Real subsurface applications n
 - tops
 - pressure observations
 - drilling observations
+- seismic volumes, sections, and trace sets
 - related provenance, diagnostics, and package/query workflows
 
 Ophiolite therefore aims to provide:
@@ -53,6 +54,7 @@ Ophiolite therefore aims to provide:
 - a robust LAS parser
 - a canonical log-domain model for LAS-derived data
 - typed non-log asset families for other wellbore datasets
+- a shared seismic core for canonical seismic descriptors, app-boundary section/trace models, SEG-Y IO, and runtime/store execution
 - an app-friendly runtime/query abstraction
 - optimized local single-asset package formats
 - a local-first project/catalog layer for assembling multiple linked assets coherently
@@ -139,12 +141,13 @@ The current implementation still has its deepest maturity in the LAS/log slice, 
 
 Core components:
 
-- workspace crates: `ophiolite-core`, `ophiolite-parser`, `ophiolite-table`, `ophiolite-package`, `ophiolite-project`, `ophiolite-ingest`, `ophiolite-compute`, `ophiolite-cli`
+- workspace crates: `ophiolite-core`, `ophiolite-parser`, `ophiolite-table`, `ophiolite-package`, `ophiolite-project`, `ophiolite-ingest`, `ophiolite-compute`, `ophiolite-seismic`, `ophiolite-seismic-io`, `ophiolite-seismic-runtime`, `ophiolite-cli`
 - root compatibility crate: `ophiolite`
 - canonical domain object: `LasFile`
 - explicit editable package session model: `PackageSession`
 - local multi-well project/catalog root: `OphioliteProject`
 - typed multi-well asset families: log, trajectory, tops, pressure observations, and drilling observations
+- shared seismic descriptors, SEG-Y IO, and runtime/store backends for volumes, sections, and trace sets
 - Tauri/backend adapter surface: `PackageBackend`
 - Tauri-ready shared backend state wrapper: `PackageBackendState`
 - app-boundary command service: `PackageCommandService`
@@ -555,6 +558,7 @@ Architecture and design decisions are documented in:
 - `docs/architecture/ADR-0010-typed-compute-and-derived-assets.md`
 - `docs/architecture/ADR-0011-structured-asset-edit-sessions.md`
 - `docs/architecture/ADR-0012-revisioned-last-save-wins.md`
+- `docs/architecture/ADR-0013-shared-subsurface-core-and-seismic-expansion.md`
 - `ophiolite_roadmap.md`
 - `docs/lasio_non_v3_parity.md`
 - `lasio-basic-example.md`
@@ -635,6 +639,7 @@ Current next priorities are:
 - improve structured asset editing UX and comparison/overlay workflows in the harness
 - deepen LAS 3 and broader structured ingest for non-log assets
 - keep the command and app boundary thin while the project-first workflow settles
+- expand the new seismic core from shared descriptors and boundary DTOs into project-managed seismic asset families without collapsing product workflow logic into the core too early
 
 Later directions include:
 
@@ -664,7 +669,7 @@ Before contributing large changes, open an issue first to discuss direction. Oph
 
 ```text
 src/                    root compatibility crate and thin CLI entrypoint
-crates/                 workspace crates for core, parser, table, package, and CLI
+crates/                 workspace crates for core, parser, table, package, seismic, and CLI
 apps/ophiolite-harness/    internal Tauri + React capability harness
 docs/                   architecture notes and ADRs
 examples/               LAS example corpus

@@ -1,6 +1,7 @@
 use ophiolite_core::Result;
 use ophiolite_project::{
     AssetBindingInput, LogAssetImportResult, OphioliteProject, ProjectAssetImportResult,
+    SeismicAssetImportResult,
 };
 use std::path::Path;
 
@@ -46,4 +47,13 @@ pub fn import_drilling_csv_asset(
     collection_name: Option<&str>,
 ) -> Result<ProjectAssetImportResult> {
     project.import_drilling_csv(csv_path, binding, collection_name)
+}
+
+pub fn import_seismic_volume_store_asset(
+    project: &mut OphioliteProject,
+    store_root: impl AsRef<Path>,
+    binding: &AssetBindingInput,
+    collection_name: Option<&str>,
+) -> Result<SeismicAssetImportResult> {
+    project.import_seismic_volume_store(store_root, binding, collection_name)
 }

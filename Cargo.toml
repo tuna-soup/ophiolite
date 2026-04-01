@@ -12,6 +12,7 @@ members = [
     "crates/ophiolite-seismic-io",
     "crates/ophiolite-seismic-runtime",
     "crates/ophiolite-cli",
+    "scripts/contracts-export",
 ]
 exclude = ["apps/ophiolite-harness/src-tauri"]
 resolver = "2"
@@ -55,6 +56,8 @@ parquet = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+schemars = { workspace = true }
+ts-rs = { workspace = true }
 
 [dev-dependencies]
 ndarray = "0.17"

@@ -1,0 +1,1414 @@
+{
+  "wellPanelContractVersion": 1,
+  "types": {
+    "WellPanelRequestDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellPanelRequestDto",
+      "type": "object",
+      "required": [
+        "schema_version",
+        "wellbore_ids"
+      ],
+      "properties": {
+        "depth_max": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "depth_min": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "wellbore_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "WellPanelDepthSampleDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellPanelDepthSampleDto",
+      "type": "object",
+      "required": [
+        "native_depth",
+        "panel_depth"
+      ],
+      "properties": {
+        "native_depth": {
+          "type": "number",
+          "format": "double"
+        },
+        "panel_depth": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "WellPanelLogCurveDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellPanelLogCurveDto",
+      "type": "object",
+      "required": [
+        "asset_id",
+        "asset_name",
+        "curve_name",
+        "depths",
+        "logical_asset_id",
+        "original_mnemonic",
+        "semantic_type",
+        "values"
+      ],
+      "properties": {
+        "asset_id": {
+          "type": "string"
+        },
+        "asset_name": {
+          "type": "string"
+        },
+        "curve_name": {
+          "type": "string"
+        },
+        "depths": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "logical_asset_id": {
+          "type": "string"
+        },
+        "original_mnemonic": {
+          "type": "string"
+        },
+        "semantic_type": {
+          "type": "string"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        }
+      }
+    },
+    "WellPanelTrajectoryRowDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellPanelTrajectoryRowDto",
+      "type": "object",
+      "required": [
+        "measured_depth"
+      ],
+      "properties": {
+        "azimuth_deg": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "easting_offset": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "inclination_deg": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "measured_depth": {
+          "type": "number",
+          "format": "double"
+        },
+        "northing_offset": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "true_vertical_depth": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      }
+    },
+    "WellPanelTrajectoryDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellPanelTrajectoryDto",
+      "type": "object",
+      "required": [
+        "asset_id",
+        "asset_name",
+        "logical_asset_id",
+        "rows"
+      ],
+      "properties": {
+        "asset_id": {
+          "type": "string"
+        },
+        "asset_name": {
+          "type": "string"
+        },
+        "logical_asset_id": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellPanelTrajectoryRowDto"
+          }
+        }
+      },
+      "definitions": {
+        "WellPanelTrajectoryRowDto": {
+          "type": "object",
+          "required": [
+            "measured_depth"
+          ],
+          "properties": {
+            "azimuth_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "easting_offset": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "inclination_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "measured_depth": {
+              "type": "number",
+              "format": "double"
+            },
+            "northing_offset": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "true_vertical_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "WellPanelTopRowDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellPanelTopRowDto",
+      "type": "object",
+      "required": [
+        "name",
+        "top_depth"
+      ],
+      "properties": {
+        "base_depth": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "depth_reference": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "top_depth": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "WellPanelTopSetDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellPanelTopSetDto",
+      "type": "object",
+      "required": [
+        "asset_id",
+        "asset_name",
+        "logical_asset_id",
+        "rows"
+      ],
+      "properties": {
+        "asset_id": {
+          "type": "string"
+        },
+        "asset_name": {
+          "type": "string"
+        },
+        "logical_asset_id": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellPanelTopRowDto"
+          }
+        }
+      },
+      "definitions": {
+        "WellPanelTopRowDto": {
+          "type": "object",
+          "required": [
+            "name",
+            "top_depth"
+          ],
+          "properties": {
+            "base_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "depth_reference": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "top_depth": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "WellPanelPressureObservationDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellPanelPressureObservationDto",
+      "type": "object",
+      "required": [
+        "pressure"
+      ],
+      "properties": {
+        "measured_depth": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "phase": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "pressure": {
+          "type": "number",
+          "format": "double"
+        },
+        "test_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timestamp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "WellPanelPressureSetDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellPanelPressureSetDto",
+      "type": "object",
+      "required": [
+        "asset_id",
+        "asset_name",
+        "logical_asset_id",
+        "rows"
+      ],
+      "properties": {
+        "asset_id": {
+          "type": "string"
+        },
+        "asset_name": {
+          "type": "string"
+        },
+        "logical_asset_id": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellPanelPressureObservationDto"
+          }
+        }
+      },
+      "definitions": {
+        "WellPanelPressureObservationDto": {
+          "type": "object",
+          "required": [
+            "pressure"
+          ],
+          "properties": {
+            "measured_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "phase": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pressure": {
+              "type": "number",
+              "format": "double"
+            },
+            "test_kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "timestamp": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "WellPanelDrillingObservationDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellPanelDrillingObservationDto",
+      "type": "object",
+      "required": [
+        "event_kind"
+      ],
+      "properties": {
+        "comment": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "event_kind": {
+          "type": "string"
+        },
+        "measured_depth": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "timestamp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      }
+    },
+    "WellPanelDrillingSetDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellPanelDrillingSetDto",
+      "type": "object",
+      "required": [
+        "asset_id",
+        "asset_name",
+        "logical_asset_id",
+        "rows"
+      ],
+      "properties": {
+        "asset_id": {
+          "type": "string"
+        },
+        "asset_name": {
+          "type": "string"
+        },
+        "logical_asset_id": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellPanelDrillingObservationDto"
+          }
+        }
+      },
+      "definitions": {
+        "WellPanelDrillingObservationDto": {
+          "type": "object",
+          "required": [
+            "event_kind"
+          ],
+          "properties": {
+            "comment": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "event_kind": {
+              "type": "string"
+            },
+            "measured_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "timestamp": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "ResolvedWellPanelWellDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolvedWellPanelWellDto",
+      "type": "object",
+      "required": [
+        "drilling_observations",
+        "logs",
+        "name",
+        "native_depth_datum",
+        "panel_depth_mapping",
+        "pressure_observations",
+        "top_sets",
+        "trajectories",
+        "well_id",
+        "wellbore_id"
+      ],
+      "properties": {
+        "drilling_observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellPanelDrillingSetDto"
+          }
+        },
+        "logs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellPanelLogCurveDto"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "native_depth_datum": {
+          "type": "string"
+        },
+        "panel_depth_mapping": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellPanelDepthSampleDto"
+          }
+        },
+        "pressure_observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellPanelPressureSetDto"
+          }
+        },
+        "top_sets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellPanelTopSetDto"
+          }
+        },
+        "trajectories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellPanelTrajectoryDto"
+          }
+        },
+        "well_id": {
+          "type": "string"
+        },
+        "wellbore_id": {
+          "type": "string"
+        }
+      },
+      "definitions": {
+        "WellPanelDepthSampleDto": {
+          "type": "object",
+          "required": [
+            "native_depth",
+            "panel_depth"
+          ],
+          "properties": {
+            "native_depth": {
+              "type": "number",
+              "format": "double"
+            },
+            "panel_depth": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "WellPanelDrillingObservationDto": {
+          "type": "object",
+          "required": [
+            "event_kind"
+          ],
+          "properties": {
+            "comment": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "event_kind": {
+              "type": "string"
+            },
+            "measured_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "timestamp": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        },
+        "WellPanelDrillingSetDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "asset_name",
+            "logical_asset_id",
+            "rows"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "asset_name": {
+              "type": "string"
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelDrillingObservationDto"
+              }
+            }
+          }
+        },
+        "WellPanelLogCurveDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "asset_name",
+            "curve_name",
+            "depths",
+            "logical_asset_id",
+            "original_mnemonic",
+            "semantic_type",
+            "values"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "asset_name": {
+              "type": "string"
+            },
+            "curve_name": {
+              "type": "string"
+            },
+            "depths": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "original_mnemonic": {
+              "type": "string"
+            },
+            "semantic_type": {
+              "type": "string"
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              }
+            }
+          }
+        },
+        "WellPanelPressureObservationDto": {
+          "type": "object",
+          "required": [
+            "pressure"
+          ],
+          "properties": {
+            "measured_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "phase": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pressure": {
+              "type": "number",
+              "format": "double"
+            },
+            "test_kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "timestamp": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "WellPanelPressureSetDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "asset_name",
+            "logical_asset_id",
+            "rows"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "asset_name": {
+              "type": "string"
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelPressureObservationDto"
+              }
+            }
+          }
+        },
+        "WellPanelTopRowDto": {
+          "type": "object",
+          "required": [
+            "name",
+            "top_depth"
+          ],
+          "properties": {
+            "base_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "depth_reference": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "top_depth": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "WellPanelTopSetDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "asset_name",
+            "logical_asset_id",
+            "rows"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "asset_name": {
+              "type": "string"
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelTopRowDto"
+              }
+            }
+          }
+        },
+        "WellPanelTrajectoryDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "asset_name",
+            "logical_asset_id",
+            "rows"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "asset_name": {
+              "type": "string"
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelTrajectoryRowDto"
+              }
+            }
+          }
+        },
+        "WellPanelTrajectoryRowDto": {
+          "type": "object",
+          "required": [
+            "measured_depth"
+          ],
+          "properties": {
+            "azimuth_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "easting_offset": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "inclination_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "measured_depth": {
+              "type": "number",
+              "format": "double"
+            },
+            "northing_offset": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "true_vertical_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "ResolvedWellPanelSourceDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolvedWellPanelSourceDto",
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "schema_version",
+        "wells"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "wells": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ResolvedWellPanelWellDto"
+          }
+        }
+      },
+      "definitions": {
+        "ResolvedWellPanelWellDto": {
+          "type": "object",
+          "required": [
+            "drilling_observations",
+            "logs",
+            "name",
+            "native_depth_datum",
+            "panel_depth_mapping",
+            "pressure_observations",
+            "top_sets",
+            "trajectories",
+            "well_id",
+            "wellbore_id"
+          ],
+          "properties": {
+            "drilling_observations": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelDrillingSetDto"
+              }
+            },
+            "logs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelLogCurveDto"
+              }
+            },
+            "name": {
+              "type": "string"
+            },
+            "native_depth_datum": {
+              "type": "string"
+            },
+            "panel_depth_mapping": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelDepthSampleDto"
+              }
+            },
+            "pressure_observations": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelPressureSetDto"
+              }
+            },
+            "top_sets": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelTopSetDto"
+              }
+            },
+            "trajectories": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelTrajectoryDto"
+              }
+            },
+            "well_id": {
+              "type": "string"
+            },
+            "wellbore_id": {
+              "type": "string"
+            }
+          }
+        },
+        "WellPanelDepthSampleDto": {
+          "type": "object",
+          "required": [
+            "native_depth",
+            "panel_depth"
+          ],
+          "properties": {
+            "native_depth": {
+              "type": "number",
+              "format": "double"
+            },
+            "panel_depth": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "WellPanelDrillingObservationDto": {
+          "type": "object",
+          "required": [
+            "event_kind"
+          ],
+          "properties": {
+            "comment": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "event_kind": {
+              "type": "string"
+            },
+            "measured_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "timestamp": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        },
+        "WellPanelDrillingSetDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "asset_name",
+            "logical_asset_id",
+            "rows"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "asset_name": {
+              "type": "string"
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelDrillingObservationDto"
+              }
+            }
+          }
+        },
+        "WellPanelLogCurveDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "asset_name",
+            "curve_name",
+            "depths",
+            "logical_asset_id",
+            "original_mnemonic",
+            "semantic_type",
+            "values"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "asset_name": {
+              "type": "string"
+            },
+            "curve_name": {
+              "type": "string"
+            },
+            "depths": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "original_mnemonic": {
+              "type": "string"
+            },
+            "semantic_type": {
+              "type": "string"
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "format": "double"
+              }
+            }
+          }
+        },
+        "WellPanelPressureObservationDto": {
+          "type": "object",
+          "required": [
+            "pressure"
+          ],
+          "properties": {
+            "measured_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "phase": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pressure": {
+              "type": "number",
+              "format": "double"
+            },
+            "test_kind": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "timestamp": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "WellPanelPressureSetDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "asset_name",
+            "logical_asset_id",
+            "rows"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "asset_name": {
+              "type": "string"
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelPressureObservationDto"
+              }
+            }
+          }
+        },
+        "WellPanelTopRowDto": {
+          "type": "object",
+          "required": [
+            "name",
+            "top_depth"
+          ],
+          "properties": {
+            "base_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "depth_reference": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "top_depth": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "WellPanelTopSetDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "asset_name",
+            "logical_asset_id",
+            "rows"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "asset_name": {
+              "type": "string"
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelTopRowDto"
+              }
+            }
+          }
+        },
+        "WellPanelTrajectoryDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "asset_name",
+            "logical_asset_id",
+            "rows"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "asset_name": {
+              "type": "string"
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/WellPanelTrajectoryRowDto"
+              }
+            }
+          }
+        },
+        "WellPanelTrajectoryRowDto": {
+          "type": "object",
+          "required": [
+            "measured_depth"
+          ],
+          "properties": {
+            "azimuth_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "easting_offset": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "inclination_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "measured_depth": {
+              "type": "number",
+              "format": "double"
+            },
+            "northing_offset": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "true_vertical_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        }
+      }
+    }
+  }
+}

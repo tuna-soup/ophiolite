@@ -20,6 +20,9 @@ Today, Ophiolite can:
 - organize multiple linked assets under one `OphioliteProject`
 - discover and run typed compute/UDF functions against eligible log and structured wellbore data
 - expose app-facing query and editing surfaces for desktop workflows
+- resolve focused frontend DTO/query payloads such as well-panel sources without exposing raw catalog internals
+- generate TypeScript contracts for frontend-safe DTOs under `contracts/ts/ophiolite-contracts`
+- run seismic processing pipelines through the shared seismic runtime, including section preview, derived-volume materialization, and persisted processing lineage
 
 The project is designed primarily for Rust desktop applications such as Tauri backends and local data tooling, while remaining interoperable with common data ecosystems.
 
@@ -297,6 +300,7 @@ The current rule is:
 - typed read/query APIs for those non-log asset families
 - cross-asset depth-range discovery for one wellbore
 - project-facing summary APIs for project, well, wellbore, collection, and asset overviews
+- focused frontend DTO/query resolution for well-panel-oriented non-seismic well data
 - project-scoped structured edit sessions for trajectory, tops, pressure observations, and drilling observations
 - synthetic multi-asset project fixture generation for testing and manual inspection
 
@@ -442,6 +446,18 @@ Session invariants:
 Backend-session parquet metadata caches are session-local in the current phase. They are reused across repeated reads within one open session and dropped when that session is closed.
 
 DTOs are boundary and transport shapes. They are not the canonical domain model. `LasFile` remains the authoritative in-memory LAS representation inside the backend.
+
+The same principle applies to `OphioliteProject`: the project/catalog is the canonical container of wells, wellbores, and asset families, while frontend-oriented DTOs such as a resolved well-panel source are query results shaped for one application workflow.
+
+For TypeScript consumers, those DTOs are now exported as a generated package:
+
+- `contracts/ts/ophiolite-contracts`
+
+Regenerate them from the repo root with:
+
+```powershell
+.\scripts\generate-ts-contracts.ps1
+```
 
 The DTO contract is versioned with a lightweight `dto_contract_version` field. Session-backed metadata, curve-catalog, and curve-window reads now carry explicit session context so desktop clients do not need to infer package/session/revision state from unrelated calls.
 

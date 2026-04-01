@@ -15,6 +15,8 @@ pub use ophiolite_parser::read_path;
 
 #[path = "../../../src/project.rs"]
 mod project;
+#[path = "../../../src/project_contracts.rs"]
+mod project_contracts;
 #[path = "../../../src/project_assets.rs"]
 mod project_assets;
 #[path = "../../../src/project_edit.rs"]
@@ -37,6 +39,13 @@ pub use project::{
 pub use project_assets::{
     AssetBindingInput, AssetColumnMetadata, AssetColumnType, AssetTableMetadata, DepthRangeQuery,
     DrillingObservationRow, PressureObservationRow, TopRow, TrajectoryRow,
+};
+pub use project_contracts::{
+    ResolvedWellPanelSourceDto, ResolvedWellPanelWellDto, WELL_PANEL_CONTRACT_VERSION,
+    WellPanelDepthSampleDto, WellPanelDrillingObservationDto, WellPanelDrillingSetDto,
+    WellPanelLogCurveDto, WellPanelPressureObservationDto, WellPanelPressureSetDto,
+    WellPanelRequestDto, WellPanelTopRowDto, WellPanelTopSetDto, WellPanelTrajectoryDto,
+    WellPanelTrajectoryRowDto,
 };
 pub use project_edit::{
     DrillingObservationEditRequest, DrillingObservationRowPatch,

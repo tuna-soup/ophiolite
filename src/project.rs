@@ -6,6 +6,13 @@ use crate::project_assets::{
     vertical_datum_for_kind, write_drilling_package, write_pressure_package, write_tops_package,
     write_trajectory_package,
 };
+use crate::project_contracts::{
+    ResolvedWellPanelSourceDto, ResolvedWellPanelWellDto, WELL_PANEL_CONTRACT_VERSION,
+    WellPanelDepthSampleDto, WellPanelDrillingObservationDto, WellPanelDrillingSetDto,
+    WellPanelLogCurveDto, WellPanelPressureObservationDto, WellPanelPressureSetDto,
+    WellPanelRequestDto, WellPanelTopRowDto, WellPanelTopSetDto, WellPanelTrajectoryDto,
+    WellPanelTrajectoryRowDto,
+};
 use crate::{
     AssetBindingInput, AssetTableMetadata, DepthRangeQuery, DrillingObservationRow, IndexKind,
     IngestIssue, LasError, LasFile, PressureObservationRow, Provenance, Result, TopRow,
@@ -955,6 +962,55 @@ impl OphioliteProject {
         read_drilling_rows(Path::new(&asset.package_path), range)
     }
 
+    pub fn read_log_curve_data(&self, asset_id: &AssetId) -> Result<Vec<LogCurveData>> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::Log)?;
+        let package = open_package(&asset.package_path)?;
+        let semantics = if asset.manifest.curve_semantics.is_empty() {
+            classify_log_curves_from_file(package.file())
+        } else {
+            asset.manifest.curve_semantics.clone()
+        };
+        log_curve_data_for_compute(package.file(), &semantics)
+    }
+
+    pub fn resolve_well_panel_source(
+        &self,
+        request: &WellPanelRequestDto,
+    ) -> Result<ResolvedWellPanelSourceDto> {
+        if request.wellbore_ids.is_empty() {
+            return Err(LasError::Validation(
+                "well-panel request requires at least one wellbore id".to_string(),
+            ));
+        }
+        if let (Some(depth_min), Some(depth_max)) = (request.depth_min, request.depth_max) {
+            if depth_min > depth_max {
+                return Err(LasError::Validation(
+                    "well-panel request requires depth_min <= depth_max".to_string(),
+                ));
+            }
+        }
+
+        let wells = request
+            .wellbore_ids
+            .iter()
+            .map(|wellbore_id| {
+                self.resolve_well_panel_well(
+                    &WellboreId(wellbore_id.clone()),
+                    request.depth_min,
+                    request.depth_max,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(ResolvedWellPanelSourceDto {
+            schema_version: WELL_PANEL_CONTRACT_VERSION,
+            id: format!("well-panel:{}", request.wellbore_ids.join(",")),
+            name: "Resolved Well Panel Source".to_string(),
+            wells,
+        })
+    }
+
     pub fn asset_record(&self, asset_id: &AssetId) -> Result<AssetRecord> {
         self.asset_by_id(asset_id)
     }
@@ -1510,6 +1566,162 @@ impl OphioliteProject {
             .collect())
     }
 
+    fn resolve_well_panel_well(
+        &self,
+        wellbore_id: &WellboreId,
+        depth_min: Option<f64>,
+        depth_max: Option<f64>,
+    ) -> Result<ResolvedWellPanelWellDto> {
+        let wellbore = self.wellbore_by_id(wellbore_id)?;
+        let current_assets = self
+            .asset_summaries(wellbore_id, None)?
+            .into_iter()
+            .filter(|summary| summary.is_current)
+            .collect::<Vec<_>>();
+
+        let mut logs = Vec::new();
+        let mut trajectories = Vec::new();
+        let mut top_sets = Vec::new();
+        let mut pressure_observations = Vec::new();
+        let mut drilling_observations = Vec::new();
+        let mut depth_samples = Vec::new();
+
+        for summary in current_assets {
+            let asset = summary.asset;
+            let collection = self.collection_by_id(&asset.collection_id)?;
+            match asset.asset_kind {
+                AssetKind::Log => {
+                    for curve in self.read_log_curve_data(&asset.id)? {
+                        let filtered = filter_log_curve_for_depth_range(&curve, depth_min, depth_max);
+                        if filtered.depths.is_empty() {
+                            continue;
+                        }
+                        depth_samples.extend(filtered.depths.iter().copied());
+                        logs.push(WellPanelLogCurveDto {
+                            asset_id: asset.id.0.clone(),
+                            logical_asset_id: asset.logical_asset_id.0.clone(),
+                            asset_name: collection.name.clone(),
+                            curve_name: filtered.curve_name,
+                            original_mnemonic: filtered.original_mnemonic,
+                            unit: filtered.unit,
+                            semantic_type: format!("{:?}", filtered.semantic_type),
+                            depths: filtered.depths,
+                            values: filtered.values,
+                        });
+                    }
+                }
+                AssetKind::Trajectory => {
+                    let range = depth_query(depth_min, depth_max);
+                    let rows = self.read_trajectory_rows(&asset.id, range.as_ref())?;
+                    if rows.is_empty() {
+                        continue;
+                    }
+                    depth_samples.extend(rows.iter().map(|row| row.measured_depth));
+                    trajectories.push(WellPanelTrajectoryDto {
+                        asset_id: asset.id.0.clone(),
+                        logical_asset_id: asset.logical_asset_id.0.clone(),
+                        asset_name: collection.name.clone(),
+                        rows: rows
+                            .into_iter()
+                            .map(|row| WellPanelTrajectoryRowDto {
+                                measured_depth: row.measured_depth,
+                                true_vertical_depth: row.true_vertical_depth,
+                                azimuth_deg: row.azimuth_deg,
+                                inclination_deg: row.inclination_deg,
+                                northing_offset: row.northing_offset,
+                                easting_offset: row.easting_offset,
+                            })
+                            .collect(),
+                    });
+                }
+                AssetKind::TopSet => {
+                    let rows = filter_top_rows_for_depth_range(self.read_tops(&asset.id)?, depth_min, depth_max);
+                    if rows.is_empty() {
+                        continue;
+                    }
+                    depth_samples.extend(rows.iter().map(|row| row.top_depth));
+                    top_sets.push(WellPanelTopSetDto {
+                        asset_id: asset.id.0.clone(),
+                        logical_asset_id: asset.logical_asset_id.0.clone(),
+                        asset_name: collection.name.clone(),
+                        rows: rows
+                            .into_iter()
+                            .map(|row| WellPanelTopRowDto {
+                                name: row.name,
+                                top_depth: row.top_depth,
+                                base_depth: row.base_depth,
+                                source: row.source,
+                                depth_reference: row.depth_reference,
+                            })
+                            .collect(),
+                    });
+                }
+                AssetKind::PressureObservation => {
+                    let range = depth_query(depth_min, depth_max);
+                    let rows = self.read_pressure_observations(&asset.id, range.as_ref())?;
+                    if rows.is_empty() {
+                        continue;
+                    }
+                    depth_samples.extend(rows.iter().filter_map(|row| row.measured_depth));
+                    pressure_observations.push(WellPanelPressureSetDto {
+                        asset_id: asset.id.0.clone(),
+                        logical_asset_id: asset.logical_asset_id.0.clone(),
+                        asset_name: collection.name.clone(),
+                        rows: rows
+                            .into_iter()
+                            .map(|row| WellPanelPressureObservationDto {
+                                measured_depth: row.measured_depth,
+                                pressure: row.pressure,
+                                phase: row.phase,
+                                test_kind: row.test_kind,
+                                timestamp: row.timestamp,
+                            })
+                            .collect(),
+                    });
+                }
+                AssetKind::DrillingObservation => {
+                    let range = depth_query(depth_min, depth_max);
+                    let rows = self.read_drilling_observations(&asset.id, range.as_ref())?;
+                    if rows.is_empty() {
+                        continue;
+                    }
+                    depth_samples.extend(rows.iter().filter_map(|row| row.measured_depth));
+                    drilling_observations.push(WellPanelDrillingSetDto {
+                        asset_id: asset.id.0.clone(),
+                        logical_asset_id: asset.logical_asset_id.0.clone(),
+                        asset_name: collection.name.clone(),
+                        rows: rows
+                            .into_iter()
+                            .map(|row| WellPanelDrillingObservationDto {
+                                measured_depth: row.measured_depth,
+                                event_kind: row.event_kind,
+                                value: row.value,
+                                unit: row.unit,
+                                timestamp: row.timestamp,
+                                comment: row.comment,
+                            })
+                            .collect(),
+                    });
+                }
+                AssetKind::SeismicVolume | AssetKind::SeismicSection | AssetKind::SeismicTraceSet => {}
+            }
+        }
+
+        let panel_depth_mapping = identity_panel_depth_mapping(depth_samples);
+        Ok(ResolvedWellPanelWellDto {
+            well_id: wellbore.well_id.0.clone(),
+            wellbore_id: wellbore.id.0.clone(),
+            name: wellbore.name,
+            native_depth_datum: "measured_depth".to_string(),
+            panel_depth_mapping,
+            logs,
+            trajectories,
+            top_sets,
+            pressure_observations,
+            drilling_observations,
+        })
+    }
+
     fn import_structured_asset<F>(
         &mut self,
         source_path: &Path,
@@ -1731,6 +1943,28 @@ impl OphioliteProject {
                         logical_asset_id: AssetId(row.get(4)?),
                         status: AssetStatus::from_str(&row.get::<_, String>(5)?)
                             .map_err(sql_validation_error)?,
+                    })
+                },
+            )
+            .map_err(sqlite_error)
+    }
+
+    fn wellbore_by_id(&self, wellbore_id: &WellboreId) -> Result<WellboreRecord> {
+        self.connection
+            .query_row(
+                "SELECT id, well_id, primary_name, identifiers_json
+                 FROM wellbores
+                 WHERE id = ?1",
+                params![wellbore_id.0],
+                |row| {
+                    Ok(WellboreRecord {
+                        id: WellboreId(row.get(0)?),
+                        well_id: WellId(row.get(1)?),
+                        name: row.get(2)?,
+                        identifiers: serde_json::from_str::<WellIdentifierSet>(
+                            &row.get::<_, String>(3)?,
+                        )
+                        .map_err(sql_json_error)?,
                     })
                 },
             )
@@ -2814,6 +3048,81 @@ fn log_curve_data_for_compute(
         });
     }
     Ok(result)
+}
+
+fn filter_log_curve_for_depth_range(
+    curve: &LogCurveData,
+    depth_min: Option<f64>,
+    depth_max: Option<f64>,
+) -> LogCurveData {
+    let mut depths = Vec::new();
+    let mut values = Vec::new();
+    for (depth, value) in curve.depths.iter().zip(curve.values.iter()) {
+        if !depth_in_range(*depth, depth_min, depth_max) {
+            continue;
+        }
+        depths.push(*depth);
+        values.push(*value);
+    }
+    LogCurveData {
+        curve_name: curve.curve_name.clone(),
+        original_mnemonic: curve.original_mnemonic.clone(),
+        unit: curve.unit.clone(),
+        semantic_type: curve.semantic_type.clone(),
+        depths,
+        values,
+    }
+}
+
+fn filter_top_rows_for_depth_range(
+    rows: Vec<TopRow>,
+    depth_min: Option<f64>,
+    depth_max: Option<f64>,
+) -> Vec<TopRow> {
+    rows.into_iter()
+        .filter(|row| depth_in_range(row.top_depth, depth_min, depth_max))
+        .collect()
+}
+
+fn identity_panel_depth_mapping(depths: Vec<f64>) -> Vec<WellPanelDepthSampleDto> {
+    let mut unique = depths
+        .into_iter()
+        .filter(|depth| depth.is_finite())
+        .collect::<Vec<_>>();
+    unique.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    unique.dedup_by(|left, right| (*left - *right).abs() < 1e-6);
+    unique
+        .into_iter()
+        .map(|depth| WellPanelDepthSampleDto {
+            native_depth: depth,
+            panel_depth: depth,
+        })
+        .collect()
+}
+
+fn depth_in_range(depth: f64, depth_min: Option<f64>, depth_max: Option<f64>) -> bool {
+    if let Some(min) = depth_min {
+        if depth < min {
+            return false;
+        }
+    }
+    if let Some(max) = depth_max {
+        if depth > max {
+            return false;
+        }
+    }
+    true
+}
+
+fn depth_query(depth_min: Option<f64>, depth_max: Option<f64>) -> Option<DepthRangeQuery> {
+    if depth_min.is_none() && depth_max.is_none() {
+        None
+    } else {
+        Some(DepthRangeQuery {
+            depth_min,
+            depth_max,
+        })
+    }
 }
 
 enum StructuredComputedRows {

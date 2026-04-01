@@ -60,6 +60,13 @@ pub use ophiolite_project::{
     DrillingObservationRow, PressureObservationRow, TopRow, TrajectoryRow,
 };
 pub use ophiolite_project::{
+    ResolvedWellPanelSourceDto, ResolvedWellPanelWellDto, WELL_PANEL_CONTRACT_VERSION,
+    WellPanelDepthSampleDto, WellPanelDrillingObservationDto, WellPanelDrillingSetDto,
+    WellPanelLogCurveDto, WellPanelPressureObservationDto, WellPanelPressureSetDto,
+    WellPanelRequestDto, WellPanelTopRowDto, WellPanelTopSetDto, WellPanelTrajectoryDto,
+    WellPanelTrajectoryRowDto,
+};
+pub use ophiolite_project::{
     AssetBlobRef, AssetCollectionId, AssetCollectionRecord, AssetCollectionSummary,
     AssetDiffSummary, AssetExtent, AssetId, AssetKind, AssetManifest, AssetRecord,
     AssetReferenceMetadata, AssetRevisionId, AssetRevisionRecord, AssetStatus, BulkDataDescriptor,
@@ -92,8 +99,10 @@ pub use ophiolite_seismic::{
 };
 pub use ophiolite_seismic::{
     DatasetId, DatasetSummary, IPC_SCHEMA_VERSION, ImportDatasetRequest, ImportDatasetResponse,
-    InterpretationPoint, OpenDatasetRequest, OpenDatasetResponse, PreviewCommand, PreviewResponse,
-    PreviewView, ProcessingParameters, SectionAxis, SectionColorMap, SectionCoordinate,
+    InterpretationPoint, OpenDatasetRequest, OpenDatasetResponse, PreviewCommand,
+    PreviewProcessingRequest, PreviewProcessingResponse, PreviewResponse, PreviewView,
+    ProcessingJobProgress, ProcessingJobState, ProcessingJobStatus, ProcessingOperation,
+    ProcessingPipeline, ProcessingPreset, SectionAxis, SectionColorMap, SectionCoordinate,
     SectionDisplayDefaults, SectionInteractionChanged, SectionMetadata, SectionPolarity,
     SectionPrimaryMode, SectionProbe, SectionProbeChanged, SectionRenderMode, SectionRequest,
     SectionTileRequest, SectionUnits, SectionView, SectionViewport, SectionViewportChanged,
@@ -112,7 +121,7 @@ pub use ophiolite_seismic_io::{
 };
 pub use ophiolite_seismic_runtime::{
     DatasetKind, GeometryProvenance, HeaderFieldSpec, InterpMethod, PreflightAction,
-    PreflightGeometry, ProcessingLineage, ProcessingOperation, RegularizationProvenance,
+    PreflightGeometry, ProcessingLineage, RegularizationProvenance,
     SeisGeometryOptions, SegyInspection, SeismicStoreError, SourceIdentity, SourceVolume,
     SparseSurveyPolicy, StoreHandle, SurveyPreflight, TbvolManifest, VolumeAxes, VolumeMetadata,
     create_tbvol_store, describe_store, ingest_segy, inspect_segy, load_array, load_occupancy,

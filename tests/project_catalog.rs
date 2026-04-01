@@ -3,7 +3,7 @@ use ophiolite::{
     AssetBindingInput, AssetKind, AssetStatus, ComputeAvailability, ComputeParameterValue,
     CurveSemanticType, DatasetKind, DepthRangeQuery, GeometryProvenance, HeaderFieldSpec,
     OphioliteProject, ProjectComputeRunRequest, SourceIdentity, TbvolManifest, VolumeAxes,
-    VolumeMetadata, create_tbvol_store, examples, import_las_asset,
+    VolumeMetadata, WellPanelRequestDto, create_tbvol_store, examples, import_las_asset,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -297,6 +297,84 @@ fn project_supports_non_log_asset_imports_and_cross_asset_queries() {
             .iter()
             .any(|asset| asset.asset_kind == AssetKind::DrillingObservation)
     );
+}
+
+#[test]
+fn project_resolves_well_panel_source_dto_for_frontend_workflows() {
+    let root = temp_project_root("project_resolves_well_panel_source_dto_for_frontend_workflows");
+    let mut project = OphioliteProject::create(&root).unwrap();
+
+    let log = project
+        .import_las(examples::path("6038187_v1.2_short.las"), Some("logs"))
+        .unwrap();
+
+    let trajectory_csv = write_csv(
+        &root,
+        "trajectory_panel.csv",
+        "md,tvd,azimuth,inclination,northing_offset,easting_offset\n100.0,95.0,180,2,0,0\n105.0,100.0,182,3,10,4\n110.0,105.0,184,4,20,8\n",
+    );
+    let tops_csv = write_csv(
+        &root,
+        "tops_panel.csv",
+        "name,top_depth,base_depth,source,depth_reference\nSand A,101.0,103.0,Interpreter,MD\nSand B,106.0,108.5,Interpreter,MD\n",
+    );
+    let pressure_csv = write_csv(
+        &root,
+        "pressure_panel.csv",
+        "measured_depth,pressure,phase,test_kind,timestamp\n102.5,4200,oil,RFT,2024-01-01T00:00:00Z\n107.5,4100,water,MDT,2024-01-02T00:00:00Z\n",
+    );
+    let drilling_csv = write_csv(
+        &root,
+        "drilling_panel.csv",
+        "measured_depth,event_kind,value,unit,timestamp,comment\n101.5,ROP,32,m/h,2024-01-01T01:00:00Z,stable\n108.0,WOB,12,klbf,2024-01-01T02:00:00Z,build section\n",
+    );
+
+    let las = examples::open("6038187_v1.2_short.las", &Default::default()).unwrap();
+    let well_info = las.well_info();
+    let binding = AssetBindingInput {
+        well_name: well_info.well.clone().unwrap_or_else(|| "WELL".to_string()),
+        wellbore_name: well_info.well.clone().unwrap_or_else(|| "WELL".to_string()),
+        uwi: well_info.uwi.clone(),
+        api: well_info.api.clone(),
+        operator_aliases: well_info.company.into_iter().collect(),
+    };
+
+    project
+        .import_trajectory_csv(&trajectory_csv, &binding, Some("survey-main"))
+        .unwrap();
+    project
+        .import_tops_csv(&tops_csv, &binding, Some("tops-main"))
+        .unwrap();
+    project
+        .import_pressure_csv(&pressure_csv, &binding, Some("pressure-main"))
+        .unwrap();
+    project
+        .import_drilling_csv(&drilling_csv, &binding, Some("drilling-main"))
+        .unwrap();
+
+    let resolved = project
+        .resolve_well_panel_source(&WellPanelRequestDto {
+            schema_version: 1,
+            wellbore_ids: vec![log.resolution.wellbore_id.0.clone()],
+            depth_min: None,
+            depth_max: None,
+        })
+        .unwrap();
+
+    assert_eq!(resolved.schema_version, 1);
+    assert_eq!(resolved.wells.len(), 1);
+
+    let well = &resolved.wells[0];
+    assert_eq!(well.wellbore_id, log.resolution.wellbore_id.0);
+    assert!(!well.logs.is_empty());
+    assert_eq!(well.trajectories.len(), 1);
+    assert_eq!(well.top_sets.len(), 1);
+    assert_eq!(well.pressure_observations.len(), 1);
+    assert_eq!(well.drilling_observations.len(), 1);
+    assert!(!well.panel_depth_mapping.is_empty());
+    assert_eq!(well.top_sets[0].rows.len(), 2);
+    assert_eq!(well.pressure_observations[0].rows.len(), 2);
+    assert_eq!(well.drilling_observations[0].rows.len(), 2);
 }
 
 #[test]

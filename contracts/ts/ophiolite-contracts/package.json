@@ -1,0 +1,22 @@
+{
+  "name": "@ophiolite/contracts",
+  "description": "Generated TypeScript contracts for Ophiolite frontend-safe DTOs",
+  "version": "0.1.0",
+  "type": "module",
+  "sideEffects": false,
+  "keywords": [
+    "ophiolite",
+    "contracts",
+    "typescript",
+    "well-panel"
+  ],
+  "files": [
+    "src",
+    "schemas",
+    "README.md"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./schemas/ophiolite-contracts.schema.json": "./schemas/ophiolite-contracts.schema.json"
+  }
+}

@@ -190,13 +190,19 @@ pub struct SeismicInterpretationPoint {
 }
 
 pub use contracts::{
-    DatasetId, DatasetSummary, IPC_SCHEMA_VERSION, ImportDatasetRequest, ImportDatasetResponse,
-    InterpretationPoint, OpenDatasetRequest, OpenDatasetResponse, PreviewCommand, PreviewResponse,
-    PreviewView, ProcessingParameters, SectionAxis, SectionColorMap, SectionCoordinate,
-    SectionDisplayDefaults, SectionInteractionChanged, SectionMetadata, SectionPolarity,
-    SectionPrimaryMode, SectionProbe, SectionProbeChanged, SectionRenderMode, SectionRequest,
-    SectionTileRequest, SectionUnits, SectionView, SectionViewport, SectionViewportChanged,
-    SuggestedImportAction, SurveyPreflightRequest, SurveyPreflightResponse, VolumeDescriptor,
+    CancelProcessingJobRequest, CancelProcessingJobResponse, DatasetId, DatasetSummary,
+    DeletePipelinePresetRequest, DeletePipelinePresetResponse, GetProcessingJobRequest,
+    GetProcessingJobResponse, IPC_SCHEMA_VERSION, ImportDatasetRequest, ImportDatasetResponse,
+    InterpretationPoint, ListPipelinePresetsResponse, OpenDatasetRequest, OpenDatasetResponse,
+    PreviewCommand, PreviewProcessingRequest, PreviewProcessingResponse, PreviewResponse,
+    PreviewView, ProcessingJobProgress, ProcessingJobState, ProcessingJobStatus,
+    ProcessingOperation, ProcessingPipeline, ProcessingPreset, SectionAxis, SectionColorMap,
+    SectionCoordinate, SectionDisplayDefaults, SectionInteractionChanged, SectionMetadata,
+    SectionPolarity, SectionPrimaryMode, SectionProbe, SectionProbeChanged, SectionRenderMode,
+    SectionRequest, SectionTileRequest, SectionUnits, SectionView, SectionViewport,
+    SectionViewportChanged, SuggestedImportAction, SurveyPreflightRequest,
+    SurveyPreflightResponse, RunProcessingRequest, RunProcessingResponse,
+    SavePipelinePresetRequest, SavePipelinePresetResponse, VolumeDescriptor,
 };
 
 #[cfg(test)]

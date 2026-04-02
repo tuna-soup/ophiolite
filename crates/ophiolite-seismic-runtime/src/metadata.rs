@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use ophiolite_seismic::ProcessingPipeline;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,13 +64,6 @@ pub struct DerivedFrom {
     pub scale: u8,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum ProcessingOperation {
-    AmplitudeScalar { factor: f32 },
-    TraceRmsNormalize,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CompressionKind {
@@ -96,7 +90,7 @@ impl Default for StorageLayout {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessingLineage {
     pub parent_store: PathBuf,
-    pub pipeline: Vec<ProcessingOperation>,
+    pub pipeline: ProcessingPipeline,
     pub runtime_version: String,
     pub created_at_unix_s: u64,
 }

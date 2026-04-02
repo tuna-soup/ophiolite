@@ -6,6 +6,14 @@ use crate::{
     SeismicAssetId, SeismicColorMap, SeismicPolarity, SeismicRenderMode, SeismicSectionAxis,
 };
 
+fn default_pipeline_schema_version() -> u32 {
+    1
+}
+
+fn default_pipeline_revision() -> u32 {
+    1
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, TS)]
 #[ts(rename = "DatasetId")]
 pub struct DatasetId(pub String);
@@ -73,9 +81,70 @@ pub struct SectionTileRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct ProcessingParameters {
-    pub algorithm: String,
-    pub gain: f32,
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingOperation {
+    AmplitudeScalar { factor: f32 },
+    TraceRmsNormalize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingPipeline {
+    #[serde(default = "default_pipeline_schema_version")]
+    pub schema_version: u32,
+    #[serde(default = "default_pipeline_revision")]
+    pub revision: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub operations: Vec<ProcessingOperation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingJobState {
+    Queued,
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingJobProgress {
+    pub completed: usize,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingJobStatus {
+    pub job_id: String,
+    pub state: ProcessingJobState,
+    pub progress: ProcessingJobProgress,
+    pub input_store_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_store_path: Option<String>,
+    pub pipeline: ProcessingPipeline,
+    #[ts(type = "number")]
+    pub created_at_unix_s: u64,
+    #[ts(type = "number")]
+    pub updated_at_unix_s: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingPreset {
+    pub preset_id: String,
+    pub pipeline: ProcessingPipeline,
+    #[ts(type = "number")]
+    pub created_at_unix_s: u64,
+    #[ts(type = "number")]
+    pub updated_at_unix_s: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -321,6 +390,92 @@ pub struct PreviewCommand {
 pub struct PreviewResponse {
     pub schema_version: u32,
     pub preview: PreviewView,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PreviewProcessingRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    pub section: SectionRequest,
+    pub pipeline: ProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PreviewProcessingResponse {
+    pub schema_version: u32,
+    pub preview: PreviewView,
+    pub pipeline: ProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RunProcessingRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_store_path: Option<String>,
+    #[serde(default)]
+    pub overwrite_existing: bool,
+    pub pipeline: ProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RunProcessingResponse {
+    pub schema_version: u32,
+    pub job: ProcessingJobStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GetProcessingJobRequest {
+    pub schema_version: u32,
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GetProcessingJobResponse {
+    pub schema_version: u32,
+    pub job: ProcessingJobStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct CancelProcessingJobRequest {
+    pub schema_version: u32,
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct CancelProcessingJobResponse {
+    pub schema_version: u32,
+    pub job: ProcessingJobStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ListPipelinePresetsResponse {
+    pub schema_version: u32,
+    pub presets: Vec<ProcessingPreset>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SavePipelinePresetRequest {
+    pub schema_version: u32,
+    pub preset: ProcessingPreset,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SavePipelinePresetResponse {
+    pub schema_version: u32,
+    pub preset: ProcessingPreset,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct DeletePipelinePresetRequest {
+    pub schema_version: u32,
+    pub preset_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct DeletePipelinePresetResponse {
+    pub schema_version: u32,
+    pub deleted: bool,
 }
 
 pub const IPC_SCHEMA_VERSION: u32 = 1;

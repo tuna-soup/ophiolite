@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use ndarray::{Array2, Array3};
 use ophiolite_seismic_runtime::{
     CompressionKind, DatasetKind, HeaderFieldSpec, IngestOptions, ProcessingLineage,
-    ProcessingOperation, SectionAxis, SourceIdentity, StorageLayout,
+    ProcessingOperation, ProcessingPipeline, SectionAxis, SourceIdentity, StorageLayout,
     TbvolReader, TbvolWriter, TileCoord, TileGeometry, VolumeAxes, VolumeMetadata,
     VolumeStoreReader, VolumeStoreWriter, ZarrVolumeStoreReader, ZarrVolumeStoreWriter,
     apply_pipeline_to_traces, assemble_section_plane,
@@ -787,7 +787,14 @@ fn derived_output_volume(
         created_by: "compute-storage-bench".to_string(),
         processing_lineage: Some(ProcessingLineage {
             parent_store: parent_store.to_path_buf(),
-            pipeline: pipeline.to_vec(),
+            pipeline: ProcessingPipeline {
+                schema_version: 1,
+                revision: 1,
+                preset_id: None,
+                name: Some("compute-storage-bench".to_string()),
+                description: None,
+                operations: pipeline.to_vec(),
+            },
             runtime_version: "compute-storage-bench".to_string(),
             created_at_unix_s: unix_timestamp_s(),
         }),

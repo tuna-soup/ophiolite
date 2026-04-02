@@ -7,13 +7,13 @@ use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
 
 use crate::error::SeismicStoreError;
-use crate::metadata::{DatasetKind, ProcessingLineage, ProcessingOperation, VolumeMetadata};
+use crate::metadata::{DatasetKind, ProcessingLineage, VolumeMetadata};
 use crate::storage::section_assembler;
 use crate::storage::tbvol::{TbvolReader, TbvolWriter, recommended_tbvol_tile_shape};
 use crate::storage::tile_geometry::TileCoord;
 use crate::storage::volume_store::{VolumeStoreReader, VolumeStoreWriter};
 use crate::store::{SectionPlane, StoreHandle, open_store};
-use crate::{SectionAxis, SectionView};
+use crate::{ProcessingOperation, ProcessingPipeline, SectionAxis, SectionView};
 
 const MAX_SCALAR_FACTOR: f32 = 10.0;
 const RMS_EPSILON: f32 = 1.0e-8;
@@ -55,6 +55,17 @@ pub fn validate_pipeline(pipeline: &[ProcessingOperation]) -> Result<(), Seismic
     Ok(())
 }
 
+pub fn validate_processing_pipeline(
+    pipeline: &ProcessingPipeline,
+) -> Result<(), SeismicStoreError> {
+    if pipeline.operations.is_empty() {
+        return Err(SeismicStoreError::Message(
+            "processing pipeline must contain at least one operator".to_string(),
+        ));
+    }
+    validate_pipeline(&pipeline.operations)
+}
+
 pub fn preview_section_plane(
     store_root: impl AsRef<Path>,
     axis: SectionAxis,
@@ -64,6 +75,16 @@ pub fn preview_section_plane(
     let handle = open_store(store_root)?;
     let reader = TbvolReader::open(&handle.root)?;
     preview_section_from_reader(&reader, axis, index, pipeline)
+}
+
+pub fn preview_processing_section_plane(
+    store_root: impl AsRef<Path>,
+    axis: SectionAxis,
+    index: usize,
+    pipeline: &ProcessingPipeline,
+) -> Result<SectionPlane, SeismicStoreError> {
+    validate_processing_pipeline(pipeline)?;
+    preview_section_plane(store_root, axis, index, &pipeline.operations)
 }
 
 pub fn preview_section_view(
@@ -79,6 +100,16 @@ pub fn preview_section_view(
     Ok(handle.section_view_from_plane(&plane))
 }
 
+pub fn preview_processing_section_view(
+    store_root: impl AsRef<Path>,
+    axis: SectionAxis,
+    index: usize,
+    pipeline: &ProcessingPipeline,
+) -> Result<SectionView, SeismicStoreError> {
+    validate_processing_pipeline(pipeline)?;
+    preview_section_view(store_root, axis, index, &pipeline.operations)
+}
+
 pub fn materialize_volume(
     input_store_root: impl AsRef<Path>,
     output_store_root: impl AsRef<Path>,
@@ -86,6 +117,48 @@ pub fn materialize_volume(
     options: MaterializeOptions,
 ) -> Result<StoreHandle, SeismicStoreError> {
     validate_pipeline(pipeline)?;
+    let pipeline_spec = pipeline_from_operations(pipeline);
+    let handle = open_store(&input_store_root)?;
+    let reader = TbvolReader::open(&handle.root)?;
+    let volume = derived_volume_metadata(
+        reader.volume(),
+        input_store_root.as_ref(),
+        &pipeline_spec,
+        options.created_by.clone(),
+    );
+    let chunk_shape = resolve_chunk_shape(options.chunk_shape, volume.shape);
+    let has_occupancy = reader_has_occupancy(&reader)?;
+    let writer = TbvolWriter::create(&output_store_root, volume, chunk_shape, has_occupancy)?;
+    let output_root = writer.root().to_path_buf();
+    materialize_from_reader_writer(&reader, writer, pipeline)?;
+    open_store(output_root)
+}
+
+pub fn materialize_processing_volume(
+    input_store_root: impl AsRef<Path>,
+    output_store_root: impl AsRef<Path>,
+    pipeline: &ProcessingPipeline,
+    options: MaterializeOptions,
+) -> Result<StoreHandle, SeismicStoreError> {
+    materialize_processing_volume_with_progress(
+        input_store_root,
+        output_store_root,
+        pipeline,
+        options,
+        |_, _| Ok(()),
+    )
+}
+
+pub fn materialize_processing_volume_with_progress<
+    F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+>(
+    input_store_root: impl AsRef<Path>,
+    output_store_root: impl AsRef<Path>,
+    pipeline: &ProcessingPipeline,
+    options: MaterializeOptions,
+    mut on_progress: F,
+) -> Result<StoreHandle, SeismicStoreError> {
+    validate_processing_pipeline(pipeline)?;
     let handle = open_store(&input_store_root)?;
     let reader = TbvolReader::open(&handle.root)?;
     let volume = derived_volume_metadata(
@@ -98,7 +171,12 @@ pub fn materialize_volume(
     let has_occupancy = reader_has_occupancy(&reader)?;
     let writer = TbvolWriter::create(&output_store_root, volume, chunk_shape, has_occupancy)?;
     let output_root = writer.root().to_path_buf();
-    materialize_from_reader_writer(&reader, writer, pipeline)?;
+    materialize_from_reader_writer_with_progress(
+        &reader,
+        writer,
+        &pipeline.operations,
+        |completed, total| on_progress(completed, total),
+    )?;
     open_store(output_root)
 }
 
@@ -119,6 +197,19 @@ pub fn materialize_from_reader_writer<R: VolumeStoreReader, W: VolumeStoreWriter
     writer: W,
     pipeline: &[ProcessingOperation],
 ) -> Result<(), SeismicStoreError> {
+    materialize_from_reader_writer_with_progress(reader, writer, pipeline, |_, _| Ok(()))
+}
+
+pub fn materialize_from_reader_writer_with_progress<
+    R: VolumeStoreReader,
+    W: VolumeStoreWriter,
+    F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+>(
+    reader: &R,
+    writer: W,
+    pipeline: &[ProcessingOperation],
+    mut on_progress: F,
+) -> Result<(), SeismicStoreError> {
     validate_pipeline(pipeline)?;
     if reader.tile_geometry().tile_shape() != writer.tile_geometry().tile_shape()
         || reader.volume().shape != writer.volume().shape
@@ -131,6 +222,8 @@ pub fn materialize_from_reader_writer<R: VolumeStoreReader, W: VolumeStoreWriter
     let tile_shape = reader.tile_geometry().tile_shape();
     let traces = tile_shape[0] * tile_shape[1];
     let samples = tile_shape[2];
+    let total_tiles = reader.tile_geometry().tile_count();
+    let mut completed_tiles = 0;
     for tile in reader.tile_geometry().iter_tiles() {
         let mut amplitudes = reader.read_tile(tile)?.into_owned();
         let occupancy = reader.read_tile_occupancy(tile)?.map(|value| value.into_owned());
@@ -145,6 +238,8 @@ pub fn materialize_from_reader_writer<R: VolumeStoreReader, W: VolumeStoreWriter
         if let Some(mask) = occupancy.as_deref() {
             writer.write_tile_occupancy(tile, mask)?;
         }
+        completed_tiles += 1;
+        on_progress(completed_tiles, total_tiles)?;
     }
     writer.finalize()
 }
@@ -240,6 +335,17 @@ fn resolve_chunk_shape(chunk_shape: [usize; 3], shape: [usize; 3]) -> [usize; 3]
     ]
 }
 
+fn pipeline_from_operations(operations: &[ProcessingOperation]) -> ProcessingPipeline {
+    ProcessingPipeline {
+        schema_version: 1,
+        revision: 1,
+        preset_id: None,
+        name: None,
+        description: None,
+        operations: operations.to_vec(),
+    }
+}
+
 fn unix_timestamp_s() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -250,7 +356,7 @@ fn unix_timestamp_s() -> u64 {
 fn derived_volume_metadata(
     input: &VolumeMetadata,
     parent_store: &Path,
-    pipeline: &[ProcessingOperation],
+    pipeline: &ProcessingPipeline,
     created_by: String,
 ) -> VolumeMetadata {
     VolumeMetadata {
@@ -261,7 +367,7 @@ fn derived_volume_metadata(
         created_by,
         processing_lineage: Some(ProcessingLineage {
             parent_store: parent_store.to_path_buf(),
-            pipeline: pipeline.to_vec(),
+            pipeline: pipeline.clone(),
             runtime_version: RUNTIME_VERSION.to_string(),
             created_at_unix_s: unix_timestamp_s(),
         }),

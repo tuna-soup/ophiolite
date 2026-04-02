@@ -26,8 +26,9 @@ pub use metadata::{
     VolumeAxes, VolumeMetadata,
 };
 pub use ophiolite_seismic::{
-    CancelProcessingJobRequest, CancelProcessingJobResponse, DatasetId, DeletePipelinePresetRequest,
-    DeletePipelinePresetResponse, GetProcessingJobRequest, GetProcessingJobResponse,
+    AxisSummaryF32, AxisSummaryI32, CancelProcessingJobRequest, CancelProcessingJobResponse,
+    DatasetId, DeletePipelinePresetRequest, DeletePipelinePresetResponse, GeometryDescriptor,
+    GeometryProvenanceSummary, GeometrySummary, GetProcessingJobRequest, GetProcessingJobResponse,
     InterpretationPoint, ListPipelinePresetsResponse, PreviewProcessingRequest,
     PreviewProcessingResponse, PreviewResponse, PreviewView, ProcessingJobProgress,
     ProcessingJobState, ProcessingJobStatus, ProcessingOperation, ProcessingPipeline,

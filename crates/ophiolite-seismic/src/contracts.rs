@@ -37,6 +37,50 @@ pub struct VolumeDescriptor {
     pub shape: [usize; 3],
     pub chunk_shape: [usize; 3],
     pub sample_interval_ms: f32,
+    pub geometry: GeometryDescriptor,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GeometryDescriptor {
+    pub compare_family: String,
+    pub fingerprint: String,
+    pub summary: GeometrySummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GeometrySummary {
+    pub inline_axis: AxisSummaryI32,
+    pub xline_axis: AxisSummaryI32,
+    pub sample_axis: AxisSummaryF32,
+    pub provenance: GeometryProvenanceSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AxisSummaryI32 {
+    pub count: usize,
+    pub first: i32,
+    pub last: i32,
+    pub step: Option<i32>,
+    pub regular: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AxisSummaryF32 {
+    pub count: usize,
+    pub first: f32,
+    pub last: f32,
+    pub step: Option<f32>,
+    pub regular: bool,
+    pub units: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum GeometryProvenanceSummary {
+    Source,
+    Derived,
+    Regularized,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]

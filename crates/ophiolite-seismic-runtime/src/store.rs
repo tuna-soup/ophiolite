@@ -3,16 +3,21 @@ use std::path::{Path, PathBuf};
 
 use ndarray::{Array2, Array3};
 use ophiolite_seismic::{
-    DatasetId, SectionAxis, SectionColorMap, SectionCoordinate, SectionDisplayDefaults,
+    AxisSummaryF32, AxisSummaryI32, DatasetId, GeometryDescriptor, GeometryProvenanceSummary,
+    GeometrySummary, SectionAxis, SectionColorMap, SectionCoordinate, SectionDisplayDefaults,
     SectionMetadata, SectionPolarity, SectionRenderMode, SectionUnits, SectionView,
     VolumeDescriptor,
 };
 
 use crate::error::SeismicStoreError;
+use crate::metadata::DatasetKind;
 use crate::storage::section_assembler;
 use crate::storage::tbvol::{TbvolManifest, TbvolReader, TbvolWriter};
 use crate::storage::tile_geometry::TileCoord;
 use crate::storage::volume_store::{VolumeStoreReader, VolumeStoreWriter, write_dense_volume};
+
+const GEOMETRY_COMPARE_FAMILY: &str = "seismic-grid:v1";
+const GEOMETRY_FINGERPRINT_VERSION: &str = "geom:v1";
 
 #[derive(Debug, Clone)]
 pub struct StoreHandle {
@@ -49,6 +54,7 @@ impl StoreHandle {
             shape: self.manifest.volume.shape,
             chunk_shape: self.manifest.tile_shape,
             sample_interval_ms: self.manifest.volume.source.sample_interval_us as f32 / 1000.0,
+            geometry: self.geometry_descriptor(),
         }
     }
 
@@ -111,6 +117,19 @@ impl StoreHandle {
                 colormap: SectionColorMap::Grayscale,
                 polarity: SectionPolarity::Normal,
             }),
+        }
+    }
+
+    fn geometry_descriptor(&self) -> GeometryDescriptor {
+        GeometryDescriptor {
+            compare_family: GEOMETRY_COMPARE_FAMILY.to_string(),
+            fingerprint: geometry_fingerprint(&self.manifest),
+            summary: GeometrySummary {
+                inline_axis: summarize_i32_axis(&self.manifest.volume.axes.ilines),
+                xline_axis: summarize_i32_axis(&self.manifest.volume.axes.xlines),
+                sample_axis: summarize_f32_axis(&self.manifest.volume.axes.sample_axis_ms),
+                provenance: geometry_provenance_summary(&self.manifest),
+            },
         }
     }
 }
@@ -244,6 +263,113 @@ fn dataset_label(root: &Path) -> String {
         .and_then(|value| value.to_str())
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| dataset_id_string(root))
+}
+
+fn summarize_i32_axis(values: &[f64]) -> AxisSummaryI32 {
+    let first = values.first().copied().unwrap_or_default().round() as i32;
+    let last = values.last().copied().unwrap_or_default().round() as i32;
+    let step = regular_i32_step(values);
+    AxisSummaryI32 {
+        count: values.len(),
+        first,
+        last,
+        step,
+        regular: step.is_some(),
+    }
+}
+
+fn summarize_f32_axis(values: &[f32]) -> AxisSummaryF32 {
+    let first = values.first().copied().unwrap_or_default();
+    let last = values.last().copied().unwrap_or_default();
+    let step = regular_f32_step(values);
+    AxisSummaryF32 {
+        count: values.len(),
+        first,
+        last,
+        step,
+        regular: step.is_some(),
+        units: Some("ms".to_string()),
+    }
+}
+
+fn regular_i32_step(values: &[f64]) -> Option<i32> {
+    if values.len() < 2 {
+        return None;
+    }
+
+    let expected = (values[1] - values[0]).round() as i32;
+    let regular = values
+        .windows(2)
+        .all(|window| ((window[1] - window[0]).round() as i32) == expected);
+
+    regular.then_some(expected)
+}
+
+fn regular_f32_step(values: &[f32]) -> Option<f32> {
+    if values.len() < 2 {
+        return None;
+    }
+
+    let expected = values[1] - values[0];
+    let regular = values
+        .windows(2)
+        .all(|window| (window[1] - window[0] - expected).abs() <= f32::EPSILON * 16.0);
+
+    regular.then_some(expected)
+}
+
+fn geometry_provenance_summary(manifest: &TbvolManifest) -> GeometryProvenanceSummary {
+    if manifest.volume.source.regularization.is_some() {
+        GeometryProvenanceSummary::Regularized
+    } else {
+        match &manifest.volume.kind {
+            DatasetKind::Source => GeometryProvenanceSummary::Source,
+            DatasetKind::Derived => GeometryProvenanceSummary::Derived,
+        }
+    }
+}
+
+fn geometry_fingerprint(manifest: &TbvolManifest) -> String {
+    let mut hash = fnv1a64_begin();
+    hash = fnv1a64_update(hash, b"inline");
+    hash = fnv1a64_update_f64_slice(hash, &manifest.volume.axes.ilines);
+    hash = fnv1a64_update(hash, b"xline");
+    hash = fnv1a64_update_f64_slice(hash, &manifest.volume.axes.xlines);
+    hash = fnv1a64_update(hash, b"sample");
+    hash = fnv1a64_update_f32_slice(hash, &manifest.volume.axes.sample_axis_ms);
+    format!("{GEOMETRY_FINGERPRINT_VERSION}:{hash:016x}")
+}
+
+fn fnv1a64_begin() -> u64 {
+    0xcbf29ce484222325
+}
+
+fn fnv1a64_update(mut hash: u64, bytes: &[u8]) -> u64 {
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn fnv1a64_update_u64(hash: u64, value: u64) -> u64 {
+    fnv1a64_update(hash, &value.to_le_bytes())
+}
+
+fn fnv1a64_update_f64_slice(mut hash: u64, values: &[f64]) -> u64 {
+    hash = fnv1a64_update_u64(hash, values.len() as u64);
+    for value in values {
+        hash = fnv1a64_update(hash, &value.to_le_bytes());
+    }
+    hash
+}
+
+fn fnv1a64_update_f32_slice(mut hash: u64, values: &[f32]) -> u64 {
+    hash = fnv1a64_update_u64(hash, values.len() as u64);
+    for value in values {
+        hash = fnv1a64_update(hash, &value.to_le_bytes());
+    }
+    hash
 }
 
 fn f64_vec_to_le_bytes(values: &[f64]) -> Vec<u8> {

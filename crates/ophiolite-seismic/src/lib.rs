@@ -190,8 +190,9 @@ pub struct SeismicInterpretationPoint {
 }
 
 pub use contracts::{
-    CancelProcessingJobRequest, CancelProcessingJobResponse, DatasetId, DatasetSummary,
-    DeletePipelinePresetRequest, DeletePipelinePresetResponse, GetProcessingJobRequest,
+    AxisSummaryF32, AxisSummaryI32, CancelProcessingJobRequest, CancelProcessingJobResponse,
+    DatasetId, DatasetSummary, DeletePipelinePresetRequest, DeletePipelinePresetResponse,
+    GeometryDescriptor, GeometryProvenanceSummary, GeometrySummary, GetProcessingJobRequest,
     GetProcessingJobResponse, IPC_SCHEMA_VERSION, ImportDatasetRequest, ImportDatasetResponse,
     InterpretationPoint, ListPipelinePresetsResponse, OpenDatasetRequest, OpenDatasetResponse,
     PreviewCommand, PreviewProcessingRequest, PreviewProcessingResponse, PreviewResponse,

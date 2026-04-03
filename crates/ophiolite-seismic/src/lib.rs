@@ -1,6 +1,8 @@
 mod contracts;
 
 use serde::{Deserialize, Serialize};
+use std::error::Error;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct SeismicAssetId(pub String);
@@ -16,6 +18,60 @@ pub enum SeismicAssetFamily {
 pub enum SeismicSampleDomain {
     Time,
     Depth,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SeismicStackingState {
+    PostStack,
+    PreStack,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SeismicOrganization {
+    BinnedGrid,
+    GatherCollection,
+    Unstructured,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SeismicLayout {
+    PostStack3D,
+    PostStack2D,
+    PreStack3DOffset,
+    PreStack3DAngle,
+    PreStack3DAzimuth,
+    PreStack3DUnknownAxis,
+    PreStack2DOffset,
+    ShotGatherSet,
+    ReceiverGatherSet,
+    CmpGatherSet,
+    UnstructuredTraceCollection,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SeismicGatherAxisKind {
+    Offset,
+    Angle,
+    Azimuth,
+    Shot,
+    Receiver,
+    Cmp,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SeismicAxisRole {
+    Inline,
+    Crossline,
+    Sample,
+    Offset,
+    Angle,
+    Azimuth,
+    Shot,
+    Receiver,
+    Cmp,
+    TraceOrdinal,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -93,6 +149,321 @@ impl SeismicVolumeDescriptor {
     pub fn sample_count(&self) -> usize {
         self.shape[2]
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SeismicDimensionDescriptor {
+    pub role: SeismicAxisRole,
+    pub label: String,
+    pub start: Option<f64>,
+    pub step: Option<f64>,
+    pub count: usize,
+    pub values: Option<Vec<f64>>,
+    pub unit: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SeismicBinGridDescriptor {
+    pub inline_axis: Option<SeismicDimensionDescriptor>,
+    pub crossline_axis: Option<SeismicDimensionDescriptor>,
+    pub coordinate_reference: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SeismicTraceDataDescriptor {
+    pub id: SeismicAssetId,
+    pub label: String,
+    pub stacking_state: SeismicStackingState,
+    pub organization: SeismicOrganization,
+    pub layout: SeismicLayout,
+    pub gather_axis_kind: Option<SeismicGatherAxisKind>,
+    pub dimensions: Vec<SeismicDimensionDescriptor>,
+    pub chunk_shape: Option<Vec<usize>>,
+    pub sample_domain: SeismicSampleDomain,
+    pub units: SeismicUnits,
+    pub bin_grid: Option<SeismicBinGridDescriptor>,
+}
+
+impl SeismicTraceDataDescriptor {
+    pub fn dimension(&self, role: SeismicAxisRole) -> Option<&SeismicDimensionDescriptor> {
+        self.dimensions
+            .iter()
+            .find(|dimension| dimension.role == role)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SeismicDescriptorConversionError {
+    IncompatibleLayout { layout: SeismicLayout },
+    MissingDimension { role: SeismicAxisRole },
+    MissingStart { role: SeismicAxisRole },
+    MissingStep { role: SeismicAxisRole },
+    InvalidChunkShape { actual_len: usize },
+    ValueOutOfRange { role: SeismicAxisRole, value: f64 },
+}
+
+impl Display for SeismicDescriptorConversionError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::IncompatibleLayout { layout } => {
+                write!(
+                    f,
+                    "descriptor layout {layout:?} is not compatible with SeismicVolumeDescriptor"
+                )
+            }
+            Self::MissingDimension { role } => {
+                write!(f, "missing required {:?} dimension", role)
+            }
+            Self::MissingStart { role } => {
+                write!(f, "missing start value for {:?} dimension", role)
+            }
+            Self::MissingStep { role } => {
+                write!(f, "missing step value for {:?} dimension", role)
+            }
+            Self::InvalidChunkShape { actual_len } => {
+                write!(f, "expected 3 chunk-shape dimensions, found {actual_len}")
+            }
+            Self::ValueOutOfRange { role, value } => {
+                write!(f, "value {value} for {:?} dimension is out of range", role)
+            }
+        }
+    }
+}
+
+impl Error for SeismicDescriptorConversionError {}
+
+impl From<&SeismicVolumeDescriptor> for SeismicTraceDataDescriptor {
+    fn from(value: &SeismicVolumeDescriptor) -> Self {
+        let inline_dimension = SeismicDimensionDescriptor {
+            role: SeismicAxisRole::Inline,
+            label: "inline".to_string(),
+            start: Some(value.geometry.inline.start as f64),
+            step: Some(value.geometry.inline.step as f64),
+            count: value.geometry.inline.count,
+            values: None,
+            unit: None,
+        };
+        let crossline_dimension = SeismicDimensionDescriptor {
+            role: SeismicAxisRole::Crossline,
+            label: "crossline".to_string(),
+            start: Some(value.geometry.xline.start as f64),
+            step: Some(value.geometry.xline.step as f64),
+            count: value.geometry.xline.count,
+            values: None,
+            unit: None,
+        };
+        let sample_dimension = SeismicDimensionDescriptor {
+            role: SeismicAxisRole::Sample,
+            label: "sample".to_string(),
+            start: Some(value.geometry.sample.start as f64),
+            step: Some(value.geometry.sample.step as f64),
+            count: value.geometry.sample.count,
+            values: None,
+            unit: Some(value.units.sample.clone()),
+        };
+
+        Self {
+            id: value.id.clone(),
+            label: value.label.clone(),
+            stacking_state: SeismicStackingState::PostStack,
+            organization: SeismicOrganization::BinnedGrid,
+            layout: SeismicLayout::PostStack3D,
+            gather_axis_kind: None,
+            dimensions: vec![
+                inline_dimension.clone(),
+                crossline_dimension.clone(),
+                sample_dimension,
+            ],
+            chunk_shape: Some(value.chunk_shape.to_vec()),
+            sample_domain: value.geometry.sample.domain.clone(),
+            units: value.units.clone(),
+            bin_grid: Some(SeismicBinGridDescriptor {
+                inline_axis: Some(inline_dimension),
+                crossline_axis: Some(crossline_dimension),
+                coordinate_reference: None,
+            }),
+        }
+    }
+}
+
+impl From<&contracts::VolumeDescriptor> for SeismicTraceDataDescriptor {
+    fn from(value: &contracts::VolumeDescriptor) -> Self {
+        let inline_dimension = SeismicDimensionDescriptor {
+            role: SeismicAxisRole::Inline,
+            label: "inline".to_string(),
+            start: Some(value.geometry.summary.inline_axis.first as f64),
+            step: value
+                .geometry
+                .summary
+                .inline_axis
+                .step
+                .map(|step| step as f64),
+            count: value.geometry.summary.inline_axis.count,
+            values: None,
+            unit: None,
+        };
+        let crossline_dimension = SeismicDimensionDescriptor {
+            role: SeismicAxisRole::Crossline,
+            label: "crossline".to_string(),
+            start: Some(value.geometry.summary.xline_axis.first as f64),
+            step: value
+                .geometry
+                .summary
+                .xline_axis
+                .step
+                .map(|step| step as f64),
+            count: value.geometry.summary.xline_axis.count,
+            values: None,
+            unit: None,
+        };
+        let sample_dimension = SeismicDimensionDescriptor {
+            role: SeismicAxisRole::Sample,
+            label: "sample".to_string(),
+            start: Some(value.geometry.summary.sample_axis.first as f64),
+            step: value
+                .geometry
+                .summary
+                .sample_axis
+                .step
+                .map(|step| step as f64),
+            count: value.geometry.summary.sample_axis.count,
+            values: None,
+            unit: value.geometry.summary.sample_axis.units.clone(),
+        };
+
+        Self {
+            id: SeismicAssetId(value.id.0.clone()),
+            label: value.label.clone(),
+            stacking_state: SeismicStackingState::PostStack,
+            organization: SeismicOrganization::BinnedGrid,
+            layout: SeismicLayout::PostStack3D,
+            gather_axis_kind: None,
+            dimensions: vec![
+                inline_dimension.clone(),
+                crossline_dimension.clone(),
+                sample_dimension,
+            ],
+            chunk_shape: Some(value.chunk_shape.to_vec()),
+            sample_domain: SeismicSampleDomain::Time,
+            units: SeismicUnits {
+                sample: value
+                    .geometry
+                    .summary
+                    .sample_axis
+                    .units
+                    .clone()
+                    .unwrap_or_else(|| "ms".to_string()),
+                amplitude: None,
+            },
+            bin_grid: Some(SeismicBinGridDescriptor {
+                inline_axis: Some(inline_dimension),
+                crossline_axis: Some(crossline_dimension),
+                coordinate_reference: None,
+            }),
+        }
+    }
+}
+
+impl TryFrom<&SeismicTraceDataDescriptor> for SeismicVolumeDescriptor {
+    type Error = SeismicDescriptorConversionError;
+
+    fn try_from(value: &SeismicTraceDataDescriptor) -> Result<Self, Self::Error> {
+        if value.layout != SeismicLayout::PostStack3D
+            || value.organization != SeismicOrganization::BinnedGrid
+            || value.stacking_state != SeismicStackingState::PostStack
+        {
+            return Err(SeismicDescriptorConversionError::IncompatibleLayout {
+                layout: value.layout.clone(),
+            });
+        }
+
+        let inline = required_index_axis(value, SeismicAxisRole::Inline)?;
+        let xline = required_index_axis(value, SeismicAxisRole::Crossline)?;
+        let sample = required_sample_axis(value, SeismicAxisRole::Sample)?;
+
+        let chunk_shape = match value.chunk_shape.as_deref() {
+            Some([inline, xline, sample]) => [*inline, *xline, *sample],
+            Some(other) => {
+                return Err(SeismicDescriptorConversionError::InvalidChunkShape {
+                    actual_len: other.len(),
+                });
+            }
+            None => [inline.count, xline.count, sample.count],
+        };
+
+        Ok(Self {
+            id: value.id.clone(),
+            label: value.label.clone(),
+            family: SeismicAssetFamily::Volume,
+            shape: [inline.count, xline.count, sample.count],
+            chunk_shape,
+            geometry: SeismicVolumeGeometry {
+                inline,
+                xline,
+                sample,
+            },
+            units: value.units.clone(),
+        })
+    }
+}
+
+fn required_dimension<'a>(
+    descriptor: &'a SeismicTraceDataDescriptor,
+    role: SeismicAxisRole,
+) -> Result<&'a SeismicDimensionDescriptor, SeismicDescriptorConversionError> {
+    descriptor
+        .dimension(role.clone())
+        .ok_or(SeismicDescriptorConversionError::MissingDimension { role })
+}
+
+fn required_index_axis(
+    descriptor: &SeismicTraceDataDescriptor,
+    role: SeismicAxisRole,
+) -> Result<SeismicIndexAxis, SeismicDescriptorConversionError> {
+    let dimension = required_dimension(descriptor, role.clone())?;
+    let start = dimension
+        .start
+        .ok_or_else(|| SeismicDescriptorConversionError::MissingStart { role: role.clone() })?;
+    let step = dimension
+        .step
+        .ok_or_else(|| SeismicDescriptorConversionError::MissingStep { role: role.clone() })?;
+
+    Ok(SeismicIndexAxis {
+        start: f64_to_i32(start, role.clone())?,
+        step: f64_to_i32(step, role)?,
+        count: dimension.count,
+    })
+}
+
+fn required_sample_axis(
+    descriptor: &SeismicTraceDataDescriptor,
+    role: SeismicAxisRole,
+) -> Result<SeismicSampleAxis, SeismicDescriptorConversionError> {
+    let dimension = required_dimension(descriptor, role.clone())?;
+    let start = dimension
+        .start
+        .ok_or_else(|| SeismicDescriptorConversionError::MissingStart { role: role.clone() })?;
+    let step = dimension
+        .step
+        .ok_or_else(|| SeismicDescriptorConversionError::MissingStep { role: role.clone() })?;
+
+    Ok(SeismicSampleAxis {
+        domain: descriptor.sample_domain.clone(),
+        start: start as f32,
+        step: step as f32,
+        count: dimension.count,
+    })
+}
+
+fn f64_to_i32(value: f64, role: SeismicAxisRole) -> Result<i32, SeismicDescriptorConversionError> {
+    if !value.is_finite()
+        || value.fract() != 0.0
+        || value < i32::MIN as f64
+        || value > i32::MAX as f64
+    {
+        return Err(SeismicDescriptorConversionError::ValueOutOfRange { role, value });
+    }
+    Ok(value as i32)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -192,18 +563,20 @@ pub struct SeismicInterpretationPoint {
 pub use contracts::{
     AxisSummaryF32, AxisSummaryI32, CancelProcessingJobRequest, CancelProcessingJobResponse,
     DatasetId, DatasetSummary, DeletePipelinePresetRequest, DeletePipelinePresetResponse,
-    GeometryDescriptor, GeometryProvenanceSummary, GeometrySummary, GetProcessingJobRequest,
-    GetProcessingJobResponse, IPC_SCHEMA_VERSION, ImportDatasetRequest, ImportDatasetResponse,
-    InterpretationPoint, ListPipelinePresetsResponse, OpenDatasetRequest, OpenDatasetResponse,
-    PreviewCommand, PreviewProcessingRequest, PreviewProcessingResponse, PreviewResponse,
-    PreviewView, ProcessingJobProgress, ProcessingJobState, ProcessingJobStatus,
-    ProcessingOperation, ProcessingPipeline, ProcessingPreset, SectionAxis, SectionColorMap,
-    SectionCoordinate, SectionDisplayDefaults, SectionInteractionChanged, SectionMetadata,
-    SectionPolarity, SectionPrimaryMode, SectionProbe, SectionProbeChanged, SectionRenderMode,
-    SectionRequest, SectionTileRequest, SectionUnits, SectionView, SectionViewport,
-    SectionViewportChanged, SuggestedImportAction, SurveyPreflightRequest,
-    SurveyPreflightResponse, RunProcessingRequest, RunProcessingResponse,
-    SavePipelinePresetRequest, SavePipelinePresetResponse, VolumeDescriptor,
+    GatherAxisKind, GatherInteractionChanged, GatherProbe, GatherProbeChanged, GatherSampleDomain,
+    GatherView, GatherViewport, GatherViewportChanged, GeometryDescriptor,
+    GeometryProvenanceSummary, GeometrySummary, GetProcessingJobRequest, GetProcessingJobResponse,
+    IPC_SCHEMA_VERSION, ImportDatasetRequest, ImportDatasetResponse, InterpretationPoint,
+    ListPipelinePresetsResponse, OpenDatasetRequest, OpenDatasetResponse, PreviewCommand,
+    PreviewProcessingRequest, PreviewProcessingResponse, PreviewResponse, PreviewView,
+    ProcessingJobProgress, ProcessingJobState, ProcessingJobStatus, ProcessingLayoutCompatibility,
+    ProcessingOperation, ProcessingPipeline, ProcessingPreset, RunProcessingRequest,
+    RunProcessingResponse, SavePipelinePresetRequest, SavePipelinePresetResponse, SectionAxis,
+    SectionColorMap, SectionCoordinate, SectionDisplayDefaults, SectionInteractionChanged,
+    SectionMetadata, SectionPolarity, SectionPrimaryMode, SectionProbe, SectionProbeChanged,
+    SectionRenderMode, SectionRequest, SectionTileRequest, SectionUnits, SectionView,
+    SectionViewport, SectionViewportChanged, SuggestedImportAction, SurveyPreflightRequest,
+    SurveyPreflightResponse, VolumeDescriptor,
 };
 
 #[cfg(test)]
@@ -248,6 +621,68 @@ mod tests {
         assert_eq!(descriptor.inline_count(), 32);
         assert_eq!(descriptor.xline_count(), 48);
         assert_eq!(descriptor.sample_count(), 256);
+    }
+
+    #[test]
+    fn volume_descriptor_upcasts_to_trace_data_descriptor() {
+        let descriptor = sample_descriptor();
+        let trace_descriptor = SeismicTraceDataDescriptor::from(&descriptor);
+
+        assert_eq!(trace_descriptor.layout, SeismicLayout::PostStack3D);
+        assert_eq!(
+            trace_descriptor.stacking_state,
+            SeismicStackingState::PostStack
+        );
+        assert_eq!(
+            trace_descriptor.organization,
+            SeismicOrganization::BinnedGrid
+        );
+        assert_eq!(
+            trace_descriptor
+                .dimension(SeismicAxisRole::Inline)
+                .unwrap()
+                .count,
+            32
+        );
+        assert_eq!(trace_descriptor.chunk_shape, Some(vec![8, 8, 64]));
+    }
+
+    #[test]
+    fn post_stack_trace_data_descriptor_downcasts_to_volume_descriptor() {
+        let descriptor = sample_descriptor();
+        let trace_descriptor = SeismicTraceDataDescriptor::from(&descriptor);
+        let restored = SeismicVolumeDescriptor::try_from(&trace_descriptor).unwrap();
+
+        assert_eq!(restored, descriptor);
+    }
+
+    #[test]
+    fn prestack_trace_data_descriptor_rejects_volume_downcast() {
+        let descriptor = sample_descriptor();
+        let mut trace_descriptor = SeismicTraceDataDescriptor::from(&descriptor);
+        trace_descriptor.layout = SeismicLayout::PreStack3DOffset;
+        trace_descriptor.stacking_state = SeismicStackingState::PreStack;
+        trace_descriptor.gather_axis_kind = Some(SeismicGatherAxisKind::Offset);
+        trace_descriptor.dimensions.insert(
+            2,
+            SeismicDimensionDescriptor {
+                role: SeismicAxisRole::Offset,
+                label: "offset".to_string(),
+                start: Some(0.0),
+                step: Some(25.0),
+                count: 8,
+                values: None,
+                unit: Some("m".to_string()),
+            },
+        );
+
+        let error = SeismicVolumeDescriptor::try_from(&trace_descriptor).unwrap_err();
+        assert_eq!(
+            error,
+            SeismicDescriptorConversionError::IncompatibleLayout {
+                layout: SeismicLayout::PreStack3DOffset,
+            }
+        );
     }
 
     #[test]

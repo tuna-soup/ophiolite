@@ -21,8 +21,10 @@ Today, Ophiolite can:
 - discover and run typed compute/UDF functions against eligible log and structured wellbore data
 - expose app-facing query and editing surfaces for desktop workflows
 - resolve focused frontend DTO/query payloads such as well-panel sources without exposing raw catalog internals
-- generate TypeScript contracts for frontend-safe DTOs under `contracts/ts/ophiolite-contracts`
+- generate TypeScript contracts for frontend-safe DTOs under `contracts/ts/ophiolite-contracts`, including well-panel and prestack gather views
 - run seismic processing pipelines through the shared seismic runtime, including section preview, derived-volume materialization, and persisted processing lineage
+- classify seismic datasets with explicit stacking/layout metadata so post-stack and future prestack/gather flows can share one canonical foundation without forcing TraceBoost off its current post-stack runtime path
+- store canonical seismic trace-data assets in the project/catalog layer while keeping the current volume-oriented runtime paths available as compatibility surfaces
 
 The project is designed primarily for Rust desktop applications such as Tauri backends and local data tooling, while remaining interoperable with common data ecosystems.
 
@@ -57,7 +59,8 @@ Ophiolite therefore aims to provide:
 - a robust LAS parser
 - a canonical log-domain model for LAS-derived data
 - typed non-log asset families for other wellbore datasets
-- a shared seismic core for canonical seismic descriptors, app-boundary section/trace models, SEG-Y IO, and runtime/store execution
+- a shared seismic core for canonical seismic descriptors, app-boundary section/gather/trace models, SEG-Y IO, and runtime/store execution
+- an additive seismic trace-data descriptor layer that distinguishes stacking state, organization, layout, and gather-axis semantics before product/runtime layers decide what they support
 - an app-friendly runtime/query abstraction
 - optimized local single-asset package formats
 - a local-first project/catalog layer for assembling multiple linked assets coherently

@@ -3,7 +3,8 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    SeismicAssetId, SeismicColorMap, SeismicPolarity, SeismicRenderMode, SeismicSectionAxis,
+    SeismicAssetId, SeismicColorMap, SeismicLayout, SeismicPolarity, SeismicRenderMode,
+    SeismicSectionAxis,
 };
 
 fn default_pipeline_schema_version() -> u32 {
@@ -109,6 +110,51 @@ impl From<SectionAxis> for SeismicSectionAxis {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum GatherAxisKind {
+    Offset,
+    Angle,
+    Azimuth,
+    Shot,
+    Receiver,
+    Cmp,
+    TraceOrdinal,
+    Unknown,
+}
+
+impl From<crate::SeismicGatherAxisKind> for GatherAxisKind {
+    fn from(value: crate::SeismicGatherAxisKind) -> Self {
+        match value {
+            crate::SeismicGatherAxisKind::Offset => Self::Offset,
+            crate::SeismicGatherAxisKind::Angle => Self::Angle,
+            crate::SeismicGatherAxisKind::Azimuth => Self::Azimuth,
+            crate::SeismicGatherAxisKind::Shot => Self::Shot,
+            crate::SeismicGatherAxisKind::Receiver => Self::Receiver,
+            crate::SeismicGatherAxisKind::Cmp => Self::Cmp,
+            crate::SeismicGatherAxisKind::Unknown => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum GatherSampleDomain {
+    Time,
+    Depth,
+}
+
+impl From<crate::SeismicSampleDomain> for GatherSampleDomain {
+    fn from(value: crate::SeismicSampleDomain) -> Self {
+        match value {
+            crate::SeismicSampleDomain::Time => Self::Time,
+            crate::SeismicSampleDomain::Depth => Self::Depth,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SectionRequest {
     pub dataset_id: DatasetId,
@@ -130,6 +176,67 @@ pub struct SectionTileRequest {
 pub enum ProcessingOperation {
     AmplitudeScalar { factor: f32 },
     TraceRmsNormalize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingLayoutCompatibility {
+    PostStackOnly,
+    PreStackOffsetOnly,
+    AnyTraceMatrix,
+}
+
+impl ProcessingLayoutCompatibility {
+    pub fn supports_layout(self, layout: SeismicLayout) -> bool {
+        match self {
+            Self::PostStackOnly => matches!(
+                layout,
+                SeismicLayout::PostStack3D | SeismicLayout::PostStack2D
+            ),
+            Self::PreStackOffsetOnly => matches!(
+                layout,
+                SeismicLayout::PreStack3DOffset | SeismicLayout::PreStack2DOffset
+            ),
+            Self::AnyTraceMatrix => matches!(
+                layout,
+                SeismicLayout::PostStack3D
+                    | SeismicLayout::PostStack2D
+                    | SeismicLayout::PreStack3DOffset
+                    | SeismicLayout::PreStack3DAngle
+                    | SeismicLayout::PreStack3DAzimuth
+                    | SeismicLayout::PreStack3DUnknownAxis
+                    | SeismicLayout::PreStack2DOffset
+                    | SeismicLayout::ShotGatherSet
+                    | SeismicLayout::ReceiverGatherSet
+                    | SeismicLayout::CmpGatherSet
+            ),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::PostStackOnly => "post-stack only",
+            Self::PreStackOffsetOnly => "prestack offset only",
+            Self::AnyTraceMatrix => "any trace matrix",
+        }
+    }
+}
+
+impl ProcessingOperation {
+    pub fn operator_id(&self) -> &'static str {
+        match self {
+            Self::AmplitudeScalar { .. } => "amplitude_scalar",
+            Self::TraceRmsNormalize => "trace_rms_normalize",
+        }
+    }
+
+    pub fn compatibility(&self) -> ProcessingLayoutCompatibility {
+        match self {
+            Self::AmplitudeScalar { .. } => ProcessingLayoutCompatibility::PostStackOnly,
+            Self::TraceRmsNormalize => ProcessingLayoutCompatibility::PostStackOnly,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -304,6 +411,22 @@ pub struct SectionView {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GatherView {
+    pub dataset_id: DatasetId,
+    pub label: String,
+    pub gather_axis_kind: GatherAxisKind,
+    pub sample_domain: GatherSampleDomain,
+    pub traces: usize,
+    pub samples: usize,
+    pub horizontal_axis_f64le: Vec<u8>,
+    pub sample_axis_f32le: Vec<u8>,
+    pub amplitudes_f32le: Vec<u8>,
+    pub units: Option<SectionUnits>,
+    pub metadata: Option<SectionMetadata>,
+    pub display_defaults: Option<SectionDisplayDefaults>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct PreviewView {
     pub section: SectionView,
     pub processing_label: String,
@@ -329,11 +452,28 @@ pub struct SectionViewport {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GatherViewport {
+    pub trace_start: usize,
+    pub trace_end: usize,
+    pub sample_start: usize,
+    pub sample_end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SectionProbe {
     pub trace_index: usize,
     pub trace_coordinate: f64,
     pub inline_coordinate: Option<f64>,
     pub xline_coordinate: Option<f64>,
+    pub sample_index: usize,
+    pub sample_value: f32,
+    pub amplitude: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GatherProbe {
+    pub trace_index: usize,
+    pub trace_coordinate: f64,
     pub sample_index: usize,
     pub sample_value: f32,
     pub amplitude: f32,
@@ -347,6 +487,13 @@ pub struct SectionProbeChanged {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GatherProbeChanged {
+    pub chart_id: String,
+    pub view_id: String,
+    pub probe: Option<GatherProbe>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SectionViewportChanged {
     pub chart_id: String,
     pub view_id: String,
@@ -354,7 +501,22 @@ pub struct SectionViewportChanged {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GatherViewportChanged {
+    pub chart_id: String,
+    pub view_id: String,
+    pub viewport: GatherViewport,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SectionInteractionChanged {
+    pub chart_id: String,
+    pub view_id: String,
+    pub primary_mode: SectionPrimaryMode,
+    pub crosshair_enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GatherInteractionChanged {
     pub chart_id: String,
     pub view_id: String,
     pub primary_mode: SectionPrimaryMode,
@@ -390,6 +552,11 @@ pub struct SurveyPreflightResponse {
     pub trace_count: u64,
     pub samples_per_trace: usize,
     pub classification: String,
+    pub stacking_state: String,
+    pub organization: String,
+    pub layout: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gather_axis_kind: Option<String>,
     pub suggested_action: SuggestedImportAction,
     pub observed_trace_count: usize,
     pub expected_trace_count: usize,

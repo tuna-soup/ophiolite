@@ -27,7 +27,7 @@ use ophiolite_compute::{
 };
 use ophiolite_core::{CurveItem, LasValue, SectionItems, derive_canonical_alias};
 use ophiolite_package::open_package;
-use ophiolite_seismic::{SeismicAssetFamily, VolumeDescriptor};
+use ophiolite_seismic::{SeismicAssetFamily, SeismicTraceDataDescriptor, VolumeDescriptor};
 use ophiolite_seismic_runtime::{TbvolManifest, describe_store, open_store};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -77,9 +77,7 @@ pub enum AssetKind {
     TopSet,
     PressureObservation,
     DrillingObservation,
-    SeismicVolume,
-    SeismicSection,
-    SeismicTraceSet,
+    SeismicTraceData,
 }
 
 impl AssetKind {
@@ -90,9 +88,7 @@ impl AssetKind {
             Self::TopSet => "top_set",
             Self::PressureObservation => "pressure_observation",
             Self::DrillingObservation => "drilling_observation",
-            Self::SeismicVolume => "seismic_volume",
-            Self::SeismicSection => "seismic_section",
-            Self::SeismicTraceSet => "seismic_trace_set",
+            Self::SeismicTraceData => "seismic_trace_data",
         }
     }
 
@@ -103,9 +99,7 @@ impl AssetKind {
             Self::TopSet => "tops",
             Self::PressureObservation => "pressure",
             Self::DrillingObservation => "drilling",
-            Self::SeismicVolume => "seismic-volumes",
-            Self::SeismicSection => "seismic-sections",
-            Self::SeismicTraceSet => "seismic-trace-sets",
+            Self::SeismicTraceData => "seismic-trace-data",
         }
     }
 
@@ -116,9 +110,7 @@ impl AssetKind {
             "top_set" => Ok(Self::TopSet),
             "pressure_observation" => Ok(Self::PressureObservation),
             "drilling_observation" => Ok(Self::DrillingObservation),
-            "seismic_volume" => Ok(Self::SeismicVolume),
-            "seismic_section" => Ok(Self::SeismicSection),
-            "seismic_trace_set" => Ok(Self::SeismicTraceSet),
+            "seismic_trace_data" => Ok(Self::SeismicTraceData),
             _ => Err(LasError::Validation(format!(
                 "unknown asset kind '{value}' in project catalog"
             ))),
@@ -263,9 +255,7 @@ pub enum AssetDiffSummary {
     TopSet(StructuredAssetDiffSummary),
     PressureObservation(StructuredAssetDiffSummary),
     DrillingObservation(StructuredAssetDiffSummary),
-    SeismicVolume(DirectoryAssetDiffSummary),
-    SeismicSection(DirectoryAssetDiffSummary),
-    SeismicTraceSet(DirectoryAssetDiffSummary),
+    SeismicTraceData(DirectoryAssetDiffSummary),
     MetadataOnly { changed_fields: Vec<String> },
 }
 
@@ -432,6 +422,7 @@ pub type SeismicAssetImportResult = ProjectAssetImportResult;
 pub struct SeismicAssetMetadata {
     pub family: SeismicAssetFamily,
     pub descriptor: VolumeDescriptor,
+    pub trace_data_descriptor: SeismicTraceDataDescriptor,
     pub store: TbvolManifest,
 }
 
@@ -900,30 +891,43 @@ impl OphioliteProject {
         )
     }
 
-    pub fn import_seismic_volume_store(
+    pub fn import_seismic_trace_data_store(
         &mut self,
         store_root: impl AsRef<Path>,
         binding: &AssetBindingInput,
         collection_name: Option<&str>,
     ) -> Result<SeismicAssetImportResult> {
+        self.import_seismic_store_with_kind(
+            store_root,
+            binding,
+            AssetKind::SeismicTraceData,
+            SeismicAssetFamily::Volume,
+            collection_name,
+        )
+    }
+
+    fn import_seismic_store_with_kind(
+        &mut self,
+        store_root: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        asset_kind: AssetKind,
+        family: SeismicAssetFamily,
+        collection_name: Option<&str>,
+    ) -> Result<SeismicAssetImportResult> {
         let store_root = store_root.as_ref();
-        let descriptor = describe_store(store_root)
-            .map_err(|error| LasError::Storage(format!("failed to describe seismic store: {error}")))?;
+        let descriptor = describe_store(store_root).map_err(|error| {
+            LasError::Storage(format!("failed to describe seismic store: {error}"))
+        })?;
         let handle = open_store(store_root)
             .map_err(|error| LasError::Storage(format!("failed to open seismic store: {error}")))?;
         let metadata = SeismicAssetMetadata {
-            family: SeismicAssetFamily::Volume,
+            family,
+            trace_data_descriptor: SeismicTraceDataDescriptor::from(&descriptor),
             descriptor,
             store: handle.manifest,
         };
 
-        self.import_seismic_asset(
-            store_root,
-            binding,
-            AssetKind::SeismicVolume,
-            collection_name,
-            &metadata,
-        )
+        self.import_seismic_asset(store_root, binding, asset_kind, collection_name, &metadata)
     }
 
     pub fn read_trajectory_rows(
@@ -1293,11 +1297,9 @@ impl OphioliteProject {
             AssetKind::TopSet => Ok(registry.catalog_for_top_set_asset()),
             AssetKind::PressureObservation => Ok(registry.catalog_for_pressure_asset()),
             AssetKind::DrillingObservation => Ok(registry.catalog_for_drilling_asset()),
-            AssetKind::SeismicVolume | AssetKind::SeismicSection | AssetKind::SeismicTraceSet => {
-                Err(LasError::Validation(
-                    "compute catalog is not implemented for seismic assets yet".to_string(),
-                ))
-            }
+            AssetKind::SeismicTraceData => Err(LasError::Validation(
+                "compute catalog is not implemented for seismic assets yet".to_string(),
+            )),
         }
     }
 
@@ -1462,7 +1464,7 @@ impl OphioliteProject {
                     AssetKind::DrillingObservation,
                 )?
             }
-            AssetKind::SeismicVolume | AssetKind::SeismicSection | AssetKind::SeismicTraceSet => {
+            AssetKind::SeismicTraceData => {
                 return Err(LasError::Validation(
                     "compute execution is not implemented for seismic assets yet".to_string(),
                 ));
@@ -1592,7 +1594,8 @@ impl OphioliteProject {
             match asset.asset_kind {
                 AssetKind::Log => {
                     for curve in self.read_log_curve_data(&asset.id)? {
-                        let filtered = filter_log_curve_for_depth_range(&curve, depth_min, depth_max);
+                        let filtered =
+                            filter_log_curve_for_depth_range(&curve, depth_min, depth_max);
                         if filtered.depths.is_empty() {
                             continue;
                         }
@@ -1635,7 +1638,11 @@ impl OphioliteProject {
                     });
                 }
                 AssetKind::TopSet => {
-                    let rows = filter_top_rows_for_depth_range(self.read_tops(&asset.id)?, depth_min, depth_max);
+                    let rows = filter_top_rows_for_depth_range(
+                        self.read_tops(&asset.id)?,
+                        depth_min,
+                        depth_max,
+                    );
                     if rows.is_empty() {
                         continue;
                     }
@@ -1703,7 +1710,7 @@ impl OphioliteProject {
                             .collect(),
                     });
                 }
-                AssetKind::SeismicVolume | AssetKind::SeismicSection | AssetKind::SeismicTraceSet => {}
+                AssetKind::SeismicTraceData => {}
             }
         }
 
@@ -2404,7 +2411,10 @@ impl OphioliteProject {
     ) -> Result<()> {
         let revision_root = self.root.join(&revision.package_snapshot_rel_path);
         fs::create_dir_all(&asset.package_path)?;
-        materialize_project_visible_files(&self.root, &artifact_mappings_for_asset(asset, &revision_root))
+        materialize_project_visible_files(
+            &self.root,
+            &artifact_mappings_for_asset(asset, &revision_root),
+        )
     }
 }
 
@@ -2491,8 +2501,7 @@ fn hash_path_into(root: &Path, path: &Path, hasher: &mut DefaultHasher) -> Resul
     relative.hash(hasher);
     if path.is_dir() {
         "dir".hash(hasher);
-        let mut entries = fs::read_dir(path)?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut entries = fs::read_dir(path)?.collect::<std::result::Result<Vec<_>, _>>()?;
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
             hash_path_into(root, &entry.path(), hasher)?;
@@ -2534,7 +2543,9 @@ fn asset_primary_blob_ref(manifest: &AssetManifest, root: &Path) -> Result<Asset
         .iter()
         .find(|descriptor| descriptor.role != "metadata")
         .or_else(|| manifest.bulk_data_descriptors.first())
-        .ok_or_else(|| LasError::Validation("asset manifest is missing bulk data descriptors".to_string()))?;
+        .ok_or_else(|| {
+            LasError::Validation("asset manifest is missing bulk data descriptors".to_string())
+        })?;
     let data_path = root.join(&descriptor.relative_path);
     Ok(AssetBlobRef {
         relative_path: descriptor.relative_path.clone(),
@@ -2556,7 +2567,10 @@ fn asset_visible_relative_paths(manifest: &AssetManifest) -> Vec<String> {
     paths
 }
 
-fn artifact_mappings_for_asset(asset: &AssetRecord, revision_root: &Path) -> Vec<(PathBuf, PathBuf)> {
+fn artifact_mappings_for_asset(
+    asset: &AssetRecord,
+    revision_root: &Path,
+) -> Vec<(PathBuf, PathBuf)> {
     asset_visible_relative_paths(&asset.manifest)
         .into_iter()
         .map(|relative_path| {
@@ -2658,14 +2672,8 @@ fn default_asset_diff_summary(asset_kind: &AssetKind) -> AssetDiffSummary {
         AssetKind::DrillingObservation => {
             AssetDiffSummary::DrillingObservation(StructuredAssetDiffSummary::default())
         }
-        AssetKind::SeismicVolume => {
-            AssetDiffSummary::SeismicVolume(DirectoryAssetDiffSummary::default())
-        }
-        AssetKind::SeismicSection => {
-            AssetDiffSummary::SeismicSection(DirectoryAssetDiffSummary::default())
-        }
-        AssetKind::SeismicTraceSet => {
-            AssetDiffSummary::SeismicTraceSet(DirectoryAssetDiffSummary::default())
+        AssetKind::SeismicTraceData => {
+            AssetDiffSummary::SeismicTraceData(DirectoryAssetDiffSummary::default())
         }
     }
 }
@@ -2693,14 +2701,8 @@ fn diff_structured_rows<T: PartialEq>(
         AssetKind::PressureObservation => AssetDiffSummary::PressureObservation(summary),
         AssetKind::DrillingObservation => AssetDiffSummary::DrillingObservation(summary),
         AssetKind::Log => AssetDiffSummary::Log(LogAssetDiffSummary::default()),
-        AssetKind::SeismicVolume => {
-            AssetDiffSummary::SeismicVolume(DirectoryAssetDiffSummary::default())
-        }
-        AssetKind::SeismicSection => {
-            AssetDiffSummary::SeismicSection(DirectoryAssetDiffSummary::default())
-        }
-        AssetKind::SeismicTraceSet => {
-            AssetDiffSummary::SeismicTraceSet(DirectoryAssetDiffSummary::default())
+        AssetKind::SeismicTraceData => {
+            AssetDiffSummary::SeismicTraceData(DirectoryAssetDiffSummary::default())
         }
     }
 }
@@ -2805,14 +2807,8 @@ fn summarize_asset_diff(asset_kind: &AssetKind, diff: &AssetDiffSummary) -> Stri
         AssetDiffSummary::DrillingObservation(summary) => {
             summarize_structured_asset_diff("drilling observations", summary)
         }
-        AssetDiffSummary::SeismicVolume(summary) => {
-            summarize_directory_asset_diff("seismic volumes", summary)
-        }
-        AssetDiffSummary::SeismicSection(summary) => {
-            summarize_directory_asset_diff("seismic sections", summary)
-        }
-        AssetDiffSummary::SeismicTraceSet(summary) => {
-            summarize_directory_asset_diff("seismic trace sets", summary)
+        AssetDiffSummary::SeismicTraceData(summary) => {
+            summarize_directory_asset_diff("seismic trace data", summary)
         }
         AssetDiffSummary::MetadataOnly { changed_fields } => {
             if changed_fields.is_empty() {
@@ -3699,9 +3695,7 @@ fn structured_asset_extent(
             | AssetKind::PressureObservation
             | AssetKind::DrillingObservation => Some(IndexKind::Depth),
             AssetKind::Log => Some(IndexKind::Depth),
-            AssetKind::SeismicVolume
-            | AssetKind::SeismicSection
-            | AssetKind::SeismicTraceSet => Some(IndexKind::Time),
+            AssetKind::SeismicTraceData => Some(IndexKind::Time),
         },
         start: extent.0,
         stop: extent.1,

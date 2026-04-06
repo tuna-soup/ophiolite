@@ -5,8 +5,7 @@ use ndarray::Array3;
 use ophiolite_seismic_runtime::{
     DatasetKind, GeometryProvenance, HeaderFieldSpec, MaterializeOptions, ProcessingOperation,
     SourceIdentity, TbvolManifest, VolumeAxes, VolumeMetadata, create_tbvol_store,
-    materialize_volume,
-    preview_section_plane, recommended_chunk_shape,
+    materialize_volume, preview_section_plane, recommended_chunk_shape,
 };
 use tempfile::tempdir;
 
@@ -23,7 +22,14 @@ fn compute_storage_preview(c: &mut Criterion) {
     ];
 
     c.bench_function("preview_section_pipeline", |b| {
-        b.iter(|| preview_section_plane(&store_root, ophiolite_seismic_runtime::SectionAxis::Inline, 32, &pipeline))
+        b.iter(|| {
+            preview_section_plane(
+                &store_root,
+                ophiolite_seismic_runtime::SectionAxis::Inline,
+                32,
+                &pipeline,
+            )
+        })
     });
 }
 
@@ -105,5 +111,9 @@ fn fixture_manifest(shape: [usize; 3]) -> TbvolManifest {
     )
 }
 
-criterion_group!(benches, compute_storage_preview, compute_storage_materialize);
+criterion_group!(
+    benches,
+    compute_storage_preview,
+    compute_storage_materialize
+);
 criterion_main!(benches);

@@ -49,11 +49,11 @@ pub fn import_drilling_csv_asset(
     project.import_drilling_csv(csv_path, binding, collection_name)
 }
 
-pub fn import_seismic_volume_store_asset(
+pub fn import_seismic_trace_data_store_asset(
     project: &mut OphioliteProject,
     store_root: impl AsRef<Path>,
     binding: &AssetBindingInput,
     collection_name: Option<&str>,
 ) -> Result<SeismicAssetImportResult> {
-    project.import_seismic_volume_store(store_root, binding, collection_name)
+    project.import_seismic_trace_data_store(store_root, binding, collection_name)
 }

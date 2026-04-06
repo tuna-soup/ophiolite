@@ -5,6 +5,9 @@ use serde::Serialize;
 use crate::error::SeismicStoreError;
 use crate::ingest::{IngestOptions, geometry_classification_label, header_field_spec};
 use crate::{SegyInspection, inspect_segy};
+use ophiolite_seismic::{
+    SeismicGatherAxisKind, SeismicLayout, SeismicOrganization, SeismicStackingState,
+};
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -26,6 +29,10 @@ pub struct SurveyPreflight {
 #[derive(Debug, Clone, Serialize)]
 pub struct PreflightGeometry {
     pub classification: String,
+    pub stacking_state: String,
+    pub organization: String,
+    pub layout: String,
+    pub gather_axis_kind: Option<String>,
     pub inline_field: crate::HeaderFieldSpec,
     pub crossline_field: crate::HeaderFieldSpec,
     pub third_axis_field: Option<crate::HeaderFieldSpec>,
@@ -60,13 +67,19 @@ pub fn preflight_segy(
     })?;
 
     let recommended_action = match report.classification {
-        ophiolite_seismic_io::GeometryClassification::RegularDense => PreflightAction::DirectDenseIngest,
-        ophiolite_seismic_io::GeometryClassification::RegularSparse => PreflightAction::RegularizeSparseSurvey,
+        ophiolite_seismic_io::GeometryClassification::RegularDense => {
+            PreflightAction::DirectDenseIngest
+        }
+        ophiolite_seismic_io::GeometryClassification::RegularSparse => {
+            PreflightAction::RegularizeSparseSurvey
+        }
         ophiolite_seismic_io::GeometryClassification::DuplicateCoordinates
         | ophiolite_seismic_io::GeometryClassification::AmbiguousMapping => {
             PreflightAction::ReviewGeometryMapping
         }
-        ophiolite_seismic_io::GeometryClassification::NonCartesian => PreflightAction::UnsupportedInV1,
+        ophiolite_seismic_io::GeometryClassification::NonCartesian => {
+            PreflightAction::UnsupportedInV1
+        }
     };
 
     let mut notes = Vec::new();
@@ -106,10 +119,29 @@ pub fn preflight_segy(
         }
     }
 
+    if report.stacking_state == SeismicStackingState::PreStack {
+        notes.push(
+            format!(
+                "Resolved survey layout is {} with gather axis {}. Runtime ingest remains post-stack-only in v1.",
+                seismic_layout_label(report.layout),
+                report
+                    .gather_axis_kind
+                    .map(seismic_gather_axis_kind_label)
+                    .unwrap_or("unknown")
+            ),
+        );
+    }
+
     Ok(SurveyPreflight {
         inspection,
         geometry: PreflightGeometry {
             classification: geometry_classification_label(report.classification).to_string(),
+            stacking_state: seismic_stacking_state_label(report.stacking_state).to_string(),
+            organization: seismic_organization_label(report.organization).to_string(),
+            layout: seismic_layout_label(report.layout).to_string(),
+            gather_axis_kind: report
+                .gather_axis_kind
+                .map(|kind| seismic_gather_axis_kind_label(kind).to_string()),
             inline_field: header_field_spec(report.inline_field),
             crossline_field: header_field_spec(report.crossline_field),
             third_axis_field: report.third_axis_field.map(header_field_spec),
@@ -128,4 +160,46 @@ pub fn preflight_segy(
     })
 }
 
+fn seismic_stacking_state_label(value: SeismicStackingState) -> &'static str {
+    match value {
+        SeismicStackingState::PostStack => "post_stack",
+        SeismicStackingState::PreStack => "pre_stack",
+        SeismicStackingState::Unknown => "unknown",
+    }
+}
 
+fn seismic_organization_label(value: SeismicOrganization) -> &'static str {
+    match value {
+        SeismicOrganization::BinnedGrid => "binned_grid",
+        SeismicOrganization::GatherCollection => "gather_collection",
+        SeismicOrganization::Unstructured => "unstructured",
+    }
+}
+
+fn seismic_layout_label(value: SeismicLayout) -> &'static str {
+    match value {
+        SeismicLayout::PostStack3D => "post_stack_3d",
+        SeismicLayout::PostStack2D => "post_stack_2d",
+        SeismicLayout::PreStack3DOffset => "pre_stack_3d_offset",
+        SeismicLayout::PreStack3DAngle => "pre_stack_3d_angle",
+        SeismicLayout::PreStack3DAzimuth => "pre_stack_3d_azimuth",
+        SeismicLayout::PreStack3DUnknownAxis => "pre_stack_3d_unknown_axis",
+        SeismicLayout::PreStack2DOffset => "pre_stack_2d_offset",
+        SeismicLayout::ShotGatherSet => "shot_gather_set",
+        SeismicLayout::ReceiverGatherSet => "receiver_gather_set",
+        SeismicLayout::CmpGatherSet => "cmp_gather_set",
+        SeismicLayout::UnstructuredTraceCollection => "unstructured_trace_collection",
+    }
+}
+
+fn seismic_gather_axis_kind_label(value: SeismicGatherAxisKind) -> &'static str {
+    match value {
+        SeismicGatherAxisKind::Offset => "offset",
+        SeismicGatherAxisKind::Angle => "angle",
+        SeismicGatherAxisKind::Azimuth => "azimuth",
+        SeismicGatherAxisKind::Shot => "shot",
+        SeismicGatherAxisKind::Receiver => "receiver",
+        SeismicGatherAxisKind::Cmp => "cmp",
+        SeismicGatherAxisKind::Unknown => "unknown",
+    }
+}

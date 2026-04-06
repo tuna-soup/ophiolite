@@ -371,5 +371,3 @@ fn index_lookup(values: &[i64]) -> HashMap<i64, usize> {
         .map(|(index, value)| (*value, index))
         .collect()
 }
-
-

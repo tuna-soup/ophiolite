@@ -74,5 +74,3 @@ fn write_section_csv(
 
     Ok(())
 }
-
-

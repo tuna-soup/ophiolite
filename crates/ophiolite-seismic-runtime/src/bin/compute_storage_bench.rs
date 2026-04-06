@@ -5,10 +5,9 @@ use ophiolite_seismic_runtime::{
     ProcessingOperation, ProcessingPipeline, SectionAxis, SourceIdentity, StorageLayout,
     TbvolReader, TbvolWriter, TileCoord, TileGeometry, VolumeAxes, VolumeMetadata,
     VolumeStoreReader, VolumeStoreWriter, ZarrVolumeStoreReader, ZarrVolumeStoreWriter,
-    apply_pipeline_to_traces, assemble_section_plane,
-    load_source_volume_with_options, materialize_from_reader_writer, preflight_segy,
-    preview_section_from_reader, recommended_chunk_shape, recommended_tbvol_tile_shape,
-    write_dense_volume,
+    apply_pipeline_to_traces, assemble_section_plane, load_source_volume_with_options,
+    materialize_from_reader_writer, preflight_segy, preview_section_from_reader,
+    recommended_chunk_shape, recommended_tbvol_tile_shape, write_dense_volume,
 };
 use serde::Serialize;
 use std::fs::{self, File};
@@ -217,7 +216,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::AnalyzeSegy { input, format } => {
             let preflight = preflight_segy(&input, &IngestOptions::default())?;
             let analysis = analyze_dataset(
-                input.file_name()
+                input
+                    .file_name()
                     .and_then(|value| value.to_str())
                     .unwrap_or("segy"),
                 "segy",
@@ -530,18 +530,24 @@ fn benchmark_zarr(
     let xline_section_read_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
-    let _ = preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, amplitude_pipeline)?;
+    let _ =
+        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, amplitude_pipeline)?;
     let preview_amplitude_scalar_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
-    let _ = preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, normalize_pipeline)?;
+    let _ =
+        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, normalize_pipeline)?;
     let preview_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
-    let _ = preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, combined_pipeline)?;
+    let _ =
+        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, combined_pipeline)?;
     let preview_pipeline_ms = started.elapsed().as_secs_f64() * 1000.0;
 
-    let amplitude_output = input_root.parent().unwrap_or_else(|| Path::new(".")).join("apply-amplitude.zarr");
+    let amplitude_output = input_root
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("apply-amplitude.zarr");
     let amplitude_writer = ZarrVolumeStoreWriter::create(
         &amplitude_output,
         derived_output_volume(reader.volume(), input_root, amplitude_pipeline),
@@ -553,7 +559,10 @@ fn benchmark_zarr(
     materialize_from_reader_writer(&reader, amplitude_writer, amplitude_pipeline)?;
     let apply_amplitude_scalar_ms = started.elapsed().as_secs_f64() * 1000.0;
 
-    let normalize_output = input_root.parent().unwrap_or_else(|| Path::new(".")).join("apply-normalize.zarr");
+    let normalize_output = input_root
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("apply-normalize.zarr");
     let normalize_writer = ZarrVolumeStoreWriter::create(
         &normalize_output,
         derived_output_volume(reader.volume(), input_root, normalize_pipeline),
@@ -565,7 +574,10 @@ fn benchmark_zarr(
     materialize_from_reader_writer(&reader, normalize_writer, normalize_pipeline)?;
     let apply_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
-    let pipeline_output = input_root.parent().unwrap_or_else(|| Path::new(".")).join("apply-pipeline.zarr");
+    let pipeline_output = input_root
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("apply-pipeline.zarr");
     let pipeline_writer = ZarrVolumeStoreWriter::create(
         &pipeline_output,
         derived_output_volume(reader.volume(), input_root, combined_pipeline),
@@ -626,18 +638,24 @@ fn benchmark_tbvol(
     let xline_section_read_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
-    let _ = preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, amplitude_pipeline)?;
+    let _ =
+        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, amplitude_pipeline)?;
     let preview_amplitude_scalar_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
-    let _ = preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, normalize_pipeline)?;
+    let _ =
+        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, normalize_pipeline)?;
     let preview_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
-    let _ = preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, combined_pipeline)?;
+    let _ =
+        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, combined_pipeline)?;
     let preview_pipeline_ms = started.elapsed().as_secs_f64() * 1000.0;
 
-    let amplitude_output = input_root.parent().unwrap_or_else(|| Path::new(".")).join("apply-amplitude.tbvol");
+    let amplitude_output = input_root
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("apply-amplitude.tbvol");
     let amplitude_writer = TbvolWriter::create(
         &amplitude_output,
         derived_output_volume(reader.volume(), input_root, amplitude_pipeline),
@@ -648,7 +666,10 @@ fn benchmark_tbvol(
     materialize_from_reader_writer(&reader, amplitude_writer, amplitude_pipeline)?;
     let apply_amplitude_scalar_ms = started.elapsed().as_secs_f64() * 1000.0;
 
-    let normalize_output = input_root.parent().unwrap_or_else(|| Path::new(".")).join("apply-normalize.tbvol");
+    let normalize_output = input_root
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("apply-normalize.tbvol");
     let normalize_writer = TbvolWriter::create(
         &normalize_output,
         derived_output_volume(reader.volume(), input_root, normalize_pipeline),
@@ -659,7 +680,10 @@ fn benchmark_tbvol(
     materialize_from_reader_writer(&reader, normalize_writer, normalize_pipeline)?;
     let apply_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
-    let pipeline_output = input_root.parent().unwrap_or_else(|| Path::new(".")).join("apply-pipeline.tbvol");
+    let pipeline_output = input_root
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("apply-pipeline.tbvol");
     let pipeline_writer = TbvolWriter::create(
         &pipeline_output,
         derived_output_volume(reader.volume(), input_root, combined_pipeline),
@@ -910,7 +934,11 @@ fn benchmark_flat(
 
 fn planned_matrix(dataset: &[DatasetClass], candidate: &[StorageCandidate]) -> Vec<BenchPlanRow> {
     let datasets = if dataset.is_empty() {
-        vec![DatasetClass::Small, DatasetClass::Medium, DatasetClass::Large]
+        vec![
+            DatasetClass::Small,
+            DatasetClass::Medium,
+            DatasetClass::Large,
+        ]
     } else {
         dataset.to_vec()
     };
@@ -972,8 +1000,9 @@ fn storage_layout(
     shard_target_mib: Option<u16>,
 ) -> Result<StorageLayout, Box<dyn std::error::Error>> {
     let compression = match candidate {
-        StorageCandidate::ZarrUncompressedUnsharded
-        | StorageCandidate::ZarrUncompressedSharded => CompressionKind::None,
+        StorageCandidate::ZarrUncompressedUnsharded | StorageCandidate::ZarrUncompressedSharded => {
+            CompressionKind::None
+        }
         StorageCandidate::ZarrLz4Unsharded | StorageCandidate::ZarrLz4Sharded => {
             CompressionKind::BloscLz4
         }
@@ -1164,7 +1193,13 @@ fn synthetic_dataset(ilines: usize, xlines: usize, samples: usize) -> BenchmarkD
 fn create_bench_root(dataset_name: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let sanitized = dataset_name
         .chars()
-        .map(|value| if value.is_ascii_alphanumeric() { value } else { '_' })
+        .map(|value| {
+            if value.is_ascii_alphanumeric() {
+                value
+            } else {
+                '_'
+            }
+        })
         .collect::<String>();
     let root = std::env::temp_dir().join(format!(
         "ophiolite-seismic-compute-bench-{sanitized}-{}",
@@ -1245,7 +1280,10 @@ fn print_dataset_analysis(
                 "- shape: {} x {} x {}",
                 analysis.shape[0], analysis.shape[1], analysis.shape[2]
             );
-            println!("- runtime_store_f32_mib: {:.2}", analysis.runtime_store_mib_f32);
+            println!(
+                "- runtime_store_f32_mib: {:.2}",
+                analysis.runtime_store_mib_f32
+            );
             for candidate in &analysis.chunk_candidates {
                 println!(
                     "- chunk_target={}MiB chunk_shape={:?} chunk_bytes={} total_chunks={}",
@@ -1293,8 +1331,14 @@ fn print_benchmark_summary(
                 println!("  shard_shape: {:?}", result.shard_shape);
                 println!("  input_store_bytes: {}", result.input_store_bytes);
                 println!("  input_file_count: {}", result.input_file_count);
-                println!("  inline_section_read_ms: {:.3}", result.inline_section_read_ms);
-                println!("  xline_section_read_ms: {:.3}", result.xline_section_read_ms);
+                println!(
+                    "  inline_section_read_ms: {:.3}",
+                    result.inline_section_read_ms
+                );
+                println!(
+                    "  xline_section_read_ms: {:.3}",
+                    result.xline_section_read_ms
+                );
                 println!(
                     "  preview_amplitude_scalar_ms: {:.3}",
                     result.preview_amplitude_scalar_ms
@@ -1304,7 +1348,10 @@ fn print_benchmark_summary(
                     result.preview_trace_rms_normalize_ms
                 );
                 println!("  preview_pipeline_ms: {:.3}", result.preview_pipeline_ms);
-                println!("  apply_amplitude_scalar_ms: {:.3}", result.apply_amplitude_scalar_ms);
+                println!(
+                    "  apply_amplitude_scalar_ms: {:.3}",
+                    result.apply_amplitude_scalar_ms
+                );
                 println!(
                     "  apply_trace_rms_normalize_ms: {:.3}",
                     result.apply_trace_rms_normalize_ms
@@ -1389,9 +1436,11 @@ impl FlatBinaryStore {
     }
 
     fn occupancy_row(&self, iline: usize) -> Option<Vec<u8>> {
-        self.occupancy
-            .as_ref()
-            .map(|mask| (0..self.shape[1]).map(|xline| mask[[iline, xline]]).collect())
+        self.occupancy.as_ref().map(|mask| {
+            (0..self.shape[1])
+                .map(|xline| mask[[iline, xline]])
+                .collect()
+        })
     }
 
     fn read_inline_section(&self, iline: usize) -> Result<Vec<f32>, Box<dyn std::error::Error>> {

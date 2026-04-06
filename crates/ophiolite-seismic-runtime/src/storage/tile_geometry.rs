@@ -87,7 +87,10 @@ impl TileGeometry {
     }
 
     pub fn tile_origin(&self, coord: TileCoord) -> [usize; 2] {
-        [coord.tile_i * self.tile_shape[0], coord.tile_x * self.tile_shape[1]]
+        [
+            coord.tile_i * self.tile_shape[0],
+            coord.tile_x * self.tile_shape[1],
+        ]
     }
 
     pub fn effective_tile_shape(&self, coord: TileCoord) -> [usize; 3] {

@@ -1,7 +1,7 @@
+use crate::SectionAxis;
 use crate::error::SeismicStoreError;
 use crate::metadata::VolumeMetadata;
 use crate::store::SectionPlane;
-use crate::SectionAxis;
 
 use super::tile_geometry::{TileCoord, TileGeometry};
 use super::volume_store::VolumeStoreReader;
@@ -72,7 +72,10 @@ fn validate_section_index(
 }
 
 fn volume_has_occupancy<R: VolumeStoreReader>(reader: &R) -> bool {
-    let first = TileCoord { tile_i: 0, tile_x: 0 };
+    let first = TileCoord {
+        tile_i: 0,
+        tile_x: 0,
+    };
     matches!(reader.read_tile_occupancy(first), Ok(Some(_)))
 }
 

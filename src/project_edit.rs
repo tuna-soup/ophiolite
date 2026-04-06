@@ -213,7 +213,7 @@ impl StructuredAssetEditSessionStore {
                     "structured edit sessions only support trajectory, tops, pressure, and drilling assets".to_string(),
                 ))
             }
-            AssetKind::SeismicVolume | AssetKind::SeismicSection | AssetKind::SeismicTraceSet => {
+            AssetKind::SeismicTraceData => {
                 return Err(LasError::Validation(
                     "structured edit sessions do not support seismic assets".to_string(),
                 ))
@@ -677,9 +677,7 @@ fn asset_kind_name(kind: &AssetKind) -> &'static str {
         AssetKind::TopSet => "top_set",
         AssetKind::PressureObservation => "pressure_observation",
         AssetKind::DrillingObservation => "drilling_observation",
-        AssetKind::SeismicVolume => "seismic_volume",
-        AssetKind::SeismicSection => "seismic_section",
-        AssetKind::SeismicTraceSet => "seismic_trace_set",
+        AssetKind::SeismicTraceData => "seismic_trace_data",
     }
 }
 

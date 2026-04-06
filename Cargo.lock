@@ -1462,6 +1462,7 @@ dependencies = [
  "criterion",
  "ibm1047",
  "memmap2",
+ "ophiolite-seismic",
  "rayon",
 ]
 

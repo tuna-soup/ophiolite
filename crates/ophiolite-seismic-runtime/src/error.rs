@@ -49,4 +49,3 @@ pub enum SeismicStoreError {
     #[error("section request dataset mismatch: expected {expected}, found {found}")]
     DatasetIdMismatch { expected: String, found: String },
 }
-

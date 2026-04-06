@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 ibm1047 = "1.0"
 memmap2 = "0.9"
+ophiolite-seismic = { path = "../ophiolite-seismic" }
 rayon = "1.11"
 
 [dev-dependencies]

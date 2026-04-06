@@ -60,8 +60,11 @@ pub trait VolumeStoreWriter {
     fn volume(&self) -> &VolumeMetadata;
     fn tile_geometry(&self) -> &TileGeometry;
     fn write_tile(&self, tile: TileCoord, amplitudes: &[f32]) -> Result<(), SeismicStoreError>;
-    fn write_tile_occupancy(&self, tile: TileCoord, occupancy: &[u8])
-        -> Result<(), SeismicStoreError>;
+    fn write_tile_occupancy(
+        &self,
+        tile: TileCoord,
+        occupancy: &[u8],
+    ) -> Result<(), SeismicStoreError>;
     fn finalize(self) -> Result<(), SeismicStoreError>
     where
         Self: Sized;

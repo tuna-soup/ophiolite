@@ -81,8 +81,10 @@ pub fn recommended_tbvol_tile_shape(shape: [usize; 3], tile_target_mib: u16) -> 
             let padding_ratio = padding_traces as f64 / stored_traces.max(1) as f64;
             let aspect_penalty = ((ci as f64 / cx as f64).ln()).abs();
             let tile_count = (grid_i * grid_x) as f64;
-            let score =
-                (target_delta * 5.0) + (padding_ratio * 4.0) + (aspect_penalty * 0.05) + (tile_count * 0.001);
+            let score = (target_delta * 5.0)
+                + (padding_ratio * 4.0)
+                + (aspect_penalty * 0.05)
+                + (tile_count * 0.001);
 
             let better = score < best_score
                 || ((score - best_score).abs() < f64::EPSILON
@@ -108,8 +110,7 @@ pub struct TbvolReader {
 impl TbvolReader {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, SeismicStoreError> {
         let root = root.as_ref().to_path_buf();
-        let manifest: TbvolManifest =
-            serde_json::from_slice(&fs::read(root.join(MANIFEST_FILE))?)?;
+        let manifest: TbvolManifest = serde_json::from_slice(&fs::read(root.join(MANIFEST_FILE))?)?;
         validate_manifest(&manifest)?;
         let geometry = manifest.tile_geometry();
 
@@ -299,8 +300,7 @@ impl VolumeStoreWriter for TbvolWriter {
         }
         if manifest.has_occupancy {
             let occupancy_len = fs::metadata(temp_root.join(OCCUPANCY_FILE))?.len();
-            let expected_occupancy =
-                geometry.tile_count() as u64 * geometry.occupancy_tile_bytes();
+            let expected_occupancy = geometry.tile_count() as u64 * geometry.occupancy_tile_bytes();
             if occupancy_len != expected_occupancy {
                 return Err(SeismicStoreError::Message(format!(
                     "tbvol occupancy finalize size mismatch: expected {expected_occupancy}, found {occupancy_len}"
@@ -358,10 +358,7 @@ fn bytes_as_f32_slice(bytes: &[u8]) -> Result<&[f32], SeismicStoreError> {
 
 fn f32_slice_as_bytes(values: &[f32]) -> &[u8] {
     unsafe {
-        std::slice::from_raw_parts(
-            values.as_ptr().cast::<u8>(),
-            std::mem::size_of_val(values),
-        )
+        std::slice::from_raw_parts(values.as_ptr().cast::<u8>(), std::mem::size_of_val(values))
     }
 }
 
@@ -405,11 +402,11 @@ fn write_all_at(file: &File, mut bytes: &[u8], mut offset: u64) -> std::io::Resu
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use crate::SectionAxis;
     use crate::metadata::{
         DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, VolumeAxes,
     };
     use crate::storage::section_assembler;
-    use crate::SectionAxis;
 
     use super::*;
 
@@ -429,15 +426,15 @@ mod tests {
             for local_i in 0..effective[0] {
                 for local_x in 0..effective[1] {
                     let dst = (local_i * tile_shape[1]) + local_x;
-                    occupancy[dst] =
-                        if origin[0] + local_i == 1 && origin[1] + local_x == 2 { 0 } else { 1 };
+                    occupancy[dst] = if origin[0] + local_i == 1 && origin[1] + local_x == 2 {
+                        0
+                    } else {
+                        1
+                    };
                     let trace_start = dst * tile_shape[2];
                     for sample in 0..effective[2] {
-                        amplitudes[trace_start + sample] = amplitude_value(
-                            origin[0] + local_i,
-                            origin[1] + local_x,
-                            sample,
-                        );
+                        amplitudes[trace_start + sample] =
+                            amplitude_value(origin[0] + local_i, origin[1] + local_x, sample);
                     }
                 }
             }
@@ -459,7 +456,8 @@ mod tests {
         assert_eq!(tile[2], amplitude_value(2, 3, 0));
         assert_eq!(tile[3], amplitude_value(2, 3, 1));
 
-        let inline = section_assembler::read_section_plane(&reader, SectionAxis::Inline, 1).unwrap();
+        let inline =
+            section_assembler::read_section_plane(&reader, SectionAxis::Inline, 1).unwrap();
         assert_eq!(inline.traces, 4);
         assert_eq!(inline.samples, 2);
         assert_eq!(inline.amplitudes[4], amplitude_value(1, 2, 0));
@@ -530,9 +528,6 @@ mod tests {
             recommended_tbvol_tile_shape([256, 256, 1024], 4),
             [32, 32, 1024]
         );
-        assert_eq!(
-            recommended_tbvol_tile_shape([23, 18, 75], 1),
-            [23, 18, 75]
-        );
+        assert_eq!(recommended_tbvol_tile_shape([23, 18, 75], 1), [23, 18, 75]);
     }
 }

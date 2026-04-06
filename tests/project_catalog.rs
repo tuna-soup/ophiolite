@@ -378,8 +378,9 @@ fn project_resolves_well_panel_source_dto_for_frontend_workflows() {
 }
 
 #[test]
-fn project_imports_seismic_volume_store_and_tracks_it_in_catalog() {
-    let root = temp_project_root("project_imports_seismic_volume_store_and_tracks_it_in_catalog");
+fn project_imports_seismic_trace_data_store_and_tracks_it_in_catalog() {
+    let root =
+        temp_project_root("project_imports_seismic_trace_data_store_and_tracks_it_in_catalog");
     let source_root = root.join("source").join("survey.tbvol");
     let manifest = sample_store_manifest();
     let data = Array3::from_shape_fn((2, 3, 4), |(iline, xline, sample)| {
@@ -397,10 +398,10 @@ fn project_imports_seismic_volume_store_and_tracks_it_in_catalog() {
     };
 
     let imported = project
-        .import_seismic_volume_store(&source_root, &binding, Some("survey-main"))
+        .import_seismic_trace_data_store(&source_root, &binding, Some("survey-main"))
         .unwrap();
 
-    assert_eq!(imported.asset.asset_kind, AssetKind::SeismicVolume);
+    assert_eq!(imported.asset.asset_kind, AssetKind::SeismicTraceData);
     assert_eq!(imported.asset.manifest.bulk_data_descriptors.len(), 1);
     assert_eq!(
         imported.asset.manifest.bulk_data_descriptors[0].relative_path,
@@ -408,7 +409,10 @@ fn project_imports_seismic_volume_store_and_tracks_it_in_catalog() {
     );
 
     let assets = project
-        .list_assets(&imported.resolution.wellbore_id, Some(AssetKind::SeismicVolume))
+        .list_assets(
+            &imported.resolution.wellbore_id,
+            Some(AssetKind::SeismicTraceData),
+        )
         .unwrap();
     assert_eq!(assets.len(), 1);
     assert_eq!(assets[0].status, AssetStatus::Bound);
@@ -425,6 +429,8 @@ fn project_imports_seismic_volume_store_and_tracks_it_in_catalog() {
     let metadata_json = fs::read_to_string(package_root.join("metadata.json")).unwrap();
     assert!(metadata_json.contains("\"family\": \"Volume\""));
     assert!(metadata_json.contains("\"label\": \"survey\""));
+    assert!(metadata_json.contains("\"trace_data_descriptor\""));
+    assert!(metadata_json.contains("\"layout\": \"PostStack3D\""));
 }
 
 #[test]

@@ -207,8 +207,7 @@ fn load_array_from_reader<R: VolumeStoreReader>(
             for local_x in 0..effective[1] {
                 let src = ((local_i * tile_shape[1]) + local_x) * tile_shape[2];
                 for sample in 0..effective[2] {
-                    data[[origin[0] + local_i, origin[1] + local_x, sample]] =
-                        values[src + sample];
+                    data[[origin[0] + local_i, origin[1] + local_x, sample]] = values[src + sample];
                 }
             }
         }
@@ -220,7 +219,11 @@ fn load_array_from_reader<R: VolumeStoreReader>(
 fn load_occupancy_from_reader<R: VolumeStoreReader>(
     reader: &R,
 ) -> Result<Option<Array2<u8>>, SeismicStoreError> {
-    let Some(_) = reader.read_tile_occupancy(TileCoord { tile_i: 0, tile_x: 0 })? else {
+    let Some(_) = reader.read_tile_occupancy(TileCoord {
+        tile_i: 0,
+        tile_x: 0,
+    })?
+    else {
         return Ok(None);
     };
     let shape = reader.volume().shape;

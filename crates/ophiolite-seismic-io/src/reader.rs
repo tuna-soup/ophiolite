@@ -9,6 +9,9 @@ use std::sync::mpsc::sync_channel;
 use std::thread;
 
 use memmap2::Mmap;
+use ophiolite_seismic::{
+    SeismicGatherAxisKind, SeismicLayout, SeismicOrganization, SeismicStackingState,
+};
 use rayon::prelude::*;
 
 use crate::{
@@ -824,6 +827,10 @@ pub struct GeometryReport {
     pub inline_field: HeaderField,
     pub crossline_field: HeaderField,
     pub third_axis_field: Option<HeaderField>,
+    pub stacking_state: SeismicStackingState,
+    pub organization: SeismicOrganization,
+    pub layout: SeismicLayout,
+    pub gather_axis_kind: Option<SeismicGatherAxisKind>,
     pub inline_values: Vec<i64>,
     pub crossline_values: Vec<i64>,
     pub third_axis_values: Vec<i64>,
@@ -1661,6 +1668,10 @@ fn analyze_geometry_headers(
             inline_field,
             crossline_field,
             third_axis_field,
+            stacking_state: SeismicStackingState::Unknown,
+            organization: SeismicOrganization::Unstructured,
+            layout: SeismicLayout::UnstructuredTraceCollection,
+            gather_axis_kind: None,
             inline_values: Vec::new(),
             crossline_values: Vec::new(),
             third_axis_values: Vec::new(),
@@ -1715,11 +1726,18 @@ fn analyze_geometry_headers(
     } else {
         GeometryClassification::AmbiguousMapping
     };
+    let gather_axis_kind = third_axis_field.map(classify_gather_axis_kind);
+    let (stacking_state, organization, layout) =
+        classify_survey_layout(third_axis_field, classification, gather_axis_kind);
 
     Ok(GeometryReport {
         inline_field,
         crossline_field,
         third_axis_field,
+        stacking_state,
+        organization,
+        layout,
+        gather_axis_kind,
         inline_values: unique_ilines,
         crossline_values: unique_xlines,
         third_axis_values: unique_third_axis,
@@ -1732,6 +1750,60 @@ fn analyze_geometry_headers(
         duplicate_examples,
         classification,
     })
+}
+
+fn classify_gather_axis_kind(field: HeaderField) -> SeismicGatherAxisKind {
+    if field == HeaderField::OFFSET {
+        SeismicGatherAxisKind::Offset
+    } else {
+        SeismicGatherAxisKind::Unknown
+    }
+}
+
+fn classify_survey_layout(
+    third_axis_field: Option<HeaderField>,
+    classification: GeometryClassification,
+    gather_axis_kind: Option<SeismicGatherAxisKind>,
+) -> (SeismicStackingState, SeismicOrganization, SeismicLayout) {
+    if classification == GeometryClassification::NonCartesian {
+        return (
+            if third_axis_field.is_some() {
+                SeismicStackingState::PreStack
+            } else {
+                SeismicStackingState::Unknown
+            },
+            SeismicOrganization::Unstructured,
+            SeismicLayout::UnstructuredTraceCollection,
+        );
+    }
+
+    match gather_axis_kind {
+        Some(SeismicGatherAxisKind::Offset) => (
+            SeismicStackingState::PreStack,
+            SeismicOrganization::BinnedGrid,
+            SeismicLayout::PreStack3DOffset,
+        ),
+        Some(SeismicGatherAxisKind::Angle) => (
+            SeismicStackingState::PreStack,
+            SeismicOrganization::BinnedGrid,
+            SeismicLayout::PreStack3DAngle,
+        ),
+        Some(SeismicGatherAxisKind::Azimuth) => (
+            SeismicStackingState::PreStack,
+            SeismicOrganization::BinnedGrid,
+            SeismicLayout::PreStack3DAzimuth,
+        ),
+        Some(_) => (
+            SeismicStackingState::PreStack,
+            SeismicOrganization::BinnedGrid,
+            SeismicLayout::PreStack3DUnknownAxis,
+        ),
+        None => (
+            SeismicStackingState::PostStack,
+            SeismicOrganization::BinnedGrid,
+            SeismicLayout::PostStack3D,
+        ),
+    }
 }
 
 fn build_cube_plan(
@@ -2335,4 +2407,79 @@ fn decode_u24(src: &[u8], endianness: Endianness) -> u32 {
     };
 
     ((bytes[0] as u32) << 16) | ((bytes[1] as u32) << 8) | bytes[2] as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header_table(
+        ilines: Vec<i64>,
+        xlines: Vec<i64>,
+        third_axis: Option<(HeaderField, Vec<i64>)>,
+    ) -> HeaderTable {
+        let mut columns = vec![
+            HeaderColumn {
+                field: HeaderField::INLINE_3D,
+                values: ilines,
+            },
+            HeaderColumn {
+                field: HeaderField::CROSSLINE_3D,
+                values: xlines,
+            },
+        ];
+
+        if let Some((field, values)) = third_axis {
+            columns.push(HeaderColumn { field, values });
+        }
+
+        let row_count = columns
+            .first()
+            .map(|column| column.values.len())
+            .unwrap_or_default();
+
+        HeaderTable {
+            trace_numbers: (0..row_count as u64).collect(),
+            columns,
+        }
+    }
+
+    #[test]
+    fn geometry_report_marks_post_stack_binned_grid_without_third_axis() {
+        let headers = header_table(vec![10, 10, 11, 11], vec![20, 21, 20, 21], None);
+        let report = analyze_geometry_headers(
+            &headers,
+            HeaderField::INLINE_3D,
+            HeaderField::CROSSLINE_3D,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(report.stacking_state, SeismicStackingState::PostStack);
+        assert_eq!(report.organization, SeismicOrganization::BinnedGrid);
+        assert_eq!(report.layout, SeismicLayout::PostStack3D);
+        assert_eq!(report.gather_axis_kind, None);
+    }
+
+    #[test]
+    fn geometry_report_marks_prestack_offset_grid_with_offset_axis() {
+        let headers = header_table(
+            vec![10, 10, 10, 10, 11, 11, 11, 11],
+            vec![20, 20, 21, 21, 20, 20, 21, 21],
+            Some((HeaderField::OFFSET, vec![1, 2, 1, 2, 1, 2, 1, 2])),
+        );
+        let report = analyze_geometry_headers(
+            &headers,
+            HeaderField::INLINE_3D,
+            HeaderField::CROSSLINE_3D,
+            Some(HeaderField::OFFSET),
+        )
+        .unwrap();
+
+        assert_eq!(report.stacking_state, SeismicStackingState::PreStack);
+        assert_eq!(report.organization, SeismicOrganization::BinnedGrid);
+        assert_eq!(report.layout, SeismicLayout::PreStack3DOffset);
+        assert_eq!(report.gather_axis_kind, Some(SeismicGatherAxisKind::Offset));
+        assert_eq!(report.third_axis_values, vec![1, 2]);
+    }
 }

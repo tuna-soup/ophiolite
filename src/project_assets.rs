@@ -203,16 +203,14 @@ pub fn depth_reference_for_kind(kind: &AssetKind) -> DepthReference {
     match kind {
         AssetKind::Log | AssetKind::Trajectory | AssetKind::TopSet => DepthReference::MeasuredDepth,
         AssetKind::PressureObservation | AssetKind::DrillingObservation => DepthReference::Unknown,
-        AssetKind::SeismicVolume | AssetKind::SeismicSection | AssetKind::SeismicTraceSet => {
-            DepthReference::Unknown
-        }
+        AssetKind::SeismicTraceData => DepthReference::Unknown,
     }
 }
 
 pub fn vertical_datum_for_kind(kind: &AssetKind) -> Option<VerticalDatum> {
     match kind {
         AssetKind::Trajectory | AssetKind::TopSet => Some(VerticalDatum::Unknown),
-        AssetKind::SeismicVolume | AssetKind::SeismicSection | AssetKind::SeismicTraceSet => None,
+        AssetKind::SeismicTraceData => None,
         _ => None,
     }
 }

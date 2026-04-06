@@ -13,7 +13,7 @@ use crate::storage::tbvol::{TbvolReader, TbvolWriter, recommended_tbvol_tile_sha
 use crate::storage::tile_geometry::TileCoord;
 use crate::storage::volume_store::{VolumeStoreReader, VolumeStoreWriter};
 use crate::store::{SectionPlane, StoreHandle, open_store};
-use crate::{ProcessingOperation, ProcessingPipeline, SectionAxis, SectionView};
+use crate::{ProcessingOperation, ProcessingPipeline, SectionAxis, SectionView, SeismicLayout};
 
 const MAX_SCALAR_FACTOR: f32 = 10.0;
 const RMS_EPSILON: f32 = 1.0e-8;
@@ -36,6 +36,13 @@ impl Default for MaterializeOptions {
 }
 
 pub fn validate_pipeline(pipeline: &[ProcessingOperation]) -> Result<(), SeismicStoreError> {
+    validate_pipeline_for_layout(pipeline, SeismicLayout::PostStack3D)
+}
+
+pub fn validate_pipeline_for_layout(
+    pipeline: &[ProcessingOperation],
+    layout: SeismicLayout,
+) -> Result<(), SeismicStoreError> {
     if pipeline.is_empty() {
         return Err(SeismicStoreError::Message(
             "processing pipeline must contain at least one operator".to_string(),
@@ -50,6 +57,16 @@ pub fn validate_pipeline(pipeline: &[ProcessingOperation]) -> Result<(), Seismic
                 "amplitude scalar factor must be in [0.0, {MAX_SCALAR_FACTOR}], found {factor}"
             )));
         }
+
+        let compatibility = operation.compatibility();
+        if !compatibility.supports_layout(layout) {
+            return Err(SeismicStoreError::Message(format!(
+                "processing operator '{}' requires {}, found layout {:?}",
+                operation.operator_id(),
+                compatibility.label(),
+                layout
+            )));
+        }
     }
 
     Ok(())
@@ -58,12 +75,19 @@ pub fn validate_pipeline(pipeline: &[ProcessingOperation]) -> Result<(), Seismic
 pub fn validate_processing_pipeline(
     pipeline: &ProcessingPipeline,
 ) -> Result<(), SeismicStoreError> {
+    validate_processing_pipeline_for_layout(pipeline, SeismicLayout::PostStack3D)
+}
+
+pub fn validate_processing_pipeline_for_layout(
+    pipeline: &ProcessingPipeline,
+    layout: SeismicLayout,
+) -> Result<(), SeismicStoreError> {
     if pipeline.operations.is_empty() {
         return Err(SeismicStoreError::Message(
             "processing pipeline must contain at least one operator".to_string(),
         ));
     }
-    validate_pipeline(&pipeline.operations)
+    validate_pipeline_for_layout(&pipeline.operations, layout)
 }
 
 pub fn preview_section_plane(
@@ -226,7 +250,9 @@ pub fn materialize_from_reader_writer_with_progress<
     let mut completed_tiles = 0;
     for tile in reader.tile_geometry().iter_tiles() {
         let mut amplitudes = reader.read_tile(tile)?.into_owned();
-        let occupancy = reader.read_tile_occupancy(tile)?.map(|value| value.into_owned());
+        let occupancy = reader
+            .read_tile_occupancy(tile)?
+            .map(|value| value.into_owned());
         apply_pipeline_to_traces(
             &mut amplitudes,
             traces,
@@ -429,5 +455,15 @@ mod tests {
             / 4.0)
             .sqrt();
         assert!((rms - 1.0).abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn pipeline_validation_rejects_incompatible_layout() {
+        let result = validate_pipeline_for_layout(
+            &[ProcessingOperation::TraceRmsNormalize],
+            SeismicLayout::PreStack3DOffset,
+        );
+        let error = result.expect_err("prestack layout should be rejected for current operators");
+        assert!(error.to_string().contains("requires post-stack only"));
     }
 }

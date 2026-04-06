@@ -7,12 +7,8 @@ use zarrs::array::codec::{BloscCodec, ZstdCodec};
 use zarrs::array::{Array, ArrayBuilder, ArraySubset, BytesToBytesCodecTraits, data_type};
 use zarrs::filesystem::FilesystemStore;
 use zarrs::group::GroupBuilder;
-use zarrs::metadata_ext::codec::blosc::{
-    BloscCompressionLevel, BloscCompressor, BloscShuffleMode,
-};
-use zarrs::storage::{
-    ReadableWritableListableStorage, ReadableWritableListableStorageTraits,
-};
+use zarrs::metadata_ext::codec::blosc::{BloscCompressionLevel, BloscCompressor, BloscShuffleMode};
+use zarrs::storage::{ReadableWritableListableStorage, ReadableWritableListableStorageTraits};
 
 use crate::error::SeismicStoreError;
 use crate::metadata::{CompressionKind, StorageLayout, StoreManifest, VolumeMetadata};
@@ -206,7 +202,8 @@ fn create_empty_store(
 
     fs::create_dir_all(root)?;
     let store: ReadableWritableListableStorage = Arc::new(
-        FilesystemStore::new(root).map_err(|error| SeismicStoreError::Message(error.to_string()))?,
+        FilesystemStore::new(root)
+            .map_err(|error| SeismicStoreError::Message(error.to_string()))?,
     );
     GroupBuilder::new()
         .attributes(
@@ -228,7 +225,10 @@ fn create_empty_store(
     if let Some(occupancy) = occupancy {
         let occupancy_array = ArrayBuilder::new(
             vec![manifest.shape[0] as u64, manifest.shape[1] as u64],
-            vec![manifest.chunk_shape[0] as u64, manifest.chunk_shape[1] as u64],
+            vec![
+                manifest.chunk_shape[0] as u64,
+                manifest.chunk_shape[1] as u64,
+            ],
             data_type::uint8(),
             0_u8,
         )
@@ -257,7 +257,8 @@ fn open_array_at_path(
     path: &str,
 ) -> Result<Array<dyn ReadableWritableListableStorageTraits>, SeismicStoreError> {
     let store: ReadableWritableListableStorage = Arc::new(
-        FilesystemStore::new(root).map_err(|error| SeismicStoreError::Message(error.to_string()))?,
+        FilesystemStore::new(root)
+            .map_err(|error| SeismicStoreError::Message(error.to_string()))?,
     );
     Array::open(store, path).map_err(|error| SeismicStoreError::Message(error.to_string()))
 }

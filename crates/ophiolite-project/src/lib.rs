@@ -15,10 +15,10 @@ pub use ophiolite_parser::read_path;
 
 #[path = "../../../src/project.rs"]
 mod project;
-#[path = "../../../src/project_contracts.rs"]
-mod project_contracts;
 #[path = "../../../src/project_assets.rs"]
 mod project_assets;
+#[path = "../../../src/project_contracts.rs"]
+mod project_contracts;
 #[path = "../../../src/project_edit.rs"]
 mod project_edit;
 #[path = "../../../src/synthetic_fixtures.rs"]
@@ -32,8 +32,8 @@ pub use project::{
     ImportResolution, LogAssetDiffSummary, LogAssetImportResult, OphioliteProject,
     OphioliteProjectManifest, ProjectAssetImportResult, ProjectAssetSummary,
     ProjectComputeRunRequest, ProjectComputeRunResult, ProjectSummary, SeismicAssetImportResult,
-    SeismicAssetMetadata, SourceArtifactRef, StructuredAssetDiffSummary, UnitSystem,
-    VerticalDatum, WellId, WellIdentifierSet, WellRecord, WellSummary, WellboreId, WellboreRecord,
+    SeismicAssetMetadata, SourceArtifactRef, StructuredAssetDiffSummary, UnitSystem, VerticalDatum,
+    WellId, WellIdentifierSet, WellRecord, WellSummary, WellboreId, WellboreRecord,
     WellboreSummary,
 };
 pub use project_assets::{

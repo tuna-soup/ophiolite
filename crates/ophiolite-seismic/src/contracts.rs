@@ -53,6 +53,12 @@ pub struct GeometrySummary {
     pub inline_axis: AxisSummaryI32,
     pub xline_axis: AxisSummaryI32,
     pub sample_axis: AxisSummaryF32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<SeismicLayout>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gather_axis_kind: Option<GatherAxisKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gather_axis: Option<AxisSummaryF32>,
     pub provenance: GeometryProvenanceSummary,
 }
 
@@ -173,9 +179,29 @@ pub struct SectionTileRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(rename_all = "snake_case")]
-pub enum ProcessingOperation {
-    AmplitudeScalar { factor: f32 },
+pub enum TraceLocalProcessingOperation {
+    AmplitudeScalar {
+        factor: f32,
+    },
     TraceRmsNormalize,
+    AgcRms {
+        window_ms: f32,
+    },
+    PhaseRotation {
+        angle_degrees: f32,
+    },
+    LowpassFilter {
+        f3_hz: f32,
+        f4_hz: f32,
+        phase: FrequencyPhaseMode,
+        window: FrequencyWindowShape,
+    },
+    HighpassFilter {
+        f1_hz: f32,
+        f2_hz: f32,
+        phase: FrequencyPhaseMode,
+        window: FrequencyWindowShape,
+    },
     BandpassFilter {
         f1_hz: f32,
         f2_hz: f32,
@@ -205,7 +231,10 @@ pub enum FrequencyWindowShape {
 #[ts(rename_all = "snake_case")]
 pub enum SectionSpectrumSelection {
     WholeSection,
-    TraceRange { trace_start: usize, trace_end: usize },
+    TraceRange {
+        trace_start: usize,
+        trace_end: usize,
+    },
     RectWindow {
         trace_start: usize,
         trace_end: usize,
@@ -227,7 +256,7 @@ pub struct AmplitudeSpectrumRequest {
     pub section: SectionRequest,
     pub selection: SectionSpectrumSelection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pipeline: Option<ProcessingPipeline>,
+    pub pipeline: Option<TraceLocalProcessingPipeline>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -286,26 +315,65 @@ impl ProcessingLayoutCompatibility {
     }
 }
 
-impl ProcessingOperation {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessingOperatorScope {
+    TraceLocal,
+    SectionMatrix,
+    GatherMatrix,
+    InverseWavelet,
+}
+
+impl ProcessingOperatorScope {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TraceLocal => "trace-local",
+            Self::SectionMatrix => "section-matrix",
+            Self::GatherMatrix => "gather-matrix",
+            Self::InverseWavelet => "inverse-wavelet",
+        }
+    }
+}
+
+impl TraceLocalProcessingOperation {
     pub fn operator_id(&self) -> &'static str {
         match self {
             Self::AmplitudeScalar { .. } => "amplitude_scalar",
             Self::TraceRmsNormalize => "trace_rms_normalize",
+            Self::AgcRms { .. } => "agc_rms",
+            Self::PhaseRotation { .. } => "phase_rotation",
+            Self::LowpassFilter { .. } => "lowpass_filter",
+            Self::HighpassFilter { .. } => "highpass_filter",
             Self::BandpassFilter { .. } => "bandpass_filter",
+        }
+    }
+
+    pub fn scope(&self) -> ProcessingOperatorScope {
+        match self {
+            Self::AmplitudeScalar { .. }
+            | Self::TraceRmsNormalize
+            | Self::AgcRms { .. }
+            | Self::PhaseRotation { .. }
+            | Self::LowpassFilter { .. }
+            | Self::HighpassFilter { .. }
+            | Self::BandpassFilter { .. } => ProcessingOperatorScope::TraceLocal,
         }
     }
 
     pub fn compatibility(&self) -> ProcessingLayoutCompatibility {
         match self {
-            Self::AmplitudeScalar { .. } => ProcessingLayoutCompatibility::PostStackOnly,
-            Self::TraceRmsNormalize => ProcessingLayoutCompatibility::PostStackOnly,
+            Self::AmplitudeScalar { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
+            Self::TraceRmsNormalize => ProcessingLayoutCompatibility::AnyTraceMatrix,
+            Self::AgcRms { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
+            Self::PhaseRotation { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
+            Self::LowpassFilter { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
+            Self::HighpassFilter { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
             Self::BandpassFilter { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct ProcessingPipeline {
+pub struct TraceLocalProcessingPipeline {
     #[serde(default = "default_pipeline_schema_version")]
     pub schema_version: u32,
     #[serde(default = "default_pipeline_revision")]
@@ -316,7 +384,114 @@ pub struct ProcessingPipeline {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub operations: Vec<ProcessingOperation>,
+    pub operations: Vec<TraceLocalProcessingOperation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum VelocityFunctionSource {
+    ConstantVelocity {
+        velocity_m_per_s: f32,
+    },
+    TimeVelocityPairs {
+        times_ms: Vec<f32>,
+        velocities_m_per_s: Vec<f32>,
+    },
+    VelocityAssetReference {
+        asset_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum GatherInterpolationMode {
+    Linear,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum GatherProcessingOperation {
+    NmoCorrection {
+        velocity_model: VelocityFunctionSource,
+        interpolation: GatherInterpolationMode,
+    },
+    StretchMute {
+        velocity_model: VelocityFunctionSource,
+        max_stretch_ratio: f32,
+    },
+    OffsetMute {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        min_offset: Option<f32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_offset: Option<f32>,
+    },
+}
+
+impl GatherProcessingOperation {
+    pub fn operator_id(&self) -> &'static str {
+        match self {
+            Self::NmoCorrection { .. } => "nmo_correction",
+            Self::StretchMute { .. } => "stretch_mute",
+            Self::OffsetMute { .. } => "offset_mute",
+        }
+    }
+
+    pub fn scope(&self) -> ProcessingOperatorScope {
+        ProcessingOperatorScope::GatherMatrix
+    }
+
+    pub fn compatibility(&self) -> ProcessingLayoutCompatibility {
+        ProcessingLayoutCompatibility::PreStackOffsetOnly
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GatherProcessingPipeline {
+    #[serde(default = "default_pipeline_schema_version")]
+    pub schema_version: u32,
+    #[serde(default = "default_pipeline_revision")]
+    pub revision: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_local_pipeline: Option<TraceLocalProcessingPipeline>,
+    pub operations: Vec<GatherProcessingOperation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingPipelineFamily {
+    TraceLocal,
+    Gather,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingPipelineSpec {
+    TraceLocal {
+        pipeline: TraceLocalProcessingPipeline,
+    },
+    Gather {
+        pipeline: GatherProcessingPipeline,
+    },
+}
+
+impl ProcessingPipelineSpec {
+    pub fn family(&self) -> ProcessingPipelineFamily {
+        match self {
+            Self::TraceLocal { .. } => ProcessingPipelineFamily::TraceLocal,
+            Self::Gather { .. } => ProcessingPipelineFamily::Gather,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -344,7 +519,7 @@ pub struct ProcessingJobStatus {
     pub input_store_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_store_path: Option<String>,
-    pub pipeline: ProcessingPipeline,
+    pub pipeline: ProcessingPipelineSpec,
     #[ts(type = "number")]
     pub created_at_unix_s: u64,
     #[ts(type = "number")]
@@ -354,9 +529,9 @@ pub struct ProcessingJobStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct ProcessingPreset {
+pub struct TraceLocalProcessingPreset {
     pub preset_id: String,
-    pub pipeline: ProcessingPipeline,
+    pub pipeline: TraceLocalProcessingPipeline,
     #[ts(type = "number")]
     pub created_at_unix_s: u64,
     #[ts(type = "number")]
@@ -492,6 +667,28 @@ pub struct GatherView {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum GatherSelector {
+    InlineXline {
+        inline: i32,
+        xline: i32,
+    },
+    Coordinate {
+        coordinate: f64,
+    },
+    Ordinal {
+        index: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GatherRequest {
+    pub dataset_id: DatasetId,
+    pub selector: GatherSelector,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct PreviewView {
     pub section: SectionView,
     pub processing_label: String,
@@ -502,6 +699,23 @@ impl PreviewView {
     pub fn pending(section: SectionView, processing_label: impl Into<String>) -> Self {
         Self {
             section,
+            processing_label: processing_label.into(),
+            preview_ready: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GatherPreviewView {
+    pub gather: GatherView,
+    pub processing_label: String,
+    pub preview_ready: bool,
+}
+
+impl GatherPreviewView {
+    pub fn pending(gather: GatherView, processing_label: impl Into<String>) -> Self {
+        Self {
+            gather,
             processing_label: processing_label.into(),
             preview_ready: false,
         }
@@ -644,6 +858,29 @@ pub struct ImportDatasetResponse {
     pub dataset: DatasetSummary,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum PrestackThirdAxisField {
+    Offset,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ImportPrestackOffsetDatasetRequest {
+    pub schema_version: u32,
+    pub input_path: String,
+    pub output_store_path: String,
+    pub third_axis_field: PrestackThirdAxisField,
+    #[serde(default)]
+    pub overwrite_existing: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ImportPrestackOffsetDatasetResponse {
+    pub schema_version: u32,
+    pub dataset: DatasetSummary,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct OpenDatasetRequest {
     pub schema_version: u32,
@@ -669,36 +906,134 @@ pub struct PreviewResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct PreviewProcessingRequest {
+pub struct PreviewTraceLocalProcessingRequest {
     pub schema_version: u32,
     pub store_path: String,
     pub section: SectionRequest,
-    pub pipeline: ProcessingPipeline,
+    pub pipeline: TraceLocalProcessingPipeline,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct PreviewProcessingResponse {
+pub struct PreviewTraceLocalProcessingResponse {
     pub schema_version: u32,
     pub preview: PreviewView,
-    pub pipeline: ProcessingPipeline,
+    pub pipeline: TraceLocalProcessingPipeline,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct RunProcessingRequest {
+pub struct RunTraceLocalProcessingRequest {
     pub schema_version: u32,
     pub store_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_store_path: Option<String>,
     #[serde(default)]
     pub overwrite_existing: bool,
-    pub pipeline: ProcessingPipeline,
+    pub pipeline: TraceLocalProcessingPipeline,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct RunProcessingResponse {
+pub struct RunTraceLocalProcessingResponse {
     pub schema_version: u32,
     pub job: ProcessingJobStatus,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PreviewGatherProcessingRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    pub gather: GatherRequest,
+    pub pipeline: GatherProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PreviewGatherProcessingResponse {
+    pub schema_version: u32,
+    pub preview: GatherPreviewView,
+    pub pipeline: GatherProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RunGatherProcessingRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_store_path: Option<String>,
+    #[serde(default)]
+    pub overwrite_existing: bool,
+    pub pipeline: GatherProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RunGatherProcessingResponse {
+    pub schema_version: u32,
+    pub job: ProcessingJobStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct VelocityScanRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    pub gather: GatherRequest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_local_pipeline: Option<TraceLocalProcessingPipeline>,
+    pub min_velocity_m_per_s: f32,
+    pub max_velocity_m_per_s: f32,
+    pub velocity_step_m_per_s: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autopick: Option<VelocityAutopickParameters>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SemblancePanel {
+    pub velocities_m_per_s: Vec<f32>,
+    pub sample_axis_ms: Vec<f32>,
+    pub semblance_f32le: Vec<u8>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum VelocityPickStrategy {
+    MaximumSemblance,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct VelocityAutopickParameters {
+    pub sample_stride: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_time_ms: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_time_ms: Option<f32>,
+    pub min_semblance: f32,
+    pub smoothing_samples: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct VelocityFunctionEstimate {
+    pub strategy: VelocityPickStrategy,
+    pub times_ms: Vec<f32>,
+    pub velocities_m_per_s: Vec<f32>,
+    pub semblance: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct VelocityScanResponse {
+    pub schema_version: u32,
+    pub gather: GatherRequest,
+    pub panel: SemblancePanel,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub processing_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autopicked_velocity_function: Option<VelocityFunctionEstimate>,
+}
+
+pub type ProcessingOperation = TraceLocalProcessingOperation;
+pub type ProcessingPipeline = TraceLocalProcessingPipeline;
+pub type ProcessingPreset = TraceLocalProcessingPreset;
+pub type PreviewProcessingRequest = PreviewTraceLocalProcessingRequest;
+pub type PreviewProcessingResponse = PreviewTraceLocalProcessingResponse;
+pub type RunProcessingRequest = RunTraceLocalProcessingRequest;
+pub type RunProcessingResponse = RunTraceLocalProcessingResponse;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct GetProcessingJobRequest {
@@ -727,19 +1062,19 @@ pub struct CancelProcessingJobResponse {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ListPipelinePresetsResponse {
     pub schema_version: u32,
-    pub presets: Vec<ProcessingPreset>,
+    pub presets: Vec<TraceLocalProcessingPreset>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SavePipelinePresetRequest {
     pub schema_version: u32,
-    pub preset: ProcessingPreset,
+    pub preset: TraceLocalProcessingPreset,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SavePipelinePresetResponse {
     pub schema_version: u32,
-    pub preset: ProcessingPreset,
+    pub preset: TraceLocalProcessingPreset,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]

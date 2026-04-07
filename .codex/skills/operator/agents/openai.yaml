@@ -1,0 +1,4 @@
+interface:
+  display_name: "Operator"
+  short_description: "Build scoped seismic operators and adjacent analysis APIs"
+  default_prompt: "Use $operator to add or modify a shared seismic operator family or adjacent analysis API across Ophiolite and TraceBoost, keeping trace-local, gather-native, section-matrix, analysis, and prestack-store boundaries explicit, including picked-analysis outputs where relevant, and only wiring UI where an owning app already exists."

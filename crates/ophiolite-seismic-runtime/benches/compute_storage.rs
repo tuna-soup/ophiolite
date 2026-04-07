@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use ndarray::Array3;
 use ophiolite_seismic_runtime::{
-    DatasetKind, GeometryProvenance, HeaderFieldSpec, MaterializeOptions, ProcessingOperation,
-    SourceIdentity, TbvolManifest, VolumeAxes, VolumeMetadata, create_tbvol_store,
-    materialize_volume, preview_section_plane, recommended_chunk_shape,
+    DatasetKind, FrequencyPhaseMode, FrequencyWindowShape, GeometryProvenance, HeaderFieldSpec,
+    MaterializeOptions, ProcessingOperation, SourceIdentity, TbvolManifest, VolumeAxes,
+    VolumeMetadata, apply_pipeline_to_traces, create_tbvol_store, materialize_volume,
+    preview_section_plane, recommended_chunk_shape,
 };
 use tempfile::tempdir;
 
@@ -62,6 +63,118 @@ fn compute_storage_materialize(c: &mut Criterion) {
     });
 }
 
+fn compute_operator_kernels(c: &mut Criterion) {
+    let traces = 64usize;
+    let samples = 256usize;
+    let sample_interval_ms = 2.0_f32;
+    let source = synthetic_section(traces, samples);
+    let occupancy = vec![1_u8; traces];
+    let phase_rotation_pipeline = [ProcessingOperation::PhaseRotation {
+        angle_degrees: 35.0,
+    }];
+    let bandpass_pipeline = [benchmark_bandpass_operation(sample_interval_ms)];
+    let bandpass_phase_rotation_pipeline = [
+        benchmark_bandpass_operation(sample_interval_ms),
+        ProcessingOperation::PhaseRotation {
+            angle_degrees: 35.0,
+        },
+    ];
+
+    let mut group = c.benchmark_group("operator_kernels");
+
+    group.bench_function("amplitude_scalar", |b| {
+        b.iter_batched(
+            || source.clone(),
+            |mut values| {
+                apply_pipeline_to_traces(
+                    &mut values,
+                    traces,
+                    samples,
+                    sample_interval_ms,
+                    Some(&occupancy),
+                    &[ProcessingOperation::AmplitudeScalar { factor: 2.0 }],
+                )
+                .expect("scalar pipeline should succeed");
+            },
+            BatchSize::LargeInput,
+        )
+    });
+
+    group.bench_function("trace_rms_normalize", |b| {
+        b.iter_batched(
+            || source.clone(),
+            |mut values| {
+                apply_pipeline_to_traces(
+                    &mut values,
+                    traces,
+                    samples,
+                    sample_interval_ms,
+                    Some(&occupancy),
+                    &[ProcessingOperation::TraceRmsNormalize],
+                )
+                .expect("normalize pipeline should succeed");
+            },
+            BatchSize::LargeInput,
+        )
+    });
+
+    group.bench_function("phase_rotation", |b| {
+        b.iter_batched(
+            || source.clone(),
+            |mut values| {
+                apply_pipeline_to_traces(
+                    &mut values,
+                    traces,
+                    samples,
+                    sample_interval_ms,
+                    Some(&occupancy),
+                    &phase_rotation_pipeline,
+                )
+                .expect("phase rotation pipeline should succeed");
+            },
+            BatchSize::LargeInput,
+        )
+    });
+
+    group.bench_function("bandpass_filter", |b| {
+        b.iter_batched(
+            || source.clone(),
+            |mut values| {
+                apply_pipeline_to_traces(
+                    &mut values,
+                    traces,
+                    samples,
+                    sample_interval_ms,
+                    Some(&occupancy),
+                    &bandpass_pipeline,
+                )
+                .expect("bandpass pipeline should succeed");
+            },
+            BatchSize::LargeInput,
+        )
+    });
+
+    group.bench_function("bandpass_plus_phase_rotation", |b| {
+        b.iter_batched(
+            || source.clone(),
+            |mut values| {
+                apply_pipeline_to_traces(
+                    &mut values,
+                    traces,
+                    samples,
+                    sample_interval_ms,
+                    Some(&occupancy),
+                    &bandpass_phase_rotation_pipeline,
+                )
+                .expect("spectral combo pipeline should succeed");
+            },
+            BatchSize::LargeInput,
+        )
+    });
+
+    group.finish();
+}
+
 fn synthetic_data(shape: [usize; 3]) -> Array3<f32> {
     Array3::from_shape_fn((shape[0], shape[1], shape[2]), |(iline, xline, sample)| {
         let il = iline as f32 / shape[0].max(1) as f32;
@@ -69,6 +182,35 @@ fn synthetic_data(shape: [usize; 3]) -> Array3<f32> {
         let smp = sample as f32 / shape[2].max(1) as f32;
         ((il * 17.0).sin() + (xl * 11.0).cos()) * (1.0 - smp) + (smp * 31.0).sin() * 0.35
     })
+}
+
+fn synthetic_section(traces: usize, samples: usize) -> Vec<f32> {
+    (0..traces)
+        .flat_map(|trace| {
+            (0..samples).map(move |sample| {
+                let trace_ratio = trace as f32 / traces.max(1) as f32;
+                let sample_ratio = sample as f32 / samples.max(1) as f32;
+                ((trace_ratio * 17.0).sin() + (sample_ratio * 31.0).cos()) * (1.0 - sample_ratio)
+                    + (sample_ratio * 11.0).sin() * 0.35
+            })
+        })
+        .collect()
+}
+
+fn benchmark_bandpass_operation(sample_interval_ms: f32) -> ProcessingOperation {
+    let nyquist_hz = 500.0 / sample_interval_ms.max(f32::EPSILON);
+    let f1_hz = (nyquist_hz * 0.06).max(4.0);
+    let f2_hz = (nyquist_hz * 0.1).max(f1_hz + 1.0);
+    let f4_hz = (nyquist_hz * 0.45).max(f2_hz + 6.0).min(nyquist_hz);
+    let f3_hz = (nyquist_hz * 0.32).max(f2_hz + 4.0).min(f4_hz);
+    ProcessingOperation::BandpassFilter {
+        f1_hz,
+        f2_hz,
+        f3_hz,
+        f4_hz,
+        phase: FrequencyPhaseMode::Zero,
+        window: FrequencyWindowShape::CosineTaper,
+    }
 }
 
 fn fixture_manifest(shape: [usize; 3]) -> TbvolManifest {
@@ -113,6 +255,7 @@ fn fixture_manifest(shape: [usize; 3]) -> TbvolManifest {
 
 criterion_group!(
     benches,
+    compute_operator_kernels,
     compute_storage_preview,
     compute_storage_materialize
 );

@@ -66,18 +66,26 @@ pub fn preflight_segy(
         ..ophiolite_seismic_io::GeometryOptions::default()
     })?;
 
-    let recommended_action = match report.classification {
-        ophiolite_seismic_io::GeometryClassification::RegularDense => {
+    let recommended_action = match (report.stacking_state, report.layout, report.classification) {
+        (
+            SeismicStackingState::PreStack,
+            SeismicLayout::PreStack3DOffset,
+            ophiolite_seismic_io::GeometryClassification::RegularDense,
+        ) => PreflightAction::DirectDenseIngest,
+        (SeismicStackingState::PreStack, _, _) => PreflightAction::UnsupportedInV1,
+        (_, _, ophiolite_seismic_io::GeometryClassification::RegularDense) => {
             PreflightAction::DirectDenseIngest
         }
-        ophiolite_seismic_io::GeometryClassification::RegularSparse => {
+        (_, _, ophiolite_seismic_io::GeometryClassification::RegularSparse) => {
             PreflightAction::RegularizeSparseSurvey
         }
-        ophiolite_seismic_io::GeometryClassification::DuplicateCoordinates
-        | ophiolite_seismic_io::GeometryClassification::AmbiguousMapping => {
-            PreflightAction::ReviewGeometryMapping
-        }
-        ophiolite_seismic_io::GeometryClassification::NonCartesian => {
+        (
+            _,
+            _,
+            ophiolite_seismic_io::GeometryClassification::DuplicateCoordinates
+            | ophiolite_seismic_io::GeometryClassification::AmbiguousMapping,
+        ) => PreflightAction::ReviewGeometryMapping,
+        (_, _, ophiolite_seismic_io::GeometryClassification::NonCartesian) => {
             PreflightAction::UnsupportedInV1
         }
     };
@@ -120,16 +128,25 @@ pub fn preflight_segy(
     }
 
     if report.stacking_state == SeismicStackingState::PreStack {
-        notes.push(
-            format!(
-                "Resolved survey layout is {} with gather axis {}. Runtime ingest remains post-stack-only in v1.",
+        let gather_axis = report
+            .gather_axis_kind
+            .map(seismic_gather_axis_kind_label)
+            .unwrap_or("unknown");
+        if report.layout == SeismicLayout::PreStack3DOffset
+            && report.classification == ophiolite_seismic_io::GeometryClassification::RegularDense
+        {
+            notes.push(format!(
+                "Resolved survey layout is {} with gather axis {}. Phase-one runtime ingest supports this path through ingest_prestack_offset_segy.",
                 seismic_layout_label(report.layout),
-                report
-                    .gather_axis_kind
-                    .map(seismic_gather_axis_kind_label)
-                    .unwrap_or("unknown")
-            ),
-        );
+                gather_axis,
+            ));
+        } else {
+            notes.push(format!(
+                "Resolved survey layout is {} with gather axis {}. Phase-one runtime ingest only supports regular dense pre_stack_3d_offset surveys.",
+                seismic_layout_label(report.layout),
+                gather_axis,
+            ));
+        }
     }
 
     Ok(SurveyPreflight {

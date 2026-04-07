@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use ophiolite_seismic::ProcessingPipeline;
+use ophiolite_seismic::ProcessingPipelineSpec;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,7 +90,7 @@ impl Default for StorageLayout {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessingLineage {
     pub parent_store: PathBuf,
-    pub pipeline: ProcessingPipeline,
+    pub pipeline: ProcessingPipelineSpec,
     pub runtime_version: String,
     pub created_at_unix_s: u64,
 }

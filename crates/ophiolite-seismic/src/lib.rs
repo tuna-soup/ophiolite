@@ -1,8 +1,10 @@
 mod contracts;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use ts_rs::TS;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct SeismicAssetId(pub String);
@@ -34,7 +36,9 @@ pub enum SeismicOrganization {
     Unstructured,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum SeismicLayout {
     PostStack3D,
     PostStack2D,
@@ -288,6 +292,46 @@ impl From<&SeismicVolumeDescriptor> for SeismicTraceDataDescriptor {
 
 impl From<&contracts::VolumeDescriptor> for SeismicTraceDataDescriptor {
     fn from(value: &contracts::VolumeDescriptor) -> Self {
+        let layout = value
+            .geometry
+            .summary
+            .layout
+            .unwrap_or(SeismicLayout::PostStack3D);
+        let stacking_state = match layout {
+            SeismicLayout::PostStack3D | SeismicLayout::PostStack2D => SeismicStackingState::PostStack,
+            SeismicLayout::PreStack3DOffset
+            | SeismicLayout::PreStack3DAngle
+            | SeismicLayout::PreStack3DAzimuth
+            | SeismicLayout::PreStack3DUnknownAxis
+            | SeismicLayout::PreStack2DOffset
+            | SeismicLayout::ShotGatherSet
+            | SeismicLayout::ReceiverGatherSet
+            | SeismicLayout::CmpGatherSet => SeismicStackingState::PreStack,
+            SeismicLayout::UnstructuredTraceCollection => SeismicStackingState::Unknown,
+        };
+        let organization = match layout {
+            SeismicLayout::PostStack3D | SeismicLayout::PostStack2D => SeismicOrganization::BinnedGrid,
+            SeismicLayout::PreStack3DOffset
+            | SeismicLayout::PreStack3DAngle
+            | SeismicLayout::PreStack3DAzimuth
+            | SeismicLayout::PreStack3DUnknownAxis
+            | SeismicLayout::PreStack2DOffset
+            | SeismicLayout::ShotGatherSet
+            | SeismicLayout::ReceiverGatherSet
+            | SeismicLayout::CmpGatherSet => SeismicOrganization::GatherCollection,
+            SeismicLayout::UnstructuredTraceCollection => SeismicOrganization::Unstructured,
+        };
+        let gather_axis_kind = value.geometry.summary.gather_axis_kind.map(|kind| match kind {
+            contracts::GatherAxisKind::Offset => SeismicGatherAxisKind::Offset,
+            contracts::GatherAxisKind::Angle => SeismicGatherAxisKind::Angle,
+            contracts::GatherAxisKind::Azimuth => SeismicGatherAxisKind::Azimuth,
+            contracts::GatherAxisKind::Shot => SeismicGatherAxisKind::Shot,
+            contracts::GatherAxisKind::Receiver => SeismicGatherAxisKind::Receiver,
+            contracts::GatherAxisKind::Cmp => SeismicGatherAxisKind::Cmp,
+            contracts::GatherAxisKind::TraceOrdinal | contracts::GatherAxisKind::Unknown => {
+                SeismicGatherAxisKind::Unknown
+            }
+        });
         let inline_dimension = SeismicDimensionDescriptor {
             role: SeismicAxisRole::Inline,
             label: "inline".to_string(),
@@ -334,10 +378,10 @@ impl From<&contracts::VolumeDescriptor> for SeismicTraceDataDescriptor {
         Self {
             id: SeismicAssetId(value.id.0.clone()),
             label: value.label.clone(),
-            stacking_state: SeismicStackingState::PostStack,
-            organization: SeismicOrganization::BinnedGrid,
-            layout: SeismicLayout::PostStack3D,
-            gather_axis_kind: None,
+            stacking_state,
+            organization,
+            layout,
+            gather_axis_kind,
             dimensions: vec![
                 inline_dimension.clone(),
                 crossline_dimension.clone(),
@@ -563,22 +607,32 @@ pub struct SeismicInterpretationPoint {
 pub use contracts::{
     AmplitudeSpectrumCurve, AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, AxisSummaryF32,
     AxisSummaryI32, CancelProcessingJobRequest, CancelProcessingJobResponse, DatasetId,
-    DatasetSummary, DeletePipelinePresetRequest, DeletePipelinePresetResponse,
-    FrequencyPhaseMode, FrequencyWindowShape, GatherAxisKind, GatherInteractionChanged,
-    GatherProbe, GatherProbeChanged, GatherSampleDomain, GatherView, GatherViewport,
-    GatherViewportChanged, GeometryDescriptor, GeometryProvenanceSummary, GeometrySummary,
-    GetProcessingJobRequest, GetProcessingJobResponse, IPC_SCHEMA_VERSION, ImportDatasetRequest,
-    ImportDatasetResponse, InterpretationPoint, ListPipelinePresetsResponse,
-    OpenDatasetRequest, OpenDatasetResponse, PreviewCommand, PreviewProcessingRequest,
-    PreviewProcessingResponse, PreviewResponse, PreviewView, ProcessingJobProgress,
-    ProcessingJobState, ProcessingJobStatus, ProcessingLayoutCompatibility, ProcessingOperation,
-    ProcessingPipeline, ProcessingPreset, RunProcessingRequest, RunProcessingResponse,
+    DatasetSummary, DeletePipelinePresetRequest, DeletePipelinePresetResponse, FrequencyPhaseMode,
+    FrequencyWindowShape, GatherAxisKind, GatherInteractionChanged, GatherInterpolationMode,
+    GatherPreviewView, GatherProbe, GatherProbeChanged, GatherProcessingOperation,
+    GatherProcessingPipeline, GatherRequest, GatherSampleDomain, GatherSelector, GatherView,
+    GatherViewport, GatherViewportChanged, GeometryDescriptor, GeometryProvenanceSummary,
+    GeometrySummary, GetProcessingJobRequest, GetProcessingJobResponse, IPC_SCHEMA_VERSION,
+    ImportDatasetRequest, ImportDatasetResponse, ImportPrestackOffsetDatasetRequest,
+    ImportPrestackOffsetDatasetResponse, InterpretationPoint, ListPipelinePresetsResponse,
+    OpenDatasetRequest, OpenDatasetResponse, PrestackThirdAxisField, PreviewCommand,
+    PreviewGatherProcessingRequest, PreviewGatherProcessingResponse, PreviewProcessingRequest,
+    PreviewProcessingResponse, PreviewResponse, PreviewTraceLocalProcessingRequest,
+    PreviewTraceLocalProcessingResponse,
+    PreviewView, ProcessingJobProgress, ProcessingJobState, ProcessingJobStatus,
+    ProcessingLayoutCompatibility, ProcessingOperation, ProcessingOperatorScope,
+    ProcessingPipeline, ProcessingPipelineFamily, ProcessingPipelineSpec, ProcessingPreset,
+    RunGatherProcessingRequest, RunGatherProcessingResponse, RunProcessingRequest,
+    RunProcessingResponse, RunTraceLocalProcessingRequest, RunTraceLocalProcessingResponse,
     SavePipelinePresetRequest, SavePipelinePresetResponse, SectionAxis, SectionColorMap,
     SectionCoordinate, SectionDisplayDefaults, SectionInteractionChanged, SectionMetadata,
     SectionPolarity, SectionPrimaryMode, SectionProbe, SectionProbeChanged, SectionRenderMode,
-    SectionRequest, SectionTileRequest, SectionUnits, SectionView, SectionViewport,
-    SectionViewportChanged, SectionSpectrumSelection, SuggestedImportAction, SurveyPreflightRequest,
-    SurveyPreflightResponse, VolumeDescriptor,
+    SectionRequest, SectionSpectrumSelection, SectionTileRequest, SectionUnits, SectionView,
+    SectionViewport, SectionViewportChanged, SemblancePanel, SuggestedImportAction,
+    SurveyPreflightRequest, SurveyPreflightResponse, TraceLocalProcessingOperation,
+    TraceLocalProcessingPipeline, TraceLocalProcessingPreset, VelocityAutopickParameters,
+    VelocityFunctionEstimate, VelocityFunctionSource, VelocityPickStrategy, VelocityScanRequest,
+    VelocityScanResponse, VolumeDescriptor,
 };
 
 #[cfg(test)]

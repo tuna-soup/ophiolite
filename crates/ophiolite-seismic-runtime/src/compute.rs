@@ -2,10 +2,10 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use realfft::{ComplexToReal, RealFftPlanner, RealToComplex, num_complex::Complex32};
 use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
+use realfft::{ComplexToReal, RealFftPlanner, RealToComplex, num_complex::Complex32};
 
 use crate::error::SeismicStoreError;
 use crate::metadata::{DatasetKind, ProcessingLineage, VolumeMetadata};
@@ -16,10 +16,13 @@ use crate::storage::volume_store::{VolumeStoreReader, VolumeStoreWriter};
 use crate::store::{SectionPlane, StoreHandle, open_store};
 use crate::{
     AmplitudeSpectrumCurve, FrequencyPhaseMode, FrequencyWindowShape, ProcessingOperation,
-    ProcessingPipeline, SectionAxis, SectionSpectrumSelection, SectionView, SeismicLayout,
+    ProcessingPipeline, ProcessingPipelineSpec, SectionAxis, SectionSpectrumSelection,
+    SectionView, SeismicLayout,
 };
 
 const MAX_SCALAR_FACTOR: f32 = 10.0;
+const MAX_PHASE_ROTATION_DEGREES: f32 = 180.0;
+const MAX_AGC_WINDOW_MS: f32 = 10_000.0;
 const RMS_EPSILON: f32 = 1.0e-8;
 const MAX_RMS_GAIN: f32 = 1.0e6;
 const SPECTRUM_EPSILON: f32 = 1.0e-12;
@@ -74,6 +77,22 @@ pub fn validate_pipeline_for_layout(
             validate_bandpass_corners(*f1_hz, *f2_hz, *f3_hz, *f4_hz)?;
         }
 
+        if let ProcessingOperation::LowpassFilter { f3_hz, f4_hz, .. } = operation {
+            validate_lowpass_corners(*f3_hz, *f4_hz)?;
+        }
+
+        if let ProcessingOperation::HighpassFilter { f1_hz, f2_hz, .. } = operation {
+            validate_highpass_corners(*f1_hz, *f2_hz)?;
+        }
+
+        if let ProcessingOperation::AgcRms { window_ms } = operation {
+            validate_agc_window(*window_ms)?;
+        }
+
+        if let ProcessingOperation::PhaseRotation { angle_degrees } = operation {
+            validate_phase_rotation_angle(*angle_degrees)?;
+        }
+
         let compatibility = operation.compatibility();
         if !compatibility.supports_layout(layout) {
             return Err(SeismicStoreError::Message(format!(
@@ -116,21 +135,50 @@ fn validate_pipeline_for_sample_interval(
 
     let nyquist_hz = nyquist_hz_for_sample_interval_ms(sample_interval_ms)?;
     for operation in pipeline {
-        if let ProcessingOperation::BandpassFilter { f4_hz, .. } = operation
-            && *f4_hz > nyquist_hz
-        {
-            return Err(SeismicStoreError::Message(format!(
-                "bandpass high corner f4_hz must be <= Nyquist ({nyquist_hz:.3} Hz), found {f4_hz}"
-            )));
+        match operation {
+            ProcessingOperation::BandpassFilter { f4_hz, .. } if *f4_hz > nyquist_hz => {
+                return Err(SeismicStoreError::Message(format!(
+                    "bandpass high corner f4_hz must be <= Nyquist ({nyquist_hz:.3} Hz), found {f4_hz}"
+                )));
+            }
+            ProcessingOperation::LowpassFilter { f4_hz, .. } if *f4_hz > nyquist_hz => {
+                return Err(SeismicStoreError::Message(format!(
+                    "lowpass high corner f4_hz must be <= Nyquist ({nyquist_hz:.3} Hz), found {f4_hz}"
+                )));
+            }
+            ProcessingOperation::HighpassFilter { f2_hz, .. } if *f2_hz > nyquist_hz => {
+                return Err(SeismicStoreError::Message(format!(
+                    "highpass pass corner f2_hz must be <= Nyquist ({nyquist_hz:.3} Hz), found {f2_hz}"
+                )));
+            }
+            _ => {}
         }
     }
     Ok(())
 }
 
 fn pipeline_requires_sample_interval(pipeline: &[ProcessingOperation]) -> bool {
-    pipeline
-        .iter()
-        .any(|operation| matches!(operation, ProcessingOperation::BandpassFilter { .. }))
+    pipeline.iter().any(|operation| {
+        matches!(
+            operation,
+            ProcessingOperation::AgcRms { .. }
+                | ProcessingOperation::LowpassFilter { .. }
+                | ProcessingOperation::HighpassFilter { .. }
+                | ProcessingOperation::BandpassFilter { .. }
+        )
+    })
+}
+
+fn pipeline_requires_spectral_workspace(pipeline: &[ProcessingOperation]) -> bool {
+    pipeline.iter().any(|operation| {
+        matches!(
+            operation,
+            ProcessingOperation::PhaseRotation { .. }
+                | ProcessingOperation::LowpassFilter { .. }
+                | ProcessingOperation::HighpassFilter { .. }
+                | ProcessingOperation::BandpassFilter { .. }
+        )
+    })
 }
 
 fn validate_bandpass_corners(
@@ -161,6 +209,86 @@ fn validate_bandpass_corners(
     if !(f1_hz <= f2_hz && f2_hz <= f3_hz && f3_hz <= f4_hz) {
         return Err(SeismicStoreError::Message(format!(
             "bandpass corners must satisfy f1 <= f2 <= f3 <= f4, found [{f1_hz}, {f2_hz}, {f3_hz}, {f4_hz}]"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_lowpass_corners(f3_hz: f32, f4_hz: f32) -> Result<(), SeismicStoreError> {
+    for (label, value) in [("f3_hz", f3_hz), ("f4_hz", f4_hz)] {
+        if !value.is_finite() {
+            return Err(SeismicStoreError::Message(format!(
+                "lowpass corner {label} must be finite, found {value}"
+            )));
+        }
+    }
+
+    if f3_hz < 0.0 {
+        return Err(SeismicStoreError::Message(format!(
+            "lowpass corner f3_hz must be >= 0.0, found {f3_hz}"
+        )));
+    }
+
+    if f3_hz > f4_hz {
+        return Err(SeismicStoreError::Message(format!(
+            "lowpass corners must satisfy f3 <= f4, found [{f3_hz}, {f4_hz}]"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_highpass_corners(f1_hz: f32, f2_hz: f32) -> Result<(), SeismicStoreError> {
+    for (label, value) in [("f1_hz", f1_hz), ("f2_hz", f2_hz)] {
+        if !value.is_finite() {
+            return Err(SeismicStoreError::Message(format!(
+                "highpass corner {label} must be finite, found {value}"
+            )));
+        }
+    }
+
+    if f1_hz < 0.0 {
+        return Err(SeismicStoreError::Message(format!(
+            "highpass corner f1_hz must be >= 0.0, found {f1_hz}"
+        )));
+    }
+
+    if f1_hz > f2_hz {
+        return Err(SeismicStoreError::Message(format!(
+            "highpass corners must satisfy f1 <= f2, found [{f1_hz}, {f2_hz}]"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_agc_window(window_ms: f32) -> Result<(), SeismicStoreError> {
+    if !window_ms.is_finite() {
+        return Err(SeismicStoreError::Message(format!(
+            "AGC window_ms must be finite, found {window_ms}"
+        )));
+    }
+
+    if !(0.0..=MAX_AGC_WINDOW_MS).contains(&window_ms) || window_ms <= 0.0 {
+        return Err(SeismicStoreError::Message(format!(
+            "AGC window_ms must be in (0.0, {MAX_AGC_WINDOW_MS}], found {window_ms}"
+        )));
+    }
+
+    Ok(())
+}
+
+fn validate_phase_rotation_angle(angle_degrees: f32) -> Result<(), SeismicStoreError> {
+    if !angle_degrees.is_finite() {
+        return Err(SeismicStoreError::Message(format!(
+            "phase rotation angle_degrees must be finite, found {angle_degrees}"
+        )));
+    }
+
+    if !(-MAX_PHASE_ROTATION_DEGREES..=MAX_PHASE_ROTATION_DEGREES).contains(&angle_degrees) {
+        return Err(SeismicStoreError::Message(format!(
+            "phase rotation angle_degrees must be in [-{MAX_PHASE_ROTATION_DEGREES}, {MAX_PHASE_ROTATION_DEGREES}], found {angle_degrees}"
         )));
     }
 
@@ -395,14 +523,12 @@ pub fn apply_pipeline_to_traces(
 
     validate_pipeline(pipeline)?;
     validate_pipeline_for_sample_interval(pipeline, sample_interval_ms)?;
-    let needs_fft = pipeline_requires_sample_interval(pipeline);
+    let needs_spectral = pipeline_requires_spectral_workspace(pipeline);
 
     compute_pool().install(|| {
-        data.par_chunks_mut(samples)
-            .enumerate()
-            .try_for_each_init(
-                || TraceComputeState::new(samples, needs_fft),
-                |state, (trace_index, trace)| {
+        data.par_chunks_mut(samples).enumerate().try_for_each_init(
+            || TraceComputeState::new(samples, needs_spectral),
+            |state, (trace_index, trace)| {
                 if trace_index >= traces {
                     return Ok(());
                 }
@@ -442,6 +568,40 @@ fn apply_operation_to_trace(
                 *sample *= gain;
             }
         }
+        ProcessingOperation::AgcRms { window_ms } => {
+            state.apply_agc_rms(trace, sample_interval_ms, *window_ms)?;
+        }
+        ProcessingOperation::PhaseRotation { angle_degrees } => {
+            state
+                .spectral
+                .as_mut()
+                .expect("spectral workspace should exist when spectral operators are present")
+                .apply_phase_rotation(trace, *angle_degrees)?;
+        }
+        ProcessingOperation::LowpassFilter {
+            f3_hz,
+            f4_hz,
+            phase,
+            window,
+        } => {
+            state
+                .spectral
+                .as_mut()
+                .expect("spectral workspace should exist when spectral operators are present")
+                .apply_lowpass(trace, sample_interval_ms, *f3_hz, *f4_hz, *phase, *window)?;
+        }
+        ProcessingOperation::HighpassFilter {
+            f1_hz,
+            f2_hz,
+            phase,
+            window,
+        } => {
+            state
+                .spectral
+                .as_mut()
+                .expect("spectral workspace should exist when spectral operators are present")
+                .apply_highpass(trace, sample_interval_ms, *f1_hz, *f2_hz, *phase, *window)?;
+        }
         ProcessingOperation::BandpassFilter {
             f1_hz,
             f2_hz,
@@ -451,10 +611,10 @@ fn apply_operation_to_trace(
             window,
         } => {
             state
-                .bandpass
+                .spectral
                 .as_mut()
-                .expect("bandpass workspace should exist when bandpass operators are present")
-                .apply(
+                .expect("spectral workspace should exist when spectral operators are present")
+                .apply_bandpass(
                     trace,
                     sample_interval_ms,
                     *f1_hz,
@@ -531,25 +691,70 @@ pub fn amplitude_spectrum_from_reader<R: VolumeStoreReader>(
     selection: &SectionSpectrumSelection,
 ) -> Result<AmplitudeSpectrumCurve, SeismicStoreError> {
     let plane = match pipeline {
-        Some(operations) if !operations.is_empty() => preview_section_from_reader(reader, axis, index, operations)?,
+        Some(operations) if !operations.is_empty() => {
+            preview_section_from_reader(reader, axis, index, operations)?
+        }
         _ => section_assembler::read_section_plane(reader, axis, index)?,
     };
     amplitude_spectrum_from_plane(&plane, selection)
 }
 
 struct TraceComputeState {
-    bandpass: Option<BandpassWorkspace>,
+    spectral: Option<SpectralWorkspace>,
+    agc_output: Vec<f32>,
+    agc_prefix_squares: Vec<f64>,
 }
 
 impl TraceComputeState {
-    fn new(samples: usize, needs_bandpass: bool) -> Self {
+    fn new(samples: usize, needs_spectral: bool) -> Self {
         Self {
-            bandpass: needs_bandpass.then(|| BandpassWorkspace::new(samples)),
+            spectral: needs_spectral.then(|| SpectralWorkspace::new(samples)),
+            agc_output: vec![0.0; samples],
+            agc_prefix_squares: vec![0.0; samples + 1],
         }
+    }
+
+    fn apply_agc_rms(
+        &mut self,
+        trace: &mut [f32],
+        sample_interval_ms: f32,
+        window_ms: f32,
+    ) -> Result<(), SeismicStoreError> {
+        validate_agc_window(window_ms)?;
+        let _ = nyquist_hz_for_sample_interval_ms(sample_interval_ms)?;
+
+        if trace.len() != self.agc_output.len() || self.agc_prefix_squares.len() != trace.len() + 1
+        {
+            return Err(SeismicStoreError::Message(format!(
+                "AGC workspace length mismatch: expected trace length {}, found {}",
+                self.agc_output.len(),
+                trace.len()
+            )));
+        }
+
+        let window_samples = ((window_ms / sample_interval_ms).round() as usize).max(1);
+        let half_window = window_samples / 2;
+        self.agc_prefix_squares[0] = 0.0;
+        for (index, sample) in trace.iter().enumerate() {
+            self.agc_prefix_squares[index + 1] =
+                self.agc_prefix_squares[index] + f64::from(*sample) * f64::from(*sample);
+        }
+
+        for (index, sample) in trace.iter().enumerate() {
+            let start = index.saturating_sub(half_window);
+            let end = (index + half_window + 1).min(trace.len());
+            let energy = self.agc_prefix_squares[end] - self.agc_prefix_squares[start];
+            let rms = (energy / (end - start).max(1) as f64).sqrt() as f32;
+            let gain = (1.0 / rms.max(RMS_EPSILON)).min(MAX_RMS_GAIN);
+            self.agc_output[index] = *sample * gain;
+        }
+        trace.copy_from_slice(&self.agc_output);
+
+        Ok(())
     }
 }
 
-struct BandpassWorkspace {
+struct SpectralWorkspace {
     forward: Arc<dyn RealToComplex<f32>>,
     inverse: Arc<dyn ComplexToReal<f32>>,
     input: Vec<f32>,
@@ -557,7 +762,7 @@ struct BandpassWorkspace {
     spectrum: Vec<Complex32>,
 }
 
-impl BandpassWorkspace {
+impl SpectralWorkspace {
     fn new(samples: usize) -> Self {
         let mut planner = RealFftPlanner::<f32>::new();
         let forward = planner.plan_fft_forward(samples);
@@ -574,7 +779,7 @@ impl BandpassWorkspace {
         }
     }
 
-    fn apply(
+    fn apply_bandpass(
         &mut self,
         trace: &mut [f32],
         sample_interval_ms: f32,
@@ -598,7 +803,9 @@ impl BandpassWorkspace {
 
         self.forward
             .process(&mut self.input, &mut self.spectrum)
-            .map_err(|error| SeismicStoreError::Message(format!("bandpass forward FFT failed: {error}")))?;
+            .map_err(|error| {
+                SeismicStoreError::Message(format!("bandpass forward FFT failed: {error}"))
+            })?;
         apply_bandpass_response(
             &mut self.spectrum,
             trace.len(),
@@ -612,7 +819,139 @@ impl BandpassWorkspace {
         )?;
         self.inverse
             .process(&mut self.spectrum, &mut self.output)
-            .map_err(|error| SeismicStoreError::Message(format!("bandpass inverse FFT failed: {error}")))?;
+            .map_err(|error| {
+                SeismicStoreError::Message(format!("bandpass inverse FFT failed: {error}"))
+            })?;
+
+        let inverse_scale = 1.0 / trace.len().max(1) as f32;
+        for (sample, value) in trace.iter_mut().zip(self.output.iter()) {
+            *sample = *value * inverse_scale;
+        }
+
+        Ok(())
+    }
+
+    fn apply_lowpass(
+        &mut self,
+        trace: &mut [f32],
+        sample_interval_ms: f32,
+        f3_hz: f32,
+        f4_hz: f32,
+        phase: FrequencyPhaseMode,
+        window: FrequencyWindowShape,
+    ) -> Result<(), SeismicStoreError> {
+        if trace.len() != self.input.len() {
+            return Err(SeismicStoreError::Message(format!(
+                "lowpass workspace length mismatch: expected {}, found {}",
+                self.input.len(),
+                trace.len()
+            )));
+        }
+
+        self.input.copy_from_slice(trace);
+        remove_trace_mean(&mut self.input);
+
+        self.forward
+            .process(&mut self.input, &mut self.spectrum)
+            .map_err(|error| {
+                SeismicStoreError::Message(format!("lowpass forward FFT failed: {error}"))
+            })?;
+        apply_lowpass_response(
+            &mut self.spectrum,
+            trace.len(),
+            sample_interval_ms,
+            f3_hz,
+            f4_hz,
+            phase,
+            window,
+        )?;
+        self.inverse
+            .process(&mut self.spectrum, &mut self.output)
+            .map_err(|error| {
+                SeismicStoreError::Message(format!("lowpass inverse FFT failed: {error}"))
+            })?;
+
+        let inverse_scale = 1.0 / trace.len().max(1) as f32;
+        for (sample, value) in trace.iter_mut().zip(self.output.iter()) {
+            *sample = *value * inverse_scale;
+        }
+
+        Ok(())
+    }
+
+    fn apply_highpass(
+        &mut self,
+        trace: &mut [f32],
+        sample_interval_ms: f32,
+        f1_hz: f32,
+        f2_hz: f32,
+        phase: FrequencyPhaseMode,
+        window: FrequencyWindowShape,
+    ) -> Result<(), SeismicStoreError> {
+        if trace.len() != self.input.len() {
+            return Err(SeismicStoreError::Message(format!(
+                "highpass workspace length mismatch: expected {}, found {}",
+                self.input.len(),
+                trace.len()
+            )));
+        }
+
+        self.input.copy_from_slice(trace);
+        remove_trace_mean(&mut self.input);
+
+        self.forward
+            .process(&mut self.input, &mut self.spectrum)
+            .map_err(|error| {
+                SeismicStoreError::Message(format!("highpass forward FFT failed: {error}"))
+            })?;
+        apply_highpass_response(
+            &mut self.spectrum,
+            trace.len(),
+            sample_interval_ms,
+            f1_hz,
+            f2_hz,
+            phase,
+            window,
+        )?;
+        self.inverse
+            .process(&mut self.spectrum, &mut self.output)
+            .map_err(|error| {
+                SeismicStoreError::Message(format!("highpass inverse FFT failed: {error}"))
+            })?;
+
+        let inverse_scale = 1.0 / trace.len().max(1) as f32;
+        for (sample, value) in trace.iter_mut().zip(self.output.iter()) {
+            *sample = *value * inverse_scale;
+        }
+
+        Ok(())
+    }
+
+    fn apply_phase_rotation(
+        &mut self,
+        trace: &mut [f32],
+        angle_degrees: f32,
+    ) -> Result<(), SeismicStoreError> {
+        if trace.len() != self.input.len() {
+            return Err(SeismicStoreError::Message(format!(
+                "phase rotation workspace length mismatch: expected {}, found {}",
+                self.input.len(),
+                trace.len()
+            )));
+        }
+
+        self.input.copy_from_slice(trace);
+        self.forward
+            .process(&mut self.input, &mut self.spectrum)
+            .map_err(|error| {
+                SeismicStoreError::Message(format!("phase rotation forward FFT failed: {error}"))
+            })?;
+        apply_phase_rotation_response(&mut self.spectrum, trace.len(), angle_degrees)?;
+        self.inverse
+            .process(&mut self.spectrum, &mut self.output)
+            .map_err(|error| {
+                SeismicStoreError::Message(format!("phase rotation inverse FFT failed: {error}"))
+            })?;
 
         let inverse_scale = 1.0 / trace.len().max(1) as f32;
         for (sample, value) in trace.iter_mut().zip(self.output.iter()) {
@@ -661,7 +1000,12 @@ impl SpectrumWorkspace {
         self.forward
             .process(&mut self.input, &mut self.spectrum)
             .map_err(|error| SeismicStoreError::Message(format!("spectrum FFT failed: {error}")))?;
-        accumulate_single_sided_amplitudes(&self.spectrum, trace.len(), sample_interval_ms, destination)
+        accumulate_single_sided_amplitudes(
+            &self.spectrum,
+            trace.len(),
+            sample_interval_ms,
+            destination,
+        )
     }
 }
 
@@ -720,6 +1064,79 @@ fn apply_bandpass_response(
     Ok(())
 }
 
+fn apply_lowpass_response(
+    spectrum: &mut [Complex32],
+    samples: usize,
+    sample_interval_ms: f32,
+    f3_hz: f32,
+    f4_hz: f32,
+    phase: FrequencyPhaseMode,
+    window: FrequencyWindowShape,
+) -> Result<(), SeismicStoreError> {
+    match phase {
+        FrequencyPhaseMode::Zero => {}
+    }
+    match window {
+        FrequencyWindowShape::CosineTaper => {}
+    }
+
+    let dt_s = sample_interval_ms / 1000.0;
+    for (index, value) in spectrum.iter_mut().enumerate() {
+        let frequency_hz = index as f32 / (samples.max(1) as f32 * dt_s);
+        *value *= cosine_taper_lowpass_gain(frequency_hz, f3_hz, f4_hz);
+    }
+
+    Ok(())
+}
+
+fn apply_highpass_response(
+    spectrum: &mut [Complex32],
+    samples: usize,
+    sample_interval_ms: f32,
+    f1_hz: f32,
+    f2_hz: f32,
+    phase: FrequencyPhaseMode,
+    window: FrequencyWindowShape,
+) -> Result<(), SeismicStoreError> {
+    match phase {
+        FrequencyPhaseMode::Zero => {}
+    }
+    match window {
+        FrequencyWindowShape::CosineTaper => {}
+    }
+
+    let dt_s = sample_interval_ms / 1000.0;
+    for (index, value) in spectrum.iter_mut().enumerate() {
+        let frequency_hz = index as f32 / (samples.max(1) as f32 * dt_s);
+        *value *= cosine_taper_highpass_gain(frequency_hz, f1_hz, f2_hz);
+    }
+
+    Ok(())
+}
+
+fn apply_phase_rotation_response(
+    spectrum: &mut [Complex32],
+    samples: usize,
+    angle_degrees: f32,
+) -> Result<(), SeismicStoreError> {
+    validate_phase_rotation_angle(angle_degrees)?;
+    let angle_radians = angle_degrees.to_radians();
+    let rotation = Complex32::new(angle_radians.cos(), angle_radians.sin());
+    let dc_nyquist_scale = angle_radians.cos();
+
+    for (index, value) in spectrum.iter_mut().enumerate() {
+        let is_dc = index == 0;
+        let is_nyquist = samples % 2 == 0 && index == samples / 2;
+        if is_dc || is_nyquist {
+            *value = Complex32::new(value.re * dc_nyquist_scale, 0.0);
+            continue;
+        }
+        *value *= rotation;
+    }
+
+    Ok(())
+}
+
 fn cosine_taper_bandpass_gain(
     frequency_hz: f32,
     f1_hz: f32,
@@ -737,6 +1154,26 @@ fn cosine_taper_bandpass_gain(
         return cosine_ramp(frequency_hz, f1_hz, f2_hz);
     }
     cosine_ramp(frequency_hz, f4_hz, f3_hz)
+}
+
+fn cosine_taper_lowpass_gain(frequency_hz: f32, f3_hz: f32, f4_hz: f32) -> f32 {
+    if frequency_hz <= f3_hz {
+        return 1.0;
+    }
+    if frequency_hz >= f4_hz {
+        return 0.0;
+    }
+    cosine_ramp(frequency_hz, f4_hz, f3_hz)
+}
+
+fn cosine_taper_highpass_gain(frequency_hz: f32, f1_hz: f32, f2_hz: f32) -> f32 {
+    if frequency_hz <= f1_hz {
+        return 0.0;
+    }
+    if frequency_hz >= f2_hz {
+        return 1.0;
+    }
+    cosine_ramp(frequency_hz, f1_hz, f2_hz)
 }
 
 fn cosine_ramp(value: f32, edge0: f32, edge1: f32) -> f32 {
@@ -934,7 +1371,9 @@ fn derived_volume_metadata(
         created_by,
         processing_lineage: Some(ProcessingLineage {
             parent_store: parent_store.to_path_buf(),
-            pipeline: pipeline.clone(),
+            pipeline: ProcessingPipelineSpec::TraceLocal {
+                pipeline: pipeline.clone(),
+            },
             runtime_version: RUNTIME_VERSION.to_string(),
             created_at_unix_s: unix_timestamp_s(),
         }),
@@ -953,6 +1392,7 @@ fn reader_has_occupancy<R: VolumeStoreReader>(reader: &R) -> Result<bool, Seismi
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ProcessingOperatorScope;
     use crate::SectionAxis;
 
     #[test]
@@ -1001,13 +1441,74 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_validation_rejects_incompatible_layout() {
-        let result = validate_pipeline_for_layout(
-            &[ProcessingOperation::TraceRmsNormalize],
-            SeismicLayout::PreStack3DOffset,
-        );
-        let error = result.expect_err("prestack layout should be rejected for current operators");
-        assert!(error.to_string().contains("requires post-stack only"));
+    fn current_trace_local_operators_support_trace_matrix_layouts() {
+        let operations = [
+            ProcessingOperation::AmplitudeScalar { factor: 1.5 },
+            ProcessingOperation::TraceRmsNormalize,
+            ProcessingOperation::AgcRms { window_ms: 250.0 },
+            ProcessingOperation::PhaseRotation {
+                angle_degrees: 30.0,
+            },
+            ProcessingOperation::LowpassFilter {
+                f3_hz: 30.0,
+                f4_hz: 45.0,
+                phase: FrequencyPhaseMode::Zero,
+                window: FrequencyWindowShape::CosineTaper,
+            },
+            ProcessingOperation::HighpassFilter {
+                f1_hz: 4.0,
+                f2_hz: 10.0,
+                phase: FrequencyPhaseMode::Zero,
+                window: FrequencyWindowShape::CosineTaper,
+            },
+            ProcessingOperation::BandpassFilter {
+                f1_hz: 5.0,
+                f2_hz: 10.0,
+                f3_hz: 30.0,
+                f4_hz: 40.0,
+                phase: FrequencyPhaseMode::Zero,
+                window: FrequencyWindowShape::CosineTaper,
+            },
+        ];
+
+        for operation in operations {
+            validate_pipeline_for_layout(&[operation], SeismicLayout::PreStack3DOffset)
+                .expect("current trace-local operators should support trace-matrix layouts");
+        }
+    }
+
+    #[test]
+    fn current_operator_scope_is_trace_local() {
+        let operations = [
+            ProcessingOperation::AmplitudeScalar { factor: 1.0 },
+            ProcessingOperation::TraceRmsNormalize,
+            ProcessingOperation::AgcRms { window_ms: 200.0 },
+            ProcessingOperation::PhaseRotation { angle_degrees: 0.0 },
+            ProcessingOperation::LowpassFilter {
+                f3_hz: 30.0,
+                f4_hz: 40.0,
+                phase: FrequencyPhaseMode::Zero,
+                window: FrequencyWindowShape::CosineTaper,
+            },
+            ProcessingOperation::HighpassFilter {
+                f1_hz: 4.0,
+                f2_hz: 8.0,
+                phase: FrequencyPhaseMode::Zero,
+                window: FrequencyWindowShape::CosineTaper,
+            },
+            ProcessingOperation::BandpassFilter {
+                f1_hz: 5.0,
+                f2_hz: 10.0,
+                f3_hz: 30.0,
+                f4_hz: 40.0,
+                phase: FrequencyPhaseMode::Zero,
+                window: FrequencyWindowShape::CosineTaper,
+            },
+        ];
+
+        for operation in operations {
+            assert_eq!(operation.scope(), ProcessingOperatorScope::TraceLocal);
+        }
     }
 
     #[test]
@@ -1017,6 +1518,28 @@ mod tests {
             f2_hz: 10.0,
             f3_hz: 30.0,
             f4_hz: 40.0,
+            phase: FrequencyPhaseMode::Zero,
+            window: FrequencyWindowShape::CosineTaper,
+        }]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn pipeline_validation_rejects_invalid_lowpass_order() {
+        let result = validate_pipeline(&[ProcessingOperation::LowpassFilter {
+            f3_hz: 45.0,
+            f4_hz: 30.0,
+            phase: FrequencyPhaseMode::Zero,
+            window: FrequencyWindowShape::CosineTaper,
+        }]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn pipeline_validation_rejects_invalid_highpass_order() {
+        let result = validate_pipeline(&[ProcessingOperation::HighpassFilter {
+            f1_hz: 12.0,
+            f2_hz: 8.0,
             phase: FrequencyPhaseMode::Zero,
             window: FrequencyWindowShape::CosineTaper,
         }]);
@@ -1037,6 +1560,126 @@ mod tests {
             2.0,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn pipeline_validation_rejects_lowpass_over_nyquist() {
+        let result = validate_pipeline_for_sample_interval(
+            &[ProcessingOperation::LowpassFilter {
+                f3_hz: 20.0,
+                f4_hz: 300.0,
+                phase: FrequencyPhaseMode::Zero,
+                window: FrequencyWindowShape::CosineTaper,
+            }],
+            2.0,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn pipeline_validation_rejects_highpass_over_nyquist() {
+        let result = validate_pipeline_for_sample_interval(
+            &[ProcessingOperation::HighpassFilter {
+                f1_hz: 5.0,
+                f2_hz: 300.0,
+                phase: FrequencyPhaseMode::Zero,
+                window: FrequencyWindowShape::CosineTaper,
+            }],
+            2.0,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn pipeline_validation_rejects_invalid_agc_window() {
+        let result = validate_pipeline(&[ProcessingOperation::AgcRms { window_ms: 0.0 }]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn pipeline_validation_rejects_phase_rotation_out_of_range() {
+        let result = validate_pipeline(&[ProcessingOperation::PhaseRotation {
+            angle_degrees: 270.0,
+        }]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn phase_rotation_zero_is_identity() {
+        let mut trace = vec![1.0_f32, -2.0, 0.5, 4.0, -1.5, 0.0, 2.0, -0.25];
+        let original = trace.clone();
+
+        apply_pipeline_to_traces(
+            &mut trace,
+            1,
+            original.len(),
+            2.0,
+            None,
+            &[ProcessingOperation::PhaseRotation { angle_degrees: 0.0 }],
+        )
+        .unwrap();
+
+        for (actual, expected) in trace.iter().zip(original.iter()) {
+            assert!((actual - expected).abs() < 1.0e-5);
+        }
+    }
+
+    #[test]
+    fn phase_rotation_180_matches_polarity_reversal() {
+        let mut trace = vec![1.0_f32, -2.0, 0.5, 4.0, -1.5, 0.0, 2.0, -0.25];
+        let original = trace.clone();
+
+        apply_pipeline_to_traces(
+            &mut trace,
+            1,
+            original.len(),
+            2.0,
+            None,
+            &[ProcessingOperation::PhaseRotation {
+                angle_degrees: 180.0,
+            }],
+        )
+        .unwrap();
+
+        for (actual, expected) in trace.iter().zip(original.iter()) {
+            assert!((actual + expected).abs() < 1.0e-5);
+        }
+    }
+
+    #[test]
+    fn phase_rotation_90_turns_sine_into_cosine() {
+        let sample_interval_ms = 2.0_f32;
+        let samples = 256usize;
+        let dt_s = sample_interval_ms / 1000.0;
+        let frequency_hz = 16.0 / (samples as f32 * dt_s);
+        let mut trace = (0..samples)
+            .map(|index| {
+                let t = index as f32 * dt_s;
+                (2.0 * std::f32::consts::PI * frequency_hz * t).sin()
+            })
+            .collect::<Vec<_>>();
+
+        apply_pipeline_to_traces(
+            &mut trace,
+            1,
+            samples,
+            sample_interval_ms,
+            None,
+            &[ProcessingOperation::PhaseRotation {
+                angle_degrees: 90.0,
+            }],
+        )
+        .unwrap();
+
+        let mut max_error_positive = 0.0_f32;
+        let mut max_error_negative = 0.0_f32;
+        for (index, actual) in trace.iter().enumerate() {
+            let t = index as f32 * dt_s;
+            let expected = (2.0 * std::f32::consts::PI * frequency_hz * t).cos();
+            max_error_positive = max_error_positive.max((actual - expected).abs());
+            max_error_negative = max_error_negative.max((actual + expected).abs());
+        }
+        assert!(max_error_positive.min(max_error_negative) < 3.0e-3);
     }
 
     #[test]
@@ -1077,7 +1720,9 @@ mod tests {
             traces: 1,
             samples,
             horizontal_axis: vec![0.0],
-            sample_axis_ms: (0..samples).map(|index| index as f32 * sample_interval_ms).collect(),
+            sample_axis_ms: (0..samples)
+                .map(|index| index as f32 * sample_interval_ms)
+                .collect(),
             amplitudes: original,
             occupancy: None,
         };
@@ -1088,21 +1733,19 @@ mod tests {
             traces: 1,
             samples,
             horizontal_axis: vec![0.0],
-            sample_axis_ms: (0..samples).map(|index| index as f32 * sample_interval_ms).collect(),
+            sample_axis_ms: (0..samples)
+                .map(|index| index as f32 * sample_interval_ms)
+                .collect(),
             amplitudes: trace,
             occupancy: None,
         };
 
-        let original_spectrum = amplitude_spectrum_from_plane(
-            &original_plane,
-            &SectionSpectrumSelection::WholeSection,
-        )
-        .unwrap();
-        let filtered_spectrum = amplitude_spectrum_from_plane(
-            &filtered_plane,
-            &SectionSpectrumSelection::WholeSection,
-        )
-        .unwrap();
+        let original_spectrum =
+            amplitude_spectrum_from_plane(&original_plane, &SectionSpectrumSelection::WholeSection)
+                .unwrap();
+        let filtered_spectrum =
+            amplitude_spectrum_from_plane(&filtered_plane, &SectionSpectrumSelection::WholeSection)
+                .unwrap();
 
         let amplitude_at = |curve: &AmplitudeSpectrumCurve, target_hz: f32| {
             let (index, _) = curve
@@ -1126,6 +1769,289 @@ mod tests {
 
         assert!(filtered_20 > original_20 * 0.7);
         assert!(filtered_90 < original_90 * 0.25);
+    }
+
+    #[test]
+    fn lowpass_preserves_low_frequency_energy_and_reduces_high_frequency_energy() {
+        let sample_interval_ms = 2.0_f32;
+        let samples = 256usize;
+        let dt_s = sample_interval_ms / 1000.0;
+        let mut trace = (0..samples)
+            .map(|index| {
+                let t = index as f32 * dt_s;
+                (2.0 * std::f32::consts::PI * 15.0 * t).sin()
+                    + 0.65 * (2.0 * std::f32::consts::PI * 70.0 * t).sin()
+            })
+            .collect::<Vec<_>>();
+        let original = trace.clone();
+
+        apply_pipeline_to_traces(
+            &mut trace,
+            1,
+            samples,
+            sample_interval_ms,
+            None,
+            &[ProcessingOperation::LowpassFilter {
+                f3_hz: 24.0,
+                f4_hz: 36.0,
+                phase: FrequencyPhaseMode::Zero,
+                window: FrequencyWindowShape::CosineTaper,
+            }],
+        )
+        .unwrap();
+
+        let original_plane = SectionPlane {
+            axis: SectionAxis::Inline,
+            coordinate_index: 0,
+            coordinate_value: 0.0,
+            traces: 1,
+            samples,
+            horizontal_axis: vec![0.0],
+            sample_axis_ms: (0..samples)
+                .map(|index| index as f32 * sample_interval_ms)
+                .collect(),
+            amplitudes: original,
+            occupancy: None,
+        };
+        let filtered_plane = SectionPlane {
+            axis: SectionAxis::Inline,
+            coordinate_index: 0,
+            coordinate_value: 0.0,
+            traces: 1,
+            samples,
+            horizontal_axis: vec![0.0],
+            sample_axis_ms: (0..samples)
+                .map(|index| index as f32 * sample_interval_ms)
+                .collect(),
+            amplitudes: trace,
+            occupancy: None,
+        };
+
+        let original_spectrum =
+            amplitude_spectrum_from_plane(&original_plane, &SectionSpectrumSelection::WholeSection)
+                .unwrap();
+        let filtered_spectrum =
+            amplitude_spectrum_from_plane(&filtered_plane, &SectionSpectrumSelection::WholeSection)
+                .unwrap();
+
+        let amplitude_at = |curve: &AmplitudeSpectrumCurve, target_hz: f32| {
+            let (index, _) = curve
+                .frequencies_hz
+                .iter()
+                .enumerate()
+                .min_by(|(_, left), (_, right)| {
+                    (*left - target_hz)
+                        .abs()
+                        .partial_cmp(&(*right - target_hz).abs())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .expect("spectrum bins should exist");
+            curve.amplitudes[index]
+        };
+
+        let original_15 = amplitude_at(&original_spectrum, 15.0);
+        let filtered_15 = amplitude_at(&filtered_spectrum, 15.0);
+        let original_70 = amplitude_at(&original_spectrum, 70.0);
+        let filtered_70 = amplitude_at(&filtered_spectrum, 70.0);
+
+        assert!(filtered_15 > original_15 * 0.7);
+        assert!(filtered_70 < original_70 * 0.25);
+    }
+
+    #[test]
+    fn highpass_preserves_high_frequency_energy_and_reduces_low_frequency_energy() {
+        let sample_interval_ms = 2.0_f32;
+        let samples = 256usize;
+        let dt_s = sample_interval_ms / 1000.0;
+        let mut trace = (0..samples)
+            .map(|index| {
+                let t = index as f32 * dt_s;
+                (2.0 * std::f32::consts::PI * 8.0 * t).sin()
+                    + 0.65 * (2.0 * std::f32::consts::PI * 45.0 * t).sin()
+            })
+            .collect::<Vec<_>>();
+        let original = trace.clone();
+
+        apply_pipeline_to_traces(
+            &mut trace,
+            1,
+            samples,
+            sample_interval_ms,
+            None,
+            &[ProcessingOperation::HighpassFilter {
+                f1_hz: 14.0,
+                f2_hz: 22.0,
+                phase: FrequencyPhaseMode::Zero,
+                window: FrequencyWindowShape::CosineTaper,
+            }],
+        )
+        .unwrap();
+
+        let original_plane = SectionPlane {
+            axis: SectionAxis::Inline,
+            coordinate_index: 0,
+            coordinate_value: 0.0,
+            traces: 1,
+            samples,
+            horizontal_axis: vec![0.0],
+            sample_axis_ms: (0..samples)
+                .map(|index| index as f32 * sample_interval_ms)
+                .collect(),
+            amplitudes: original,
+            occupancy: None,
+        };
+        let filtered_plane = SectionPlane {
+            axis: SectionAxis::Inline,
+            coordinate_index: 0,
+            coordinate_value: 0.0,
+            traces: 1,
+            samples,
+            horizontal_axis: vec![0.0],
+            sample_axis_ms: (0..samples)
+                .map(|index| index as f32 * sample_interval_ms)
+                .collect(),
+            amplitudes: trace,
+            occupancy: None,
+        };
+
+        let original_spectrum =
+            amplitude_spectrum_from_plane(&original_plane, &SectionSpectrumSelection::WholeSection)
+                .unwrap();
+        let filtered_spectrum =
+            amplitude_spectrum_from_plane(&filtered_plane, &SectionSpectrumSelection::WholeSection)
+                .unwrap();
+
+        let amplitude_at = |curve: &AmplitudeSpectrumCurve, target_hz: f32| {
+            let (index, _) = curve
+                .frequencies_hz
+                .iter()
+                .enumerate()
+                .min_by(|(_, left), (_, right)| {
+                    (*left - target_hz)
+                        .abs()
+                        .partial_cmp(&(*right - target_hz).abs())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .expect("spectrum bins should exist");
+            curve.amplitudes[index]
+        };
+
+        let original_8 = amplitude_at(&original_spectrum, 8.0);
+        let filtered_8 = amplitude_at(&filtered_spectrum, 8.0);
+        let original_45 = amplitude_at(&original_spectrum, 45.0);
+        let filtered_45 = amplitude_at(&filtered_spectrum, 45.0);
+
+        assert!(filtered_8 < original_8 * 0.25);
+        assert!(filtered_45 > original_45 * 0.7);
+    }
+
+    #[test]
+    fn agc_balances_low_and_high_energy_segments() {
+        let sample_interval_ms = 2.0_f32;
+        let samples = 400usize;
+        let dt_s = sample_interval_ms / 1000.0;
+        let mut trace = (0..samples)
+            .map(|index| {
+                let amplitude = if index < samples / 2 { 0.5 } else { 3.0 };
+                let t = index as f32 * dt_s;
+                amplitude * (2.0 * std::f32::consts::PI * 18.0 * t).sin()
+            })
+            .collect::<Vec<_>>();
+
+        apply_pipeline_to_traces(
+            &mut trace,
+            1,
+            samples,
+            sample_interval_ms,
+            None,
+            &[ProcessingOperation::AgcRms { window_ms: 120.0 }],
+        )
+        .unwrap();
+
+        let region_rms = |start: usize, end: usize| {
+            (trace[start..end]
+                .iter()
+                .map(|value| value * value)
+                .sum::<f32>()
+                / (end - start) as f32)
+                .sqrt()
+        };
+
+        let early_rms = region_rms(40, 160);
+        let late_rms = region_rms(240, 360);
+
+        assert!((early_rms - 1.0).abs() < 0.2);
+        assert!((late_rms - 1.0).abs() < 0.2);
+        assert!((early_rms - late_rms).abs() < 0.15);
+    }
+
+    #[test]
+    fn phase_rotation_preserves_amplitude_spectrum() {
+        let sample_interval_ms = 2.0_f32;
+        let samples = 256usize;
+        let dt_s = sample_interval_ms / 1000.0;
+        let original = (0..samples)
+            .map(|index| {
+                let t = index as f32 * dt_s;
+                (2.0 * std::f32::consts::PI * 20.0 * t).sin()
+                    + 0.35 * (2.0 * std::f32::consts::PI * 45.0 * t).cos()
+            })
+            .collect::<Vec<_>>();
+        let mut rotated = original.clone();
+
+        apply_pipeline_to_traces(
+            &mut rotated,
+            1,
+            samples,
+            sample_interval_ms,
+            None,
+            &[ProcessingOperation::PhaseRotation {
+                angle_degrees: 35.0,
+            }],
+        )
+        .unwrap();
+
+        let original_plane = SectionPlane {
+            axis: SectionAxis::Inline,
+            coordinate_index: 0,
+            coordinate_value: 0.0,
+            traces: 1,
+            samples,
+            horizontal_axis: vec![0.0],
+            sample_axis_ms: (0..samples)
+                .map(|index| index as f32 * sample_interval_ms)
+                .collect(),
+            amplitudes: original,
+            occupancy: None,
+        };
+        let rotated_plane = SectionPlane {
+            axis: SectionAxis::Inline,
+            coordinate_index: 0,
+            coordinate_value: 0.0,
+            traces: 1,
+            samples,
+            horizontal_axis: vec![0.0],
+            sample_axis_ms: (0..samples)
+                .map(|index| index as f32 * sample_interval_ms)
+                .collect(),
+            amplitudes: rotated,
+            occupancy: None,
+        };
+
+        let original_spectrum =
+            amplitude_spectrum_from_plane(&original_plane, &SectionSpectrumSelection::WholeSection)
+                .unwrap();
+        let rotated_spectrum =
+            amplitude_spectrum_from_plane(&rotated_plane, &SectionSpectrumSelection::WholeSection)
+                .unwrap();
+
+        for (left, right) in original_spectrum
+            .amplitudes
+            .iter()
+            .zip(rotated_spectrum.amplitudes.iter())
+        {
+            assert!((left - right).abs() < 1.0e-3);
+        }
     }
 
     #[test]
@@ -1166,10 +2092,7 @@ mod tests {
             samples: 6,
             horizontal_axis: vec![0.0, 1.0],
             sample_axis_ms: vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0],
-            amplitudes: vec![
-                0.0, 1.0, 0.0, -1.0, 0.0, 0.0,
-                0.0, 0.5, 0.0, -0.5, 0.0, 0.0,
-            ],
+            amplitudes: vec![0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.5, 0.0, -0.5, 0.0, 0.0],
             occupancy: None,
         };
 

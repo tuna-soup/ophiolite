@@ -128,6 +128,9 @@ impl StoreHandle {
                 inline_axis: summarize_i32_axis(&self.manifest.volume.axes.ilines),
                 xline_axis: summarize_i32_axis(&self.manifest.volume.axes.xlines),
                 sample_axis: summarize_f32_axis(&self.manifest.volume.axes.sample_axis_ms),
+                layout: None,
+                gather_axis_kind: None,
+                gather_axis: None,
                 provenance: geometry_provenance_summary(&self.manifest),
             },
         }

@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use ndarray::Array2;
 use zarrs::array::DataType;
+use zarrs::array::codec::BytesToBytesCodecTraits;
 use zarrs::array::codec::{BloscCodec, ZstdCodec};
 use zarrs::array::{Array, ArrayBuilder};
-use zarrs::array::codec::BytesToBytesCodecTraits;
 use zarrs::array_subset::ArraySubset;
 use zarrs::filesystem::FilesystemStore;
 use zarrs::group::GroupBuilder;

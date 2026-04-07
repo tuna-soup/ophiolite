@@ -24,7 +24,15 @@ Today, Ophiolite can:
 - generate TypeScript contracts for frontend-safe DTOs under `contracts/ts/ophiolite-contracts`, including well-panel and prestack gather views
 - run seismic processing pipelines through the shared seismic runtime, including section preview, derived-volume materialization, and persisted processing lineage
 - classify seismic datasets with explicit stacking/layout metadata so post-stack and future prestack/gather flows can share one canonical foundation without forcing TraceBoost off its current post-stack runtime path
+- ingest and persist phase-one prestack offset surveys through a dedicated gather-native `tbgath` runtime path, with gather preview and gather-processing materialization separated from the post-stack `tbvol` section path
+- expose phase-one prestack analysis as separate request/response APIs, including offset-gather velocity scan / semblance evaluation and optional first-pass velocity autopick that do not masquerade as materializing operators
 - store canonical seismic trace-data assets in the project/catalog layer while keeping the current volume-oriented runtime paths available as compatibility surfaces
+
+Today the shared seismic operator family is intentionally narrow:
+
+- current live operators are trace-local conditioning or spectral operators: `amplitude_scalar`, `trace_rms_normalize`, `agc_rms`, `phase_rotation`, `lowpass_filter`, `highpass_filter`, and `bandpass_filter`
+- section/gather-matrix operators such as `f-k` filtering are a separate future scope, not something to force into the trace-local executor
+- inverse-wavelet operators such as deconvolution are also a separate future scope with different assumptions and validation needs
 
 The project is designed primarily for Rust desktop applications such as Tauri backends and local data tooling, while remaining interoperable with common data ecosystems.
 
@@ -61,6 +69,7 @@ Ophiolite therefore aims to provide:
 - typed non-log asset families for other wellbore datasets
 - a shared seismic core for canonical seismic descriptors, app-boundary section/gather/trace models, SEG-Y IO, and runtime/store execution
 - an additive seismic trace-data descriptor layer that distinguishes stacking state, organization, layout, and gather-axis semantics before product/runtime layers decide what they support
+- separate runtime storage/query paths for post-stack volumes and prestack gathers so future apps do not need to force both through one fake common shape
 - an app-friendly runtime/query abstraction
 - optimized local single-asset package formats
 - a local-first project/catalog layer for assembling multiple linked assets coherently

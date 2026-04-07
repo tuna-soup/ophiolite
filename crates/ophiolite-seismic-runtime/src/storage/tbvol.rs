@@ -1,7 +1,7 @@
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 
-use memmap2::{Mmap, MmapOptions};
+use memmap2::{Mmap, MmapMut, MmapOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SeismicStoreError;
@@ -208,11 +208,19 @@ impl TbvolWriter {
         let geometry = manifest.tile_geometry();
 
         let amplitude_path = temp_root.join(AMPLITUDE_FILE);
-        let amplitude_file = File::create(&amplitude_path)?;
+        let amplitude_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&amplitude_path)?;
         amplitude_file.set_len(geometry.tile_count() as u64 * geometry.amplitude_tile_bytes())?;
 
         let occupancy_file = if has_occupancy {
-            let file = File::create(temp_root.join(OCCUPANCY_FILE))?;
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(temp_root.join(OCCUPANCY_FILE))?;
             file.set_len(geometry.tile_count() as u64 * geometry.occupancy_tile_bytes())?;
             Some(file)
         } else {
@@ -231,6 +239,17 @@ impl TbvolWriter {
 
     pub fn root(&self) -> &Path {
         &self.final_root
+    }
+
+    pub fn map_amplitude_mut(&self) -> Result<MmapMut, SeismicStoreError> {
+        Ok(unsafe { MmapOptions::new().map_mut(&self.amplitude_file)? })
+    }
+
+    pub fn map_occupancy_mut(&self) -> Result<Option<MmapMut>, SeismicStoreError> {
+        let Some(file) = &self.occupancy_file else {
+            return Ok(None);
+        };
+        Ok(Some(unsafe { MmapOptions::new().map_mut(file)? }))
     }
 }
 

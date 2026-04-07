@@ -2,13 +2,13 @@ use clap::{Parser, Subcommand, ValueEnum};
 use ndarray::{Array2, Array3};
 use ophiolite_seismic_runtime::{
     CompressionKind, DatasetKind, FrequencyPhaseMode, FrequencyWindowShape, HeaderFieldSpec,
-    IngestOptions, ProcessingLineage, ProcessingOperation, ProcessingPipeline, SectionAxis,
-    SourceIdentity, StorageLayout, TbvolReader, TbvolWriter, TileCoord, TileGeometry,
-    VolumeAxes, VolumeMetadata, VolumeStoreReader, VolumeStoreWriter, ZarrVolumeStoreReader,
-    ZarrVolumeStoreWriter, apply_pipeline_to_traces, assemble_section_plane,
-    load_source_volume_with_options, materialize_from_reader_writer, preflight_segy,
-    preview_section_from_reader, recommended_chunk_shape, recommended_tbvol_tile_shape,
-    write_dense_volume,
+    IngestOptions, ProcessingLineage, ProcessingOperation, ProcessingPipeline,
+    ProcessingPipelineSpec, SectionAxis, SourceIdentity, SparseSurveyPolicy, StorageLayout,
+    TbvolReader, TbvolWriter, TileCoord, TileGeometry, VolumeAxes, VolumeMetadata,
+    VolumeStoreReader, VolumeStoreWriter, ZarrVolumeStoreReader, ZarrVolumeStoreWriter,
+    apply_pipeline_to_traces, assemble_section_plane, load_source_volume_with_options,
+    materialize_from_reader_writer, preflight_segy, preview_section_from_reader,
+    recommended_chunk_shape, recommended_tbvol_tile_shape, write_dense_volume,
 };
 use serde::Serialize;
 use std::fs::{self, File};
@@ -191,11 +191,15 @@ struct StorageBenchmarkResult {
     xline_section_read_ms: f64,
     preview_amplitude_scalar_ms: f64,
     preview_trace_rms_normalize_ms: f64,
+    preview_phase_rotation_ms: f64,
     preview_bandpass_ms: f64,
+    preview_bandpass_phase_rotation_ms: f64,
     preview_pipeline_ms: f64,
     apply_amplitude_scalar_ms: f64,
     apply_trace_rms_normalize_ms: f64,
+    apply_phase_rotation_ms: f64,
     apply_bandpass_ms: f64,
+    apply_bandpass_phase_rotation_ms: f64,
     apply_pipeline_ms: f64,
     pipeline_output_bytes: u64,
     pipeline_output_file_count: u64,
@@ -253,7 +257,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             scalar_factor,
             format,
         } => {
-            let volume = load_source_volume_with_options(&input, &IngestOptions::default())?;
+            let volume = load_source_volume_with_options(
+                &input,
+                &IngestOptions {
+                    sparse_survey_policy: SparseSurveyPolicy::RegularizeToDense { fill_value: 0.0 },
+                    ..IngestOptions::default()
+                },
+            )?;
             let dataset = BenchmarkDataset {
                 name: input
                     .file_name()
@@ -432,7 +442,12 @@ fn run_candidate_benchmark(
         factor: scalar_factor,
     }];
     let normalize_pipeline = [ProcessingOperation::TraceRmsNormalize];
+    let phase_rotation_pipeline = [benchmark_phase_rotation_operation()];
     let bandpass_pipeline = [benchmark_bandpass_operation(sample_interval_ms)];
+    let bandpass_phase_rotation_pipeline = [
+        benchmark_bandpass_operation(sample_interval_ms),
+        benchmark_phase_rotation_operation(),
+    ];
     let combined_pipeline = [
         ProcessingOperation::AmplitudeScalar {
             factor: scalar_factor,
@@ -458,7 +473,9 @@ fn run_candidate_benchmark(
                 mid_xline,
                 &amplitude_pipeline,
                 &normalize_pipeline,
+                &phase_rotation_pipeline,
                 &bandpass_pipeline,
+                &bandpass_phase_rotation_pipeline,
                 &combined_pipeline,
             )?
         }
@@ -473,7 +490,9 @@ fn run_candidate_benchmark(
                 mid_xline,
                 &amplitude_pipeline,
                 &normalize_pipeline,
+                &phase_rotation_pipeline,
                 &bandpass_pipeline,
+                &bandpass_phase_rotation_pipeline,
                 &combined_pipeline,
             )?
         }
@@ -507,7 +526,9 @@ fn run_candidate_benchmark(
                 mid_xline,
                 &amplitude_pipeline,
                 &normalize_pipeline,
+                &phase_rotation_pipeline,
                 &bandpass_pipeline,
+                &bandpass_phase_rotation_pipeline,
                 &combined_pipeline,
             )?
         }
@@ -527,7 +548,9 @@ fn benchmark_zarr(
     mid_xline: usize,
     amplitude_pipeline: &[ProcessingOperation],
     normalize_pipeline: &[ProcessingOperation],
+    phase_rotation_pipeline: &[ProcessingOperation],
     bandpass_pipeline: &[ProcessingOperation],
+    bandpass_phase_rotation_pipeline: &[ProcessingOperation],
     combined_pipeline: &[ProcessingOperation],
 ) -> Result<StorageBenchmarkResult, Box<dyn std::error::Error>> {
     let reader = ZarrVolumeStoreReader::open(input_root)?;
@@ -550,9 +573,27 @@ fn benchmark_zarr(
     let preview_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
+    let _ = preview_section_from_reader(
+        &reader,
+        SectionAxis::Inline,
+        mid_inline,
+        phase_rotation_pipeline,
+    )?;
+    let preview_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let started = Instant::now();
     let _ =
         preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, bandpass_pipeline)?;
     let preview_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let started = Instant::now();
+    let _ = preview_section_from_reader(
+        &reader,
+        SectionAxis::Inline,
+        mid_inline,
+        bandpass_phase_rotation_pipeline,
+    )?;
+    let preview_bandpass_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
     let _ =
@@ -589,6 +630,21 @@ fn benchmark_zarr(
     materialize_from_reader_writer(&reader, normalize_writer, normalize_pipeline)?;
     let apply_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
+    let phase_rotation_output = input_root
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("apply-phase-rotation.zarr");
+    let phase_rotation_writer = ZarrVolumeStoreWriter::create(
+        &phase_rotation_output,
+        derived_output_volume(reader.volume(), input_root, phase_rotation_pipeline),
+        chunk_shape,
+        layout.clone(),
+        reader_has_occupancy(&reader)?,
+    )?;
+    let started = Instant::now();
+    materialize_from_reader_writer(&reader, phase_rotation_writer, phase_rotation_pipeline)?;
+    let apply_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
+
     let bandpass_output = input_root
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -603,6 +659,29 @@ fn benchmark_zarr(
     let started = Instant::now();
     materialize_from_reader_writer(&reader, bandpass_writer, bandpass_pipeline)?;
     let apply_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let bandpass_phase_rotation_output = input_root
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("apply-bandpass-phase-rotation.zarr");
+    let bandpass_phase_rotation_writer = ZarrVolumeStoreWriter::create(
+        &bandpass_phase_rotation_output,
+        derived_output_volume(
+            reader.volume(),
+            input_root,
+            bandpass_phase_rotation_pipeline,
+        ),
+        chunk_shape,
+        layout.clone(),
+        reader_has_occupancy(&reader)?,
+    )?;
+    let started = Instant::now();
+    materialize_from_reader_writer(
+        &reader,
+        bandpass_phase_rotation_writer,
+        bandpass_phase_rotation_pipeline,
+    )?;
+    let apply_bandpass_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let pipeline_output = input_root
         .parent()
@@ -624,7 +703,9 @@ fn benchmark_zarr(
 
     let _ = fs::remove_dir_all(amplitude_output);
     let _ = fs::remove_dir_all(normalize_output);
+    let _ = fs::remove_dir_all(phase_rotation_output);
     let _ = fs::remove_dir_all(bandpass_output);
+    let _ = fs::remove_dir_all(bandpass_phase_rotation_output);
     let _ = fs::remove_dir_all(&pipeline_output);
 
     Ok(StorageBenchmarkResult {
@@ -639,11 +720,15 @@ fn benchmark_zarr(
         xline_section_read_ms,
         preview_amplitude_scalar_ms,
         preview_trace_rms_normalize_ms,
+        preview_phase_rotation_ms,
         preview_bandpass_ms,
+        preview_bandpass_phase_rotation_ms,
         preview_pipeline_ms,
         apply_amplitude_scalar_ms,
         apply_trace_rms_normalize_ms,
+        apply_phase_rotation_ms,
         apply_bandpass_ms,
+        apply_bandpass_phase_rotation_ms,
         apply_pipeline_ms,
         pipeline_output_bytes,
         pipeline_output_file_count,
@@ -658,7 +743,9 @@ fn benchmark_tbvol(
     mid_xline: usize,
     amplitude_pipeline: &[ProcessingOperation],
     normalize_pipeline: &[ProcessingOperation],
+    phase_rotation_pipeline: &[ProcessingOperation],
     bandpass_pipeline: &[ProcessingOperation],
+    bandpass_phase_rotation_pipeline: &[ProcessingOperation],
     combined_pipeline: &[ProcessingOperation],
 ) -> Result<StorageBenchmarkResult, Box<dyn std::error::Error>> {
     let reader = TbvolReader::open(input_root)?;
@@ -682,9 +769,27 @@ fn benchmark_tbvol(
     let preview_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
+    let _ = preview_section_from_reader(
+        &reader,
+        SectionAxis::Inline,
+        mid_inline,
+        phase_rotation_pipeline,
+    )?;
+    let preview_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let started = Instant::now();
     let _ =
         preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, bandpass_pipeline)?;
     let preview_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let started = Instant::now();
+    let _ = preview_section_from_reader(
+        &reader,
+        SectionAxis::Inline,
+        mid_inline,
+        bandpass_phase_rotation_pipeline,
+    )?;
+    let preview_bandpass_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
     let _ =
@@ -719,6 +824,20 @@ fn benchmark_tbvol(
     materialize_from_reader_writer(&reader, normalize_writer, normalize_pipeline)?;
     let apply_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
+    let phase_rotation_output = input_root
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("apply-phase-rotation.tbvol");
+    let phase_rotation_writer = TbvolWriter::create(
+        &phase_rotation_output,
+        derived_output_volume(reader.volume(), input_root, phase_rotation_pipeline),
+        chunk_shape,
+        reader_has_occupancy(&reader)?,
+    )?;
+    let started = Instant::now();
+    materialize_from_reader_writer(&reader, phase_rotation_writer, phase_rotation_pipeline)?;
+    let apply_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
+
     let bandpass_output = input_root
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -732,6 +851,28 @@ fn benchmark_tbvol(
     let started = Instant::now();
     materialize_from_reader_writer(&reader, bandpass_writer, bandpass_pipeline)?;
     let apply_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let bandpass_phase_rotation_output = input_root
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("apply-bandpass-phase-rotation.tbvol");
+    let bandpass_phase_rotation_writer = TbvolWriter::create(
+        &bandpass_phase_rotation_output,
+        derived_output_volume(
+            reader.volume(),
+            input_root,
+            bandpass_phase_rotation_pipeline,
+        ),
+        chunk_shape,
+        reader_has_occupancy(&reader)?,
+    )?;
+    let started = Instant::now();
+    materialize_from_reader_writer(
+        &reader,
+        bandpass_phase_rotation_writer,
+        bandpass_phase_rotation_pipeline,
+    )?;
+    let apply_bandpass_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let pipeline_output = input_root
         .parent()
@@ -752,7 +893,9 @@ fn benchmark_tbvol(
 
     let _ = fs::remove_dir_all(amplitude_output);
     let _ = fs::remove_dir_all(normalize_output);
+    let _ = fs::remove_dir_all(phase_rotation_output);
     let _ = fs::remove_dir_all(bandpass_output);
+    let _ = fs::remove_dir_all(bandpass_phase_rotation_output);
     let _ = fs::remove_dir_all(&pipeline_output);
 
     Ok(StorageBenchmarkResult {
@@ -767,11 +910,15 @@ fn benchmark_tbvol(
         xline_section_read_ms,
         preview_amplitude_scalar_ms,
         preview_trace_rms_normalize_ms,
+        preview_phase_rotation_ms,
         preview_bandpass_ms,
+        preview_bandpass_phase_rotation_ms,
         preview_pipeline_ms,
         apply_amplitude_scalar_ms,
         apply_trace_rms_normalize_ms,
+        apply_phase_rotation_ms,
         apply_bandpass_ms,
+        apply_bandpass_phase_rotation_ms,
         apply_pipeline_ms,
         pipeline_output_bytes,
         pipeline_output_file_count,
@@ -867,13 +1014,15 @@ fn derived_output_volume(
         created_by: "compute-storage-bench".to_string(),
         processing_lineage: Some(ProcessingLineage {
             parent_store: parent_store.to_path_buf(),
-            pipeline: ProcessingPipeline {
-                schema_version: 1,
-                revision: 1,
-                preset_id: None,
-                name: Some("compute-storage-bench".to_string()),
-                description: None,
-                operations: pipeline.to_vec(),
+            pipeline: ProcessingPipelineSpec::TraceLocal {
+                pipeline: ProcessingPipeline {
+                    schema_version: 1,
+                    revision: 1,
+                    preset_id: None,
+                    name: Some("compute-storage-bench".to_string()),
+                    description: None,
+                    operations: pipeline.to_vec(),
+                },
             },
             runtime_version: "compute-storage-bench".to_string(),
             created_at_unix_s: unix_timestamp_s(),
@@ -901,7 +1050,9 @@ fn benchmark_flat(
     mid_xline: usize,
     amplitude_pipeline: &[ProcessingOperation],
     normalize_pipeline: &[ProcessingOperation],
+    phase_rotation_pipeline: &[ProcessingOperation],
     bandpass_pipeline: &[ProcessingOperation],
+    bandpass_phase_rotation_pipeline: &[ProcessingOperation],
     combined_pipeline: &[ProcessingOperation],
 ) -> Result<StorageBenchmarkResult, Box<dyn std::error::Error>> {
     let started = Instant::now();
@@ -944,9 +1095,33 @@ fn benchmark_flat(
         store.shape[2],
         store.sample_interval_ms,
         store.occupancy_row(mid_inline).as_deref(),
+        phase_rotation_pipeline,
+    )?;
+    let preview_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let started = Instant::now();
+    let mut plane = store.read_inline_section(mid_inline)?;
+    apply_pipeline_to_traces(
+        &mut plane,
+        store.shape[1],
+        store.shape[2],
+        store.sample_interval_ms,
+        store.occupancy_row(mid_inline).as_deref(),
         bandpass_pipeline,
     )?;
     let preview_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let started = Instant::now();
+    let mut plane = store.read_inline_section(mid_inline)?;
+    apply_pipeline_to_traces(
+        &mut plane,
+        store.shape[1],
+        store.shape[2],
+        store.sample_interval_ms,
+        store.occupancy_row(mid_inline).as_deref(),
+        bandpass_phase_rotation_pipeline,
+    )?;
+    let preview_bandpass_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
     let mut plane = store.read_inline_section(mid_inline)?;
@@ -970,10 +1145,24 @@ fn benchmark_flat(
     store.materialize(&normalize_output, chunk_shape, normalize_pipeline)?;
     let apply_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
+    let phase_rotation_output = store.root.join("apply-phase-rotation.bin");
+    let started = Instant::now();
+    store.materialize(&phase_rotation_output, chunk_shape, phase_rotation_pipeline)?;
+    let apply_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
+
     let bandpass_output = store.root.join("apply-bandpass.bin");
     let started = Instant::now();
     store.materialize(&bandpass_output, chunk_shape, bandpass_pipeline)?;
     let apply_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let bandpass_phase_rotation_output = store.root.join("apply-bandpass-phase-rotation.bin");
+    let started = Instant::now();
+    store.materialize(
+        &bandpass_phase_rotation_output,
+        chunk_shape,
+        bandpass_phase_rotation_pipeline,
+    )?;
+    let apply_bandpass_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let pipeline_output = store.root.join("apply-pipeline.bin");
     let started = Instant::now();
@@ -986,7 +1175,9 @@ fn benchmark_flat(
 
     let _ = fs::remove_file(amplitude_output);
     let _ = fs::remove_file(normalize_output);
+    let _ = fs::remove_file(phase_rotation_output);
     let _ = fs::remove_file(bandpass_output);
+    let _ = fs::remove_file(bandpass_phase_rotation_output);
     let _ = fs::remove_file(&pipeline_output);
 
     Ok(StorageBenchmarkResult {
@@ -1001,11 +1192,15 @@ fn benchmark_flat(
         xline_section_read_ms,
         preview_amplitude_scalar_ms,
         preview_trace_rms_normalize_ms,
+        preview_phase_rotation_ms,
         preview_bandpass_ms,
+        preview_bandpass_phase_rotation_ms,
         preview_pipeline_ms,
         apply_amplitude_scalar_ms,
         apply_trace_rms_normalize_ms,
+        apply_phase_rotation_ms,
         apply_bandpass_ms,
+        apply_bandpass_phase_rotation_ms,
         apply_pipeline_ms,
         pipeline_output_bytes,
         pipeline_output_file_count: 1,
@@ -1427,7 +1622,15 @@ fn print_benchmark_summary(
                     "  preview_trace_rms_normalize_ms: {:.3}",
                     result.preview_trace_rms_normalize_ms
                 );
+                println!(
+                    "  preview_phase_rotation_ms: {:.3}",
+                    result.preview_phase_rotation_ms
+                );
                 println!("  preview_bandpass_ms: {:.3}", result.preview_bandpass_ms);
+                println!(
+                    "  preview_bandpass_phase_rotation_ms: {:.3}",
+                    result.preview_bandpass_phase_rotation_ms
+                );
                 println!("  preview_pipeline_ms: {:.3}", result.preview_pipeline_ms);
                 println!(
                     "  apply_amplitude_scalar_ms: {:.3}",
@@ -1437,7 +1640,15 @@ fn print_benchmark_summary(
                     "  apply_trace_rms_normalize_ms: {:.3}",
                     result.apply_trace_rms_normalize_ms
                 );
+                println!(
+                    "  apply_phase_rotation_ms: {:.3}",
+                    result.apply_phase_rotation_ms
+                );
                 println!("  apply_bandpass_ms: {:.3}", result.apply_bandpass_ms);
+                println!(
+                    "  apply_bandpass_phase_rotation_ms: {:.3}",
+                    result.apply_bandpass_phase_rotation_ms
+                );
                 println!("  apply_pipeline_ms: {:.3}", result.apply_pipeline_ms);
                 println!("  pipeline_output_bytes: {}", result.pipeline_output_bytes);
                 println!(
@@ -1640,6 +1851,12 @@ fn benchmark_bandpass_operation(sample_interval_ms: f32) -> ProcessingOperation 
         f4_hz,
         phase: FrequencyPhaseMode::Zero,
         window: FrequencyWindowShape::CosineTaper,
+    }
+}
+
+fn benchmark_phase_rotation_operation() -> ProcessingOperation {
+    ProcessingOperation::PhaseRotation {
+        angle_degrees: 35.0,
     }
 }
 

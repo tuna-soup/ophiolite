@@ -1,7 +1,10 @@
 mod compute;
 mod error;
+mod gather_processing;
 mod ingest;
 mod metadata;
+mod prestack_analysis;
+mod prestack_store;
 mod preflight;
 mod render;
 mod storage;
@@ -9,37 +12,60 @@ mod store;
 
 pub use compute::{
     MaterializeOptions, amplitude_spectrum_from_plane, amplitude_spectrum_from_reader,
-    apply_pipeline_to_plane, apply_pipeline_to_traces,
-    materialize_from_reader_writer, materialize_from_reader_writer_with_progress,
-    materialize_processing_volume, materialize_processing_volume_with_progress, materialize_volume,
+    apply_pipeline_to_plane, apply_pipeline_to_traces, materialize_from_reader_writer,
+    materialize_from_reader_writer_with_progress, materialize_processing_volume,
+    materialize_processing_volume_with_progress, materialize_volume,
     preview_processing_section_plane, preview_processing_section_view, preview_section_from_reader,
     preview_section_plane, preview_section_view, validate_pipeline, validate_pipeline_for_layout,
     validate_processing_pipeline, validate_processing_pipeline_for_layout,
 };
 pub use error::SeismicStoreError;
+pub use gather_processing::{
+    GatherPlane, apply_gather_processing_pipeline, apply_trace_local_pipeline_to_gather,
+    validate_gather_processing_pipeline, validate_gather_processing_pipeline_for_layout,
+};
 pub use ingest::{
-    IngestOptions, SeisGeometryOptions, SourceVolume, SparseSurveyPolicy, ingest_segy,
-    load_source_volume, load_source_volume_with_options, recommended_chunk_shape,
+    IngestOptions, SeisGeometryOptions, SourceVolume, SparseSurveyPolicy,
+    ingest_prestack_offset_segy, ingest_segy, load_source_volume, load_source_volume_with_options,
+    recommended_chunk_shape,
 };
 pub use metadata::{
     CompressionKind, DatasetKind, GeometryProvenance, HeaderFieldSpec, InterpMethod,
     ProcessingLineage, RegularizationProvenance, SourceIdentity, StorageLayout, StoreManifest,
     VolumeAxes, VolumeMetadata,
 };
+pub use prestack_analysis::velocity_scan;
+pub use prestack_store::{
+    PrestackStoreHandle, TbgathManifest, TbgathReader, TbgathWriter, create_tbgath_store,
+    describe_prestack_store, gather_view as prestack_gather_view,
+    materialize_gather_processing_store, materialize_gather_processing_store_with_progress,
+    open_prestack_store, preview_gather_processing_view,
+    read_gather_plane as read_prestack_gather_plane,
+};
 pub use ophiolite_seismic::{
     AmplitudeSpectrumCurve, AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, AxisSummaryF32,
     AxisSummaryI32, CancelProcessingJobRequest, CancelProcessingJobResponse, DatasetId,
     DeletePipelinePresetRequest, DeletePipelinePresetResponse, FrequencyPhaseMode,
-    FrequencyWindowShape, GeometryDescriptor, GeometryProvenanceSummary, GeometrySummary,
+    FrequencyWindowShape, GatherAxisKind, GatherInterpolationMode, GatherPreviewView,
+    GatherProbe, GatherProbeChanged, GatherProcessingOperation, GatherProcessingPipeline,
+    GatherRequest, GatherSampleDomain, GatherSelector, GatherView, GatherViewport,
+    GatherViewportChanged, GeometryDescriptor, GeometryProvenanceSummary, GeometrySummary,
     GetProcessingJobRequest, GetProcessingJobResponse, InterpretationPoint,
-    ListPipelinePresetsResponse, PreviewProcessingRequest, PreviewProcessingResponse,
-    PreviewResponse, PreviewView, ProcessingJobProgress, ProcessingJobState,
-    ProcessingJobStatus, ProcessingLayoutCompatibility, ProcessingOperation, ProcessingPipeline,
-    ProcessingPreset, RunProcessingRequest, RunProcessingResponse, SavePipelinePresetRequest,
-    SavePipelinePresetResponse, SectionAxis, SectionCoordinate, SectionDisplayDefaults,
-    SectionMetadata, SectionProbe, SectionProbeChanged, SectionRenderMode, SectionRequest,
-    SectionTileRequest, SectionUnits, SectionView, SectionViewport, SectionViewportChanged,
-    SectionSpectrumSelection, SeismicLayout, VolumeDescriptor,
+    ListPipelinePresetsResponse, PreviewGatherProcessingRequest,
+    PreviewGatherProcessingResponse, PreviewProcessingRequest, PreviewProcessingResponse,
+    PreviewResponse, PreviewTraceLocalProcessingRequest, PreviewTraceLocalProcessingResponse,
+    PreviewView, ProcessingJobProgress, ProcessingJobState, ProcessingJobStatus,
+    ProcessingLayoutCompatibility, ProcessingOperation, ProcessingOperatorScope,
+    ProcessingPipeline, ProcessingPipelineFamily, ProcessingPipelineSpec, ProcessingPreset,
+    RunGatherProcessingRequest, RunGatherProcessingResponse, RunProcessingRequest,
+    RunProcessingResponse, RunTraceLocalProcessingRequest, RunTraceLocalProcessingResponse,
+    SavePipelinePresetRequest, SavePipelinePresetResponse, SectionAxis, SectionCoordinate,
+    SectionDisplayDefaults, SectionMetadata, SectionProbe, SectionProbeChanged, SectionRenderMode,
+    SectionRequest, SectionSpectrumSelection, SectionTileRequest, SectionUnits, SectionView,
+    SectionViewport, SectionViewportChanged, SemblancePanel, SeismicLayout,
+    TraceLocalProcessingOperation, TraceLocalProcessingPipeline, TraceLocalProcessingPreset,
+    VelocityAutopickParameters, VelocityFunctionEstimate, VelocityFunctionSource,
+    VelocityPickStrategy, VelocityScanRequest, VelocityScanResponse, VolumeDescriptor,
 };
 pub use preflight::{PreflightAction, PreflightGeometry, SurveyPreflight, preflight_segy};
 pub use render::{render_section_csv, render_section_csv_for_request};

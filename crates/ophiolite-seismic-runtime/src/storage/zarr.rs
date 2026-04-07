@@ -3,8 +3,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ndarray::Array2;
+use zarrs::array::DataType;
 use zarrs::array::codec::{BloscCodec, ZstdCodec};
-use zarrs::array::{Array, ArrayBuilder, ArraySubset, BytesToBytesCodecTraits, data_type};
+use zarrs::array::{Array, ArrayBuilder};
+use zarrs::array::codec::BytesToBytesCodecTraits;
+use zarrs::array_subset::ArraySubset;
 use zarrs::filesystem::FilesystemStore;
 use zarrs::group::GroupBuilder;
 use zarrs::metadata_ext::codec::blosc::{BloscCompressionLevel, BloscCompressor, BloscShuffleMode};
@@ -61,7 +64,7 @@ impl VolumeStoreReader for ZarrVolumeStoreReader {
     fn read_tile<'a>(&'a self, tile: TileCoord) -> Result<TileBuffer<'a>, SeismicStoreError> {
         let subset = amplitude_subset(&self.geometry, tile);
         let effective = self.geometry.effective_tile_shape(tile);
-        let raw = self.array.retrieve_array_subset::<Vec<f32>>(&subset)?;
+        let raw = self.array.retrieve_array_subset_elements::<f32>(&subset)?;
         Ok(TileBuffer::Owned(pad_amplitude_tile(
             &self.geometry,
             effective,
@@ -78,7 +81,7 @@ impl VolumeStoreReader for ZarrVolumeStoreReader {
         };
         let subset = occupancy_subset(&self.geometry, tile);
         let effective = self.geometry.effective_tile_shape(tile);
-        let raw = array.retrieve_array_subset::<Vec<u8>>(&subset)?;
+        let raw = array.retrieve_array_subset_elements::<u8>(&subset)?;
         Ok(Some(OccupancyTile::Owned(pad_occupancy_tile(
             &self.geometry,
             effective,
@@ -163,7 +166,7 @@ impl VolumeStoreWriter for ZarrVolumeStoreWriter {
             }
         }
         self.array
-            .store_array_subset(&amplitude_subset(&self.geometry, tile), &raw)?;
+            .store_array_subset_elements(&amplitude_subset(&self.geometry, tile), &raw)?;
         Ok(())
     }
 
@@ -182,7 +185,7 @@ impl VolumeStoreWriter for ZarrVolumeStoreWriter {
             let src = local_i * tile_shape[1];
             raw.extend_from_slice(&occupancy[src..src + effective[1]]);
         }
-        array.store_array_subset(&occupancy_subset(&self.geometry, tile), &raw)?;
+        array.store_array_subset_elements(&occupancy_subset(&self.geometry, tile), &raw)?;
         Ok(())
     }
 
@@ -229,19 +232,21 @@ fn create_empty_store(
                 manifest.chunk_shape[0] as u64,
                 manifest.chunk_shape[1] as u64,
             ],
-            data_type::uint8(),
+            DataType::UInt8,
             0_u8,
         )
         .dimension_names(["iline", "xline"].into())
         .build(store, OCCUPANCY_PATH)
         .map_err(|error| SeismicStoreError::Message(error.to_string()))?;
         occupancy_array.store_metadata()?;
-        occupancy_array.store_array_subset(
+        occupancy_array.store_array_subset_elements(
             &ArraySubset::new_with_ranges(&[
                 0_u64..manifest.shape[0] as u64,
                 0_u64..manifest.shape[1] as u64,
             ]),
-            occupancy.to_owned(),
+            occupancy
+                .as_slice()
+                .expect("occupancy seed should be contiguous"),
         )?;
     }
 
@@ -276,7 +281,7 @@ fn build_amplitude_array(
             .map(|value| *value as u64)
             .collect::<Vec<_>>(),
         effective_array_chunk_shape(manifest, &layout),
-        data_type::float32(),
+        DataType::Float32,
         0.0f32,
     );
     builder.dimension_names(Some(["iline", "xline", "sample"]));
@@ -284,18 +289,9 @@ fn build_amplitude_array(
     if let Some(codec) = compression_codec(&layout.compression)? {
         builder.bytes_to_bytes_codecs(vec![codec]);
     }
-    if let Some(shard_shape) = layout.shard_shape
-        && shard_shape != manifest.chunk_shape
-    {
-        builder.subchunk_shape(
-            manifest
-                .chunk_shape
-                .iter()
-                .map(|value| *value as u64)
-                .collect::<Vec<_>>(),
-        );
-    }
-
+    // zarrs 0.22 on the pinned Rust 1.90 toolchain does not expose the newer
+    // builder hook for inner subchunks/shards. We keep shard metadata in the
+    // manifest, but fall back to plain chunked array construction here.
     builder
         .build(store.clone(), path)
         .map_err(|error| SeismicStoreError::Message(error.to_string()))

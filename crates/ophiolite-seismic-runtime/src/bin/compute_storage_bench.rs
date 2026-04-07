@@ -1,13 +1,14 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use ndarray::{Array2, Array3};
 use ophiolite_seismic_runtime::{
-    CompressionKind, DatasetKind, HeaderFieldSpec, IngestOptions, ProcessingLineage,
-    ProcessingOperation, ProcessingPipeline, SectionAxis, SourceIdentity, StorageLayout,
-    TbvolReader, TbvolWriter, TileCoord, TileGeometry, VolumeAxes, VolumeMetadata,
-    VolumeStoreReader, VolumeStoreWriter, ZarrVolumeStoreReader, ZarrVolumeStoreWriter,
-    apply_pipeline_to_traces, assemble_section_plane, load_source_volume_with_options,
-    materialize_from_reader_writer, preflight_segy, preview_section_from_reader,
-    recommended_chunk_shape, recommended_tbvol_tile_shape, write_dense_volume,
+    CompressionKind, DatasetKind, FrequencyPhaseMode, FrequencyWindowShape, HeaderFieldSpec,
+    IngestOptions, ProcessingLineage, ProcessingOperation, ProcessingPipeline, SectionAxis,
+    SourceIdentity, StorageLayout, TbvolReader, TbvolWriter, TileCoord, TileGeometry,
+    VolumeAxes, VolumeMetadata, VolumeStoreReader, VolumeStoreWriter, ZarrVolumeStoreReader,
+    ZarrVolumeStoreWriter, apply_pipeline_to_traces, assemble_section_plane,
+    load_source_volume_with_options, materialize_from_reader_writer, preflight_segy,
+    preview_section_from_reader, recommended_chunk_shape, recommended_tbvol_tile_shape,
+    write_dense_volume,
 };
 use serde::Serialize;
 use std::fs::{self, File};
@@ -190,9 +191,11 @@ struct StorageBenchmarkResult {
     xline_section_read_ms: f64,
     preview_amplitude_scalar_ms: f64,
     preview_trace_rms_normalize_ms: f64,
+    preview_bandpass_ms: f64,
     preview_pipeline_ms: f64,
     apply_amplitude_scalar_ms: f64,
     apply_trace_rms_normalize_ms: f64,
+    apply_bandpass_ms: f64,
     apply_pipeline_ms: f64,
     pipeline_output_bytes: u64,
     pipeline_output_file_count: u64,
@@ -421,6 +424,7 @@ fn run_candidate_benchmark(
     }
     fs::create_dir_all(bench_root)?;
     let chunk_shape = candidate_chunk_shape(candidate, dataset.shape, chunk_target_mib);
+    let sample_interval_ms = sample_interval_ms(&dataset.axes.sample_axis_ms)?;
 
     let mid_inline = dataset.shape[0] / 2;
     let mid_xline = dataset.shape[1] / 2;
@@ -428,6 +432,7 @@ fn run_candidate_benchmark(
         factor: scalar_factor,
     }];
     let normalize_pipeline = [ProcessingOperation::TraceRmsNormalize];
+    let bandpass_pipeline = [benchmark_bandpass_operation(sample_interval_ms)];
     let combined_pipeline = [
         ProcessingOperation::AmplitudeScalar {
             factor: scalar_factor,
@@ -441,6 +446,7 @@ fn run_candidate_benchmark(
                 bench_root,
                 &dataset.data,
                 dataset.shape,
+                sample_interval_ms,
                 dataset.occupancy.as_ref(),
             )?;
             benchmark_flat(
@@ -452,6 +458,7 @@ fn run_candidate_benchmark(
                 mid_xline,
                 &amplitude_pipeline,
                 &normalize_pipeline,
+                &bandpass_pipeline,
                 &combined_pipeline,
             )?
         }
@@ -466,6 +473,7 @@ fn run_candidate_benchmark(
                 mid_xline,
                 &amplitude_pipeline,
                 &normalize_pipeline,
+                &bandpass_pipeline,
                 &combined_pipeline,
             )?
         }
@@ -499,6 +507,7 @@ fn run_candidate_benchmark(
                 mid_xline,
                 &amplitude_pipeline,
                 &normalize_pipeline,
+                &bandpass_pipeline,
                 &combined_pipeline,
             )?
         }
@@ -518,6 +527,7 @@ fn benchmark_zarr(
     mid_xline: usize,
     amplitude_pipeline: &[ProcessingOperation],
     normalize_pipeline: &[ProcessingOperation],
+    bandpass_pipeline: &[ProcessingOperation],
     combined_pipeline: &[ProcessingOperation],
 ) -> Result<StorageBenchmarkResult, Box<dyn std::error::Error>> {
     let reader = ZarrVolumeStoreReader::open(input_root)?;
@@ -538,6 +548,11 @@ fn benchmark_zarr(
     let _ =
         preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, normalize_pipeline)?;
     let preview_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let started = Instant::now();
+    let _ =
+        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, bandpass_pipeline)?;
+    let preview_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
     let _ =
@@ -574,6 +589,21 @@ fn benchmark_zarr(
     materialize_from_reader_writer(&reader, normalize_writer, normalize_pipeline)?;
     let apply_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
+    let bandpass_output = input_root
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("apply-bandpass.zarr");
+    let bandpass_writer = ZarrVolumeStoreWriter::create(
+        &bandpass_output,
+        derived_output_volume(reader.volume(), input_root, bandpass_pipeline),
+        chunk_shape,
+        layout.clone(),
+        reader_has_occupancy(&reader)?,
+    )?;
+    let started = Instant::now();
+    materialize_from_reader_writer(&reader, bandpass_writer, bandpass_pipeline)?;
+    let apply_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
+
     let pipeline_output = input_root
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -594,6 +624,7 @@ fn benchmark_zarr(
 
     let _ = fs::remove_dir_all(amplitude_output);
     let _ = fs::remove_dir_all(normalize_output);
+    let _ = fs::remove_dir_all(bandpass_output);
     let _ = fs::remove_dir_all(&pipeline_output);
 
     Ok(StorageBenchmarkResult {
@@ -608,9 +639,11 @@ fn benchmark_zarr(
         xline_section_read_ms,
         preview_amplitude_scalar_ms,
         preview_trace_rms_normalize_ms,
+        preview_bandpass_ms,
         preview_pipeline_ms,
         apply_amplitude_scalar_ms,
         apply_trace_rms_normalize_ms,
+        apply_bandpass_ms,
         apply_pipeline_ms,
         pipeline_output_bytes,
         pipeline_output_file_count,
@@ -625,6 +658,7 @@ fn benchmark_tbvol(
     mid_xline: usize,
     amplitude_pipeline: &[ProcessingOperation],
     normalize_pipeline: &[ProcessingOperation],
+    bandpass_pipeline: &[ProcessingOperation],
     combined_pipeline: &[ProcessingOperation],
 ) -> Result<StorageBenchmarkResult, Box<dyn std::error::Error>> {
     let reader = TbvolReader::open(input_root)?;
@@ -646,6 +680,11 @@ fn benchmark_tbvol(
     let _ =
         preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, normalize_pipeline)?;
     let preview_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let started = Instant::now();
+    let _ =
+        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, bandpass_pipeline)?;
+    let preview_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
     let _ =
@@ -680,6 +719,20 @@ fn benchmark_tbvol(
     materialize_from_reader_writer(&reader, normalize_writer, normalize_pipeline)?;
     let apply_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
+    let bandpass_output = input_root
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("apply-bandpass.tbvol");
+    let bandpass_writer = TbvolWriter::create(
+        &bandpass_output,
+        derived_output_volume(reader.volume(), input_root, bandpass_pipeline),
+        chunk_shape,
+        reader_has_occupancy(&reader)?,
+    )?;
+    let started = Instant::now();
+    materialize_from_reader_writer(&reader, bandpass_writer, bandpass_pipeline)?;
+    let apply_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
+
     let pipeline_output = input_root
         .parent()
         .unwrap_or_else(|| Path::new("."))
@@ -699,6 +752,7 @@ fn benchmark_tbvol(
 
     let _ = fs::remove_dir_all(amplitude_output);
     let _ = fs::remove_dir_all(normalize_output);
+    let _ = fs::remove_dir_all(bandpass_output);
     let _ = fs::remove_dir_all(&pipeline_output);
 
     Ok(StorageBenchmarkResult {
@@ -713,9 +767,11 @@ fn benchmark_tbvol(
         xline_section_read_ms,
         preview_amplitude_scalar_ms,
         preview_trace_rms_normalize_ms,
+        preview_bandpass_ms,
         preview_pipeline_ms,
         apply_amplitude_scalar_ms,
         apply_trace_rms_normalize_ms,
+        apply_bandpass_ms,
         apply_pipeline_ms,
         pipeline_output_bytes,
         pipeline_output_file_count,
@@ -845,6 +901,7 @@ fn benchmark_flat(
     mid_xline: usize,
     amplitude_pipeline: &[ProcessingOperation],
     normalize_pipeline: &[ProcessingOperation],
+    bandpass_pipeline: &[ProcessingOperation],
     combined_pipeline: &[ProcessingOperation],
 ) -> Result<StorageBenchmarkResult, Box<dyn std::error::Error>> {
     let started = Instant::now();
@@ -861,9 +918,10 @@ fn benchmark_flat(
         &mut plane,
         store.shape[1],
         store.shape[2],
+        store.sample_interval_ms,
         store.occupancy_row(mid_inline).as_deref(),
         amplitude_pipeline,
-    );
+    )?;
     let preview_amplitude_scalar_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
@@ -872,9 +930,10 @@ fn benchmark_flat(
         &mut plane,
         store.shape[1],
         store.shape[2],
+        store.sample_interval_ms,
         store.occupancy_row(mid_inline).as_deref(),
         normalize_pipeline,
-    );
+    )?;
     let preview_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let started = Instant::now();
@@ -883,9 +942,22 @@ fn benchmark_flat(
         &mut plane,
         store.shape[1],
         store.shape[2],
+        store.sample_interval_ms,
+        store.occupancy_row(mid_inline).as_deref(),
+        bandpass_pipeline,
+    )?;
+    let preview_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let started = Instant::now();
+    let mut plane = store.read_inline_section(mid_inline)?;
+    apply_pipeline_to_traces(
+        &mut plane,
+        store.shape[1],
+        store.shape[2],
+        store.sample_interval_ms,
         store.occupancy_row(mid_inline).as_deref(),
         combined_pipeline,
-    );
+    )?;
     let preview_pipeline_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let amplitude_output = store.root.join("apply-amplitude.bin");
@@ -898,6 +970,11 @@ fn benchmark_flat(
     store.materialize(&normalize_output, chunk_shape, normalize_pipeline)?;
     let apply_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
 
+    let bandpass_output = store.root.join("apply-bandpass.bin");
+    let started = Instant::now();
+    store.materialize(&bandpass_output, chunk_shape, bandpass_pipeline)?;
+    let apply_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
+
     let pipeline_output = store.root.join("apply-pipeline.bin");
     let started = Instant::now();
     store.materialize(&pipeline_output, chunk_shape, combined_pipeline)?;
@@ -909,6 +986,7 @@ fn benchmark_flat(
 
     let _ = fs::remove_file(amplitude_output);
     let _ = fs::remove_file(normalize_output);
+    let _ = fs::remove_file(bandpass_output);
     let _ = fs::remove_file(&pipeline_output);
 
     Ok(StorageBenchmarkResult {
@@ -923,9 +1001,11 @@ fn benchmark_flat(
         xline_section_read_ms,
         preview_amplitude_scalar_ms,
         preview_trace_rms_normalize_ms,
+        preview_bandpass_ms,
         preview_pipeline_ms,
         apply_amplitude_scalar_ms,
         apply_trace_rms_normalize_ms,
+        apply_bandpass_ms,
         apply_pipeline_ms,
         pipeline_output_bytes,
         pipeline_output_file_count: 1,
@@ -1347,6 +1427,7 @@ fn print_benchmark_summary(
                     "  preview_trace_rms_normalize_ms: {:.3}",
                     result.preview_trace_rms_normalize_ms
                 );
+                println!("  preview_bandpass_ms: {:.3}", result.preview_bandpass_ms);
                 println!("  preview_pipeline_ms: {:.3}", result.preview_pipeline_ms);
                 println!(
                     "  apply_amplitude_scalar_ms: {:.3}",
@@ -1356,6 +1437,7 @@ fn print_benchmark_summary(
                     "  apply_trace_rms_normalize_ms: {:.3}",
                     result.apply_trace_rms_normalize_ms
                 );
+                println!("  apply_bandpass_ms: {:.3}", result.apply_bandpass_ms);
                 println!("  apply_pipeline_ms: {:.3}", result.apply_pipeline_ms);
                 println!("  pipeline_output_bytes: {}", result.pipeline_output_bytes);
                 println!(
@@ -1395,6 +1477,7 @@ struct FlatBinaryStore {
     root: PathBuf,
     data_path: PathBuf,
     shape: [usize; 3],
+    sample_interval_ms: f32,
     occupancy: Option<Array2<u8>>,
 }
 
@@ -1403,6 +1486,7 @@ impl FlatBinaryStore {
         root: &Path,
         data: &Array3<f32>,
         shape: [usize; 3],
+        sample_interval_ms: f32,
         occupancy: Option<&Array2<u8>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         if root.exists() {
@@ -1431,6 +1515,7 @@ impl FlatBinaryStore {
             root: root.to_path_buf(),
             data_path,
             shape,
+            sample_interval_ms,
             occupancy: occupancy.cloned(),
         })
     }
@@ -1505,9 +1590,10 @@ impl FlatBinaryStore {
                 &mut values,
                 traces,
                 self.shape[2],
+                self.sample_interval_ms,
                 occupancy.as_deref(),
                 pipeline,
-            );
+            )?;
             write_f32_le(&mut writer, &values)?;
             processed_traces += traces;
         }
@@ -1528,6 +1614,33 @@ fn occupancy_slice(
         values.push(mask[[iline, xline]]);
     }
     values
+}
+
+fn sample_interval_ms(sample_axis_ms: &[f32]) -> Result<f32, Box<dyn std::error::Error>> {
+    if sample_axis_ms.len() < 2 {
+        return Err("sample axis must contain at least two entries".into());
+    }
+    let step = (sample_axis_ms[1] - sample_axis_ms[0]).abs();
+    if !step.is_finite() || step <= 0.0 {
+        return Err(format!("invalid sample axis step: {step}").into());
+    }
+    Ok(step)
+}
+
+fn benchmark_bandpass_operation(sample_interval_ms: f32) -> ProcessingOperation {
+    let nyquist_hz = 500.0 / sample_interval_ms.max(f32::EPSILON);
+    let f1_hz = (nyquist_hz * 0.06).max(4.0);
+    let f2_hz = (nyquist_hz * 0.1).max(f1_hz + 1.0);
+    let f4_hz = (nyquist_hz * 0.45).max(f2_hz + 6.0).min(nyquist_hz);
+    let f3_hz = (nyquist_hz * 0.32).max(f2_hz + 4.0).min(f4_hz);
+    ProcessingOperation::BandpassFilter {
+        f1_hz,
+        f2_hz,
+        f3_hz,
+        f4_hz,
+        phase: FrequencyPhaseMode::Zero,
+        window: FrequencyWindowShape::CosineTaper,
+    }
 }
 
 fn write_f32_le(writer: &mut File, values: &[f32]) -> Result<(), Box<dyn std::error::Error>> {

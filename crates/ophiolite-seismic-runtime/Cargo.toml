@@ -10,12 +10,13 @@ ndarray = "0.17.2"
 ophiolite-seismic = { path = "../ophiolite-seismic" }
 ophiolite-seismic-io = { path = "../ophiolite-seismic-io" }
 rayon = "1.11"
+realfft = "3.4"
 schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 ts-rs = { workspace = true }
-zarrs = { version = "0.23.7", default-features = true }
+zarrs = { version = "0.22.5", default-features = true }
 
 [dev-dependencies]
 criterion = "0.5"

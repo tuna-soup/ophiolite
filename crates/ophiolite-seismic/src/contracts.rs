@@ -176,6 +176,69 @@ pub struct SectionTileRequest {
 pub enum ProcessingOperation {
     AmplitudeScalar { factor: f32 },
     TraceRmsNormalize,
+    BandpassFilter {
+        f1_hz: f32,
+        f2_hz: f32,
+        f3_hz: f32,
+        f4_hz: f32,
+        phase: FrequencyPhaseMode,
+        window: FrequencyWindowShape,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum FrequencyPhaseMode {
+    Zero,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum FrequencyWindowShape {
+    CosineTaper,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SectionSpectrumSelection {
+    WholeSection,
+    TraceRange { trace_start: usize, trace_end: usize },
+    RectWindow {
+        trace_start: usize,
+        trace_end: usize,
+        sample_start: usize,
+        sample_end: usize,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AmplitudeSpectrumCurve {
+    pub frequencies_hz: Vec<f32>,
+    pub amplitudes: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AmplitudeSpectrumRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    pub section: SectionRequest,
+    pub selection: SectionSpectrumSelection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<ProcessingPipeline>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AmplitudeSpectrumResponse {
+    pub schema_version: u32,
+    pub section: SectionRequest,
+    pub selection: SectionSpectrumSelection,
+    pub sample_interval_ms: f32,
+    pub curve: AmplitudeSpectrumCurve,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub processing_label: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -228,6 +291,7 @@ impl ProcessingOperation {
         match self {
             Self::AmplitudeScalar { .. } => "amplitude_scalar",
             Self::TraceRmsNormalize => "trace_rms_normalize",
+            Self::BandpassFilter { .. } => "bandpass_filter",
         }
     }
 
@@ -235,6 +299,7 @@ impl ProcessingOperation {
         match self {
             Self::AmplitudeScalar { .. } => ProcessingLayoutCompatibility::PostStackOnly,
             Self::TraceRmsNormalize => ProcessingLayoutCompatibility::PostStackOnly,
+            Self::BandpassFilter { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
         }
     }
 }

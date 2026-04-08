@@ -630,6 +630,7 @@ pub use contracts::{
     ProcessingJobArtifactKind, ProcessingJobProgress, ProcessingJobState, ProcessingJobStatus,
     ProcessingLayoutCompatibility, ProcessingOperation, ProcessingOperatorScope,
     ProcessingPipeline, ProcessingPipelineFamily, ProcessingPipelineSpec, ProcessingPreset,
+    SegyGeometryCandidate, SegyGeometryOverride, SegyHeaderField, SegyHeaderValueType,
     RunGatherProcessingRequest, RunGatherProcessingResponse, RunProcessingRequest,
     RunProcessingResponse, RunTraceLocalProcessingRequest, RunTraceLocalProcessingResponse,
     SavePipelinePresetRequest, SavePipelinePresetResponse, SectionAxis, SectionColorMap,

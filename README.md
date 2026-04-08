@@ -30,7 +30,8 @@ Today, Ophiolite can:
 
 Today the shared seismic operator family is intentionally narrow:
 
-- current live operators are trace-local conditioning or spectral operators: `amplitude_scalar`, `trace_rms_normalize`, `agc_rms`, `phase_rotation`, `lowpass_filter`, `highpass_filter`, and `bandpass_filter`
+- current live trace-local operators are `amplitude_scalar`, `trace_rms_normalize`, `agc_rms`, `phase_rotation`, `lowpass_filter`, `highpass_filter`, `bandpass_filter`, and same-geometry `volume_arithmetic`
+- geometry-changing post-stack derivation is a separate live family, currently terminal `subvolume crop`, rather than something forced into the trace-local executor
 - section/gather-matrix operators such as `f-k` filtering are a separate future scope, not something to force into the trace-local executor
 - inverse-wavelet operators such as deconvolution are also a separate future scope with different assumptions and validation needs
 

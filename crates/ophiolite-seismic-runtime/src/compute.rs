@@ -1,12 +1,8 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, hash_map::DefaultHasher};
+use std::hash::Hasher;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use rayon::ThreadPool;
-use rayon::ThreadPoolBuilder;
-use rayon::prelude::*;
-use realfft::{ComplexToReal, RealFftPlanner, RealToComplex, num_complex::Complex32};
 
 use crate::error::SeismicStoreError;
 use crate::metadata::{DatasetKind, ProcessingLineage, VolumeMetadata};
@@ -21,8 +17,13 @@ use crate::store::{SectionPlane, StoreHandle, open_store};
 use crate::{
     AmplitudeSpectrumCurve, FrequencyPhaseMode, FrequencyWindowShape, ProcessingOperation,
     ProcessingPipeline, ProcessingPipelineSpec, SectionAxis, SectionSpectrumSelection, SectionView,
-    SeismicLayout, TraceLocalVolumeArithmeticOperator,
+    SeismicLayout, SubvolumeCropOperation, SubvolumeProcessingPipeline,
+    TraceLocalVolumeArithmeticOperator,
 };
+use rayon::ThreadPool;
+use rayon::ThreadPoolBuilder;
+use rayon::prelude::*;
+use realfft::{ComplexToReal, RealFftPlanner, RealToComplex, num_complex::Complex32};
 
 const MAX_SCALAR_FACTOR: f32 = 10.0;
 const MAX_PHASE_ROTATION_DEGREES: f32 = 180.0;
@@ -32,6 +33,7 @@ const MAX_RMS_GAIN: f32 = 1.0e6;
 const SPECTRUM_EPSILON: f32 = 1.0e-12;
 const DIVISION_EPSILON: f32 = 1.0e-8;
 const RUNTIME_VERSION: &str = "ophiolite-seismic-runtime-0.1.0";
+const DEFAULT_PREVIEW_SECTION_PREFIX_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct MaterializeOptions {
@@ -52,6 +54,243 @@ impl Default for MaterializeOptions {
 struct SecondaryTraceMatrix {
     amplitudes: Vec<f32>,
     occupancy: Option<Vec<u8>>,
+}
+
+#[derive(Debug)]
+struct LoadedSourceTile {
+    amplitudes: Vec<f32>,
+    occupancy: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CropIndexBounds {
+    inline_start: usize,
+    inline_end_exclusive: usize,
+    xline_start: usize,
+    xline_end_exclusive: usize,
+    sample_start: usize,
+    sample_end_exclusive: usize,
+}
+
+impl CropIndexBounds {
+    fn output_shape(self) -> [usize; 3] {
+        [
+            self.inline_end_exclusive - self.inline_start,
+            self.xline_end_exclusive - self.xline_start,
+            self.sample_end_exclusive - self.sample_start,
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PreviewSectionPrefixReuse {
+    pub cache_hit: bool,
+    pub reused_prefix_operations: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreviewSectionPrefixCache {
+    max_bytes: usize,
+    current_bytes: usize,
+    access_counter: u64,
+    entries: HashMap<PreviewSectionPrefixCacheKey, PreviewSectionPrefixCacheEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PreviewSectionPrefixCacheKey {
+    store_root_hash: u64,
+    axis: u8,
+    index: usize,
+    prefix_hash: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PreviewSectionPrefixCacheEntry {
+    plane: SectionPlane,
+    bytes: usize,
+    prefix_operations: usize,
+    last_access: u64,
+}
+
+pub struct PreviewSectionSession {
+    handle: StoreHandle,
+    reader: TbvolReader,
+    store_root_hash: u64,
+    prefix_cache: PreviewSectionPrefixCache,
+}
+
+impl Default for PreviewSectionPrefixCache {
+    fn default() -> Self {
+        Self::new(DEFAULT_PREVIEW_SECTION_PREFIX_CACHE_BYTES)
+    }
+}
+
+impl PreviewSectionPrefixCache {
+    pub fn new(max_bytes: usize) -> Self {
+        Self {
+            max_bytes,
+            current_bytes: 0,
+            access_counter: 0,
+            entries: HashMap::new(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn total_bytes(&self) -> usize {
+        self.current_bytes
+    }
+
+    fn next_access(&mut self) -> u64 {
+        self.access_counter = self.access_counter.saturating_add(1);
+        self.access_counter
+    }
+
+    fn longest_prefix_hit(
+        &mut self,
+        store_root_hash: u64,
+        axis: SectionAxis,
+        index: usize,
+        prefix_hashes: &[u64],
+        max_prefix_len: usize,
+    ) -> Result<Option<(SectionPlane, usize)>, SeismicStoreError> {
+        for prefix_len in (1..=max_prefix_len.min(prefix_hashes.len())).rev() {
+            let key = preview_section_prefix_cache_key(
+                store_root_hash,
+                axis,
+                index,
+                prefix_hashes[prefix_len - 1],
+            );
+            let access = self.next_access();
+            if let Some(entry) = self.entries.get_mut(&key) {
+                entry.last_access = access;
+                return Ok(Some((entry.plane.clone(), entry.prefix_operations)));
+            }
+        }
+        Ok(None)
+    }
+
+    fn store_prefix(
+        &mut self,
+        store_root_hash: u64,
+        axis: SectionAxis,
+        index: usize,
+        prefix_len: usize,
+        prefix_hash: u64,
+        plane: &SectionPlane,
+    ) -> Result<(), SeismicStoreError> {
+        if prefix_len == 0 {
+            return Ok(());
+        }
+        let key = preview_section_prefix_cache_key(store_root_hash, axis, index, prefix_hash);
+        let bytes = preview_section_plane_bytes(plane);
+        if bytes > self.max_bytes {
+            return Ok(());
+        }
+        let access = self.next_access();
+        if let Some(existing) = self.entries.remove(&key) {
+            self.current_bytes = self.current_bytes.saturating_sub(existing.bytes);
+        }
+        self.evict_until_fits(bytes);
+        self.entries.insert(
+            key,
+            PreviewSectionPrefixCacheEntry {
+                plane: plane.clone(),
+                bytes,
+                prefix_operations: prefix_len,
+                last_access: access,
+            },
+        );
+        self.current_bytes = self.current_bytes.saturating_add(bytes);
+        Ok(())
+    }
+
+    fn evict_until_fits(&mut self, incoming_bytes: usize) {
+        while self.current_bytes.saturating_add(incoming_bytes) > self.max_bytes {
+            let Some((key, bytes)) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_access)
+                .map(|(key, entry)| (key.clone(), entry.bytes))
+            else {
+                break;
+            };
+            self.entries.remove(&key);
+            self.current_bytes = self.current_bytes.saturating_sub(bytes);
+        }
+    }
+}
+
+impl PreviewSectionSession {
+    pub fn open(store_root: impl AsRef<Path>) -> Result<Self, SeismicStoreError> {
+        Self::open_with_cache_bytes(store_root, DEFAULT_PREVIEW_SECTION_PREFIX_CACHE_BYTES)
+    }
+
+    pub fn open_with_cache_bytes(
+        store_root: impl AsRef<Path>,
+        cache_bytes: usize,
+    ) -> Result<Self, SeismicStoreError> {
+        let handle = open_store(store_root)?;
+        let reader = TbvolReader::open(&handle.root)?;
+        Ok(Self {
+            store_root_hash: preview_store_root_hash(&handle.root),
+            handle,
+            reader,
+            prefix_cache: PreviewSectionPrefixCache::new(cache_bytes),
+        })
+    }
+
+    pub fn preview_section_view(
+        &self,
+        axis: SectionAxis,
+        index: usize,
+        pipeline: &[ProcessingOperation],
+    ) -> Result<SectionView, SeismicStoreError> {
+        validate_pipeline(pipeline)?;
+        let secondary_readers = open_secondary_store_readers(&self.handle, None, pipeline)?;
+        let plane = preview_section_from_tbvol_reader(
+            &self.reader,
+            axis,
+            index,
+            pipeline,
+            &secondary_readers,
+        )?;
+        Ok(self.handle.section_view_from_plane(&plane))
+    }
+
+    pub fn preview_section_view_with_prefix_cache(
+        &mut self,
+        axis: SectionAxis,
+        index: usize,
+        pipeline: &[ProcessingOperation],
+    ) -> Result<(SectionView, PreviewSectionPrefixReuse), SeismicStoreError> {
+        validate_pipeline(pipeline)?;
+        let secondary_readers = open_secondary_store_readers(&self.handle, None, pipeline)?;
+        let (plane, reuse) = preview_section_from_tbvol_reader_with_prefix_cache(
+            &self.reader,
+            self.store_root_hash,
+            axis,
+            index,
+            pipeline,
+            &secondary_readers,
+            &mut self.prefix_cache,
+        )?;
+        Ok((self.handle.section_view_from_plane(&plane), reuse))
+    }
+
+    pub fn cache_entry_count(&self) -> usize {
+        self.prefix_cache.len()
+    }
+
+    pub fn cache_total_bytes(&self) -> usize {
+        self.prefix_cache.total_bytes()
+    }
+
+    pub fn dataset_id(&self) -> ophiolite_seismic::DatasetId {
+        self.handle.dataset_id()
+    }
 }
 
 pub fn validate_pipeline(pipeline: &[ProcessingOperation]) -> Result<(), SeismicStoreError> {
@@ -265,6 +504,62 @@ pub fn validate_processing_pipeline_for_layout(
         ));
     }
     validate_pipeline_for_layout(&pipeline.operations, layout)
+}
+
+pub fn validate_subvolume_processing_pipeline(
+    pipeline: &SubvolumeProcessingPipeline,
+) -> Result<(), SeismicStoreError> {
+    validate_subvolume_processing_pipeline_for_layout(pipeline, SeismicLayout::PostStack3D)
+}
+
+pub fn validate_subvolume_processing_pipeline_for_layout(
+    pipeline: &SubvolumeProcessingPipeline,
+    layout: SeismicLayout,
+) -> Result<(), SeismicStoreError> {
+    if !matches!(
+        layout,
+        SeismicLayout::PostStack3D | SeismicLayout::PostStack2D
+    ) {
+        return Err(SeismicStoreError::Message(format!(
+            "subvolume processing requires post-stack layout, found {:?}",
+            layout
+        )));
+    }
+
+    if let Some(trace_local_pipeline) = pipeline.trace_local_pipeline.as_ref() {
+        validate_processing_pipeline_for_layout(trace_local_pipeline, layout)?;
+    }
+
+    validate_subvolume_crop_operation(&pipeline.crop)
+}
+
+fn validate_subvolume_crop_operation(
+    crop: &SubvolumeCropOperation,
+) -> Result<(), SeismicStoreError> {
+    if crop.inline_min > crop.inline_max {
+        return Err(SeismicStoreError::Message(format!(
+            "crop inline_min must be <= inline_max, found [{}, {}]",
+            crop.inline_min, crop.inline_max
+        )));
+    }
+    if crop.xline_min > crop.xline_max {
+        return Err(SeismicStoreError::Message(format!(
+            "crop xline_min must be <= xline_max, found [{}, {}]",
+            crop.xline_min, crop.xline_max
+        )));
+    }
+    if !crop.z_min_ms.is_finite() || !crop.z_max_ms.is_finite() {
+        return Err(SeismicStoreError::Message(
+            "crop z_min_ms and z_max_ms must be finite".to_string(),
+        ));
+    }
+    if crop.z_min_ms > crop.z_max_ms {
+        return Err(SeismicStoreError::Message(format!(
+            "crop z_min_ms must be <= z_max_ms, found [{}, {}]",
+            crop.z_min_ms, crop.z_max_ms
+        )));
+    }
+    Ok(())
 }
 
 fn validate_pipeline_for_sample_interval(
@@ -494,6 +789,61 @@ pub fn preview_processing_section_view(
     preview_section_view(store_root, axis, index, &pipeline.operations)
 }
 
+pub fn preview_section_view_with_prefix_cache(
+    store_root: impl AsRef<Path>,
+    axis: SectionAxis,
+    index: usize,
+    pipeline: &[ProcessingOperation],
+    cache: &mut PreviewSectionPrefixCache,
+) -> Result<(SectionView, PreviewSectionPrefixReuse), SeismicStoreError> {
+    validate_pipeline(pipeline)?;
+    let handle = open_store(store_root.as_ref())?;
+    let reader = TbvolReader::open(&handle.root)?;
+    let secondary_readers = open_secondary_store_readers(&handle, None, pipeline)?;
+    let (plane, reuse) = preview_section_from_tbvol_reader_with_prefix_cache(
+        &reader,
+        preview_store_root_hash(&handle.root),
+        axis,
+        index,
+        pipeline,
+        &secondary_readers,
+        cache,
+    )?;
+    Ok((handle.section_view_from_plane(&plane), reuse))
+}
+
+pub fn preview_processing_section_view_with_prefix_cache(
+    store_root: impl AsRef<Path>,
+    axis: SectionAxis,
+    index: usize,
+    pipeline: &ProcessingPipeline,
+    cache: &mut PreviewSectionPrefixCache,
+) -> Result<(SectionView, PreviewSectionPrefixReuse), SeismicStoreError> {
+    validate_processing_pipeline(pipeline)?;
+    preview_section_view_with_prefix_cache(store_root, axis, index, &pipeline.operations, cache)
+}
+
+pub fn preview_subvolume_processing_section_view(
+    store_root: impl AsRef<Path>,
+    axis: SectionAxis,
+    index: usize,
+    pipeline: &SubvolumeProcessingPipeline,
+) -> Result<SectionView, SeismicStoreError> {
+    validate_subvolume_processing_pipeline(pipeline)?;
+    let handle = open_store(store_root)?;
+    let reader = TbvolReader::open(&handle.root)?;
+    let crop_bounds = resolve_crop_bounds(reader.volume(), &pipeline.crop)?;
+    let plane = preview_subvolume_section_plane_from_tbvol_reader(
+        &reader,
+        axis,
+        index,
+        pipeline.trace_local_pipeline.as_ref(),
+        &crop_bounds,
+        &handle,
+    )?;
+    Ok(handle.section_view_from_plane(&plane))
+}
+
 pub fn materialize_volume(
     input_store_root: impl AsRef<Path>,
     output_store_root: impl AsRef<Path>,
@@ -578,6 +928,64 @@ pub fn materialize_processing_volume_with_progress<
     open_store(output_root)
 }
 
+pub fn materialize_subvolume_processing_volume(
+    input_store_root: impl AsRef<Path>,
+    output_store_root: impl AsRef<Path>,
+    pipeline: &SubvolumeProcessingPipeline,
+    options: MaterializeOptions,
+) -> Result<StoreHandle, SeismicStoreError> {
+    materialize_subvolume_processing_volume_with_progress(
+        input_store_root,
+        output_store_root,
+        pipeline,
+        options,
+        |_, _| Ok(()),
+    )
+}
+
+pub fn materialize_subvolume_processing_volume_with_progress<
+    F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+>(
+    input_store_root: impl AsRef<Path>,
+    output_store_root: impl AsRef<Path>,
+    pipeline: &SubvolumeProcessingPipeline,
+    options: MaterializeOptions,
+    mut on_progress: F,
+) -> Result<StoreHandle, SeismicStoreError> {
+    validate_subvolume_processing_pipeline(pipeline)?;
+    let handle = open_store(&input_store_root)?;
+    let reader = TbvolReader::open(&handle.root)?;
+    let crop_bounds = resolve_crop_bounds(reader.volume(), &pipeline.crop)?;
+    let volume = derived_subvolume_volume_metadata(
+        reader.volume(),
+        input_store_root.as_ref(),
+        pipeline,
+        crop_bounds,
+        options.created_by.clone(),
+    );
+    let chunk_shape = resolve_chunk_shape(options.chunk_shape, volume.shape);
+    let has_occupancy = reader_has_occupancy(&reader)?;
+    let writer = TbvolWriter::create(&output_store_root, volume, chunk_shape, has_occupancy)?;
+    let output_root = writer.root().to_path_buf();
+    let secondary_readers = match pipeline.trace_local_pipeline.as_ref() {
+        Some(trace_local_pipeline) => open_secondary_store_readers(
+            &handle,
+            Some(reader.tile_geometry().tile_shape()),
+            &trace_local_pipeline.operations,
+        )?,
+        None => HashMap::new(),
+    };
+    materialize_subvolume_from_tbvol_reader_writer_with_progress(
+        &reader,
+        writer,
+        pipeline.trace_local_pipeline.as_ref(),
+        crop_bounds,
+        &secondary_readers,
+        |completed, total| on_progress(completed, total),
+    )?;
+    open_store(output_root)
+}
+
 pub fn preview_section_from_reader<R: VolumeStoreReader>(
     reader: &R,
     axis: SectionAxis,
@@ -597,6 +1005,443 @@ pub fn preview_section_from_reader<R: VolumeStoreReader>(
     let mut plane = section_assembler::read_section_plane(reader, axis, index)?;
     apply_pipeline_to_plane(&mut plane, pipeline)?;
     Ok(plane)
+}
+
+fn preview_subvolume_section_plane_from_tbvol_reader(
+    reader: &TbvolReader,
+    axis: SectionAxis,
+    index: usize,
+    trace_local_pipeline: Option<&ProcessingPipeline>,
+    crop_bounds: &CropIndexBounds,
+    handle: &StoreHandle,
+) -> Result<SectionPlane, SeismicStoreError> {
+    let mut plane = match trace_local_pipeline {
+        Some(pipeline) => {
+            let secondary_readers =
+                open_secondary_store_readers(handle, None, &pipeline.operations)?;
+            preview_section_from_tbvol_reader(
+                reader,
+                axis,
+                index,
+                &pipeline.operations,
+                &secondary_readers,
+            )?
+        }
+        None => section_assembler::read_section_plane(reader, axis, index)?,
+    };
+    crop_section_plane(&mut plane, *crop_bounds)?;
+    Ok(plane)
+}
+
+fn crop_section_plane(
+    plane: &mut SectionPlane,
+    crop_bounds: CropIndexBounds,
+) -> Result<(), SeismicStoreError> {
+    let (section_start, section_end_exclusive, horizontal_start, horizontal_end_exclusive) =
+        match plane.axis {
+            SectionAxis::Inline => (
+                crop_bounds.inline_start,
+                crop_bounds.inline_end_exclusive,
+                crop_bounds.xline_start,
+                crop_bounds.xline_end_exclusive,
+            ),
+            SectionAxis::Xline => (
+                crop_bounds.xline_start,
+                crop_bounds.xline_end_exclusive,
+                crop_bounds.inline_start,
+                crop_bounds.inline_end_exclusive,
+            ),
+        };
+
+    if plane.coordinate_index < section_start || plane.coordinate_index >= section_end_exclusive {
+        return Err(SeismicStoreError::Message(format!(
+            "current {:?} section lies outside the crop window",
+            plane.axis
+        )));
+    }
+
+    let output_traces = horizontal_end_exclusive - horizontal_start;
+    let output_samples = crop_bounds.sample_end_exclusive - crop_bounds.sample_start;
+    let mut cropped = vec![0.0_f32; output_traces * output_samples];
+    for output_trace_index in 0..output_traces {
+        let source_trace_index = horizontal_start + output_trace_index;
+        let source_trace_start = source_trace_index * plane.samples;
+        let output_trace_start = output_trace_index * output_samples;
+        cropped[output_trace_start..output_trace_start + output_samples].copy_from_slice(
+            &plane.amplitudes[source_trace_start + crop_bounds.sample_start
+                ..source_trace_start + crop_bounds.sample_end_exclusive],
+        );
+    }
+
+    plane.coordinate_index -= section_start;
+    plane.traces = output_traces;
+    plane.samples = output_samples;
+    plane.horizontal_axis =
+        plane.horizontal_axis[horizontal_start..horizontal_end_exclusive].to_vec();
+    plane.sample_axis_ms =
+        plane.sample_axis_ms[crop_bounds.sample_start..crop_bounds.sample_end_exclusive].to_vec();
+    plane.amplitudes = cropped;
+    plane.occupancy = plane
+        .occupancy
+        .as_ref()
+        .map(|mask| mask[horizontal_start..horizontal_end_exclusive].to_vec());
+    Ok(())
+}
+
+fn resolve_crop_bounds(
+    volume: &VolumeMetadata,
+    crop: &SubvolumeCropOperation,
+) -> Result<CropIndexBounds, SeismicStoreError> {
+    validate_subvolume_crop_operation(crop)?;
+    let (inline_start, inline_end_exclusive) = resolve_i32_axis_bounds(
+        "inline",
+        &volume.axes.ilines,
+        crop.inline_min,
+        crop.inline_max,
+    )?;
+    let (xline_start, xline_end_exclusive) =
+        resolve_i32_axis_bounds("xline", &volume.axes.xlines, crop.xline_min, crop.xline_max)?;
+    let (sample_start, sample_end_exclusive) = resolve_f32_axis_bounds(
+        "sample",
+        &volume.axes.sample_axis_ms,
+        crop.z_min_ms,
+        crop.z_max_ms,
+    )?;
+
+    if inline_start == 0
+        && inline_end_exclusive == volume.shape[0]
+        && xline_start == 0
+        && xline_end_exclusive == volume.shape[1]
+        && sample_start == 0
+        && sample_end_exclusive == volume.shape[2]
+    {
+        return Err(SeismicStoreError::Message(
+            "crop window must be a strict subset of the source volume".to_string(),
+        ));
+    }
+
+    Ok(CropIndexBounds {
+        inline_start,
+        inline_end_exclusive,
+        xline_start,
+        xline_end_exclusive,
+        sample_start,
+        sample_end_exclusive,
+    })
+}
+
+fn resolve_i32_axis_bounds(
+    label: &str,
+    axis: &[f64],
+    min_value: i32,
+    max_value: i32,
+) -> Result<(usize, usize), SeismicStoreError> {
+    if axis.is_empty() {
+        return Err(SeismicStoreError::Message(format!("{label} axis is empty")));
+    }
+
+    let min_index = axis
+        .iter()
+        .position(|value| (*value).round() as i32 == min_value)
+        .ok_or_else(|| {
+            SeismicStoreError::Message(format!(
+                "crop {label}_min {min_value} does not match a source axis value"
+            ))
+        })?;
+    let max_index = axis
+        .iter()
+        .position(|value| (*value).round() as i32 == max_value)
+        .ok_or_else(|| {
+            SeismicStoreError::Message(format!(
+                "crop {label}_max {max_value} does not match a source axis value"
+            ))
+        })?;
+
+    Ok((
+        min_index.min(max_index),
+        min_index.max(max_index).saturating_add(1),
+    ))
+}
+
+fn resolve_f32_axis_bounds(
+    label: &str,
+    axis: &[f32],
+    min_value: f32,
+    max_value: f32,
+) -> Result<(usize, usize), SeismicStoreError> {
+    if axis.is_empty() {
+        return Err(SeismicStoreError::Message(format!("{label} axis is empty")));
+    }
+
+    let axis_min = axis.iter().copied().fold(f32::INFINITY, f32::min);
+    let axis_max = axis.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    if min_value < axis_min || max_value > axis_max {
+        return Err(SeismicStoreError::Message(format!(
+            "crop {label} bounds [{min_value}, {max_value}] exceed source extent [{axis_min}, {axis_max}]"
+        )));
+    }
+
+    let contained_indexes = axis
+        .iter()
+        .enumerate()
+        .filter_map(|(index, value)| {
+            ((*value >= min_value) && (*value <= max_value)).then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let Some(start) = contained_indexes.first().copied() else {
+        return Err(SeismicStoreError::Message(format!(
+            "crop {label} bounds [{min_value}, {max_value}] do not contain any source samples"
+        )));
+    };
+    let end_exclusive = contained_indexes
+        .last()
+        .copied()
+        .expect("contained indexes should have at least one element")
+        + 1;
+    Ok((start, end_exclusive))
+}
+
+fn derived_subvolume_volume_metadata(
+    input: &VolumeMetadata,
+    parent_store: &Path,
+    pipeline: &SubvolumeProcessingPipeline,
+    crop_bounds: CropIndexBounds,
+    created_by: String,
+) -> VolumeMetadata {
+    VolumeMetadata {
+        kind: DatasetKind::Derived,
+        source: input.source.clone(),
+        shape: crop_bounds.output_shape(),
+        axes: crate::metadata::VolumeAxes {
+            ilines: input.axes.ilines[crop_bounds.inline_start..crop_bounds.inline_end_exclusive]
+                .to_vec(),
+            xlines: input.axes.xlines[crop_bounds.xline_start..crop_bounds.xline_end_exclusive]
+                .to_vec(),
+            sample_axis_ms: input.axes.sample_axis_ms
+                [crop_bounds.sample_start..crop_bounds.sample_end_exclusive]
+                .to_vec(),
+        },
+        coordinate_reference_binding: input.coordinate_reference_binding.clone(),
+        spatial: input.spatial.clone(),
+        created_by,
+        processing_lineage: Some(ProcessingLineage {
+            parent_store: parent_store.to_path_buf(),
+            pipeline: ProcessingPipelineSpec::Subvolume {
+                pipeline: pipeline.clone(),
+            },
+            runtime_version: RUNTIME_VERSION.to_string(),
+            created_at_unix_s: unix_timestamp_s(),
+        }),
+    }
+}
+
+fn materialize_subvolume_from_tbvol_reader_writer_with_progress<
+    W: VolumeStoreWriter,
+    F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+>(
+    reader: &TbvolReader,
+    writer: W,
+    trace_local_pipeline: Option<&ProcessingPipeline>,
+    crop_bounds: CropIndexBounds,
+    secondary_readers: &HashMap<String, TbvolReader>,
+    mut on_progress: F,
+) -> Result<(), SeismicStoreError> {
+    if let Some(pipeline) = trace_local_pipeline {
+        validate_processing_pipeline(pipeline)?;
+    }
+
+    let output_geometry = writer.tile_geometry().clone();
+    let output_tile_shape = output_geometry.tile_shape();
+    let source_sample_count = reader.volume().shape[2];
+    let sample_interval_ms = reader.volume().source.sample_interval_us as f32 / 1000.0;
+    let total_tiles = output_geometry.tile_count();
+    let trace_count = output_tile_shape[0] * output_tile_shape[1];
+    let cropped_sample_count = output_tile_shape[2];
+    let mut completed_tiles = 0;
+
+    for tile in output_geometry.iter_tiles() {
+        let effective = output_geometry.effective_tile_shape(tile);
+        let origin = output_geometry.tile_origin(tile);
+        let source_inline_start = crop_bounds.inline_start + origin[0];
+        let source_xline_start = crop_bounds.xline_start + origin[1];
+
+        let primary_full = assemble_source_trace_matrix(
+            reader,
+            source_inline_start,
+            source_xline_start,
+            output_tile_shape,
+            [effective[0], effective[1]],
+            0,
+            source_sample_count,
+        )?;
+
+        let occupancy = primary_full.occupancy.clone();
+        let amplitudes = if let Some(pipeline) = trace_local_pipeline {
+            let mut full_trace_amplitudes = primary_full.amplitudes;
+            let secondary_inputs = if pipeline_requires_external_volume_inputs(&pipeline.operations)
+            {
+                Some(load_secondary_trace_matrices_for_crop_tile(
+                    secondary_readers,
+                    source_inline_start,
+                    source_xline_start,
+                    output_tile_shape,
+                    [effective[0], effective[1]],
+                    0,
+                    source_sample_count,
+                )?)
+            } else {
+                None
+            };
+            apply_pipeline_to_traces_internal(
+                &mut full_trace_amplitudes,
+                trace_count,
+                source_sample_count,
+                sample_interval_ms,
+                occupancy.as_deref(),
+                &pipeline.operations,
+                secondary_inputs.as_ref(),
+            )?;
+            crop_trace_matrix_samples(
+                &full_trace_amplitudes,
+                trace_count,
+                source_sample_count,
+                crop_bounds.sample_start,
+                crop_bounds.sample_end_exclusive,
+            )
+        } else {
+            crop_trace_matrix_samples(
+                &primary_full.amplitudes,
+                trace_count,
+                source_sample_count,
+                crop_bounds.sample_start,
+                crop_bounds.sample_end_exclusive,
+            )
+        };
+
+        debug_assert_eq!(amplitudes.len(), trace_count * cropped_sample_count);
+        writer.write_tile(tile, &amplitudes)?;
+        if let Some(mask) = occupancy.as_deref() {
+            writer.write_tile_occupancy(tile, mask)?;
+        }
+        completed_tiles += 1;
+        on_progress(completed_tiles, total_tiles)?;
+    }
+
+    writer.finalize()
+}
+
+fn load_secondary_trace_matrices_for_crop_tile(
+    readers: &HashMap<String, TbvolReader>,
+    source_inline_start: usize,
+    source_xline_start: usize,
+    tile_shape: [usize; 3],
+    effective_trace_shape: [usize; 2],
+    sample_start: usize,
+    sample_end_exclusive: usize,
+) -> Result<HashMap<String, SecondaryTraceMatrix>, SeismicStoreError> {
+    let mut inputs = HashMap::with_capacity(readers.len());
+    for (store_path, reader) in readers {
+        let matrix = assemble_source_trace_matrix(
+            reader,
+            source_inline_start,
+            source_xline_start,
+            tile_shape,
+            effective_trace_shape,
+            sample_start,
+            sample_end_exclusive,
+        )?;
+        inputs.insert(
+            store_path.clone(),
+            SecondaryTraceMatrix {
+                amplitudes: matrix.amplitudes,
+                occupancy: matrix.occupancy,
+            },
+        );
+    }
+    Ok(inputs)
+}
+
+fn assemble_source_trace_matrix(
+    reader: &TbvolReader,
+    source_inline_start: usize,
+    source_xline_start: usize,
+    tile_shape: [usize; 3],
+    effective_trace_shape: [usize; 2],
+    sample_start: usize,
+    sample_end_exclusive: usize,
+) -> Result<LoadedSourceTile, SeismicStoreError> {
+    let sample_count = sample_end_exclusive.saturating_sub(sample_start);
+    let trace_count = tile_shape[0] * tile_shape[1];
+    let mut amplitudes = vec![0.0_f32; trace_count * sample_count];
+    let mut occupancy = vec![0_u8; trace_count];
+    let mut has_occupancy = false;
+    let mut cache = HashMap::<TileCoord, LoadedSourceTile>::new();
+    let source_tile_shape = reader.tile_geometry().tile_shape();
+
+    for local_i in 0..effective_trace_shape[0] {
+        for local_x in 0..effective_trace_shape[1] {
+            let source_inline = source_inline_start + local_i;
+            let source_xline = source_xline_start + local_x;
+            let source_tile = TileCoord {
+                tile_i: source_inline / source_tile_shape[0],
+                tile_x: source_xline / source_tile_shape[1],
+            };
+            let tile = if let Some(tile) = cache.get(&source_tile) {
+                tile
+            } else {
+                let loaded = LoadedSourceTile {
+                    amplitudes: reader.read_tile(source_tile)?.into_owned(),
+                    occupancy: reader
+                        .read_tile_occupancy(source_tile)?
+                        .map(|mask| mask.into_owned()),
+                };
+                cache.entry(source_tile).or_insert(loaded)
+            };
+
+            let source_local_i = source_inline % source_tile_shape[0];
+            let source_local_x = source_xline % source_tile_shape[1];
+            let source_trace_start =
+                ((source_local_i * source_tile_shape[1]) + source_local_x) * source_tile_shape[2];
+            let destination_trace_index = (local_i * tile_shape[1]) + local_x;
+            let destination_trace_start = destination_trace_index * sample_count;
+            amplitudes[destination_trace_start..destination_trace_start + sample_count]
+                .copy_from_slice(
+                    &tile.amplitudes[source_trace_start + sample_start
+                        ..source_trace_start + sample_end_exclusive],
+                );
+            has_occupancy |= tile.occupancy.is_some();
+            occupancy[destination_trace_index] = tile
+                .occupancy
+                .as_ref()
+                .and_then(|mask| mask.get(source_local_i * source_tile_shape[1] + source_local_x))
+                .copied()
+                .unwrap_or(1);
+        }
+    }
+
+    Ok(LoadedSourceTile {
+        amplitudes,
+        occupancy: has_occupancy.then_some(occupancy),
+    })
+}
+
+fn crop_trace_matrix_samples(
+    source: &[f32],
+    traces: usize,
+    source_samples: usize,
+    sample_start: usize,
+    sample_end_exclusive: usize,
+) -> Vec<f32> {
+    let output_samples = sample_end_exclusive.saturating_sub(sample_start);
+    let mut cropped = vec![0.0_f32; traces * output_samples];
+    for trace_index in 0..traces {
+        let source_trace_start = trace_index * source_samples;
+        let destination_trace_start = trace_index * output_samples;
+        cropped[destination_trace_start..destination_trace_start + output_samples].copy_from_slice(
+            &source[source_trace_start + sample_start..source_trace_start + sample_end_exclusive],
+        );
+    }
+    cropped
 }
 
 pub fn materialize_from_reader_writer<R: VolumeStoreReader, W: VolumeStoreWriter>(
@@ -707,6 +1552,71 @@ fn preview_section_from_tbvol_reader(
         secondary_inputs.as_ref(),
     )?;
     Ok(plane)
+}
+
+fn preview_section_from_tbvol_reader_with_prefix_cache(
+    reader: &TbvolReader,
+    store_root_hash: u64,
+    axis: SectionAxis,
+    index: usize,
+    pipeline: &[ProcessingOperation],
+    secondary_readers: &HashMap<String, TbvolReader>,
+    cache: &mut PreviewSectionPrefixCache,
+) -> Result<(SectionPlane, PreviewSectionPrefixReuse), SeismicStoreError> {
+    validate_pipeline(pipeline)?;
+    if pipeline_requires_external_volume_inputs(pipeline) {
+        let plane =
+            preview_section_from_tbvol_reader(reader, axis, index, pipeline, secondary_readers)?;
+        return Ok((plane, PreviewSectionPrefixReuse::default()));
+    }
+
+    let max_cacheable_prefix_len = pipeline
+        .iter()
+        .take_while(|operation| {
+            operation
+                .dependency_profile()
+                .same_section_ephemeral_reuse_safe
+        })
+        .count();
+    let prefix_hashes = preview_prefix_hashes(pipeline);
+
+    let mut reuse = PreviewSectionPrefixReuse::default();
+    let mut plane = if let Some((cached_plane, prefix_len)) = cache.longest_prefix_hit(
+        store_root_hash,
+        axis,
+        index,
+        &prefix_hashes,
+        max_cacheable_prefix_len,
+    )? {
+        reuse.cache_hit = true;
+        reuse.reused_prefix_operations = prefix_len;
+        cached_plane
+    } else {
+        section_assembler::read_section_plane(reader, axis, index)?
+    };
+
+    if reuse.cache_hit {
+        if reuse.reused_prefix_operations < pipeline.len() {
+            apply_pipeline_to_plane(&mut plane, &pipeline[reuse.reused_prefix_operations..])?;
+        }
+    } else {
+        for prefix_len in 1..=pipeline.len() {
+            let operation = &pipeline[prefix_len - 1];
+            apply_pipeline_to_plane(&mut plane, std::slice::from_ref(operation))?;
+            if prefix_len <= max_cacheable_prefix_len {
+                cache.store_prefix(
+                    store_root_hash,
+                    axis,
+                    index,
+                    prefix_len,
+                    prefix_hashes[prefix_len - 1],
+                    &plane,
+                )?;
+            }
+        }
+    }
+
+    Ok((plane, reuse))
 }
 
 fn materialize_from_tbvol_reader_writer_with_progress<
@@ -1009,6 +1919,131 @@ fn apply_volume_arithmetic(
         (TraceLocalVolumeArithmeticOperator::Add, None)
         | (TraceLocalVolumeArithmeticOperator::Subtract, None) => {}
     }
+}
+
+fn preview_section_prefix_cache_key(
+    store_root_hash: u64,
+    axis: SectionAxis,
+    index: usize,
+    prefix_hash: u64,
+) -> PreviewSectionPrefixCacheKey {
+    PreviewSectionPrefixCacheKey {
+        store_root_hash,
+        axis: match axis {
+            SectionAxis::Inline => 0,
+            SectionAxis::Xline => 1,
+        },
+        index,
+        prefix_hash,
+    }
+}
+
+fn preview_store_root_hash(store_root: &Path) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    hasher.write(store_root.as_os_str().to_string_lossy().as_bytes());
+    hasher.finish()
+}
+
+fn preview_prefix_hashes(pipeline: &[ProcessingOperation]) -> Vec<u64> {
+    let mut hasher = DefaultHasher::new();
+    let mut hashes = Vec::with_capacity(pipeline.len());
+    for operation in pipeline {
+        hash_processing_operation(&mut hasher, operation);
+        hashes.push(hasher.finish());
+    }
+    hashes
+}
+
+fn hash_processing_operation(hasher: &mut DefaultHasher, operation: &ProcessingOperation) {
+    match operation {
+        ProcessingOperation::AmplitudeScalar { factor } => {
+            hasher.write_u8(0);
+            hasher.write_u32(factor.to_bits());
+        }
+        ProcessingOperation::TraceRmsNormalize => {
+            hasher.write_u8(1);
+        }
+        ProcessingOperation::AgcRms { window_ms } => {
+            hasher.write_u8(2);
+            hasher.write_u32(window_ms.to_bits());
+        }
+        ProcessingOperation::PhaseRotation { angle_degrees } => {
+            hasher.write_u8(3);
+            hasher.write_u32(angle_degrees.to_bits());
+        }
+        ProcessingOperation::LowpassFilter {
+            f3_hz,
+            f4_hz,
+            phase,
+            window,
+        } => {
+            hasher.write_u8(4);
+            hasher.write_u32(f3_hz.to_bits());
+            hasher.write_u32(f4_hz.to_bits());
+            hasher.write_u8(match phase {
+                FrequencyPhaseMode::Zero => 0,
+            });
+            hasher.write_u8(match window {
+                FrequencyWindowShape::CosineTaper => 0,
+            });
+        }
+        ProcessingOperation::HighpassFilter {
+            f1_hz,
+            f2_hz,
+            phase,
+            window,
+        } => {
+            hasher.write_u8(5);
+            hasher.write_u32(f1_hz.to_bits());
+            hasher.write_u32(f2_hz.to_bits());
+            hasher.write_u8(match phase {
+                FrequencyPhaseMode::Zero => 0,
+            });
+            hasher.write_u8(match window {
+                FrequencyWindowShape::CosineTaper => 0,
+            });
+        }
+        ProcessingOperation::BandpassFilter {
+            f1_hz,
+            f2_hz,
+            f3_hz,
+            f4_hz,
+            phase,
+            window,
+        } => {
+            hasher.write_u8(6);
+            hasher.write_u32(f1_hz.to_bits());
+            hasher.write_u32(f2_hz.to_bits());
+            hasher.write_u32(f3_hz.to_bits());
+            hasher.write_u32(f4_hz.to_bits());
+            hasher.write_u8(match phase {
+                FrequencyPhaseMode::Zero => 0,
+            });
+            hasher.write_u8(match window {
+                FrequencyWindowShape::CosineTaper => 0,
+            });
+        }
+        ProcessingOperation::VolumeArithmetic {
+            operator,
+            secondary_store_path,
+        } => {
+            hasher.write_u8(7);
+            hasher.write_u8(match operator {
+                TraceLocalVolumeArithmeticOperator::Add => 0,
+                TraceLocalVolumeArithmeticOperator::Subtract => 1,
+                TraceLocalVolumeArithmeticOperator::Multiply => 2,
+                TraceLocalVolumeArithmeticOperator::Divide => 3,
+            });
+            hasher.write(secondary_store_path.as_bytes());
+        }
+    }
+}
+
+fn preview_section_plane_bytes(plane: &SectionPlane) -> usize {
+    plane.amplitudes.len() * std::mem::size_of::<f32>()
+        + plane.sample_axis_ms.len() * std::mem::size_of::<f32>()
+        + plane.horizontal_axis.len() * std::mem::size_of::<f64>()
+        + plane.occupancy.as_ref().map_or(0, Vec::len)
 }
 
 pub fn amplitude_spectrum_from_plane(
@@ -1772,6 +2807,8 @@ fn derived_volume_metadata(
         source: input.source.clone(),
         shape: input.shape,
         axes: input.axes.clone(),
+        coordinate_reference_binding: input.coordinate_reference_binding.clone(),
+        spatial: input.spatial.clone(),
         created_by,
         processing_lineage: Some(ProcessingLineage {
             parent_store: parent_store.to_path_buf(),
@@ -1796,8 +2833,8 @@ fn reader_has_occupancy<R: VolumeStoreReader>(reader: &R) -> Result<bool, Seismi
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ProcessingOperatorScope;
     use crate::SectionAxis;
+    use crate::{ProcessingOperatorScope, ProcessingSampleDependency, ProcessingSpatialDependency};
     use std::collections::HashMap;
 
     #[test]
@@ -1922,6 +2959,68 @@ mod tests {
         for operation in operations {
             assert_eq!(operation.scope(), ProcessingOperatorScope::TraceLocal);
         }
+    }
+
+    #[test]
+    fn dependency_profiles_distinguish_pointwise_windowed_and_whole_trace_ops() {
+        let scalar = ProcessingOperation::AmplitudeScalar { factor: 1.0 }.dependency_profile();
+        assert_eq!(
+            scalar.sample_dependency,
+            ProcessingSampleDependency::Pointwise
+        );
+        assert_eq!(
+            scalar.spatial_dependency,
+            ProcessingSpatialDependency::SingleTrace
+        );
+        assert!(scalar.same_section_ephemeral_reuse_safe);
+
+        let agc = ProcessingOperation::AgcRms { window_ms: 200.0 }.dependency_profile();
+        assert_eq!(
+            agc.sample_dependency,
+            ProcessingSampleDependency::BoundedWindow {
+                window_ms_hint: 200.0
+            }
+        );
+        assert_eq!(
+            agc.spatial_dependency,
+            ProcessingSpatialDependency::SingleTrace
+        );
+
+        let bandpass = ProcessingOperation::BandpassFilter {
+            f1_hz: 5.0,
+            f2_hz: 10.0,
+            f3_hz: 30.0,
+            f4_hz: 40.0,
+            phase: FrequencyPhaseMode::Zero,
+            window: FrequencyWindowShape::CosineTaper,
+        }
+        .dependency_profile();
+        assert_eq!(
+            bandpass.sample_dependency,
+            ProcessingSampleDependency::WholeTrace
+        );
+        assert_eq!(
+            bandpass.spatial_dependency,
+            ProcessingSpatialDependency::SingleTrace
+        );
+    }
+
+    #[test]
+    fn volume_arithmetic_dependency_profile_marks_external_input() {
+        let profile = ProcessingOperation::VolumeArithmetic {
+            operator: TraceLocalVolumeArithmeticOperator::Add,
+            secondary_store_path: "secondary.tbvol".to_string(),
+        }
+        .dependency_profile();
+        assert_eq!(
+            profile.sample_dependency,
+            ProcessingSampleDependency::Pointwise
+        );
+        assert_eq!(
+            profile.spatial_dependency,
+            ProcessingSpatialDependency::ExternalVolumePointwise
+        );
+        assert!(profile.same_section_ephemeral_reuse_safe);
     }
 
     #[test]

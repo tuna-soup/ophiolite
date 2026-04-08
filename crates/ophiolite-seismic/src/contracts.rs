@@ -39,6 +39,10 @@ pub struct VolumeDescriptor {
     pub chunk_shape: [usize; 3],
     pub sample_interval_ms: f32,
     pub geometry: GeometryDescriptor,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_reference_binding: Option<CoordinateReferenceBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spatial: Option<SurveySpatialDescriptor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -60,6 +64,77 @@ pub struct GeometrySummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gather_axis: Option<AxisSummaryF32>,
     pub provenance: GeometryProvenanceSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct CoordinateReferenceDescriptor {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub geodetic_datum: Option<String>,
+    pub unit: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum CoordinateReferenceSource {
+    Header,
+    ImportManifest,
+    UserOverride,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct CoordinateReferenceBinding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detected: Option<CoordinateReferenceDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective: Option<CoordinateReferenceDescriptor>,
+    pub source: CoordinateReferenceSource,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProjectedPoint2 {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProjectedVector2 {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProjectedPolygon2 {
+    pub exterior: Vec<ProjectedPoint2>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SurveyGridTransform {
+    pub origin: ProjectedPoint2,
+    pub inline_basis: ProjectedVector2,
+    pub xline_basis: ProjectedVector2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SurveySpatialAvailability {
+    Available,
+    Partial,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SurveySpatialDescriptor {
+    pub coordinate_reference: Option<CoordinateReferenceDescriptor>,
+    pub grid_transform: Option<SurveyGridTransform>,
+    pub footprint: Option<ProjectedPolygon2>,
+    pub availability: SurveySpatialAvailability,
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -348,6 +423,54 @@ impl ProcessingOperatorScope {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ProcessingSampleDependency {
+    Pointwise,
+    BoundedWindow { window_ms_hint: f32 },
+    WholeTrace,
+}
+
+impl ProcessingSampleDependency {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pointwise => "pointwise",
+            Self::BoundedWindow { .. } => "bounded_window",
+            Self::WholeTrace => "whole_trace",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessingSpatialDependency {
+    SingleTrace,
+    SectionNeighborhood,
+    GatherNeighborhood,
+    ExternalVolumePointwise,
+    Global,
+}
+
+impl ProcessingSpatialDependency {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::SingleTrace => "single_trace",
+            Self::SectionNeighborhood => "section_neighborhood",
+            Self::GatherNeighborhood => "gather_neighborhood",
+            Self::ExternalVolumePointwise => "external_volume_pointwise",
+            Self::Global => "global",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProcessingOperatorDependencyProfile {
+    pub deterministic: bool,
+    pub sample_dependency: ProcessingSampleDependency,
+    pub spatial_dependency: ProcessingSpatialDependency,
+    pub inline_radius: usize,
+    pub crossline_radius: usize,
+    pub same_section_ephemeral_reuse_safe: bool,
+}
+
 impl TraceLocalProcessingOperation {
     pub fn operator_id(&self) -> &'static str {
         match self {
@@ -387,6 +510,56 @@ impl TraceLocalProcessingOperation {
             Self::VolumeArithmetic { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
         }
     }
+
+    pub fn dependency_profile(&self) -> ProcessingOperatorDependencyProfile {
+        match self {
+            Self::AmplitudeScalar { .. } => ProcessingOperatorDependencyProfile {
+                deterministic: true,
+                sample_dependency: ProcessingSampleDependency::Pointwise,
+                spatial_dependency: ProcessingSpatialDependency::SingleTrace,
+                inline_radius: 0,
+                crossline_radius: 0,
+                same_section_ephemeral_reuse_safe: true,
+            },
+            Self::TraceRmsNormalize => ProcessingOperatorDependencyProfile {
+                deterministic: true,
+                sample_dependency: ProcessingSampleDependency::WholeTrace,
+                spatial_dependency: ProcessingSpatialDependency::SingleTrace,
+                inline_radius: 0,
+                crossline_radius: 0,
+                same_section_ephemeral_reuse_safe: true,
+            },
+            Self::AgcRms { window_ms } => ProcessingOperatorDependencyProfile {
+                deterministic: true,
+                sample_dependency: ProcessingSampleDependency::BoundedWindow {
+                    window_ms_hint: *window_ms,
+                },
+                spatial_dependency: ProcessingSpatialDependency::SingleTrace,
+                inline_radius: 0,
+                crossline_radius: 0,
+                same_section_ephemeral_reuse_safe: true,
+            },
+            Self::PhaseRotation { .. }
+            | Self::LowpassFilter { .. }
+            | Self::HighpassFilter { .. }
+            | Self::BandpassFilter { .. } => ProcessingOperatorDependencyProfile {
+                deterministic: true,
+                sample_dependency: ProcessingSampleDependency::WholeTrace,
+                spatial_dependency: ProcessingSpatialDependency::SingleTrace,
+                inline_radius: 0,
+                crossline_radius: 0,
+                same_section_ephemeral_reuse_safe: true,
+            },
+            Self::VolumeArithmetic { .. } => ProcessingOperatorDependencyProfile {
+                deterministic: true,
+                sample_dependency: ProcessingSampleDependency::Pointwise,
+                spatial_dependency: ProcessingSpatialDependency::ExternalVolumePointwise,
+                inline_radius: 0,
+                crossline_radius: 0,
+                same_section_ephemeral_reuse_safe: true,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -402,6 +575,33 @@ pub struct TraceLocalProcessingPipeline {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub operations: Vec<TraceLocalProcessingOperation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SubvolumeCropOperation {
+    pub inline_min: i32,
+    pub inline_max: i32,
+    pub xline_min: i32,
+    pub xline_max: i32,
+    pub z_min_ms: f32,
+    pub z_max_ms: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SubvolumeProcessingPipeline {
+    #[serde(default = "default_pipeline_schema_version")]
+    pub schema_version: u32,
+    #[serde(default = "default_pipeline_revision")]
+    pub revision: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_local_pipeline: Option<TraceLocalProcessingPipeline>,
+    pub crop: SubvolumeCropOperation,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -492,6 +692,7 @@ pub struct GatherProcessingPipeline {
 #[ts(rename_all = "snake_case")]
 pub enum ProcessingPipelineFamily {
     TraceLocal,
+    Subvolume,
     Gather,
 }
 
@@ -502,6 +703,9 @@ pub enum ProcessingPipelineSpec {
     TraceLocal {
         pipeline: TraceLocalProcessingPipeline,
     },
+    Subvolume {
+        pipeline: SubvolumeProcessingPipeline,
+    },
     Gather {
         pipeline: GatherProcessingPipeline,
     },
@@ -511,6 +715,7 @@ impl ProcessingPipelineSpec {
     pub fn family(&self) -> ProcessingPipelineFamily {
         match self {
             Self::TraceLocal { .. } => ProcessingPipelineFamily::TraceLocal,
+            Self::Subvolume { .. } => ProcessingPipelineFamily::Subvolume,
             Self::Gather { .. } => ProcessingPipelineFamily::Gather,
         }
     }
@@ -854,9 +1059,57 @@ pub struct DatasetSummary {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SegyHeaderValueType {
+    I16,
+    I32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyHeaderField {
+    pub start_byte: u16,
+    pub value_type: SegyHeaderValueType,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyGeometryOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inline_3d: Option<SegyHeaderField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crossline_3d: Option<SegyHeaderField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_axis: Option<SegyHeaderField>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyGeometryCandidate {
+    pub label: String,
+    pub geometry: SegyGeometryOverride,
+    pub classification: String,
+    pub stacking_state: String,
+    pub organization: String,
+    pub layout: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gather_axis_kind: Option<String>,
+    pub suggested_action: SuggestedImportAction,
+    pub inline_count: usize,
+    pub crossline_count: usize,
+    pub third_axis_count: usize,
+    pub observed_trace_count: usize,
+    pub expected_trace_count: usize,
+    pub completeness_ratio: f64,
+    pub auto_selectable: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SurveyPreflightRequest {
     pub schema_version: u32,
     pub input_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_override: Option<SegyGeometryOverride>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -875,6 +1128,11 @@ pub struct SurveyPreflightResponse {
     pub observed_trace_count: usize,
     pub expected_trace_count: usize,
     pub completeness_ratio: f64,
+    pub resolved_geometry: SegyGeometryOverride,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_geometry_override: Option<SegyGeometryOverride>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub geometry_candidates: Vec<SegyGeometryCandidate>,
     pub notes: Vec<String>,
 }
 
@@ -883,6 +1141,8 @@ pub struct ImportDatasetRequest {
     pub schema_version: u32,
     pub input_path: String,
     pub output_store_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_override: Option<SegyGeometryOverride>,
     #[serde(default)]
     pub overwrite_existing: bool,
 }
@@ -956,6 +1216,21 @@ pub struct PreviewTraceLocalProcessingResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PreviewSubvolumeProcessingRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    pub section: SectionRequest,
+    pub pipeline: SubvolumeProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PreviewSubvolumeProcessingResponse {
+    pub schema_version: u32,
+    pub preview: PreviewView,
+    pub pipeline: SubvolumeProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct RunTraceLocalProcessingRequest {
     pub schema_version: u32,
     pub store_path: String,
@@ -970,6 +1245,23 @@ pub struct RunTraceLocalProcessingRequest {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct RunTraceLocalProcessingResponse {
+    pub schema_version: u32,
+    pub job: ProcessingJobStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RunSubvolumeProcessingRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_store_path: Option<String>,
+    #[serde(default)]
+    pub overwrite_existing: bool,
+    pub pipeline: SubvolumeProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RunSubvolumeProcessingResponse {
     pub schema_version: u32,
     pub job: ProcessingJobStatus,
 }

@@ -11,13 +11,18 @@ mod storage;
 mod store;
 
 pub use compute::{
-    MaterializeOptions, amplitude_spectrum_from_plane, amplitude_spectrum_from_reader,
+    MaterializeOptions, PreviewSectionPrefixCache, PreviewSectionPrefixReuse,
+    PreviewSectionSession, amplitude_spectrum_from_plane, amplitude_spectrum_from_reader,
     amplitude_spectrum_from_store, apply_pipeline_to_plane, apply_pipeline_to_traces,
     materialize_from_reader_writer, materialize_from_reader_writer_with_progress,
-    materialize_processing_volume, materialize_processing_volume_with_progress, materialize_volume,
-    preview_processing_section_plane, preview_processing_section_view, preview_section_from_reader,
-    preview_section_plane, preview_section_view, validate_pipeline, validate_pipeline_for_layout,
+    materialize_processing_volume, materialize_processing_volume_with_progress,
+    materialize_subvolume_processing_volume, materialize_subvolume_processing_volume_with_progress,
+    materialize_volume, preview_processing_section_plane, preview_processing_section_view,
+    preview_processing_section_view_with_prefix_cache, preview_section_from_reader,
+    preview_section_plane, preview_section_view, preview_section_view_with_prefix_cache,
+    preview_subvolume_processing_section_view, validate_pipeline, validate_pipeline_for_layout,
     validate_processing_pipeline, validate_processing_pipeline_for_layout,
+    validate_subvolume_processing_pipeline, validate_subvolume_processing_pipeline_for_layout,
 };
 pub use error::SeismicStoreError;
 pub use gather_processing::{
@@ -36,25 +41,31 @@ pub use metadata::{
 };
 pub use ophiolite_seismic::{
     AmplitudeSpectrumCurve, AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, AxisSummaryF32,
-    AxisSummaryI32, CancelProcessingJobRequest, CancelProcessingJobResponse, DatasetId,
-    DeletePipelinePresetRequest, DeletePipelinePresetResponse, FrequencyPhaseMode,
+    AxisSummaryI32, CancelProcessingJobRequest, CancelProcessingJobResponse,
+    CoordinateReferenceBinding, CoordinateReferenceDescriptor, CoordinateReferenceSource,
+    DatasetId, DeletePipelinePresetRequest, DeletePipelinePresetResponse, FrequencyPhaseMode,
     FrequencyWindowShape, GatherAxisKind, GatherInterpolationMode, GatherPreviewView, GatherProbe,
     GatherProbeChanged, GatherProcessingOperation, GatherProcessingPipeline, GatherRequest,
     GatherSampleDomain, GatherSelector, GatherView, GatherViewport, GatherViewportChanged,
     GeometryDescriptor, GeometryProvenanceSummary, GeometrySummary, GetProcessingJobRequest,
     GetProcessingJobResponse, InterpretationPoint, ListPipelinePresetsResponse,
     PreviewGatherProcessingRequest, PreviewGatherProcessingResponse, PreviewProcessingRequest,
-    PreviewProcessingResponse, PreviewResponse, PreviewTraceLocalProcessingRequest,
+    PreviewProcessingResponse, PreviewResponse, PreviewSubvolumeProcessingRequest,
+    PreviewSubvolumeProcessingResponse, PreviewTraceLocalProcessingRequest,
     PreviewTraceLocalProcessingResponse, PreviewView, ProcessingJobProgress, ProcessingJobState,
     ProcessingJobStatus, ProcessingLayoutCompatibility, ProcessingOperation,
-    ProcessingOperatorScope, ProcessingPipeline, ProcessingPipelineFamily, ProcessingPipelineSpec,
-    ProcessingPreset, RunGatherProcessingRequest, RunGatherProcessingResponse,
-    RunProcessingRequest, RunProcessingResponse, RunTraceLocalProcessingRequest,
-    RunTraceLocalProcessingResponse, SavePipelinePresetRequest, SavePipelinePresetResponse,
-    SectionAxis, SectionCoordinate, SectionDisplayDefaults, SectionMetadata, SectionProbe,
-    SectionProbeChanged, SectionRenderMode, SectionRequest, SectionSpectrumSelection,
-    SectionTileRequest, SectionUnits, SectionView, SectionViewport, SectionViewportChanged,
-    SeismicLayout, SemblancePanel, TraceLocalProcessingOperation, TraceLocalProcessingPipeline,
+    ProcessingOperatorDependencyProfile, ProcessingOperatorScope, ProcessingPipeline,
+    ProcessingPipelineFamily, ProcessingPipelineSpec, ProcessingPreset, ProcessingSampleDependency,
+    ProcessingSpatialDependency, ProjectedPoint2, ProjectedPolygon2, ProjectedVector2,
+    RunGatherProcessingRequest, RunGatherProcessingResponse, RunProcessingRequest,
+    RunProcessingResponse, RunSubvolumeProcessingRequest, RunSubvolumeProcessingResponse,
+    RunTraceLocalProcessingRequest, RunTraceLocalProcessingResponse, SavePipelinePresetRequest,
+    SavePipelinePresetResponse, SectionAxis, SectionCoordinate, SectionDisplayDefaults,
+    SectionMetadata, SectionProbe, SectionProbeChanged, SectionRenderMode, SectionRequest,
+    SectionSpectrumSelection, SectionTileRequest, SectionUnits, SectionView, SectionViewport,
+    SectionViewportChanged, SeismicLayout, SemblancePanel, SubvolumeCropOperation,
+    SubvolumeProcessingPipeline, SurveyGridTransform, SurveySpatialAvailability,
+    SurveySpatialDescriptor, TraceLocalProcessingOperation, TraceLocalProcessingPipeline,
     TraceLocalProcessingPreset, TraceLocalVolumeArithmeticOperator, VelocityAutopickParameters,
     VelocityFunctionEstimate, VelocityFunctionSource, VelocityPickStrategy, VelocityScanRequest,
     VelocityScanResponse, VolumeDescriptor,
@@ -67,6 +78,7 @@ pub use prestack_store::{
     materialize_gather_processing_store, materialize_gather_processing_store_with_progress,
     open_prestack_store, preview_gather_processing_view,
     read_gather_plane as read_prestack_gather_plane,
+    set_prestack_store_native_coordinate_reference,
 };
 pub use render::{render_section_csv, render_section_csv_for_request};
 pub use storage::section_assembler::read_section_plane as assemble_section_plane;
@@ -81,7 +93,7 @@ pub use storage::volume_store::{
 pub use storage::zarr::{ZarrVolumeStoreReader, ZarrVolumeStoreWriter};
 pub use store::{
     SectionPlane, StoreHandle, create_tbvol_store, describe_store, load_array, load_occupancy,
-    open_store, read_section_plane, section_view,
+    open_store, read_section_plane, section_view, set_store_native_coordinate_reference,
 };
 
 use std::path::Path;
@@ -116,4 +128,27 @@ pub fn inspect_segy(path: impl AsRef<Path>) -> Result<SegyInspection, SeismicSto
             .map(|warning| format!("{warning:?}"))
             .collect(),
     })
+}
+
+pub fn set_any_store_native_coordinate_reference(
+    root: impl AsRef<Path>,
+    coordinate_reference_id: Option<&str>,
+    coordinate_reference_name: Option<&str>,
+) -> Result<VolumeDescriptor, SeismicStoreError> {
+    let root = root.as_ref();
+    match set_store_native_coordinate_reference(
+        root,
+        coordinate_reference_id,
+        coordinate_reference_name,
+    ) {
+        Ok(descriptor) => Ok(descriptor),
+        Err(SeismicStoreError::Json(_)) | Err(SeismicStoreError::MissingManifest(_)) => {
+            set_prestack_store_native_coordinate_reference(
+                root,
+                coordinate_reference_id,
+                coordinate_reference_name,
+            )
+        }
+        Err(error) => Err(error),
+    }
 }

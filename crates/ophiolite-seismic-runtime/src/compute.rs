@@ -1,3 +1,4 @@
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,8 +17,8 @@ use crate::storage::volume_store::{VolumeStoreReader, VolumeStoreWriter};
 use crate::store::{SectionPlane, StoreHandle, open_store};
 use crate::{
     AmplitudeSpectrumCurve, FrequencyPhaseMode, FrequencyWindowShape, ProcessingOperation,
-    ProcessingPipeline, ProcessingPipelineSpec, SectionAxis, SectionSpectrumSelection,
-    SectionView, SeismicLayout,
+    ProcessingPipeline, ProcessingPipelineSpec, SectionAxis, SectionSpectrumSelection, SectionView,
+    SeismicLayout, TraceLocalVolumeArithmeticOperator,
 };
 
 const MAX_SCALAR_FACTOR: f32 = 10.0;
@@ -26,6 +27,7 @@ const MAX_AGC_WINDOW_MS: f32 = 10_000.0;
 const RMS_EPSILON: f32 = 1.0e-8;
 const MAX_RMS_GAIN: f32 = 1.0e6;
 const SPECTRUM_EPSILON: f32 = 1.0e-12;
+const DIVISION_EPSILON: f32 = 1.0e-8;
 const RUNTIME_VERSION: &str = "ophiolite-seismic-runtime-0.1.0";
 
 #[derive(Debug, Clone)]
@@ -41,6 +43,12 @@ impl Default for MaterializeOptions {
             created_by: RUNTIME_VERSION.to_string(),
         }
     }
+}
+
+#[derive(Debug)]
+struct SecondaryTraceMatrix {
+    amplitudes: Vec<f32>,
+    occupancy: Option<Vec<u8>>,
 }
 
 pub fn validate_pipeline(pipeline: &[ProcessingOperation]) -> Result<(), SeismicStoreError> {
@@ -93,6 +101,14 @@ pub fn validate_pipeline_for_layout(
             validate_phase_rotation_angle(*angle_degrees)?;
         }
 
+        if let ProcessingOperation::VolumeArithmetic {
+            secondary_store_path,
+            ..
+        } = operation
+        {
+            validate_secondary_store_path(secondary_store_path)?;
+        }
+
         let compatibility = operation.compatibility();
         if !compatibility.supports_layout(layout) {
             return Err(SeismicStoreError::Message(format!(
@@ -105,6 +121,129 @@ pub fn validate_pipeline_for_layout(
     }
 
     Ok(())
+}
+
+fn validate_secondary_store_path(secondary_store_path: &str) -> Result<(), SeismicStoreError> {
+    if secondary_store_path.trim().is_empty() {
+        return Err(SeismicStoreError::Message(
+            "volume arithmetic secondary_store_path must not be empty".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn pipeline_requires_external_volume_inputs(pipeline: &[ProcessingOperation]) -> bool {
+    pipeline
+        .iter()
+        .any(|operation| matches!(operation, ProcessingOperation::VolumeArithmetic { .. }))
+}
+
+fn secondary_store_paths(pipeline: &[ProcessingOperation]) -> Vec<String> {
+    let mut paths = BTreeSet::new();
+    for operation in pipeline {
+        if let ProcessingOperation::VolumeArithmetic {
+            secondary_store_path,
+            ..
+        } = operation
+        {
+            let trimmed = secondary_store_path.trim();
+            if !trimmed.is_empty() {
+                paths.insert(trimmed.to_string());
+            }
+        }
+    }
+    paths.into_iter().collect()
+}
+
+fn validate_secondary_store_compatibility(
+    primary_handle: &StoreHandle,
+    secondary_handle: &StoreHandle,
+    secondary_store_path: &str,
+) -> Result<(), SeismicStoreError> {
+    let primary_geometry = primary_handle.volume_descriptor().geometry;
+    let secondary_geometry = secondary_handle.volume_descriptor().geometry;
+    if secondary_geometry.compare_family != primary_geometry.compare_family {
+        return Err(SeismicStoreError::Message(format!(
+            "volume arithmetic secondary store '{}' compare family '{}' does not match primary '{}'",
+            secondary_store_path,
+            secondary_geometry.compare_family,
+            primary_geometry.compare_family
+        )));
+    }
+    if secondary_geometry.fingerprint != primary_geometry.fingerprint {
+        return Err(SeismicStoreError::Message(format!(
+            "volume arithmetic secondary store '{}' fingerprint '{}' does not match primary '{}'",
+            secondary_store_path, secondary_geometry.fingerprint, primary_geometry.fingerprint
+        )));
+    }
+    Ok(())
+}
+
+fn open_secondary_store_readers(
+    primary_handle: &StoreHandle,
+    primary_tile_shape: Option<[usize; 3]>,
+    pipeline: &[ProcessingOperation],
+) -> Result<HashMap<String, TbvolReader>, SeismicStoreError> {
+    let mut readers = HashMap::new();
+    for secondary_store_path in secondary_store_paths(pipeline) {
+        let secondary_handle = open_store(&secondary_store_path)?;
+        validate_secondary_store_compatibility(
+            primary_handle,
+            &secondary_handle,
+            &secondary_store_path,
+        )?;
+        let secondary_reader = TbvolReader::open(&secondary_handle.root)?;
+        if let Some(tile_shape) = primary_tile_shape
+            && secondary_reader.tile_geometry().tile_shape() != tile_shape
+        {
+            return Err(SeismicStoreError::Message(format!(
+                "volume arithmetic secondary store '{}' tile shape {:?} does not match primary {:?}",
+                secondary_store_path,
+                secondary_reader.tile_geometry().tile_shape(),
+                tile_shape
+            )));
+        }
+        readers.insert(secondary_store_path, secondary_reader);
+    }
+    Ok(readers)
+}
+
+fn load_secondary_section_inputs(
+    axis: SectionAxis,
+    index: usize,
+    readers: &HashMap<String, TbvolReader>,
+) -> Result<HashMap<String, SecondaryTraceMatrix>, SeismicStoreError> {
+    let mut inputs = HashMap::with_capacity(readers.len());
+    for (store_path, reader) in readers {
+        let plane = section_assembler::read_section_plane(reader, axis, index)?;
+        inputs.insert(
+            store_path.clone(),
+            SecondaryTraceMatrix {
+                amplitudes: plane.amplitudes,
+                occupancy: plane.occupancy,
+            },
+        );
+    }
+    Ok(inputs)
+}
+
+fn load_secondary_tile_inputs(
+    tile: TileCoord,
+    readers: &HashMap<String, TbvolReader>,
+) -> Result<HashMap<String, SecondaryTraceMatrix>, SeismicStoreError> {
+    let mut inputs = HashMap::with_capacity(readers.len());
+    for (store_path, reader) in readers {
+        inputs.insert(
+            store_path.clone(),
+            SecondaryTraceMatrix {
+                amplitudes: reader.read_tile(tile)?.into_owned(),
+                occupancy: reader
+                    .read_tile_occupancy(tile)?
+                    .map(|occupancy| occupancy.into_owned()),
+            },
+        );
+    }
+    Ok(inputs)
 }
 
 pub fn validate_processing_pipeline(
@@ -313,7 +452,8 @@ pub fn preview_section_plane(
 ) -> Result<SectionPlane, SeismicStoreError> {
     let handle = open_store(store_root)?;
     let reader = TbvolReader::open(&handle.root)?;
-    preview_section_from_reader(&reader, axis, index, pipeline)
+    let secondary_readers = open_secondary_store_readers(&handle, None, pipeline)?;
+    preview_section_from_tbvol_reader(&reader, axis, index, pipeline, &secondary_readers)
 }
 
 pub fn preview_processing_section_plane(
@@ -335,7 +475,9 @@ pub fn preview_section_view(
     validate_pipeline(pipeline)?;
     let handle = open_store(store_root)?;
     let reader = TbvolReader::open(&handle.root)?;
-    let plane = preview_section_from_reader(&reader, axis, index, pipeline)?;
+    let secondary_readers = open_secondary_store_readers(&handle, None, pipeline)?;
+    let plane =
+        preview_section_from_tbvol_reader(&reader, axis, index, pipeline, &secondary_readers)?;
     Ok(handle.section_view_from_plane(&plane))
 }
 
@@ -369,7 +511,15 @@ pub fn materialize_volume(
     let has_occupancy = reader_has_occupancy(&reader)?;
     let writer = TbvolWriter::create(&output_store_root, volume, chunk_shape, has_occupancy)?;
     let output_root = writer.root().to_path_buf();
-    materialize_from_reader_writer(&reader, writer, pipeline)?;
+    let secondary_readers =
+        open_secondary_store_readers(&handle, Some(reader.tile_geometry().tile_shape()), pipeline)?;
+    materialize_from_tbvol_reader_writer_with_progress(
+        &reader,
+        writer,
+        pipeline,
+        &secondary_readers,
+        |_, _| Ok(()),
+    )?;
     open_store(output_root)
 }
 
@@ -410,10 +560,16 @@ pub fn materialize_processing_volume_with_progress<
     let has_occupancy = reader_has_occupancy(&reader)?;
     let writer = TbvolWriter::create(&output_store_root, volume, chunk_shape, has_occupancy)?;
     let output_root = writer.root().to_path_buf();
-    materialize_from_reader_writer_with_progress(
+    let secondary_readers = open_secondary_store_readers(
+        &handle,
+        Some(reader.tile_geometry().tile_shape()),
+        &pipeline.operations,
+    )?;
+    materialize_from_tbvol_reader_writer_with_progress(
         &reader,
         writer,
         &pipeline.operations,
+        &secondary_readers,
         |completed, total| on_progress(completed, total),
     )?;
     open_store(output_root)
@@ -426,6 +582,11 @@ pub fn preview_section_from_reader<R: VolumeStoreReader>(
     pipeline: &[ProcessingOperation],
 ) -> Result<SectionPlane, SeismicStoreError> {
     validate_pipeline(pipeline)?;
+    if pipeline_requires_external_volume_inputs(pipeline) {
+        return Err(SeismicStoreError::Message(
+            "volume arithmetic preview requires a store-backed preview path".to_string(),
+        ));
+    }
     validate_pipeline_for_sample_interval(
         pipeline,
         reader.volume().source.sample_interval_us as f32 / 1000.0,
@@ -453,6 +614,128 @@ pub fn materialize_from_reader_writer_with_progress<
     pipeline: &[ProcessingOperation],
     mut on_progress: F,
 ) -> Result<(), SeismicStoreError> {
+    if pipeline_requires_external_volume_inputs(pipeline) {
+        return Err(SeismicStoreError::Message(
+            "volume arithmetic materialization requires a store-backed materialization path"
+                .to_string(),
+        ));
+    }
+    materialize_from_reader_writer_internal(reader, writer, pipeline, None, &mut on_progress)
+}
+
+pub fn apply_pipeline_to_plane(
+    plane: &mut SectionPlane,
+    pipeline: &[ProcessingOperation],
+) -> Result<(), SeismicStoreError> {
+    validate_pipeline(pipeline)?;
+    if pipeline_requires_external_volume_inputs(pipeline) {
+        return Err(SeismicStoreError::Message(
+            "volume arithmetic requires store-backed secondary inputs".to_string(),
+        ));
+    }
+    let sample_interval_ms = sample_interval_ms_from_axis(&plane.sample_axis_ms)?;
+    validate_pipeline_for_sample_interval(pipeline, sample_interval_ms)?;
+    apply_pipeline_to_traces_internal(
+        &mut plane.amplitudes,
+        plane.traces,
+        plane.samples,
+        sample_interval_ms,
+        plane.occupancy.as_deref(),
+        pipeline,
+        None,
+    )
+}
+
+pub fn apply_pipeline_to_traces(
+    data: &mut [f32],
+    traces: usize,
+    samples: usize,
+    sample_interval_ms: f32,
+    occupancy: Option<&[u8]>,
+    pipeline: &[ProcessingOperation],
+) -> Result<(), SeismicStoreError> {
+    if traces == 0 || samples == 0 || data.is_empty() || pipeline.is_empty() {
+        return Ok(());
+    }
+
+    validate_pipeline(pipeline)?;
+    if pipeline_requires_external_volume_inputs(pipeline) {
+        return Err(SeismicStoreError::Message(
+            "volume arithmetic requires store-backed secondary inputs".to_string(),
+        ));
+    }
+    apply_pipeline_to_traces_internal(
+        data,
+        traces,
+        samples,
+        sample_interval_ms,
+        occupancy,
+        pipeline,
+        None,
+    )
+}
+
+fn preview_section_from_tbvol_reader(
+    reader: &TbvolReader,
+    axis: SectionAxis,
+    index: usize,
+    pipeline: &[ProcessingOperation],
+    secondary_readers: &HashMap<String, TbvolReader>,
+) -> Result<SectionPlane, SeismicStoreError> {
+    validate_pipeline(pipeline)?;
+    let mut plane = section_assembler::read_section_plane(reader, axis, index)?;
+    let sample_interval_ms = sample_interval_ms_from_axis(&plane.sample_axis_ms)?;
+    let secondary_inputs = if pipeline_requires_external_volume_inputs(pipeline) {
+        Some(load_secondary_section_inputs(
+            axis,
+            index,
+            secondary_readers,
+        )?)
+    } else {
+        None
+    };
+    apply_pipeline_to_traces_internal(
+        &mut plane.amplitudes,
+        plane.traces,
+        plane.samples,
+        sample_interval_ms,
+        plane.occupancy.as_deref(),
+        pipeline,
+        secondary_inputs.as_ref(),
+    )?;
+    Ok(plane)
+}
+
+fn materialize_from_tbvol_reader_writer_with_progress<
+    W: VolumeStoreWriter,
+    F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+>(
+    reader: &TbvolReader,
+    writer: W,
+    pipeline: &[ProcessingOperation],
+    secondary_readers: &HashMap<String, TbvolReader>,
+    mut on_progress: F,
+) -> Result<(), SeismicStoreError> {
+    materialize_from_reader_writer_internal(
+        reader,
+        writer,
+        pipeline,
+        Some(secondary_readers),
+        &mut on_progress,
+    )
+}
+
+fn materialize_from_reader_writer_internal<
+    R: VolumeStoreReader,
+    W: VolumeStoreWriter,
+    F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+>(
+    reader: &R,
+    writer: W,
+    pipeline: &[ProcessingOperation],
+    secondary_readers: Option<&HashMap<String, TbvolReader>>,
+    on_progress: &mut F,
+) -> Result<(), SeismicStoreError> {
     validate_pipeline(pipeline)?;
     if reader.tile_geometry().tile_shape() != writer.tile_geometry().tile_shape()
         || reader.volume().shape != writer.volume().shape
@@ -474,13 +757,20 @@ pub fn materialize_from_reader_writer_with_progress<
         let occupancy = reader
             .read_tile_occupancy(tile)?
             .map(|value| value.into_owned());
-        apply_pipeline_to_traces(
+        let secondary_inputs = match secondary_readers {
+            Some(readers) if pipeline_requires_external_volume_inputs(pipeline) => {
+                Some(load_secondary_tile_inputs(tile, readers)?)
+            }
+            _ => None,
+        };
+        apply_pipeline_to_traces_internal(
             &mut amplitudes,
             traces,
             samples,
             sample_interval_ms,
             occupancy.as_deref(),
             pipeline,
+            secondary_inputs.as_ref(),
         )?;
         writer.write_tile(tile, &amplitudes)?;
         if let Some(mask) = occupancy.as_deref() {
@@ -492,30 +782,14 @@ pub fn materialize_from_reader_writer_with_progress<
     writer.finalize()
 }
 
-pub fn apply_pipeline_to_plane(
-    plane: &mut SectionPlane,
-    pipeline: &[ProcessingOperation],
-) -> Result<(), SeismicStoreError> {
-    validate_pipeline(pipeline)?;
-    let sample_interval_ms = sample_interval_ms_from_axis(&plane.sample_axis_ms)?;
-    validate_pipeline_for_sample_interval(pipeline, sample_interval_ms)?;
-    apply_pipeline_to_traces(
-        &mut plane.amplitudes,
-        plane.traces,
-        plane.samples,
-        sample_interval_ms,
-        plane.occupancy.as_deref(),
-        pipeline,
-    )
-}
-
-pub fn apply_pipeline_to_traces(
+fn apply_pipeline_to_traces_internal(
     data: &mut [f32],
     traces: usize,
     samples: usize,
     sample_interval_ms: f32,
     occupancy: Option<&[u8]>,
     pipeline: &[ProcessingOperation],
+    secondary_inputs: Option<&HashMap<String, SecondaryTraceMatrix>>,
 ) -> Result<(), SeismicStoreError> {
     if traces == 0 || samples == 0 || data.is_empty() || pipeline.is_empty() {
         return Ok(());
@@ -523,6 +797,11 @@ pub fn apply_pipeline_to_traces(
 
     validate_pipeline(pipeline)?;
     validate_pipeline_for_sample_interval(pipeline, sample_interval_ms)?;
+    if pipeline_requires_external_volume_inputs(pipeline) && secondary_inputs.is_none() {
+        return Err(SeismicStoreError::Message(
+            "volume arithmetic requires secondary trace matrices".to_string(),
+        ));
+    }
     let needs_spectral = pipeline_requires_spectral_workspace(pipeline);
 
     compute_pool().install(|| {
@@ -536,7 +815,15 @@ pub fn apply_pipeline_to_traces(
                     return Ok(());
                 }
                 for operation in pipeline {
-                    apply_operation_to_trace(trace, sample_interval_ms, state, operation)?;
+                    apply_operation_to_trace(
+                        trace,
+                        trace_index,
+                        samples,
+                        sample_interval_ms,
+                        state,
+                        operation,
+                        secondary_inputs,
+                    )?;
                 }
                 Ok(())
             },
@@ -546,9 +833,12 @@ pub fn apply_pipeline_to_traces(
 
 fn apply_operation_to_trace(
     trace: &mut [f32],
+    trace_index: usize,
+    samples: usize,
     sample_interval_ms: f32,
     state: &mut TraceComputeState,
     operation: &ProcessingOperation,
+    secondary_inputs: Option<&HashMap<String, SecondaryTraceMatrix>>,
 ) -> Result<(), SeismicStoreError> {
     match operation {
         ProcessingOperation::AmplitudeScalar { factor } => {
@@ -625,9 +915,97 @@ fn apply_operation_to_trace(
                     *window,
                 )?;
         }
+        ProcessingOperation::VolumeArithmetic {
+            operator,
+            secondary_store_path,
+        } => {
+            let secondary_inputs = secondary_inputs.ok_or_else(|| {
+                SeismicStoreError::Message(
+                    "volume arithmetic requires secondary trace matrices".to_string(),
+                )
+            })?;
+            let secondary = secondary_inputs.get(secondary_store_path).ok_or_else(|| {
+                SeismicStoreError::Message(format!(
+                    "volume arithmetic secondary input '{}' was not loaded",
+                    secondary_store_path
+                ))
+            })?;
+            let secondary_trace = secondary.trace_slice(trace_index, samples)?;
+            apply_volume_arithmetic(trace, secondary_trace, *operator);
+        }
     }
 
     Ok(())
+}
+
+impl SecondaryTraceMatrix {
+    fn trace_slice(
+        &self,
+        trace_index: usize,
+        samples: usize,
+    ) -> Result<Option<&[f32]>, SeismicStoreError> {
+        if self
+            .occupancy
+            .as_deref()
+            .is_some_and(|mask| mask.get(trace_index).copied().unwrap_or(1) == 0)
+        {
+            return Ok(None);
+        }
+
+        let start = trace_index
+            .checked_mul(samples)
+            .ok_or_else(|| SeismicStoreError::Message("trace offset overflow".to_string()))?;
+        let end = start
+            .checked_add(samples)
+            .ok_or_else(|| SeismicStoreError::Message("trace slice overflow".to_string()))?;
+        if end > self.amplitudes.len() {
+            return Err(SeismicStoreError::Message(format!(
+                "secondary trace matrix length {} is smaller than required end offset {}",
+                self.amplitudes.len(),
+                end
+            )));
+        }
+        Ok(Some(&self.amplitudes[start..end]))
+    }
+}
+
+fn apply_volume_arithmetic(
+    trace: &mut [f32],
+    secondary_trace: Option<&[f32]>,
+    operator: TraceLocalVolumeArithmeticOperator,
+) {
+    match (operator, secondary_trace) {
+        (TraceLocalVolumeArithmeticOperator::Add, Some(secondary_trace)) => {
+            for (sample, other) in trace.iter_mut().zip(secondary_trace.iter()) {
+                *sample += *other;
+            }
+        }
+        (TraceLocalVolumeArithmeticOperator::Subtract, Some(secondary_trace)) => {
+            for (sample, other) in trace.iter_mut().zip(secondary_trace.iter()) {
+                *sample -= *other;
+            }
+        }
+        (TraceLocalVolumeArithmeticOperator::Multiply, Some(secondary_trace)) => {
+            for (sample, other) in trace.iter_mut().zip(secondary_trace.iter()) {
+                *sample *= *other;
+            }
+        }
+        (TraceLocalVolumeArithmeticOperator::Divide, Some(secondary_trace)) => {
+            for (sample, other) in trace.iter_mut().zip(secondary_trace.iter()) {
+                *sample = if other.abs() <= DIVISION_EPSILON {
+                    0.0
+                } else {
+                    *sample / *other
+                };
+            }
+        }
+        (TraceLocalVolumeArithmeticOperator::Multiply, None)
+        | (TraceLocalVolumeArithmeticOperator::Divide, None) => {
+            trace.fill(0.0);
+        }
+        (TraceLocalVolumeArithmeticOperator::Add, None)
+        | (TraceLocalVolumeArithmeticOperator::Subtract, None) => {}
+    }
 }
 
 pub fn amplitude_spectrum_from_plane(
@@ -695,6 +1073,26 @@ pub fn amplitude_spectrum_from_reader<R: VolumeStoreReader>(
             preview_section_from_reader(reader, axis, index, operations)?
         }
         _ => section_assembler::read_section_plane(reader, axis, index)?,
+    };
+    amplitude_spectrum_from_plane(&plane, selection)
+}
+
+pub fn amplitude_spectrum_from_store(
+    store_root: impl AsRef<Path>,
+    axis: SectionAxis,
+    index: usize,
+    pipeline: Option<&[ProcessingOperation]>,
+    selection: &SectionSpectrumSelection,
+) -> Result<AmplitudeSpectrumCurve, SeismicStoreError> {
+    let handle = open_store(store_root)?;
+    let reader = TbvolReader::open(&handle.root)?;
+    let operations = pipeline.unwrap_or(&[]);
+    let secondary_readers = open_secondary_store_readers(&handle, None, operations)?;
+    let plane = match pipeline {
+        Some(operations) if !operations.is_empty() => {
+            preview_section_from_tbvol_reader(&reader, axis, index, operations, &secondary_readers)?
+        }
+        _ => section_assembler::read_section_plane(&reader, axis, index)?,
     };
     amplitude_spectrum_from_plane(&plane, selection)
 }
@@ -1394,6 +1792,7 @@ mod tests {
     use super::*;
     use crate::ProcessingOperatorScope;
     use crate::SectionAxis;
+    use std::collections::HashMap;
 
     #[test]
     fn pipeline_validation_rejects_invalid_scalar() {
@@ -1442,7 +1841,7 @@ mod tests {
 
     #[test]
     fn current_trace_local_operators_support_trace_matrix_layouts() {
-        let operations = [
+        let operations = vec![
             ProcessingOperation::AmplitudeScalar { factor: 1.5 },
             ProcessingOperation::TraceRmsNormalize,
             ProcessingOperation::AgcRms { window_ms: 250.0 },
@@ -1469,6 +1868,10 @@ mod tests {
                 phase: FrequencyPhaseMode::Zero,
                 window: FrequencyWindowShape::CosineTaper,
             },
+            ProcessingOperation::VolumeArithmetic {
+                operator: TraceLocalVolumeArithmeticOperator::Subtract,
+                secondary_store_path: "secondary.tbvol".to_string(),
+            },
         ];
 
         for operation in operations {
@@ -1479,7 +1882,7 @@ mod tests {
 
     #[test]
     fn current_operator_scope_is_trace_local() {
-        let operations = [
+        let operations = vec![
             ProcessingOperation::AmplitudeScalar { factor: 1.0 },
             ProcessingOperation::TraceRmsNormalize,
             ProcessingOperation::AgcRms { window_ms: 200.0 },
@@ -1503,6 +1906,10 @@ mod tests {
                 f4_hz: 40.0,
                 phase: FrequencyPhaseMode::Zero,
                 window: FrequencyWindowShape::CosineTaper,
+            },
+            ProcessingOperation::VolumeArithmetic {
+                operator: TraceLocalVolumeArithmeticOperator::Add,
+                secondary_store_path: "secondary.tbvol".to_string(),
             },
         ];
 
@@ -1593,6 +2000,15 @@ mod tests {
     #[test]
     fn pipeline_validation_rejects_invalid_agc_window() {
         let result = validate_pipeline(&[ProcessingOperation::AgcRms { window_ms: 0.0 }]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn pipeline_validation_rejects_empty_volume_arithmetic_store_path() {
+        let result = validate_pipeline(&[ProcessingOperation::VolumeArithmetic {
+            operator: TraceLocalVolumeArithmeticOperator::Subtract,
+            secondary_store_path: "   ".to_string(),
+        }]);
         assert!(result.is_err());
     }
 
@@ -2110,5 +2526,52 @@ mod tests {
         assert_eq!(spectrum.frequencies_hz.len(), 3);
         assert_eq!(spectrum.amplitudes.len(), 3);
         assert!(spectrum.amplitudes.iter().any(|value| *value > 0.0));
+    }
+
+    #[test]
+    fn volume_arithmetic_adds_secondary_trace_samples() {
+        let mut trace = vec![1.0_f32, 2.0, 3.0, 4.0];
+        let secondary_inputs = HashMap::from([(
+            "secondary.tbvol".to_string(),
+            SecondaryTraceMatrix {
+                amplitudes: vec![0.5, 1.0, 1.5, 2.0],
+                occupancy: None,
+            },
+        )]);
+
+        apply_pipeline_to_traces_internal(
+            &mut trace,
+            1,
+            4,
+            2.0,
+            None,
+            &[ProcessingOperation::VolumeArithmetic {
+                operator: TraceLocalVolumeArithmeticOperator::Add,
+                secondary_store_path: "secondary.tbvol".to_string(),
+            }],
+            Some(&secondary_inputs),
+        )
+        .unwrap();
+
+        assert_eq!(trace, vec![1.5, 3.0, 4.5, 6.0]);
+    }
+
+    #[test]
+    fn volume_arithmetic_requires_secondary_inputs_outside_store_backed_paths() {
+        let mut trace = vec![1.0_f32, 2.0, 3.0, 4.0];
+
+        let result = apply_pipeline_to_traces(
+            &mut trace,
+            1,
+            4,
+            2.0,
+            None,
+            &[ProcessingOperation::VolumeArithmetic {
+                operator: TraceLocalVolumeArithmeticOperator::Subtract,
+                secondary_store_path: "secondary.tbvol".to_string(),
+            }],
+        );
+
+        assert!(result.is_err());
     }
 }

@@ -210,6 +210,20 @@ pub enum TraceLocalProcessingOperation {
         phase: FrequencyPhaseMode,
         window: FrequencyWindowShape,
     },
+    VolumeArithmetic {
+        operator: TraceLocalVolumeArithmeticOperator,
+        secondary_store_path: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum TraceLocalVolumeArithmeticOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -344,6 +358,7 @@ impl TraceLocalProcessingOperation {
             Self::LowpassFilter { .. } => "lowpass_filter",
             Self::HighpassFilter { .. } => "highpass_filter",
             Self::BandpassFilter { .. } => "bandpass_filter",
+            Self::VolumeArithmetic { .. } => "volume_arithmetic",
         }
     }
 
@@ -355,7 +370,8 @@ impl TraceLocalProcessingOperation {
             | Self::PhaseRotation { .. }
             | Self::LowpassFilter { .. }
             | Self::HighpassFilter { .. }
-            | Self::BandpassFilter { .. } => ProcessingOperatorScope::TraceLocal,
+            | Self::BandpassFilter { .. }
+            | Self::VolumeArithmetic { .. } => ProcessingOperatorScope::TraceLocal,
         }
     }
 
@@ -368,6 +384,7 @@ impl TraceLocalProcessingOperation {
             Self::LowpassFilter { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
             Self::HighpassFilter { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
             Self::BandpassFilter { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
+            Self::VolumeArithmetic { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
         }
     }
 }
@@ -385,6 +402,11 @@ pub struct TraceLocalProcessingPipeline {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub operations: Vec<TraceLocalProcessingOperation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct TraceLocalProcessingCheckpoint {
+    pub after_operation_index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -511,6 +533,22 @@ pub struct ProcessingJobProgress {
     pub total: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingJobArtifactKind {
+    Checkpoint,
+    FinalOutput,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingJobArtifact {
+    pub kind: ProcessingJobArtifactKind,
+    pub step_index: usize,
+    pub label: String,
+    pub store_path: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ProcessingJobStatus {
     pub job_id: String,
@@ -520,6 +558,10 @@ pub struct ProcessingJobStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_store_path: Option<String>,
     pub pipeline: ProcessingPipelineSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_stage_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artifacts: Vec<ProcessingJobArtifact>,
     #[ts(type = "number")]
     pub created_at_unix_s: u64,
     #[ts(type = "number")]
@@ -670,16 +712,9 @@ pub struct GatherView {
 #[serde(rename_all = "snake_case")]
 #[ts(rename_all = "snake_case")]
 pub enum GatherSelector {
-    InlineXline {
-        inline: i32,
-        xline: i32,
-    },
-    Coordinate {
-        coordinate: f64,
-    },
-    Ordinal {
-        index: usize,
-    },
+    InlineXline { inline: i32, xline: i32 },
+    Coordinate { coordinate: f64 },
+    Ordinal { index: usize },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -928,6 +963,8 @@ pub struct RunTraceLocalProcessingRequest {
     pub output_store_path: Option<String>,
     #[serde(default)]
     pub overwrite_existing: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checkpoints: Vec<TraceLocalProcessingCheckpoint>,
     pub pipeline: TraceLocalProcessingPipeline,
 }
 

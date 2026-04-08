@@ -14,7 +14,9 @@ use crate::metadata::{
     VolumeAxes, VolumeMetadata,
 };
 use crate::prestack_store::{PrestackStoreHandle, TbgathManifest, create_tbgath_store};
-use crate::storage::tbvol::{TbvolWriter, recommended_tbvol_tile_shape};
+use crate::storage::tbvol::{
+    TbvolWriter, recommended_default_tbvol_tile_target_mib, recommended_tbvol_tile_shape,
+};
 use crate::storage::volume_store::{VolumeStoreWriter, write_dense_volume};
 use crate::store::{StoreHandle, open_store};
 use ophiolite_seismic::{GatherAxisKind, SeismicLayout, SeismicStackingState};
@@ -614,7 +616,10 @@ pub fn recommended_chunk_shape(shape: [usize; 3], chunk_target_mib: u16) -> [usi
 
 fn resolve_chunk_shape(chunk_shape: [usize; 3], shape: [usize; 3]) -> [usize; 3] {
     if chunk_shape.iter().all(|value| *value == 0) {
-        return recommended_tbvol_tile_shape(shape, 4);
+        return recommended_tbvol_tile_shape(
+            shape,
+            recommended_default_tbvol_tile_target_mib(shape),
+        );
     }
 
     [

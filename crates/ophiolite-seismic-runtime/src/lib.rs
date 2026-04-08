@@ -70,7 +70,10 @@ pub use prestack_store::{
 };
 pub use render::{render_section_csv, render_section_csv_for_request};
 pub use storage::section_assembler::read_section_plane as assemble_section_plane;
-pub use storage::tbvol::{TbvolManifest, TbvolReader, TbvolWriter, recommended_tbvol_tile_shape};
+pub use storage::tbvol::{
+    TbvolManifest, TbvolReader, TbvolWriter, recommended_default_tbvol_tile_target_mib,
+    recommended_tbvol_tile_shape,
+};
 pub use storage::tile_geometry::{TileCoord, TileGeometry};
 pub use storage::volume_store::{
     OccupancyTile, TileBuffer, VolumeStoreReader, VolumeStoreWriter, write_dense_volume,

@@ -13,6 +13,9 @@ use super::volume_store::{OccupancyTile, TileBuffer, VolumeStoreReader, VolumeSt
 const MANIFEST_FILE: &str = "manifest.json";
 const AMPLITUDE_FILE: &str = "amplitude.bin";
 const OCCUPANCY_FILE: &str = "occupancy.bin";
+const DEFAULT_TBVOL_TILE_TARGET_MIB: u16 = 4;
+const LARGE_VOLUME_TBVOL_TILE_TARGET_MIB: u16 = 8;
+const LARGE_VOLUME_RUNTIME_STORE_THRESHOLD_MIB: u64 = 768;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TbvolManifest {
@@ -47,6 +50,17 @@ impl TbvolManifest {
 
     pub fn tile_geometry(&self) -> TileGeometry {
         TileGeometry::new(self.volume.shape, self.tile_shape)
+    }
+}
+
+pub fn recommended_default_tbvol_tile_target_mib(shape: [usize; 3]) -> u16 {
+    let runtime_store_bytes_f32 =
+        shape[0] as u64 * shape[1] as u64 * shape[2] as u64 * std::mem::size_of::<f32>() as u64;
+    let threshold_bytes = LARGE_VOLUME_RUNTIME_STORE_THRESHOLD_MIB * 1024 * 1024;
+    if runtime_store_bytes_f32 >= threshold_bytes {
+        LARGE_VOLUME_TBVOL_TILE_TARGET_MIB
+    } else {
+        DEFAULT_TBVOL_TILE_TARGET_MIB
     }
 }
 
@@ -528,6 +542,8 @@ mod tests {
                 xlines: (0..shape[1]).map(|value| value as f64).collect(),
                 sample_axis_ms: (0..shape[2]).map(|value| value as f32 * 2.0).collect(),
             },
+            coordinate_reference_binding: None,
+            spatial: None,
             created_by: "tbvol-test".to_string(),
             processing_lineage: None,
         }
@@ -548,5 +564,21 @@ mod tests {
             [32, 32, 1024]
         );
         assert_eq!(recommended_tbvol_tile_shape([23, 18, 75], 1), [23, 18, 75]);
+    }
+
+    #[test]
+    fn recommends_default_tile_target_by_volume_size() {
+        assert_eq!(
+            recommended_default_tbvol_tile_target_mib([256, 256, 1024]),
+            4
+        );
+        assert_eq!(
+            recommended_default_tbvol_tile_target_mib([384, 384, 1024]),
+            4
+        );
+        assert_eq!(
+            recommended_default_tbvol_tile_target_mib([651, 951, 462]),
+            8
+        );
     }
 }

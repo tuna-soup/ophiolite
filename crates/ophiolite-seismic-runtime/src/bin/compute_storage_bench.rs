@@ -6,9 +6,10 @@ use ophiolite_seismic_runtime::{
     ProcessingPipelineSpec, SectionAxis, SourceIdentity, SparseSurveyPolicy, StorageLayout,
     TbvolReader, TbvolWriter, TileCoord, TileGeometry, VolumeAxes, VolumeMetadata,
     VolumeStoreReader, VolumeStoreWriter, ZarrVolumeStoreReader, ZarrVolumeStoreWriter,
-    apply_pipeline_to_traces, assemble_section_plane, load_source_volume_with_options,
-    materialize_from_reader_writer, preflight_segy, preview_section_from_reader,
-    recommended_chunk_shape, recommended_tbvol_tile_shape, write_dense_volume,
+    apply_pipeline_to_traces, assemble_section_plane, load_array, load_occupancy,
+    load_source_volume_with_options, materialize_from_reader_writer, open_store, preflight_segy,
+    preview_section_from_reader, recommended_chunk_shape, recommended_tbvol_tile_shape,
+    write_dense_volume,
 };
 use serde::Serialize;
 use std::fs::{self, File};
@@ -119,6 +120,15 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
         format: OutputFormat,
     },
+    SweepTbvol {
+        input: PathBuf,
+        #[arg(long)]
+        chunk_target_mib: Vec<u16>,
+        #[arg(long, default_value_t = 2.0)]
+        scalar_factor: f32,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+        format: OutputFormat,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -203,6 +213,34 @@ struct StorageBenchmarkResult {
     apply_pipeline_ms: f64,
     pipeline_output_bytes: u64,
     pipeline_output_file_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TbvolTileSweepSummary {
+    dataset_name: String,
+    source_kind: String,
+    shape: [usize; 3],
+    scalar_factor: f32,
+    results: Vec<TbvolTileSweepResult>,
+    best_preview_chunk_target_mib: u16,
+    best_apply_chunk_target_mib: u16,
+    best_io_chunk_target_mib: u16,
+    best_balanced_chunk_target_mib: u16,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct TbvolTileSweepResult {
+    chunk_target_mib: u16,
+    chunk_shape: [usize; 3],
+    tile_bytes: u64,
+    tile_count: u64,
+    input_store_bytes: u64,
+    input_file_count: u64,
+    inline_section_read_ms: f64,
+    xline_section_read_ms: f64,
+    preview_pipeline_ms: f64,
+    apply_pipeline_ms: f64,
+    balanced_score: f64,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -382,9 +420,85 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             print_benchmark_summary(&summary, format)?;
         }
+        Command::SweepTbvol {
+            input,
+            chunk_target_mib,
+            scalar_factor,
+            format,
+        } => {
+            let (dataset, source_kind) = load_benchmark_dataset_from_path(&input)?;
+            let summary = benchmark_tbvol_tile_sweep(
+                &dataset,
+                &source_kind,
+                &requested_or_default_chunk_targets(&chunk_target_mib),
+                scalar_factor,
+            )?;
+            print_tbvol_tile_sweep_summary(&summary, format)?;
+        }
     }
 
     Ok(())
+}
+
+fn load_benchmark_dataset_from_path(
+    input: &Path,
+) -> Result<(BenchmarkDataset, String), Box<dyn std::error::Error>> {
+    if input.is_dir() {
+        let handle = open_store(input)?;
+        let data = load_array(&handle)?;
+        let occupancy = load_occupancy(&handle)?;
+        let dataset = BenchmarkDataset {
+            name: input
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("tbvol")
+                .to_string(),
+            shape: handle.manifest.volume.shape,
+            data,
+            axes: handle.manifest.volume.axes.clone(),
+            source: handle.manifest.volume.source.clone(),
+            occupancy,
+        };
+        return Ok((dataset, "tbvol".to_string()));
+    }
+
+    let extension = input
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !matches!(extension.as_str(), "sgy" | "segy" | "su") {
+        return Err(format!(
+            "unsupported sweep input: {}; expected a SEG-Y/SU file or tbvol directory",
+            input.display()
+        )
+        .into());
+    }
+
+    let volume = load_source_volume_with_options(
+        input,
+        &IngestOptions {
+            sparse_survey_policy: SparseSurveyPolicy::RegularizeToDense { fill_value: 0.0 },
+            ..IngestOptions::default()
+        },
+    )?;
+    let dataset = BenchmarkDataset {
+        name: input
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("segy")
+            .to_string(),
+        shape: [
+            volume.data.shape()[0],
+            volume.data.shape()[1],
+            volume.data.shape()[2],
+        ],
+        data: volume.data,
+        axes: volume.axes,
+        source: volume.source,
+        occupancy: volume.occupancy,
+    };
+    Ok((dataset, "segy".to_string()))
 }
 
 fn benchmark_dataset(
@@ -418,6 +532,101 @@ fn benchmark_dataset(
         shard_target_mib,
         scalar_factor,
         results,
+    })
+}
+
+fn benchmark_tbvol_tile_sweep(
+    dataset: &BenchmarkDataset,
+    source_kind: &str,
+    chunk_targets_mib: &[u16],
+    scalar_factor: f32,
+) -> Result<TbvolTileSweepSummary, Box<dyn std::error::Error>> {
+    let mut rows = Vec::new();
+    for chunk_target_mib in chunk_targets_mib {
+        let bench_root =
+            create_bench_root(&format!("{}-tbvol-sweep-{chunk_target_mib}", dataset.name))?;
+        let result = run_candidate_benchmark(
+            dataset,
+            &bench_root,
+            StorageCandidate::Tbvol,
+            *chunk_target_mib,
+            None,
+            scalar_factor,
+        )?;
+        let geometry = TileGeometry::new(dataset.shape, result.chunk_shape);
+        rows.push(TbvolTileSweepResult {
+            chunk_target_mib: *chunk_target_mib,
+            chunk_shape: result.chunk_shape,
+            tile_bytes: geometry.amplitude_tile_bytes(),
+            tile_count: geometry.tile_count() as u64,
+            input_store_bytes: result.input_store_bytes,
+            input_file_count: result.input_file_count,
+            inline_section_read_ms: result.inline_section_read_ms,
+            xline_section_read_ms: result.xline_section_read_ms,
+            preview_pipeline_ms: result.preview_pipeline_ms,
+            apply_pipeline_ms: result.apply_pipeline_ms,
+            balanced_score: 0.0,
+        });
+    }
+
+    if rows.is_empty() {
+        return Err("tbvol tile sweep requires at least one chunk_target_mib".into());
+    }
+
+    let min_preview = rows
+        .iter()
+        .map(|row| row.preview_pipeline_ms)
+        .fold(f64::INFINITY, f64::min);
+    let min_apply = rows
+        .iter()
+        .map(|row| row.apply_pipeline_ms)
+        .fold(f64::INFINITY, f64::min);
+    let min_io = rows
+        .iter()
+        .map(|row| row.inline_section_read_ms + row.xline_section_read_ms)
+        .fold(f64::INFINITY, f64::min);
+
+    for row in &mut rows {
+        let io_total = row.inline_section_read_ms + row.xline_section_read_ms;
+        row.balanced_score = (row.preview_pipeline_ms / min_preview)
+            + (row.apply_pipeline_ms / min_apply)
+            + (io_total / min_io);
+    }
+
+    let best_preview_chunk_target_mib = rows
+        .iter()
+        .min_by(|lhs, rhs| lhs.preview_pipeline_ms.total_cmp(&rhs.preview_pipeline_ms))
+        .map(|row| row.chunk_target_mib)
+        .ok_or("missing preview benchmark rows")?;
+    let best_apply_chunk_target_mib = rows
+        .iter()
+        .min_by(|lhs, rhs| lhs.apply_pipeline_ms.total_cmp(&rhs.apply_pipeline_ms))
+        .map(|row| row.chunk_target_mib)
+        .ok_or("missing apply benchmark rows")?;
+    let best_io_chunk_target_mib = rows
+        .iter()
+        .min_by(|lhs, rhs| {
+            (lhs.inline_section_read_ms + lhs.xline_section_read_ms)
+                .total_cmp(&(rhs.inline_section_read_ms + rhs.xline_section_read_ms))
+        })
+        .map(|row| row.chunk_target_mib)
+        .ok_or("missing io benchmark rows")?;
+    let best_balanced_chunk_target_mib = rows
+        .iter()
+        .min_by(|lhs, rhs| lhs.balanced_score.total_cmp(&rhs.balanced_score))
+        .map(|row| row.chunk_target_mib)
+        .ok_or("missing balanced benchmark rows")?;
+
+    Ok(TbvolTileSweepSummary {
+        dataset_name: dataset.name.clone(),
+        source_kind: source_kind.to_string(),
+        shape: dataset.shape,
+        scalar_factor,
+        results: rows,
+        best_preview_chunk_target_mib,
+        best_apply_chunk_target_mib,
+        best_io_chunk_target_mib,
+        best_balanced_chunk_target_mib,
     })
 }
 
@@ -504,6 +713,8 @@ fn run_candidate_benchmark(
                 source: dataset.source.clone(),
                 shape: dataset.shape,
                 axes: dataset.axes.clone(),
+                coordinate_reference_binding: None,
+                spatial: None,
                 created_by: "compute-storage-bench".to_string(),
                 processing_lineage: None,
             };
@@ -996,6 +1207,8 @@ fn benchmark_volume(dataset: &BenchmarkDataset) -> VolumeMetadata {
         source: dataset.source.clone(),
         shape: dataset.shape,
         axes: dataset.axes.clone(),
+        coordinate_reference_binding: None,
+        spatial: None,
         created_by: "compute-storage-bench".to_string(),
         processing_lineage: None,
     }
@@ -1011,6 +1224,8 @@ fn derived_output_volume(
         source: input.source.clone(),
         shape: input.shape,
         axes: input.axes.clone(),
+        coordinate_reference_binding: input.coordinate_reference_binding.clone(),
+        spatial: input.spatial.clone(),
         created_by: "compute-storage-bench".to_string(),
         processing_lineage: Some(ProcessingLineage {
             parent_store: parent_store.to_path_buf(),
@@ -1370,6 +1585,17 @@ fn chunk_targets_mib() -> Vec<u16> {
     vec![1, 2, 4, 8]
 }
 
+fn requested_or_default_chunk_targets(selected: &[u16]) -> Vec<u16> {
+    if selected.is_empty() {
+        return chunk_targets_mib();
+    }
+
+    let mut chunk_targets = selected.to_vec();
+    chunk_targets.sort_unstable();
+    chunk_targets.dedup();
+    chunk_targets
+}
+
 fn shard_targets_mib() -> Vec<u16> {
     vec![32, 64, 128, 256]
 }
@@ -1655,6 +1881,57 @@ fn print_benchmark_summary(
                     "  pipeline_output_file_count: {}",
                     result.pipeline_output_file_count
                 );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_tbvol_tile_sweep_summary(
+    summary: &TbvolTileSweepSummary,
+    format: OutputFormat,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match format {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(summary)?),
+        OutputFormat::Text => {
+            println!("tbvol tile sweep");
+            println!("- dataset: {}", summary.dataset_name);
+            println!("- source_kind: {}", summary.source_kind);
+            println!(
+                "- shape: {} x {} x {}",
+                summary.shape[0], summary.shape[1], summary.shape[2]
+            );
+            println!(
+                "- best_preview_chunk_target_mib: {}",
+                summary.best_preview_chunk_target_mib
+            );
+            println!(
+                "- best_apply_chunk_target_mib: {}",
+                summary.best_apply_chunk_target_mib
+            );
+            println!(
+                "- best_io_chunk_target_mib: {}",
+                summary.best_io_chunk_target_mib
+            );
+            println!(
+                "- best_balanced_chunk_target_mib: {}",
+                summary.best_balanced_chunk_target_mib
+            );
+            for row in &summary.results {
+                println!("- chunk_target_mib: {}", row.chunk_target_mib);
+                println!("  chunk_shape: {:?}", row.chunk_shape);
+                println!("  tile_bytes: {}", row.tile_bytes);
+                println!("  tile_count: {}", row.tile_count);
+                println!("  input_store_bytes: {}", row.input_store_bytes);
+                println!("  input_file_count: {}", row.input_file_count);
+                println!(
+                    "  inline_section_read_ms: {:.3}",
+                    row.inline_section_read_ms
+                );
+                println!("  xline_section_read_ms: {:.3}", row.xline_section_read_ms);
+                println!("  preview_pipeline_ms: {:.3}", row.preview_pipeline_ms);
+                println!("  apply_pipeline_ms: {:.3}", row.apply_pipeline_ms);
+                println!("  balanced_score: {:.3}", row.balanced_score);
             }
         }
     }

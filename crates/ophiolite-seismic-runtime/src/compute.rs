@@ -11,7 +11,10 @@ use realfft::{ComplexToReal, RealFftPlanner, RealToComplex, num_complex::Complex
 use crate::error::SeismicStoreError;
 use crate::metadata::{DatasetKind, ProcessingLineage, VolumeMetadata};
 use crate::storage::section_assembler;
-use crate::storage::tbvol::{TbvolReader, TbvolWriter, recommended_tbvol_tile_shape};
+use crate::storage::tbvol::{
+    TbvolReader, TbvolWriter, recommended_default_tbvol_tile_target_mib,
+    recommended_tbvol_tile_shape,
+};
 use crate::storage::tile_geometry::TileCoord;
 use crate::storage::volume_store::{VolumeStoreReader, VolumeStoreWriter};
 use crate::store::{SectionPlane, StoreHandle, open_store};
@@ -1727,7 +1730,10 @@ fn compute_pool() -> &'static ThreadPool {
 
 fn resolve_chunk_shape(chunk_shape: [usize; 3], shape: [usize; 3]) -> [usize; 3] {
     if chunk_shape.iter().all(|value| *value == 0) {
-        return recommended_tbvol_tile_shape(shape, 4);
+        return recommended_tbvol_tile_shape(
+            shape,
+            recommended_default_tbvol_tile_target_mib(shape),
+        );
     }
 
     [

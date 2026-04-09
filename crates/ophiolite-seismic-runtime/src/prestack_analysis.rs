@@ -15,13 +15,21 @@ const SEMBLANCE_EPSILON: f32 = 1.0e-12;
 const MAX_VELOCITY_SCAN_SAMPLES: usize = 4096;
 const MAX_AUTOPICK_SMOOTHING_SAMPLES: usize = 1024;
 
-pub fn velocity_scan(request: VelocityScanRequest) -> Result<VelocityScanResponse, SeismicStoreError> {
+pub fn velocity_scan(
+    request: VelocityScanRequest,
+) -> Result<VelocityScanResponse, SeismicStoreError> {
     let handle = open_prestack_store(&request.store_path)?;
     let mut gather = read_gather_plane(&request.store_path, &request.gather)?;
 
     if let Some(trace_local_pipeline) = request.trace_local_pipeline.as_ref() {
-        crate::compute::validate_processing_pipeline_for_layout(trace_local_pipeline, handle.manifest.layout)?;
-        crate::gather_processing::apply_trace_local_pipeline_to_gather(&mut gather, trace_local_pipeline)?;
+        crate::compute::validate_processing_pipeline_for_layout(
+            trace_local_pipeline,
+            handle.manifest.layout,
+        )?;
+        crate::gather_processing::apply_trace_local_pipeline_to_gather(
+            &mut gather,
+            trace_local_pipeline,
+        )?;
     }
 
     let velocities_m_per_s = velocity_scan_axis(
@@ -204,10 +212,16 @@ fn pick_velocity_function(
 
     for sample_index in (0..sample_count).step_by(stride) {
         let time_ms = sample_axis_ms[sample_index];
-        if parameters.min_time_ms.is_some_and(|min_time_ms| time_ms < min_time_ms) {
+        if parameters
+            .min_time_ms
+            .is_some_and(|min_time_ms| time_ms < min_time_ms)
+        {
             continue;
         }
-        if parameters.max_time_ms.is_some_and(|max_time_ms| time_ms > max_time_ms) {
+        if parameters
+            .max_time_ms
+            .is_some_and(|max_time_ms| time_ms > max_time_ms)
+        {
             continue;
         }
 
@@ -254,21 +268,29 @@ fn validate_autopick_parameters(
             parameters.min_semblance
         )));
     }
-    if parameters.smoothing_samples == 0 || parameters.smoothing_samples > MAX_AUTOPICK_SMOOTHING_SAMPLES {
+    if parameters.smoothing_samples == 0
+        || parameters.smoothing_samples > MAX_AUTOPICK_SMOOTHING_SAMPLES
+    {
         return Err(SeismicStoreError::Message(format!(
             "velocity autopick smoothing_samples must be in [1, {MAX_AUTOPICK_SMOOTHING_SAMPLES}], found {}",
             parameters.smoothing_samples
         )));
     }
-    if let (Some(min_time_ms), Some(max_time_ms)) = (parameters.min_time_ms, parameters.max_time_ms) {
+    if let (Some(min_time_ms), Some(max_time_ms)) = (parameters.min_time_ms, parameters.max_time_ms)
+    {
         if !min_time_ms.is_finite() || !max_time_ms.is_finite() || min_time_ms > max_time_ms {
             return Err(SeismicStoreError::Message(format!(
                 "velocity autopick time range must be finite and satisfy min <= max, found [{min_time_ms}, {max_time_ms}]"
             )));
         }
     }
-    for (label, value) in [("min_time_ms", parameters.min_time_ms), ("max_time_ms", parameters.max_time_ms)] {
-        if let Some(value) = value && !value.is_finite() {
+    for (label, value) in [
+        ("min_time_ms", parameters.min_time_ms),
+        ("max_time_ms", parameters.max_time_ms),
+    ] {
+        if let Some(value) = value
+            && !value.is_finite()
+        {
             return Err(SeismicStoreError::Message(format!(
                 "velocity autopick {label} must be finite, found {value}"
             )));
@@ -295,15 +317,19 @@ fn smooth_velocity_samples(values: &mut [f32], smoothing_samples: usize) {
 }
 
 fn trace_local_pipeline_label(pipeline: &TraceLocalProcessingPipeline) -> String {
-    if let Some(name) = pipeline.name.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(name) = pipeline
+        .name
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         return name.to_string();
     }
-    if pipeline.operations.is_empty() {
+    if pipeline.operation_count() == 0 {
         return "trace-local".to_string();
     }
     pipeline
-        .operations
-        .iter()
+        .operations()
         .map(|operation| operation.operator_id().to_string())
         .collect::<Vec<_>>()
         .join("__")
@@ -321,14 +347,14 @@ fn f32_vec_to_le_bytes(values: &[f32]) -> Vec<u8> {
 mod tests {
     use super::*;
     use ophiolite_seismic::{
-        DatasetId, GatherRequest, GatherSelector, VelocityAutopickParameters,
-        VelocityPickStrategy,
+        DatasetId, GatherRequest, GatherSelector, VelocityAutopickParameters, VelocityPickStrategy,
     };
 
     use std::path::PathBuf;
 
     use crate::metadata::{
-        DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, VolumeAxes, VolumeMetadata,
+        DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, VolumeAxes,
+        VolumeMetadata, generate_store_id,
     };
     use crate::prestack_store::{TbgathManifest, create_tbgath_store};
 
@@ -336,6 +362,7 @@ mod tests {
         TbgathManifest::new(
             VolumeMetadata {
                 kind: DatasetKind::Source,
+                store_id: generate_store_id(),
                 source: SourceIdentity {
                     source_path: PathBuf::from("synthetic.sgy"),
                     file_size: 0,
@@ -343,6 +370,10 @@ mod tests {
                     samples_per_trace: 4,
                     sample_interval_us: 2000,
                     sample_format_code: 5,
+                    endianness: "big".to_string(),
+                    revision_raw: 0,
+                    fixed_length_trace_flag_raw: 1,
+                    extended_textual_headers: 0,
                     geometry: GeometryProvenance {
                         inline_field: HeaderFieldSpec {
                             name: "INLINE_3D".to_string(),
@@ -368,6 +399,9 @@ mod tests {
                     xlines: vec![2000.0],
                     sample_axis_ms: vec![0.0, 4.0, 8.0, 12.0],
                 },
+                segy_export: None,
+                coordinate_reference_binding: None,
+                spatial: None,
                 created_by: "test".to_string(),
                 processing_lineage: None,
             },
@@ -564,7 +598,10 @@ mod tests {
         })
         .expect("velocity scan should succeed");
 
-        assert_eq!(response.panel.velocities_m_per_s, vec![1500.0, 2000.0, 2500.0]);
+        assert_eq!(
+            response.panel.velocities_m_per_s,
+            vec![1500.0, 2000.0, 2500.0]
+        );
         assert_eq!(response.panel.sample_axis_ms.len(), 4);
         assert_eq!(
             response.panel.semblance_f32le.len(),

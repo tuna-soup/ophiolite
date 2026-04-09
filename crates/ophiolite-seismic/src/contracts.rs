@@ -8,7 +8,7 @@ use crate::{
 };
 
 fn default_pipeline_schema_version() -> u32 {
-    1
+    2
 }
 
 fn default_pipeline_revision() -> u32 {
@@ -34,6 +34,7 @@ impl From<&SeismicAssetId> for DatasetId {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct VolumeDescriptor {
     pub id: DatasetId,
+    pub store_id: String,
     pub label: String,
     pub shape: [usize; 3],
     pub chunk_shape: [usize; 3],
@@ -43,6 +44,27 @@ pub struct VolumeDescriptor {
     pub coordinate_reference_binding: Option<CoordinateReferenceBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub spatial: Option<SurveySpatialDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub processing_lineage_summary: Option<ProcessingLineageSummary>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingArtifactRole {
+    FinalOutput,
+    Checkpoint,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingLineageSummary {
+    pub parent_store_path: String,
+    pub parent_store_id: String,
+    pub artifact_role: ProcessingArtifactRole,
+    pub pipeline_family: ProcessingPipelineFamily,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_name: Option<String>,
+    pub pipeline_revision: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -563,6 +585,13 @@ impl TraceLocalProcessingOperation {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct TraceLocalProcessingStep {
+    pub operation: TraceLocalProcessingOperation,
+    #[serde(default)]
+    pub checkpoint: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct TraceLocalProcessingPipeline {
     #[serde(default = "default_pipeline_schema_version")]
     pub schema_version: u32,
@@ -574,7 +603,25 @@ pub struct TraceLocalProcessingPipeline {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub operations: Vec<TraceLocalProcessingOperation>,
+    pub steps: Vec<TraceLocalProcessingStep>,
+}
+
+impl TraceLocalProcessingPipeline {
+    pub fn operation_count(&self) -> usize {
+        self.steps.len()
+    }
+
+    pub fn operations(&self) -> impl Iterator<Item = &TraceLocalProcessingOperation> {
+        self.steps.iter().map(|step| &step.operation)
+    }
+
+    pub fn checkpoint_indexes(&self) -> Vec<usize> {
+        self.steps
+            .iter()
+            .enumerate()
+            .filter_map(|(index, step)| step.checkpoint.then_some(index))
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -602,11 +649,6 @@ pub struct SubvolumeProcessingPipeline {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace_local_pipeline: Option<TraceLocalProcessingPipeline>,
     pub crop: SubvolumeCropOperation,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct TraceLocalProcessingCheckpoint {
-    pub after_operation_index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -895,6 +937,54 @@ pub struct SectionView {
     pub units: Option<SectionUnits>,
     pub metadata: Option<SectionMetadata>,
     pub display_defaults: Option<SectionDisplayDefaults>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SectionHorizonLineStyle {
+    Solid,
+    Dashed,
+    Dotted,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SectionHorizonStyle {
+    pub color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_width: Option<f32>,
+    pub line_style: SectionHorizonLineStyle,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SectionHorizonSample {
+    pub trace_index: usize,
+    pub sample_index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_value: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SectionHorizonOverlayView {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub style: SectionHorizonStyle,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub samples: Vec<SectionHorizonSample>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ImportedHorizonDescriptor {
+    pub id: String,
+    pub name: String,
+    pub source_path: String,
+    pub point_count: usize,
+    pub mapped_point_count: usize,
+    pub missing_cell_count: usize,
+    pub style: SectionHorizonStyle,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -1189,6 +1279,49 @@ pub struct OpenDatasetResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ExportSegyRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    pub output_path: String,
+    #[serde(default)]
+    pub overwrite_existing: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ExportSegyResponse {
+    pub schema_version: u32,
+    pub store_path: String,
+    pub output_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ImportHorizonXyzRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    pub input_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ImportHorizonXyzResponse {
+    pub schema_version: u32,
+    pub imported: Vec<ImportedHorizonDescriptor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct LoadSectionHorizonsRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    pub axis: SectionAxis,
+    pub index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct LoadSectionHorizonsResponse {
+    pub schema_version: u32,
+    pub overlays: Vec<SectionHorizonOverlayView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct PreviewCommand {
     pub schema_version: u32,
     pub request: SectionRequest,
@@ -1238,8 +1371,6 @@ pub struct RunTraceLocalProcessingRequest {
     pub output_store_path: Option<String>,
     #[serde(default)]
     pub overwrite_existing: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub checkpoints: Vec<TraceLocalProcessingCheckpoint>,
     pub pipeline: TraceLocalProcessingPipeline,
 }
 

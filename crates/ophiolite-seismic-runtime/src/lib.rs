@@ -1,12 +1,14 @@
 mod compute;
 mod error;
 mod gather_processing;
+mod horizons;
 mod ingest;
 mod metadata;
 mod preflight;
 mod prestack_analysis;
 mod prestack_store;
 mod render;
+mod segy_export;
 mod storage;
 mod store;
 
@@ -29,6 +31,7 @@ pub use gather_processing::{
     GatherPlane, apply_gather_processing_pipeline, apply_trace_local_pipeline_to_gather,
     validate_gather_processing_pipeline, validate_gather_processing_pipeline_for_layout,
 };
+pub use horizons::{import_horizon_xyzs, section_horizon_overlays};
 pub use ingest::{
     IngestOptions, SeisGeometryOptions, SourceVolume, SparseSurveyPolicy,
     ingest_prestack_offset_segy, ingest_segy, load_source_volume, load_source_volume_with_options,
@@ -36,8 +39,8 @@ pub use ingest::{
 };
 pub use metadata::{
     CompressionKind, DatasetKind, GeometryProvenance, HeaderFieldSpec, InterpMethod,
-    ProcessingLineage, RegularizationProvenance, SourceIdentity, StorageLayout, StoreManifest,
-    VolumeAxes, VolumeMetadata,
+    ProcessingLineage, RegularizationProvenance, SegyExportDescriptor, SourceIdentity,
+    StorageLayout, StoreManifest, VolumeAxes, VolumeMetadata, generate_store_id,
 };
 pub use ophiolite_seismic::{
     AmplitudeSpectrumCurve, AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, AxisSummaryF32,
@@ -48,27 +51,30 @@ pub use ophiolite_seismic::{
     GatherProbeChanged, GatherProcessingOperation, GatherProcessingPipeline, GatherRequest,
     GatherSampleDomain, GatherSelector, GatherView, GatherViewport, GatherViewportChanged,
     GeometryDescriptor, GeometryProvenanceSummary, GeometrySummary, GetProcessingJobRequest,
-    GetProcessingJobResponse, InterpretationPoint, ListPipelinePresetsResponse,
-    PreviewGatherProcessingRequest, PreviewGatherProcessingResponse, PreviewProcessingRequest,
-    PreviewProcessingResponse, PreviewResponse, PreviewSubvolumeProcessingRequest,
-    PreviewSubvolumeProcessingResponse, PreviewTraceLocalProcessingRequest,
-    PreviewTraceLocalProcessingResponse, PreviewView, ProcessingJobProgress, ProcessingJobState,
-    ProcessingJobStatus, ProcessingLayoutCompatibility, ProcessingOperation,
-    ProcessingOperatorDependencyProfile, ProcessingOperatorScope, ProcessingPipeline,
-    ProcessingPipelineFamily, ProcessingPipelineSpec, ProcessingPreset, ProcessingSampleDependency,
-    ProcessingSpatialDependency, ProjectedPoint2, ProjectedPolygon2, ProjectedVector2,
-    RunGatherProcessingRequest, RunGatherProcessingResponse, RunProcessingRequest,
-    RunProcessingResponse, RunSubvolumeProcessingRequest, RunSubvolumeProcessingResponse,
-    RunTraceLocalProcessingRequest, RunTraceLocalProcessingResponse, SavePipelinePresetRequest,
-    SavePipelinePresetResponse, SectionAxis, SectionCoordinate, SectionDisplayDefaults,
-    SectionMetadata, SectionProbe, SectionProbeChanged, SectionRenderMode, SectionRequest,
-    SectionSpectrumSelection, SectionTileRequest, SectionUnits, SectionView, SectionViewport,
-    SectionViewportChanged, SeismicLayout, SemblancePanel, SubvolumeCropOperation,
-    SubvolumeProcessingPipeline, SurveyGridTransform, SurveySpatialAvailability,
-    SurveySpatialDescriptor, TraceLocalProcessingOperation, TraceLocalProcessingPipeline,
-    TraceLocalProcessingPreset, TraceLocalVolumeArithmeticOperator, VelocityAutopickParameters,
-    VelocityFunctionEstimate, VelocityFunctionSource, VelocityPickStrategy, VelocityScanRequest,
-    VelocityScanResponse, VolumeDescriptor,
+    GetProcessingJobResponse, ImportHorizonXyzRequest, ImportHorizonXyzResponse,
+    ImportedHorizonDescriptor, InterpretationPoint, ListPipelinePresetsResponse,
+    LoadSectionHorizonsRequest, LoadSectionHorizonsResponse, PreviewGatherProcessingRequest,
+    PreviewGatherProcessingResponse, PreviewProcessingRequest, PreviewProcessingResponse,
+    PreviewResponse, PreviewSubvolumeProcessingRequest, PreviewSubvolumeProcessingResponse,
+    PreviewTraceLocalProcessingRequest, PreviewTraceLocalProcessingResponse, PreviewView,
+    ProcessingArtifactRole, ProcessingJobProgress, ProcessingJobState, ProcessingJobStatus,
+    ProcessingLayoutCompatibility, ProcessingOperation, ProcessingOperatorDependencyProfile,
+    ProcessingOperatorScope, ProcessingPipeline, ProcessingPipelineFamily, ProcessingPipelineSpec,
+    ProcessingPreset, ProcessingSampleDependency, ProcessingSpatialDependency, ProjectedPoint2,
+    ProjectedPolygon2, ProjectedVector2, RunGatherProcessingRequest, RunGatherProcessingResponse,
+    RunProcessingRequest, RunProcessingResponse, RunSubvolumeProcessingRequest,
+    RunSubvolumeProcessingResponse, RunTraceLocalProcessingRequest,
+    RunTraceLocalProcessingResponse, SavePipelinePresetRequest, SavePipelinePresetResponse,
+    SectionAxis, SectionCoordinate, SectionDisplayDefaults, SectionHorizonLineStyle,
+    SectionHorizonOverlayView, SectionHorizonSample, SectionHorizonStyle, SectionMetadata,
+    SectionProbe, SectionProbeChanged, SectionRenderMode, SectionRequest, SectionSpectrumSelection,
+    SectionTileRequest, SectionUnits, SectionView, SectionViewport, SectionViewportChanged,
+    SeismicLayout, SemblancePanel, SubvolumeCropOperation, SubvolumeProcessingPipeline,
+    SurveyGridTransform, SurveySpatialAvailability, SurveySpatialDescriptor,
+    TraceLocalProcessingOperation, TraceLocalProcessingPipeline, TraceLocalProcessingPreset,
+    TraceLocalVolumeArithmeticOperator, VelocityAutopickParameters, VelocityFunctionEstimate,
+    VelocityFunctionSource, VelocityPickStrategy, VelocityScanRequest, VelocityScanResponse,
+    VolumeDescriptor,
 };
 pub use preflight::{PreflightAction, PreflightGeometry, SurveyPreflight, preflight_segy};
 pub use prestack_analysis::velocity_scan;
@@ -81,6 +87,9 @@ pub use prestack_store::{
     set_prestack_store_native_coordinate_reference,
 };
 pub use render::{render_section_csv, render_section_csv_for_request};
+pub use segy_export::{
+    attach_store_segy_export, copy_store_segy_export, crop_store_segy_export, export_store_to_segy,
+};
 pub use storage::section_assembler::read_section_plane as assemble_section_plane;
 pub use storage::tbvol::{
     TbvolManifest, TbvolReader, TbvolWriter, recommended_default_tbvol_tile_target_mib,

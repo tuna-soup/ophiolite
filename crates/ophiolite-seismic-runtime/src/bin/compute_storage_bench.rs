@@ -2,14 +2,14 @@ use clap::{Parser, Subcommand, ValueEnum};
 use ndarray::{Array2, Array3};
 use ophiolite_seismic_runtime::{
     CompressionKind, DatasetKind, FrequencyPhaseMode, FrequencyWindowShape, HeaderFieldSpec,
-    IngestOptions, ProcessingLineage, ProcessingOperation, ProcessingPipeline,
-    ProcessingPipelineSpec, SectionAxis, SourceIdentity, SparseSurveyPolicy, StorageLayout,
-    TbvolReader, TbvolWriter, TileCoord, TileGeometry, VolumeAxes, VolumeMetadata,
+    IngestOptions, ProcessingArtifactRole, ProcessingLineage, ProcessingOperation,
+    ProcessingPipeline, ProcessingPipelineSpec, SectionAxis, SourceIdentity, SparseSurveyPolicy,
+    StorageLayout, TbvolReader, TbvolWriter, TileCoord, TileGeometry, VolumeAxes, VolumeMetadata,
     VolumeStoreReader, VolumeStoreWriter, ZarrVolumeStoreReader, ZarrVolumeStoreWriter,
-    apply_pipeline_to_traces, assemble_section_plane, load_array, load_occupancy,
-    load_source_volume_with_options, materialize_from_reader_writer, open_store, preflight_segy,
-    preview_section_from_reader, recommended_chunk_shape, recommended_tbvol_tile_shape,
-    write_dense_volume,
+    apply_pipeline_to_traces, assemble_section_plane, generate_store_id, load_array,
+    load_occupancy, load_source_volume_with_options, materialize_from_reader_writer, open_store,
+    preflight_segy, preview_section_from_reader, recommended_chunk_shape,
+    recommended_tbvol_tile_shape, write_dense_volume,
 };
 use serde::Serialize;
 use std::fs::{self, File};
@@ -710,6 +710,7 @@ fn run_candidate_benchmark(
             let input_root = bench_root.join("input.zarr");
             let volume = VolumeMetadata {
                 kind: ophiolite_seismic_runtime::DatasetKind::Source,
+                store_id: generate_store_id(),
                 source: dataset.source.clone(),
                 shape: dataset.shape,
                 axes: dataset.axes.clone(),
@@ -717,6 +718,7 @@ fn run_candidate_benchmark(
                 spatial: None,
                 created_by: "compute-storage-bench".to_string(),
                 processing_lineage: None,
+                segy_export: None,
             };
             let writer = ZarrVolumeStoreWriter::create(
                 &input_root,
@@ -1204,6 +1206,7 @@ fn build_occupancy_tile(
 fn benchmark_volume(dataset: &BenchmarkDataset) -> VolumeMetadata {
     VolumeMetadata {
         kind: DatasetKind::Source,
+        store_id: generate_store_id(),
         source: dataset.source.clone(),
         shape: dataset.shape,
         axes: dataset.axes.clone(),
@@ -1211,6 +1214,7 @@ fn benchmark_volume(dataset: &BenchmarkDataset) -> VolumeMetadata {
         spatial: None,
         created_by: "compute-storage-bench".to_string(),
         processing_lineage: None,
+        segy_export: None,
     }
 }
 
@@ -1221,6 +1225,7 @@ fn derived_output_volume(
 ) -> VolumeMetadata {
     VolumeMetadata {
         kind: DatasetKind::Derived,
+        store_id: generate_store_id(),
         source: input.source.clone(),
         shape: input.shape,
         axes: input.axes.clone(),
@@ -1229,19 +1234,29 @@ fn derived_output_volume(
         created_by: "compute-storage-bench".to_string(),
         processing_lineage: Some(ProcessingLineage {
             parent_store: parent_store.to_path_buf(),
+            parent_store_id: input.store_id.clone(),
+            artifact_role: ProcessingArtifactRole::FinalOutput,
             pipeline: ProcessingPipelineSpec::TraceLocal {
                 pipeline: ProcessingPipeline {
-                    schema_version: 1,
+                    schema_version: 2,
                     revision: 1,
                     preset_id: None,
                     name: Some("compute-storage-bench".to_string()),
                     description: None,
-                    operations: pipeline.to_vec(),
+                    steps: pipeline
+                        .iter()
+                        .cloned()
+                        .map(|operation| ophiolite_seismic::TraceLocalProcessingStep {
+                            operation,
+                            checkpoint: false,
+                        })
+                        .collect(),
                 },
             },
             runtime_version: "compute-storage-bench".to_string(),
             created_at_unix_s: unix_timestamp_s(),
         }),
+        segy_export: None,
     }
 }
 
@@ -1665,6 +1680,10 @@ fn synthetic_dataset(ilines: usize, xlines: usize, samples: usize) -> BenchmarkD
         samples_per_trace: samples,
         sample_interval_us: 2000,
         sample_format_code: 5,
+        endianness: "big".to_string(),
+        revision_raw: 0,
+        fixed_length_trace_flag_raw: 1,
+        extended_textual_headers: 0,
         geometry: ophiolite_seismic_runtime::GeometryProvenance {
             inline_field: HeaderFieldSpec {
                 name: "INLINE_SYNTHETIC".to_string(),

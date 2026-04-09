@@ -3,10 +3,11 @@ use std::path::{Path, PathBuf};
 
 use ndarray::{Array2, Array3};
 use ophiolite_seismic::{
-    AxisSummaryF32, AxisSummaryI32, DatasetId, GeometryDescriptor, GeometryProvenanceSummary,
-    GeometrySummary, SectionAxis, SectionColorMap, SectionCoordinate, SectionDisplayDefaults,
-    SectionMetadata, SectionPolarity, SectionRenderMode, SectionUnits, SectionView,
-    VolumeDescriptor,
+    AxisSummaryF32, AxisSummaryI32, CoordinateReferenceBinding, CoordinateReferenceDescriptor,
+    CoordinateReferenceSource, DatasetId, GeometryDescriptor, GeometryProvenanceSummary,
+    GeometrySummary, ProcessingLineageSummary, SectionAxis, SectionColorMap, SectionCoordinate,
+    SectionDisplayDefaults, SectionMetadata, SectionPolarity, SectionRenderMode, SectionUnits,
+    SectionView, SurveySpatialDescriptor, VolumeDescriptor,
 };
 
 use crate::error::SeismicStoreError;
@@ -50,11 +51,17 @@ impl StoreHandle {
     pub fn volume_descriptor(&self) -> VolumeDescriptor {
         VolumeDescriptor {
             id: self.dataset_id(),
+            store_id: self.manifest.volume.store_id.clone(),
             label: dataset_label(&self.root),
             shape: self.manifest.volume.shape,
             chunk_shape: self.manifest.tile_shape,
             sample_interval_ms: self.manifest.volume.source.sample_interval_us as f32 / 1000.0,
             geometry: self.geometry_descriptor(),
+            coordinate_reference_binding: self.manifest.volume.coordinate_reference_binding.clone(),
+            spatial: self.manifest.volume.spatial.clone(),
+            processing_lineage_summary: processing_lineage_summary(
+                self.manifest.volume.processing_lineage.as_ref(),
+            ),
         }
     }
 
@@ -100,7 +107,7 @@ impl StoreHandle {
                 amplitude: Some("amplitude".to_string()),
             }),
             metadata: Some(SectionMetadata {
-                store_id: Some(self.dataset_id().0),
+                store_id: Some(self.manifest.volume.store_id.clone()),
                 derived_from: self
                     .manifest
                     .volume
@@ -137,6 +144,31 @@ impl StoreHandle {
     }
 }
 
+fn processing_lineage_summary(
+    lineage: Option<&crate::metadata::ProcessingLineage>,
+) -> Option<ProcessingLineageSummary> {
+    let lineage = lineage?;
+    let (pipeline_name, pipeline_revision) = match &lineage.pipeline {
+        ophiolite_seismic::ProcessingPipelineSpec::TraceLocal { pipeline } => {
+            (pipeline.name.clone(), pipeline.revision)
+        }
+        ophiolite_seismic::ProcessingPipelineSpec::Subvolume { pipeline } => {
+            (pipeline.name.clone(), pipeline.revision)
+        }
+        ophiolite_seismic::ProcessingPipelineSpec::Gather { pipeline } => {
+            (pipeline.name.clone(), pipeline.revision)
+        }
+    };
+    Some(ProcessingLineageSummary {
+        parent_store_path: lineage.parent_store.to_string_lossy().into_owned(),
+        parent_store_id: lineage.parent_store_id.clone(),
+        artifact_role: lineage.artifact_role,
+        pipeline_family: lineage.pipeline.family(),
+        pipeline_name: pipeline_name.filter(|value| !value.trim().is_empty()),
+        pipeline_revision,
+    })
+}
+
 pub fn create_tbvol_store(
     root: impl AsRef<Path>,
     manifest: TbvolManifest,
@@ -166,6 +198,24 @@ pub fn open_store(root: impl AsRef<Path>) -> Result<StoreHandle, SeismicStoreErr
 
 pub fn describe_store(root: impl AsRef<Path>) -> Result<VolumeDescriptor, SeismicStoreError> {
     Ok(open_store(root)?.volume_descriptor())
+}
+
+pub fn set_store_native_coordinate_reference(
+    root: impl AsRef<Path>,
+    coordinate_reference_id: Option<&str>,
+    coordinate_reference_name: Option<&str>,
+) -> Result<VolumeDescriptor, SeismicStoreError> {
+    let root = root.as_ref().to_path_buf();
+    let manifest_path = root.join("manifest.json");
+    let mut manifest = serde_json::from_slice::<TbvolManifest>(&fs::read(&manifest_path)?)?;
+    manifest.volume.coordinate_reference_binding = apply_native_coordinate_reference_override(
+        manifest.volume.coordinate_reference_binding.take(),
+        manifest.volume.spatial.as_mut(),
+        coordinate_reference_id,
+        coordinate_reference_name,
+    );
+    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    Ok(StoreHandle { root, manifest }.volume_descriptor())
 }
 
 pub fn section_view(
@@ -217,6 +267,79 @@ fn load_array_from_reader<R: VolumeStoreReader>(
     }
 
     Ok(data)
+}
+
+pub(crate) fn apply_native_coordinate_reference_override(
+    binding: Option<CoordinateReferenceBinding>,
+    spatial: Option<&mut SurveySpatialDescriptor>,
+    coordinate_reference_id: Option<&str>,
+    coordinate_reference_name: Option<&str>,
+) -> Option<CoordinateReferenceBinding> {
+    let coordinate_reference_id = coordinate_reference_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let coordinate_reference_name = coordinate_reference_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+
+    let mut binding = binding.unwrap_or(CoordinateReferenceBinding {
+        detected: None,
+        effective: None,
+        source: CoordinateReferenceSource::Unknown,
+        notes: Vec::new(),
+    });
+    let template = binding
+        .effective
+        .clone()
+        .or_else(|| binding.detected.clone())
+        .or_else(|| {
+            spatial
+                .as_ref()
+                .and_then(|item| item.coordinate_reference.clone())
+        });
+
+    if let Some(coordinate_reference_id) = coordinate_reference_id {
+        let mut effective = template.unwrap_or(CoordinateReferenceDescriptor {
+            id: None,
+            name: None,
+            geodetic_datum: None,
+            unit: None,
+        });
+        effective.id = Some(coordinate_reference_id);
+        if coordinate_reference_name.is_some() {
+            effective.name = coordinate_reference_name;
+        }
+        binding.effective = Some(effective.clone());
+        binding.source = CoordinateReferenceSource::UserOverride;
+        binding
+            .notes
+            .retain(|note| note != "effective native coordinate reference overridden by user");
+        binding.notes.push(String::from(
+            "effective native coordinate reference overridden by user",
+        ));
+        if let Some(spatial) = spatial {
+            spatial.coordinate_reference = Some(effective);
+        }
+        return Some(binding);
+    }
+
+    if let Some(detected) = binding.detected.clone() {
+        binding.effective = Some(detected.clone());
+        if let Some(spatial) = spatial {
+            spatial.coordinate_reference = Some(detected);
+        }
+        binding
+            .notes
+            .retain(|note| note != "effective native coordinate reference overridden by user");
+        return Some(binding);
+    }
+
+    if let Some(spatial) = spatial {
+        spatial.coordinate_reference = None;
+    }
+    None
 }
 
 fn load_occupancy_from_reader<R: VolumeStoreReader>(
@@ -401,7 +524,7 @@ mod tests {
     use super::*;
     use crate::metadata::{
         DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, VolumeAxes,
-        VolumeMetadata,
+        VolumeMetadata, generate_store_id,
     };
     use ndarray::Array3;
     use tempfile::tempdir;
@@ -410,6 +533,7 @@ mod tests {
         TbvolManifest::new(
             VolumeMetadata {
                 kind: DatasetKind::Source,
+                store_id: generate_store_id(),
                 source: SourceIdentity {
                     source_path: PathBuf::from("input.sgy"),
                     file_size: 1,
@@ -417,6 +541,10 @@ mod tests {
                     samples_per_trace: shape[2],
                     sample_interval_us: 2000,
                     sample_format_code: 5,
+                    endianness: "big".to_string(),
+                    revision_raw: 0,
+                    fixed_length_trace_flag_raw: 1,
+                    extended_textual_headers: 0,
                     geometry: GeometryProvenance {
                         inline_field: HeaderFieldSpec {
                             name: "INLINE_3D".to_string(),
@@ -438,6 +566,9 @@ mod tests {
                     xlines: vec![200.0, 201.0, 202.0, 203.0],
                     sample_axis_ms: vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0],
                 },
+                segy_export: None,
+                coordinate_reference_binding: None,
+                spatial: None,
                 created_by: "test".to_string(),
                 processing_lineage: None,
             },

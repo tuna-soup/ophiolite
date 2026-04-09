@@ -14,7 +14,9 @@ use zarrs::metadata_ext::codec::blosc::{BloscCompressionLevel, BloscCompressor, 
 use zarrs::storage::{ReadableWritableListableStorage, ReadableWritableListableStorageTraits};
 
 use crate::error::SeismicStoreError;
-use crate::metadata::{CompressionKind, StorageLayout, StoreManifest, VolumeMetadata};
+use crate::metadata::{
+    CompressionKind, StorageLayout, StoreManifest, VolumeMetadata, generate_store_id,
+};
 
 use super::tile_geometry::{TileCoord, TileGeometry};
 use super::volume_store::{OccupancyTile, TileBuffer, VolumeStoreReader, VolumeStoreWriter};
@@ -33,8 +35,8 @@ pub struct ZarrVolumeStoreReader {
 impl ZarrVolumeStoreReader {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, SeismicStoreError> {
         let root = root.as_ref().to_path_buf();
-        let manifest: StoreManifest =
-            serde_json::from_slice(&fs::read(root.join(StoreManifest::FILE_NAME))?)?;
+        let manifest_path = root.join(StoreManifest::FILE_NAME);
+        let manifest: StoreManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
         let geometry = TileGeometry::new(manifest.shape, manifest.chunk_shape);
         let array = open_array_at_path(&root, &manifest.array_path)?;
         let occupancy = manifest
@@ -101,20 +103,27 @@ pub struct ZarrVolumeStoreWriter {
 impl ZarrVolumeStoreWriter {
     pub fn create(
         root: impl AsRef<Path>,
-        volume: VolumeMetadata,
+        mut volume: VolumeMetadata,
         tile_shape: [usize; 3],
         storage_layout: StorageLayout,
         has_occupancy: bool,
     ) -> Result<Self, SeismicStoreError> {
         let root = root.as_ref().to_path_buf();
+        if volume.store_id.trim().is_empty() {
+            volume.store_id = generate_store_id();
+        }
         let geometry = TileGeometry::new(volume.shape, tile_shape);
         let manifest = StoreManifest {
             version: 1,
+            store_id: volume.store_id.clone(),
             kind: volume.kind.clone(),
             source: volume.source.clone(),
             shape: volume.shape,
             chunk_shape: tile_shape,
             axes: volume.axes.clone(),
+            segy_export: volume.segy_export.clone(),
+            coordinate_reference_binding: volume.coordinate_reference_binding.clone(),
+            spatial: volume.spatial.clone(),
             array_path: ARRAY_PATH.to_string(),
             occupancy_array_path: has_occupancy.then(|| OCCUPANCY_PATH.to_string()),
             created_by: volume.created_by.clone(),

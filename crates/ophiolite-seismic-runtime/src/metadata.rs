@@ -1,7 +1,11 @@
 use std::path::PathBuf;
 
+use ophiolite_seismic::CoordinateReferenceBinding;
+use ophiolite_seismic::ProcessingArtifactRole;
 use ophiolite_seismic::ProcessingPipelineSpec;
+use ophiolite_seismic::SurveySpatialDescriptor;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeaderFieldSpec {
@@ -46,8 +50,25 @@ pub struct SourceIdentity {
     pub samples_per_trace: usize,
     pub sample_interval_us: u16,
     pub sample_format_code: u16,
+    pub endianness: String,
+    pub revision_raw: u16,
+    pub fixed_length_trace_flag_raw: u16,
+    pub extended_textual_headers: i16,
     pub geometry: GeometryProvenance,
     pub regularization: Option<RegularizationProvenance>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SegyExportDescriptor {
+    pub schema_version: u32,
+    pub text_headers_path: String,
+    pub binary_header_path: String,
+    pub trace_headers_path: String,
+    pub trace_index_path: String,
+    pub trace_count: usize,
+    pub textual_header_count: usize,
+    pub endianness: String,
+    pub contains_synthetic_traces: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +111,8 @@ impl Default for StorageLayout {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessingLineage {
     pub parent_store: PathBuf,
+    pub parent_store_id: String,
+    pub artifact_role: ProcessingArtifactRole,
     pub pipeline: ProcessingPipelineSpec,
     pub runtime_version: String,
     pub created_at_unix_s: u64,
@@ -98,9 +121,16 @@ pub struct ProcessingLineage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolumeMetadata {
     pub kind: DatasetKind,
+    pub store_id: String,
     pub source: SourceIdentity,
     pub shape: [usize; 3],
     pub axes: VolumeAxes,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub segy_export: Option<SegyExportDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_reference_binding: Option<CoordinateReferenceBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spatial: Option<SurveySpatialDescriptor>,
     pub created_by: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processing_lineage: Option<ProcessingLineage>,
@@ -109,11 +139,18 @@ pub struct VolumeMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoreManifest {
     pub version: u32,
+    pub store_id: String,
     pub kind: DatasetKind,
     pub source: SourceIdentity,
     pub shape: [usize; 3],
     pub chunk_shape: [usize; 3],
     pub axes: VolumeAxes,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub segy_export: Option<SegyExportDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_reference_binding: Option<CoordinateReferenceBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spatial: Option<SurveySpatialDescriptor>,
     pub array_path: String,
     pub occupancy_array_path: Option<String>,
     pub created_by: String,
@@ -132,11 +169,19 @@ impl From<&StoreManifest> for VolumeMetadata {
     fn from(value: &StoreManifest) -> Self {
         Self {
             kind: value.kind.clone(),
+            store_id: value.store_id.clone(),
             source: value.source.clone(),
             shape: value.shape,
             axes: value.axes.clone(),
+            segy_export: value.segy_export.clone(),
+            coordinate_reference_binding: value.coordinate_reference_binding.clone(),
+            spatial: value.spatial.clone(),
             created_by: value.created_by.clone(),
             processing_lineage: value.processing_lineage.clone(),
         }
     }
+}
+
+pub fn generate_store_id() -> String {
+    Uuid::new_v4().to_string()
 }

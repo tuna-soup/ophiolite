@@ -11,20 +11,27 @@ use crate::TileCoord;
 use crate::error::SeismicStoreError;
 use crate::metadata::{
     DatasetKind, GeometryProvenance, HeaderFieldSpec, RegularizationProvenance, SourceIdentity,
-    VolumeAxes, VolumeMetadata,
+    VolumeAxes, VolumeMetadata, generate_store_id,
 };
 use crate::prestack_store::{PrestackStoreHandle, TbgathManifest, create_tbgath_store};
+use crate::segy_export::attach_store_segy_export;
 use crate::storage::tbvol::{
     TbvolWriter, recommended_default_tbvol_tile_target_mib, recommended_tbvol_tile_shape,
 };
 use crate::storage::volume_store::{VolumeStoreWriter, write_dense_volume};
 use crate::store::{StoreHandle, open_store};
-use ophiolite_seismic::{GatherAxisKind, SeismicLayout, SeismicStackingState};
+use ophiolite_seismic::{
+    CoordinateReferenceBinding, CoordinateReferenceDescriptor, CoordinateReferenceSource,
+    GatherAxisKind, ProjectedPoint2, ProjectedPolygon2, ProjectedVector2, SeismicLayout,
+    SeismicStackingState, SurveyGridTransform, SurveySpatialAvailability, SurveySpatialDescriptor,
+};
 
 #[derive(Debug, Clone)]
 pub struct SourceVolume {
     pub source: SourceIdentity,
     pub axes: VolumeAxes,
+    pub coordinate_reference_binding: Option<CoordinateReferenceBinding>,
+    pub spatial: Option<SurveySpatialDescriptor>,
     pub data: Array3<f32>,
     pub occupancy: Option<Array2<u8>>,
 }
@@ -126,9 +133,13 @@ pub fn ingest_segy(
     ];
     let volume_metadata = VolumeMetadata {
         kind: DatasetKind::Source,
+        store_id: generate_store_id(),
         source: volume.source.clone(),
         shape,
         axes: volume.axes.clone(),
+        segy_export: None,
+        coordinate_reference_binding: volume.coordinate_reference_binding.clone(),
+        spatial: volume.spatial.clone(),
         created_by: "ophiolite-seismic-runtime-0.1.0".to_string(),
         processing_lineage: None,
     };
@@ -141,6 +152,14 @@ pub fn ingest_segy(
     )?;
     write_dense_volume(&writer, &volume.data, volume.occupancy.as_ref())?;
     writer.finalize()?;
+    attach_store_segy_export(
+        store_root.as_ref(),
+        segy_path,
+        &summary,
+        &reader,
+        &geometry_report,
+        volume.occupancy.is_some(),
+    )?;
     open_store(store_root)
 }
 
@@ -163,6 +182,8 @@ pub fn ingest_prestack_offset_segy(
         third_axis_field: options.geometry.third_axis_field,
         ..GeometryOptions::default()
     })?;
+    let spatial = derive_survey_spatial_descriptor(&reader, &geometry_report)?;
+    let coordinate_reference_binding = coordinate_reference_binding_from_spatial(spatial.as_ref());
 
     validate_prestack_offset_geometry(&geometry_report, &options)?;
     let cube = reader.assemble_cube()?;
@@ -183,9 +204,13 @@ pub fn ingest_prestack_offset_segy(
     let manifest = TbgathManifest::new(
         VolumeMetadata {
             kind: DatasetKind::Source,
+            store_id: generate_store_id(),
             source,
             shape,
             axes,
+            segy_export: None,
+            coordinate_reference_binding,
+            spatial,
             created_by: "ophiolite-seismic-runtime-0.1.0".to_string(),
             processing_lineage: None,
         },
@@ -227,6 +252,8 @@ pub fn load_source_volume_with_options(
         third_axis_field: options.geometry.third_axis_field,
         ..GeometryOptions::default()
     })?;
+    let spatial = derive_survey_spatial_descriptor(&reader, &geometry_report)?;
+    let coordinate_reference_binding = coordinate_reference_binding_from_spatial(spatial.as_ref());
 
     match geometry_report.classification {
         GeometryClassification::RegularDense => {
@@ -253,6 +280,8 @@ pub fn load_source_volume_with_options(
                     xlines: cube.xlines.into_iter().map(|value| value as f64).collect(),
                     sample_axis_ms: cube.sample_axis_ms,
                 },
+                coordinate_reference_binding,
+                spatial,
                 data,
                 occupancy: None,
             })
@@ -319,6 +348,9 @@ fn regularize_sparse_regular_poststack(
         occupancy[[inline_index, xline_index]] = 1;
     }
 
+    let spatial = derive_survey_spatial_descriptor(reader, geometry_report)?;
+    let coordinate_reference_binding = coordinate_reference_binding_from_spatial(spatial.as_ref());
+
     Ok(SourceVolume {
         source: build_source_identity(
             segy_path,
@@ -350,6 +382,8 @@ fn regularize_sparse_regular_poststack(
                 .collect(),
             sample_axis_ms: reader.sample_axis_ms(),
         },
+        coordinate_reference_binding,
+        spatial,
         data: Array3::from_shape_vec(shape, data)?,
         occupancy: Some(occupancy),
     })
@@ -405,11 +439,16 @@ fn ingest_sparse_regular_poststack_to_tbvol(
             .collect(),
         sample_axis_ms: reader.sample_axis_ms(),
     };
+    let spatial = derive_survey_spatial_descriptor(reader, geometry_report)?;
     let volume_metadata = VolumeMetadata {
         kind: DatasetKind::Source,
+        store_id: generate_store_id(),
         source,
         shape,
         axes,
+        segy_export: None,
+        coordinate_reference_binding: coordinate_reference_binding_from_spatial(spatial.as_ref()),
+        spatial,
         created_by: "ophiolite-seismic-runtime-0.1.0".to_string(),
         processing_lineage: None,
     };
@@ -489,6 +528,14 @@ fn ingest_sparse_regular_poststack_to_tbvol(
     }
     drop(occupancy_map);
     writer.finalize()?;
+    attach_store_segy_export(
+        store_root.as_ref(),
+        segy_path,
+        summary,
+        reader,
+        geometry_report,
+        true,
+    )?;
     open_store(store_root)
 }
 
@@ -507,6 +554,13 @@ fn build_source_identity(
         samples_per_trace,
         sample_interval_us,
         sample_format_code: summary.sample_format_code,
+        endianness: match summary.endianness {
+            ophiolite_seismic_io::Endianness::Big => "big".to_string(),
+            ophiolite_seismic_io::Endianness::Little => "little".to_string(),
+        },
+        revision_raw: summary.revision_raw,
+        fixed_length_trace_flag_raw: summary.fixed_length_trace_flag_raw,
+        extended_textual_headers: summary.extended_textual_headers,
         geometry: GeometryProvenance {
             inline_field: header_field_spec(geometry_report.inline_field),
             crossline_field: header_field_spec(geometry_report.crossline_field),
@@ -514,6 +568,341 @@ fn build_source_identity(
         },
         regularization,
     }
+}
+
+fn derive_survey_spatial_descriptor(
+    reader: &ophiolite_seismic_io::SegyReader,
+    geometry_report: &GeometryReport,
+) -> Result<Option<SurveySpatialDescriptor>, SeismicStoreError> {
+    if matches!(
+        geometry_report.classification,
+        GeometryClassification::NonCartesian
+    ) {
+        return Ok(Some(SurveySpatialDescriptor {
+            coordinate_reference: None,
+            grid_transform: None,
+            footprint: None,
+            availability: SurveySpatialAvailability::Unavailable,
+            notes: vec![String::from(
+                "survey geometry is non-cartesian under the resolved inline/xline mapping",
+            )],
+        }));
+    }
+
+    let mapping = reader.header_mapping();
+    let cdp_x_field = mapping.cdp_x();
+    let cdp_y_field = mapping.cdp_y();
+    let headers = reader.load_trace_headers(
+        &[
+            geometry_report.inline_field,
+            geometry_report.crossline_field,
+            cdp_x_field,
+            cdp_y_field,
+            HeaderField::SOURCE_GROUP_SCALAR,
+            HeaderField::COORDINATE_UNITS,
+        ],
+        ophiolite_seismic_io::TraceSelection::All,
+    )?;
+
+    let ilines = headers
+        .column(geometry_report.inline_field)
+        .expect("geometry analysis validated inline field");
+    let xlines = headers
+        .column(geometry_report.crossline_field)
+        .expect("geometry analysis validated crossline field");
+    let cdp_x = headers
+        .column(cdp_x_field)
+        .expect("trace header extraction requested CDP_X");
+    let cdp_y = headers
+        .column(cdp_y_field)
+        .expect("trace header extraction requested CDP_Y");
+    let scalars = headers
+        .column(HeaderField::SOURCE_GROUP_SCALAR)
+        .expect("trace header extraction requested SOURCE_GROUP_SCALAR");
+    let coordinate_units = headers
+        .column(HeaderField::COORDINATE_UNITS)
+        .expect("trace header extraction requested COORDINATE_UNITS");
+
+    if cdp_x.iter().all(|value| *value == 0) && cdp_y.iter().all(|value| *value == 0) {
+        return Ok(Some(SurveySpatialDescriptor {
+            coordinate_reference: None,
+            grid_transform: None,
+            footprint: None,
+            availability: SurveySpatialAvailability::Unavailable,
+            notes: vec![String::from(
+                "CDP_X and CDP_Y trace headers are zero for the resolved survey",
+            )],
+        }));
+    }
+
+    let coordinate_units_code = dominant_i16_value(coordinate_units);
+    let mut notes = Vec::new();
+    let unit = coordinate_unit_label(coordinate_units_code);
+    let planar_coordinates = coordinate_units_code == Some(1);
+    if coordinate_units_code.is_none() || coordinate_units_code == Some(0) {
+        notes.push(String::from(
+            "coordinate units are not declared in SEG-Y trace headers",
+        ));
+    } else if !planar_coordinates {
+        notes.push(format!(
+            "coordinate units code {:?} is not a planar projected coordinate system",
+            coordinate_units_code
+        ));
+    }
+
+    let inline_lookup = index_lookup(&geometry_report.inline_values);
+    let xline_lookup = index_lookup(&geometry_report.crossline_values);
+    let mut observations = Vec::with_capacity(headers.rows());
+
+    for trace_index in 0..headers.rows() {
+        let scalar = segy_coordinate_scalar(scalars[trace_index]);
+        let x = cdp_x[trace_index] as f64 * scalar;
+        let y = cdp_y[trace_index] as f64 * scalar;
+        if !x.is_finite() || !y.is_finite() {
+            continue;
+        }
+        if x == 0.0 && y == 0.0 {
+            continue;
+        }
+        let inline_index = inline_lookup[&ilines[trace_index]] as f64;
+        let xline_index = xline_lookup[&xlines[trace_index]] as f64;
+        observations.push((inline_index, xline_index, x, y));
+    }
+
+    if observations.len() < 3 {
+        notes.push(String::from(
+            "not enough non-zero trace-coordinate samples were available to derive a survey map transform",
+        ));
+        return Ok(Some(SurveySpatialDescriptor {
+            coordinate_reference: Some(CoordinateReferenceDescriptor {
+                id: None,
+                name: None,
+                geodetic_datum: None,
+                unit: unit.map(str::to_owned),
+            }),
+            grid_transform: None,
+            footprint: None,
+            availability: SurveySpatialAvailability::Unavailable,
+            notes,
+        }));
+    }
+
+    if !planar_coordinates {
+        return Ok(Some(SurveySpatialDescriptor {
+            coordinate_reference: Some(CoordinateReferenceDescriptor {
+                id: None,
+                name: None,
+                geodetic_datum: None,
+                unit: unit.map(str::to_owned),
+            }),
+            grid_transform: None,
+            footprint: None,
+            availability: SurveySpatialAvailability::Unavailable,
+            notes,
+        }));
+    }
+
+    let Some((origin, inline_basis, xline_basis)) = fit_grid_transform(&observations) else {
+        notes.push(String::from(
+            "trace-coordinate samples do not support a stable affine grid transform",
+        ));
+        return Ok(Some(SurveySpatialDescriptor {
+            coordinate_reference: Some(CoordinateReferenceDescriptor {
+                id: None,
+                name: None,
+                geodetic_datum: None,
+                unit: unit.map(str::to_owned),
+            }),
+            grid_transform: None,
+            footprint: None,
+            availability: SurveySpatialAvailability::Unavailable,
+            notes,
+        }));
+    };
+
+    notes.push(String::from(
+        "survey map geometry was derived from CDP_X/CDP_Y trace headers with SCALCO applied",
+    ));
+    notes.push(String::from(
+        "coordinate reference system identity remains unresolved because SEG-Y ingest does not yet capture a canonical CRS identifier",
+    ));
+
+    let inline_extent = geometry_report.inline_values.len().saturating_sub(1) as f64;
+    let xline_extent = geometry_report.crossline_values.len().saturating_sub(1) as f64;
+    let corner_00 = origin.clone();
+    let corner_10 = affine_grid_point(&origin, &inline_basis, &xline_basis, inline_extent, 0.0);
+    let corner_11 = affine_grid_point(
+        &origin,
+        &inline_basis,
+        &xline_basis,
+        inline_extent,
+        xline_extent,
+    );
+    let corner_01 = affine_grid_point(&origin, &inline_basis, &xline_basis, 0.0, xline_extent);
+
+    Ok(Some(SurveySpatialDescriptor {
+        coordinate_reference: Some(CoordinateReferenceDescriptor {
+            id: None,
+            name: None,
+            geodetic_datum: None,
+            unit: unit.map(str::to_owned),
+        }),
+        grid_transform: Some(SurveyGridTransform {
+            origin: origin.clone(),
+            inline_basis,
+            xline_basis,
+        }),
+        footprint: Some(ProjectedPolygon2 {
+            exterior: vec![
+                corner_00.clone(),
+                corner_10,
+                corner_11,
+                corner_01,
+                corner_00,
+            ],
+        }),
+        availability: SurveySpatialAvailability::Partial,
+        notes,
+    }))
+}
+
+fn coordinate_reference_binding_from_spatial(
+    spatial: Option<&SurveySpatialDescriptor>,
+) -> Option<CoordinateReferenceBinding> {
+    let detected = spatial?.coordinate_reference.clone()?;
+    Some(CoordinateReferenceBinding {
+        detected: Some(detected.clone()),
+        effective: Some(detected),
+        source: CoordinateReferenceSource::Header,
+        notes: Vec::new(),
+    })
+}
+
+fn dominant_i16_value(values: &[i64]) -> Option<i16> {
+    let mut counts = HashMap::<i16, usize>::new();
+    for value in values {
+        let entry = counts.entry(*value as i16).or_default();
+        *entry += 1;
+    }
+    counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .map(|(value, _)| value)
+}
+
+fn coordinate_unit_label(code: Option<i16>) -> Option<&'static str> {
+    match code {
+        Some(1) => Some("length"),
+        Some(2) => Some("seconds_of_arc"),
+        _ => None,
+    }
+}
+
+fn segy_coordinate_scalar(raw_value: i64) -> f64 {
+    match raw_value as i16 {
+        0 => 1.0,
+        value if value < 0 => 1.0 / f64::from(-value),
+        value => f64::from(value),
+    }
+}
+
+fn affine_grid_point(
+    origin: &ProjectedPoint2,
+    inline_basis: &ProjectedVector2,
+    xline_basis: &ProjectedVector2,
+    inline_index: f64,
+    xline_index: f64,
+) -> ProjectedPoint2 {
+    ProjectedPoint2 {
+        x: origin.x + inline_basis.x * inline_index + xline_basis.x * xline_index,
+        y: origin.y + inline_basis.y * inline_index + xline_basis.y * xline_index,
+    }
+}
+
+fn fit_grid_transform(
+    observations: &[(f64, f64, f64, f64)],
+) -> Option<(ProjectedPoint2, ProjectedVector2, ProjectedVector2)> {
+    let mut n = 0.0;
+    let mut sum_i = 0.0;
+    let mut sum_x = 0.0;
+    let mut sum_ii = 0.0;
+    let mut sum_ix = 0.0;
+    let mut sum_xx = 0.0;
+    let mut sum_px = 0.0;
+    let mut sum_i_px = 0.0;
+    let mut sum_x_px = 0.0;
+    let mut sum_py = 0.0;
+    let mut sum_i_py = 0.0;
+    let mut sum_x_py = 0.0;
+
+    for (inline_index, xline_index, px, py) in observations {
+        n += 1.0;
+        sum_i += *inline_index;
+        sum_x += *xline_index;
+        sum_ii += inline_index * inline_index;
+        sum_ix += inline_index * xline_index;
+        sum_xx += xline_index * xline_index;
+        sum_px += *px;
+        sum_i_px += inline_index * px;
+        sum_x_px += xline_index * px;
+        sum_py += *py;
+        sum_i_py += inline_index * py;
+        sum_x_py += xline_index * py;
+    }
+
+    let matrix = [
+        [n, sum_i, sum_x],
+        [sum_i, sum_ii, sum_ix],
+        [sum_x, sum_ix, sum_xx],
+    ];
+    let coeff_x = solve_3x3(matrix, [sum_px, sum_i_px, sum_x_px])?;
+    let coeff_y = solve_3x3(matrix, [sum_py, sum_i_py, sum_x_py])?;
+
+    Some((
+        ProjectedPoint2 {
+            x: coeff_x[0],
+            y: coeff_y[0],
+        },
+        ProjectedVector2 {
+            x: coeff_x[1],
+            y: coeff_y[1],
+        },
+        ProjectedVector2 {
+            x: coeff_x[2],
+            y: coeff_y[2],
+        },
+    ))
+}
+
+fn solve_3x3(matrix: [[f64; 3]; 3], rhs: [f64; 3]) -> Option<[f64; 3]> {
+    let det = determinant_3x3(matrix);
+    if det.abs() < 1e-9 {
+        return None;
+    }
+
+    let det_0 = determinant_3x3([
+        [rhs[0], matrix[0][1], matrix[0][2]],
+        [rhs[1], matrix[1][1], matrix[1][2]],
+        [rhs[2], matrix[2][1], matrix[2][2]],
+    ]);
+    let det_1 = determinant_3x3([
+        [matrix[0][0], rhs[0], matrix[0][2]],
+        [matrix[1][0], rhs[1], matrix[1][2]],
+        [matrix[2][0], rhs[2], matrix[2][2]],
+    ]);
+    let det_2 = determinant_3x3([
+        [matrix[0][0], matrix[0][1], rhs[0]],
+        [matrix[1][0], matrix[1][1], rhs[1]],
+        [matrix[2][0], matrix[2][1], rhs[2]],
+    ]);
+
+    Some([det_0 / det, det_1 / det, det_2 / det])
+}
+
+fn determinant_3x3(matrix: [[f64; 3]; 3]) -> f64 {
+    matrix[0][0] * (matrix[1][1] * matrix[2][2] - matrix[1][2] * matrix[2][1])
+        - matrix[0][1] * (matrix[1][0] * matrix[2][2] - matrix[1][2] * matrix[2][0])
+        + matrix[0][2] * (matrix[1][0] * matrix[2][1] - matrix[1][1] * matrix[2][0])
 }
 
 fn validate_prestack_offset_geometry(
@@ -548,7 +937,8 @@ fn validate_prestack_offset_geometry(
     }
     if options.geometry.third_axis_field.is_none() {
         return Err(SeismicStoreError::Message(
-            "prestack offset ingest requires resolving the third-axis header field explicitly".to_string(),
+            "prestack offset ingest requires resolving the third-axis header field explicitly"
+                .to_string(),
         ));
     }
     Ok(())
@@ -707,5 +1097,49 @@ mod tests {
             .expect("first prestack gather should be readable");
         assert_eq!(gather.traces, handle.manifest.gather_axis_values.len());
         assert_eq!(gather.samples, handle.manifest.volume.shape[2]);
+    }
+
+    #[test]
+    fn segy_coordinate_scalar_applies_segy_convention() {
+        assert_eq!(segy_coordinate_scalar(0), 1.0);
+        assert_eq!(segy_coordinate_scalar(10), 10.0);
+        assert!((segy_coordinate_scalar(-100) - 0.01).abs() < 1e-12);
+    }
+
+    #[test]
+    fn fit_grid_transform_recovers_affine_survey_geometry() {
+        let observations = vec![
+            (0.0, 0.0, 1000.0, 2000.0),
+            (1.0, 0.0, 1010.0, 2005.0),
+            (0.0, 1.0, 998.0, 2020.0),
+            (1.0, 1.0, 1008.0, 2025.0),
+        ];
+
+        let (origin, inline_basis, xline_basis) =
+            fit_grid_transform(&observations).expect("transform should fit");
+
+        assert!((origin.x - 1000.0).abs() < 1e-6);
+        assert!((origin.y - 2000.0).abs() < 1e-6);
+        assert!((inline_basis.x - 10.0).abs() < 1e-6);
+        assert!((inline_basis.y - 5.0).abs() < 1e-6);
+        assert!((xline_basis.x + 2.0).abs() < 1e-6);
+        assert!((xline_basis.y - 20.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn affine_grid_point_builds_expected_corner() {
+        let point = affine_grid_point(
+            &ProjectedPoint2 {
+                x: 1000.0,
+                y: 2000.0,
+            },
+            &ProjectedVector2 { x: 10.0, y: 5.0 },
+            &ProjectedVector2 { x: -2.0, y: 20.0 },
+            1.0,
+            1.0,
+        );
+
+        assert!((point.x - 1008.0).abs() < 1e-6);
+        assert!((point.y - 2025.0).abs() < 1e-6);
     }
 }

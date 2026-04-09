@@ -5,7 +5,7 @@ use memmap2::{Mmap, MmapMut, MmapOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SeismicStoreError;
-use crate::metadata::VolumeMetadata;
+use crate::metadata::{VolumeMetadata, generate_store_id};
 
 use super::tile_geometry::{TileCoord, TileGeometry};
 use super::volume_store::{OccupancyTile, TileBuffer, VolumeStoreReader, VolumeStoreWriter};
@@ -32,7 +32,10 @@ pub struct TbvolManifest {
 }
 
 impl TbvolManifest {
-    pub fn new(volume: VolumeMetadata, tile_shape: [usize; 3], has_occupancy: bool) -> Self {
+    pub fn new(mut volume: VolumeMetadata, tile_shape: [usize; 3], has_occupancy: bool) -> Self {
+        if volume.store_id.trim().is_empty() {
+            volume.store_id = generate_store_id();
+        }
         let geometry = TileGeometry::new(volume.shape, tile_shape);
         Self {
             format: "tbvol".to_string(),
@@ -124,7 +127,8 @@ pub struct TbvolReader {
 impl TbvolReader {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, SeismicStoreError> {
         let root = root.as_ref().to_path_buf();
-        let manifest: TbvolManifest = serde_json::from_slice(&fs::read(root.join(MANIFEST_FILE))?)?;
+        let manifest_path = root.join(MANIFEST_FILE);
+        let manifest: TbvolManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
         validate_manifest(&manifest)?;
         let geometry = manifest.tile_geometry();
 
@@ -514,6 +518,7 @@ mod tests {
     fn test_volume_metadata(shape: [usize; 3]) -> VolumeMetadata {
         VolumeMetadata {
             kind: DatasetKind::Source,
+            store_id: generate_store_id(),
             source: SourceIdentity {
                 source_path: PathBuf::from("synthetic://tbvol-test"),
                 file_size: 0,
@@ -521,6 +526,10 @@ mod tests {
                 samples_per_trace: shape[2],
                 sample_interval_us: 2000,
                 sample_format_code: 5,
+                endianness: "big".to_string(),
+                revision_raw: 0,
+                fixed_length_trace_flag_raw: 1,
+                extended_textual_headers: 0,
                 geometry: GeometryProvenance {
                     inline_field: HeaderFieldSpec {
                         name: "INLINE".to_string(),
@@ -542,6 +551,7 @@ mod tests {
                 xlines: (0..shape[1]).map(|value| value as f64).collect(),
                 sample_axis_ms: (0..shape[2]).map(|value| value as f32 * 2.0).collect(),
             },
+            segy_export: None,
             coordinate_reference_binding: None,
             spatial: None,
             created_by: "tbvol-test".to_string(),

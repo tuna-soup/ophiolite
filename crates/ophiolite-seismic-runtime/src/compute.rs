@@ -5,7 +5,8 @@ use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::SeismicStoreError;
-use crate::metadata::{DatasetKind, ProcessingLineage, VolumeMetadata};
+use crate::metadata::{DatasetKind, ProcessingLineage, VolumeMetadata, generate_store_id};
+use crate::segy_export::{copy_store_segy_export, crop_store_segy_export};
 use crate::storage::section_assembler;
 use crate::storage::tbvol::{
     TbvolReader, TbvolWriter, recommended_default_tbvol_tile_target_mib,
@@ -20,6 +21,7 @@ use crate::{
     SeismicLayout, SubvolumeCropOperation, SubvolumeProcessingPipeline,
     TraceLocalVolumeArithmeticOperator,
 };
+use ophiolite_seismic::ProcessingArtifactRole;
 use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
@@ -498,12 +500,13 @@ pub fn validate_processing_pipeline_for_layout(
     pipeline: &ProcessingPipeline,
     layout: SeismicLayout,
 ) -> Result<(), SeismicStoreError> {
-    if pipeline.operations.is_empty() {
+    if pipeline.operation_count() == 0 {
         return Err(SeismicStoreError::Message(
             "processing pipeline must contain at least one operator".to_string(),
         ));
     }
-    validate_pipeline_for_layout(&pipeline.operations, layout)
+    let operations = trace_local_operations(pipeline);
+    validate_pipeline_for_layout(&operations, layout)
 }
 
 pub fn validate_subvolume_processing_pipeline(
@@ -531,6 +534,10 @@ pub fn validate_subvolume_processing_pipeline_for_layout(
     }
 
     validate_subvolume_crop_operation(&pipeline.crop)
+}
+
+fn trace_local_operations(pipeline: &ProcessingPipeline) -> Vec<ProcessingOperation> {
+    pipeline.operations().cloned().collect()
 }
 
 fn validate_subvolume_crop_operation(
@@ -761,7 +768,8 @@ pub fn preview_processing_section_plane(
     pipeline: &ProcessingPipeline,
 ) -> Result<SectionPlane, SeismicStoreError> {
     validate_processing_pipeline(pipeline)?;
-    preview_section_plane(store_root, axis, index, &pipeline.operations)
+    let operations = trace_local_operations(pipeline);
+    preview_section_plane(store_root, axis, index, &operations)
 }
 
 pub fn preview_section_view(
@@ -786,7 +794,8 @@ pub fn preview_processing_section_view(
     pipeline: &ProcessingPipeline,
 ) -> Result<SectionView, SeismicStoreError> {
     validate_processing_pipeline(pipeline)?;
-    preview_section_view(store_root, axis, index, &pipeline.operations)
+    let operations = trace_local_operations(pipeline);
+    preview_section_view(store_root, axis, index, &operations)
 }
 
 pub fn preview_section_view_with_prefix_cache(
@@ -820,7 +829,8 @@ pub fn preview_processing_section_view_with_prefix_cache(
     cache: &mut PreviewSectionPrefixCache,
 ) -> Result<(SectionView, PreviewSectionPrefixReuse), SeismicStoreError> {
     validate_processing_pipeline(pipeline)?;
-    preview_section_view_with_prefix_cache(store_root, axis, index, &pipeline.operations, cache)
+    let operations = trace_local_operations(pipeline);
+    preview_section_view_with_prefix_cache(store_root, axis, index, &operations, cache)
 }
 
 pub fn preview_subvolume_processing_section_view(
@@ -873,6 +883,7 @@ pub fn materialize_volume(
         &secondary_readers,
         |_, _| Ok(()),
     )?;
+    copy_store_segy_export(input_store_root.as_ref(), &output_root)?;
     open_store(output_root)
 }
 
@@ -913,18 +924,20 @@ pub fn materialize_processing_volume_with_progress<
     let has_occupancy = reader_has_occupancy(&reader)?;
     let writer = TbvolWriter::create(&output_store_root, volume, chunk_shape, has_occupancy)?;
     let output_root = writer.root().to_path_buf();
+    let operations = trace_local_operations(pipeline);
     let secondary_readers = open_secondary_store_readers(
         &handle,
         Some(reader.tile_geometry().tile_shape()),
-        &pipeline.operations,
+        &operations,
     )?;
     materialize_from_tbvol_reader_writer_with_progress(
         &reader,
         writer,
-        &pipeline.operations,
+        &operations,
         &secondary_readers,
         |completed, total| on_progress(completed, total),
     )?;
+    copy_store_segy_export(input_store_root.as_ref(), &output_root)?;
     open_store(output_root)
 }
 
@@ -968,11 +981,14 @@ pub fn materialize_subvolume_processing_volume_with_progress<
     let writer = TbvolWriter::create(&output_store_root, volume, chunk_shape, has_occupancy)?;
     let output_root = writer.root().to_path_buf();
     let secondary_readers = match pipeline.trace_local_pipeline.as_ref() {
-        Some(trace_local_pipeline) => open_secondary_store_readers(
-            &handle,
-            Some(reader.tile_geometry().tile_shape()),
-            &trace_local_pipeline.operations,
-        )?,
+        Some(trace_local_pipeline) => {
+            let operations = trace_local_operations(trace_local_pipeline);
+            open_secondary_store_readers(
+                &handle,
+                Some(reader.tile_geometry().tile_shape()),
+                &operations,
+            )?
+        }
         None => HashMap::new(),
     };
     materialize_subvolume_from_tbvol_reader_writer_with_progress(
@@ -982,6 +998,14 @@ pub fn materialize_subvolume_processing_volume_with_progress<
         crop_bounds,
         &secondary_readers,
         |completed, total| on_progress(completed, total),
+    )?;
+    crop_store_segy_export(
+        input_store_root.as_ref(),
+        &output_root,
+        crop_bounds.inline_start,
+        crop_bounds.inline_end_exclusive,
+        crop_bounds.xline_start,
+        crop_bounds.xline_end_exclusive,
     )?;
     open_store(output_root)
 }
@@ -1017,15 +1041,9 @@ fn preview_subvolume_section_plane_from_tbvol_reader(
 ) -> Result<SectionPlane, SeismicStoreError> {
     let mut plane = match trace_local_pipeline {
         Some(pipeline) => {
-            let secondary_readers =
-                open_secondary_store_readers(handle, None, &pipeline.operations)?;
-            preview_section_from_tbvol_reader(
-                reader,
-                axis,
-                index,
-                &pipeline.operations,
-                &secondary_readers,
-            )?
+            let operations = trace_local_operations(pipeline);
+            let secondary_readers = open_secondary_store_readers(handle, None, &operations)?;
+            preview_section_from_tbvol_reader(reader, axis, index, &operations, &secondary_readers)?
         }
         None => section_assembler::read_section_plane(reader, axis, index)?,
     };
@@ -1210,6 +1228,7 @@ fn derived_subvolume_volume_metadata(
 ) -> VolumeMetadata {
     VolumeMetadata {
         kind: DatasetKind::Derived,
+        store_id: generate_store_id(),
         source: input.source.clone(),
         shape: crop_bounds.output_shape(),
         axes: crate::metadata::VolumeAxes {
@@ -1221,11 +1240,14 @@ fn derived_subvolume_volume_metadata(
                 [crop_bounds.sample_start..crop_bounds.sample_end_exclusive]
                 .to_vec(),
         },
+        segy_export: None,
         coordinate_reference_binding: input.coordinate_reference_binding.clone(),
         spatial: input.spatial.clone(),
         created_by,
         processing_lineage: Some(ProcessingLineage {
             parent_store: parent_store.to_path_buf(),
+            parent_store_id: input.store_id.clone(),
+            artifact_role: ProcessingArtifactRole::FinalOutput,
             pipeline: ProcessingPipelineSpec::Subvolume {
                 pipeline: pipeline.clone(),
             },
@@ -1277,9 +1299,9 @@ fn materialize_subvolume_from_tbvol_reader_writer_with_progress<
 
         let occupancy = primary_full.occupancy.clone();
         let amplitudes = if let Some(pipeline) = trace_local_pipeline {
+            let operations = trace_local_operations(pipeline);
             let mut full_trace_amplitudes = primary_full.amplitudes;
-            let secondary_inputs = if pipeline_requires_external_volume_inputs(&pipeline.operations)
-            {
+            let secondary_inputs = if pipeline_requires_external_volume_inputs(&operations) {
                 Some(load_secondary_trace_matrices_for_crop_tile(
                     secondary_readers,
                     source_inline_start,
@@ -1298,7 +1320,7 @@ fn materialize_subvolume_from_tbvol_reader_writer_with_progress<
                 source_sample_count,
                 sample_interval_ms,
                 occupancy.as_deref(),
-                &pipeline.operations,
+                &operations,
                 secondary_inputs.as_ref(),
             )?;
             crop_trace_matrix_samples(
@@ -2780,12 +2802,19 @@ fn resolve_chunk_shape(chunk_shape: [usize; 3], shape: [usize; 3]) -> [usize; 3]
 
 fn pipeline_from_operations(operations: &[ProcessingOperation]) -> ProcessingPipeline {
     ProcessingPipeline {
-        schema_version: 1,
+        schema_version: 2,
         revision: 1,
         preset_id: None,
         name: None,
         description: None,
-        operations: operations.to_vec(),
+        steps: operations
+            .iter()
+            .cloned()
+            .map(|operation| ophiolite_seismic::TraceLocalProcessingStep {
+                operation,
+                checkpoint: false,
+            })
+            .collect(),
     }
 }
 
@@ -2804,14 +2833,18 @@ fn derived_volume_metadata(
 ) -> VolumeMetadata {
     VolumeMetadata {
         kind: DatasetKind::Derived,
+        store_id: generate_store_id(),
         source: input.source.clone(),
         shape: input.shape,
         axes: input.axes.clone(),
+        segy_export: None,
         coordinate_reference_binding: input.coordinate_reference_binding.clone(),
         spatial: input.spatial.clone(),
         created_by,
         processing_lineage: Some(ProcessingLineage {
             parent_store: parent_store.to_path_buf(),
+            parent_store_id: input.store_id.clone(),
+            artifact_role: ProcessingArtifactRole::FinalOutput,
             pipeline: ProcessingPipelineSpec::TraceLocal {
                 pipeline: pipeline.clone(),
             },

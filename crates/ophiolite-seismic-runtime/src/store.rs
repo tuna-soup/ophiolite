@@ -13,9 +13,10 @@ use ophiolite_seismic::{
 use crate::error::SeismicStoreError;
 use crate::metadata::DatasetKind;
 use crate::storage::section_assembler;
-use crate::storage::tbvol::{TbvolManifest, TbvolReader, TbvolWriter};
-use crate::storage::tile_geometry::TileCoord;
-use crate::storage::volume_store::{VolumeStoreReader, VolumeStoreWriter, write_dense_volume};
+use crate::storage::tbvol::{TbvolManifest, TbvolReader, TbvolWriter, load_tbvol_manifest};
+use crate::storage::volume_store::{
+    VolumeStoreWriter, read_dense_occupancy, read_dense_volume, write_dense_volume,
+};
 
 const GEOMETRY_COMPARE_FAMILY: &str = "seismic-grid:v1";
 const GEOMETRY_FINGERPRINT_VERSION: &str = "geom:v1";
@@ -56,6 +57,7 @@ impl StoreHandle {
             shape: self.manifest.volume.shape,
             chunk_shape: self.manifest.tile_shape,
             sample_interval_ms: self.manifest.volume.source.sample_interval_us as f32 / 1000.0,
+            sample_data_fidelity: self.manifest.volume.source.sample_data_fidelity.clone(),
             geometry: self.geometry_descriptor(),
             coordinate_reference_binding: self.manifest.volume.coordinate_reference_binding.clone(),
             spatial: self.manifest.volume.spatial.clone(),
@@ -192,7 +194,13 @@ pub fn open_store(root: impl AsRef<Path>) -> Result<StoreHandle, SeismicStoreErr
     if !manifest_path.exists() {
         return Err(SeismicStoreError::MissingManifest(manifest_path));
     }
-    let manifest = serde_json::from_slice::<TbvolManifest>(&fs::read(&manifest_path)?)?;
+    let manifest = load_tbvol_manifest(&manifest_path).map_err(|error| match error {
+        SeismicStoreError::Message(message) => SeismicStoreError::Message(format!(
+            "failed to parse tbvol manifest at {}: {message}",
+            manifest_path.display()
+        )),
+        other => other,
+    })?;
     Ok(StoreHandle { root, manifest })
 }
 
@@ -236,37 +244,12 @@ pub fn read_section_plane(
 
 pub fn load_array(handle: &StoreHandle) -> Result<Array3<f32>, SeismicStoreError> {
     let reader = TbvolReader::open(&handle.root)?;
-    load_array_from_reader(&reader)
+    read_dense_volume(&reader)
 }
 
 pub fn load_occupancy(handle: &StoreHandle) -> Result<Option<Array2<u8>>, SeismicStoreError> {
     let reader = TbvolReader::open(&handle.root)?;
-    load_occupancy_from_reader(&reader)
-}
-
-fn load_array_from_reader<R: VolumeStoreReader>(
-    reader: &R,
-) -> Result<Array3<f32>, SeismicStoreError> {
-    let shape = reader.volume().shape;
-    let mut data = Array3::<f32>::zeros((shape[0], shape[1], shape[2]));
-    let tile_shape = reader.tile_geometry().tile_shape();
-
-    for tile in reader.tile_geometry().iter_tiles() {
-        let values = reader.read_tile(tile)?;
-        let values = values.as_slice();
-        let effective = reader.tile_geometry().effective_tile_shape(tile);
-        let origin = reader.tile_geometry().tile_origin(tile);
-        for local_i in 0..effective[0] {
-            for local_x in 0..effective[1] {
-                let src = ((local_i * tile_shape[1]) + local_x) * tile_shape[2];
-                for sample in 0..effective[2] {
-                    data[[origin[0] + local_i, origin[1] + local_x, sample]] = values[src + sample];
-                }
-            }
-        }
-    }
-
-    Ok(data)
+    read_dense_occupancy(&reader)
 }
 
 pub(crate) fn apply_native_coordinate_reference_override(
@@ -340,38 +323,6 @@ pub(crate) fn apply_native_coordinate_reference_override(
         spatial.coordinate_reference = None;
     }
     None
-}
-
-fn load_occupancy_from_reader<R: VolumeStoreReader>(
-    reader: &R,
-) -> Result<Option<Array2<u8>>, SeismicStoreError> {
-    let Some(_) = reader.read_tile_occupancy(TileCoord {
-        tile_i: 0,
-        tile_x: 0,
-    })?
-    else {
-        return Ok(None);
-    };
-    let shape = reader.volume().shape;
-    let mut data = Array2::<u8>::zeros((shape[0], shape[1]));
-    let tile_shape = reader.tile_geometry().tile_shape();
-
-    for tile in reader.tile_geometry().iter_tiles() {
-        let Some(values) = reader.read_tile_occupancy(tile)? else {
-            continue;
-        };
-        let values = values.as_slice();
-        let effective = reader.tile_geometry().effective_tile_shape(tile);
-        let origin = reader.tile_geometry().tile_origin(tile);
-        for local_i in 0..effective[0] {
-            for local_x in 0..effective[1] {
-                let src = local_i * tile_shape[1] + local_x;
-                data[[origin[0] + local_i, origin[1] + local_x]] = values[src];
-            }
-        }
-    }
-
-    Ok(Some(data))
 }
 
 fn dataset_leaf_name(root: &Path) -> String {
@@ -527,6 +478,7 @@ mod tests {
         VolumeMetadata, generate_store_id,
     };
     use ndarray::Array3;
+    use serde_json::json;
     use tempfile::tempdir;
 
     fn fixture_manifest(shape: [usize; 3]) -> TbvolManifest {
@@ -541,6 +493,7 @@ mod tests {
                     samples_per_trace: shape[2],
                     sample_interval_us: 2000,
                     sample_format_code: 5,
+                    sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(5),
                     endianness: "big".to_string(),
                     revision_raw: 0,
                     fixed_length_trace_flag_raw: 1,
@@ -655,5 +608,67 @@ mod tests {
         assert_eq!(xline.amplitudes[12], 220.0);
 
         fs::remove_dir_all(&root).expect("temp store should be removable");
+    }
+
+    #[test]
+    fn open_store_accepts_legacy_manifest_without_expanded_segy_fields() {
+        let temp_dir = tempdir().expect("temp dir");
+        let root = temp_dir.path().join("legacy.tbvol");
+        fs::create_dir_all(&root).expect("store root");
+        let legacy_manifest = json!({
+            "format": "tbvol",
+            "version": 1,
+            "volume": {
+                "kind": "Source",
+                "source": {
+                    "source_path": "C:\\legacy\\survey.sgy",
+                    "file_size": 165060,
+                    "trace_count": 414,
+                    "samples_per_trace": 75,
+                    "sample_interval_us": 4000,
+                    "sample_format_code": 3,
+                    "geometry": {
+                        "inline_field": {
+                            "name": "INLINE_3D",
+                            "start_byte": 189,
+                            "value_type": "I32"
+                        },
+                        "crossline_field": {
+                            "name": "CROSSLINE_3D",
+                            "start_byte": 193,
+                            "value_type": "I32"
+                        },
+                        "third_axis_field": null
+                    },
+                    "regularization": null
+                },
+                "shape": [23, 18, 75],
+                "axes": {
+                    "ilines": [111.0, 112.0],
+                    "xlines": [875.0, 876.0],
+                    "sample_axis_ms": [4.0, 8.0]
+                },
+                "created_by": "legacy-runtime"
+            },
+            "tile_shape": [23, 18, 75],
+            "tile_grid_shape": [1, 1],
+            "sample_type": "f32",
+            "endianness": "little",
+            "has_occupancy": false,
+            "amplitude_tile_bytes": 124200,
+            "occupancy_tile_bytes": null
+        });
+        fs::write(
+            root.join("manifest.json"),
+            serde_json::to_vec_pretty(&legacy_manifest).expect("manifest json"),
+        )
+        .expect("manifest write");
+
+        let handle = open_store(&root).expect("legacy manifest should open");
+        assert!(!handle.manifest.volume.store_id.trim().is_empty());
+        assert_eq!(handle.manifest.volume.source.endianness, "big");
+        assert_eq!(handle.manifest.volume.source.revision_raw, 0);
+        assert_eq!(handle.manifest.volume.source.fixed_length_trace_flag_raw, 1);
+        assert_eq!(handle.manifest.volume.source.extended_textual_headers, 0);
     }
 }

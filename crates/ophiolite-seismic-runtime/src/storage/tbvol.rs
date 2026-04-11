@@ -5,7 +5,7 @@ use memmap2::{Mmap, MmapMut, MmapOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SeismicStoreError;
-use crate::metadata::{VolumeMetadata, generate_store_id};
+use crate::metadata::{VolumeMetadata, generate_store_id, normalize_source_identity};
 
 use super::tile_geometry::{TileCoord, TileGeometry};
 use super::volume_store::{OccupancyTile, TileBuffer, VolumeStoreReader, VolumeStoreWriter};
@@ -54,6 +54,25 @@ impl TbvolManifest {
     pub fn tile_geometry(&self) -> TileGeometry {
         TileGeometry::new(self.volume.shape, self.tile_shape)
     }
+}
+
+pub(crate) fn load_tbvol_manifest(
+    manifest_path: &Path,
+) -> Result<TbvolManifest, SeismicStoreError> {
+    let bytes = fs::read(manifest_path)?;
+    let mut manifest: TbvolManifest = serde_json::from_slice(&bytes)?;
+    let mut changed = false;
+    if manifest.volume.store_id.trim().is_empty() {
+        manifest.volume.store_id = generate_store_id();
+        changed = true;
+    }
+    if normalize_source_identity(&mut manifest.volume.source) {
+        changed = true;
+    }
+    if changed {
+        fs::write(manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    }
+    Ok(manifest)
 }
 
 pub fn recommended_default_tbvol_tile_target_mib(shape: [usize; 3]) -> u16 {
@@ -128,7 +147,7 @@ impl TbvolReader {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, SeismicStoreError> {
         let root = root.as_ref().to_path_buf();
         let manifest_path = root.join(MANIFEST_FILE);
-        let manifest: TbvolManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
+        let manifest = load_tbvol_manifest(&manifest_path)?;
         validate_manifest(&manifest)?;
         let geometry = manifest.tile_geometry();
 
@@ -526,6 +545,7 @@ mod tests {
                 samples_per_trace: shape[2],
                 sample_interval_us: 2000,
                 sample_format_code: 5,
+                sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(5),
                 endianness: "big".to_string(),
                 revision_raw: 0,
                 fixed_length_trace_flag_raw: 1,
@@ -590,5 +610,70 @@ mod tests {
             recommended_default_tbvol_tile_target_mib([651, 951, 462]),
             8
         );
+    }
+
+    #[test]
+    fn load_manifest_backfills_missing_store_id_for_legacy_tbvol() {
+        let root = unique_test_root("tbvol-legacy-store-id");
+        fs::create_dir_all(&root).expect("root dir");
+        let manifest_path = root.join("manifest.json");
+        let manifest = serde_json::json!({
+            "format": "tbvol",
+            "version": 1,
+            "volume": {
+                "kind": "Source",
+                "source": {
+                    "source_path": "synthetic://tbvol-test",
+                    "file_size": 0,
+                    "trace_count": 12,
+                    "samples_per_trace": 2,
+                    "sample_interval_us": 2000,
+                    "sample_format_code": 5,
+                    "geometry": {
+                        "inline_field": {
+                            "name": "INLINE",
+                            "start_byte": 189,
+                            "value_type": "I32"
+                        },
+                        "crossline_field": {
+                            "name": "XLINE",
+                            "start_byte": 193,
+                            "value_type": "I32"
+                        },
+                        "third_axis_field": null
+                    },
+                    "regularization": null
+                },
+                "shape": [3, 4, 2],
+                "axes": {
+                    "ilines": [0.0, 1.0, 2.0],
+                    "xlines": [0.0, 1.0, 2.0, 3.0],
+                    "sample_axis_ms": [0.0, 2.0]
+                },
+                "created_by": "legacy-runtime"
+            },
+            "tile_shape": [3, 4, 2],
+            "tile_grid_shape": [1, 1],
+            "sample_type": "f32",
+            "endianness": "little",
+            "has_occupancy": false,
+            "amplitude_tile_bytes": 96,
+            "occupancy_tile_bytes": null
+        });
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("write manifest");
+
+        let parsed = load_tbvol_manifest(&manifest_path).expect("load manifest");
+        assert!(!parsed.volume.store_id.trim().is_empty());
+
+        let rewritten: TbvolManifest =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("read rewritten manifest"))
+                .expect("parse rewritten manifest");
+        assert!(!rewritten.volume.store_id.trim().is_empty());
+
+        let _ = fs::remove_dir_all(&root);
     }
 }

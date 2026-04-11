@@ -4,6 +4,7 @@ mod gather_processing;
 mod horizons;
 mod ingest;
 mod metadata;
+mod openvds;
 mod preflight;
 mod prestack_analysis;
 mod prestack_store;
@@ -11,6 +12,9 @@ mod render;
 mod segy_export;
 mod storage;
 mod store;
+mod survey_time_depth;
+mod time_depth;
+mod zarr_export;
 
 pub use compute::{
     MaterializeOptions, PreviewSectionPrefixCache, PreviewSectionPrefixReuse,
@@ -31,17 +35,21 @@ pub use gather_processing::{
     GatherPlane, apply_gather_processing_pipeline, apply_trace_local_pipeline_to_gather,
     validate_gather_processing_pipeline, validate_gather_processing_pipeline_for_layout,
 };
-pub use horizons::{import_horizon_xyzs, section_horizon_overlays};
+pub use horizons::{
+    ImportedHorizonGrid, import_horizon_xyzs, load_horizon_grids, section_horizon_overlays,
+};
 pub use ingest::{
-    IngestOptions, SeisGeometryOptions, SourceVolume, SparseSurveyPolicy,
-    ingest_prestack_offset_segy, ingest_segy, load_source_volume, load_source_volume_with_options,
-    recommended_chunk_shape,
+    IngestOptions, SeisGeometryOptions, SourceVolume, SparseSurveyPolicy, VolumeImportFormat,
+    detect_volume_import_format, ingest_prestack_offset_segy, ingest_segy, ingest_volume,
+    ingest_zarr_store, load_source_volume, load_source_volume_with_options,
+    normalize_volume_import_path, recommended_chunk_shape,
 };
 pub use metadata::{
     CompressionKind, DatasetKind, GeometryProvenance, HeaderFieldSpec, InterpMethod,
     ProcessingLineage, RegularizationProvenance, SegyExportDescriptor, SourceIdentity,
     StorageLayout, StoreManifest, VolumeAxes, VolumeMetadata, generate_store_id,
 };
+pub use openvds::{ingest_openvds_store, looks_like_openvds_path};
 pub use ophiolite_seismic::{
     AmplitudeSpectrumCurve, AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, AxisSummaryF32,
     AxisSummaryI32, CancelProcessingJobRequest, CancelProcessingJobResponse,
@@ -70,11 +78,11 @@ pub use ophiolite_seismic::{
     SectionProbe, SectionProbeChanged, SectionRenderMode, SectionRequest, SectionSpectrumSelection,
     SectionTileRequest, SectionUnits, SectionView, SectionViewport, SectionViewportChanged,
     SeismicLayout, SemblancePanel, SubvolumeCropOperation, SubvolumeProcessingPipeline,
-    SurveyGridTransform, SurveySpatialAvailability, SurveySpatialDescriptor,
+    SurveyGridTransform, SurveyPropertyField3D, SurveySpatialAvailability, SurveySpatialDescriptor,
     TraceLocalProcessingOperation, TraceLocalProcessingPipeline, TraceLocalProcessingPreset,
     TraceLocalVolumeArithmeticOperator, VelocityAutopickParameters, VelocityFunctionEstimate,
-    VelocityFunctionSource, VelocityPickStrategy, VelocityScanRequest, VelocityScanResponse,
-    VolumeDescriptor,
+    VelocityFunctionSource, VelocityPickStrategy, VelocityQuantityKind, VelocityScanRequest,
+    VelocityScanResponse, VolumeDescriptor,
 };
 pub use preflight::{PreflightAction, PreflightGeometry, SurveyPreflight, preflight_segy};
 pub use prestack_analysis::velocity_scan;
@@ -95,6 +103,10 @@ pub use storage::tbvol::{
     TbvolManifest, TbvolReader, TbvolWriter, recommended_default_tbvol_tile_target_mib,
     recommended_tbvol_tile_shape,
 };
+pub use storage::tbvolc::{
+    TbvolcAmplitudeEncoding, TbvolcManifest, TbvolcReader, TbvolcWriter, transcode_tbvol_to_tbvolc,
+    transcode_tbvolc_to_tbvol,
+};
 pub use storage::tile_geometry::{TileCoord, TileGeometry};
 pub use storage::volume_store::{
     OccupancyTile, TileBuffer, VolumeStoreReader, VolumeStoreWriter, write_dense_volume,
@@ -103,6 +115,19 @@ pub use storage::zarr::{ZarrVolumeStoreReader, ZarrVolumeStoreWriter};
 pub use store::{
     SectionPlane, StoreHandle, create_tbvol_store, describe_store, load_array, load_occupancy,
     open_store, read_section_plane, section_view, set_store_native_coordinate_reference,
+};
+pub use survey_time_depth::{
+    SectionSurveyTimeDepthTransformSlice, StoredSurveyPropertyField,
+    StoredSurveyTimeDepthTransform, build_survey_property_field, build_survey_time_depth_transform,
+    load_survey_property_field, load_survey_property_fields, load_survey_time_depth_transform,
+    load_survey_time_depth_transforms, section_time_depth_transform_slice,
+    store_survey_property_field, store_survey_time_depth_transform,
+};
+pub use time_depth::{
+    convert_section_view_to_depth, depth_converted_section_view, resolved_section_display_view,
+};
+pub use zarr_export::{
+    default_zarr_storage_layout, export_store_to_zarr, export_store_to_zarr_with_layout,
 };
 
 use std::path::Path;

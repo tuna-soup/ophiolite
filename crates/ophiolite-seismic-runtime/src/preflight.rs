@@ -4,7 +4,9 @@ use serde::Serialize;
 
 use crate::error::SeismicStoreError;
 use crate::ingest::{IngestOptions, geometry_classification_label, header_field_spec};
+use crate::metadata::segy_sample_data_fidelity;
 use crate::{SegyInspection, inspect_segy};
+use ophiolite_seismic::SampleValuePreservation;
 use ophiolite_seismic::{
     SeismicGatherAxisKind, SeismicLayout, SeismicOrganization, SeismicStackingState,
 };
@@ -21,6 +23,7 @@ pub enum PreflightAction {
 #[derive(Debug, Clone, Serialize)]
 pub struct SurveyPreflight {
     pub inspection: SegyInspection,
+    pub sample_data_fidelity: ophiolite_seismic::SampleDataFidelity,
     pub geometry: PreflightGeometry,
     pub recommended_action: PreflightAction,
     pub notes: Vec<String>,
@@ -66,6 +69,7 @@ pub fn preflight_segy(
         ..ophiolite_seismic_io::GeometryOptions::default()
     })?;
 
+    let sample_data_fidelity = segy_sample_data_fidelity(inspection.sample_format_code);
     let recommended_action = match (report.stacking_state, report.layout, report.classification) {
         (
             SeismicStackingState::PreStack,
@@ -149,8 +153,17 @@ pub fn preflight_segy(
         }
     }
 
+    if sample_data_fidelity.preservation == SampleValuePreservation::PotentiallyLossy {
+        notes.push(format!(
+            "Source sample conversion may be lossy: {} -> {}.",
+            sample_data_fidelity.source_sample_type, sample_data_fidelity.working_sample_type
+        ));
+    }
+    notes.extend(sample_data_fidelity.notes.iter().cloned());
+
     Ok(SurveyPreflight {
         inspection,
+        sample_data_fidelity,
         geometry: PreflightGeometry {
             classification: geometry_classification_label(report.classification).to_string(),
             stacking_state: seismic_stacking_state_label(report.stacking_state).to_string(),

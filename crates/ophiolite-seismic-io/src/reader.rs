@@ -695,6 +695,8 @@ pub struct HeaderField {
 
 impl HeaderField {
     pub const FIELD_RECORD: Self = Self::new_i32("FIELD_RECORD", 9);
+    pub const SOURCE_GROUP_SCALAR: Self = Self::new_i16("SOURCE_GROUP_SCALAR", 71);
+    pub const COORDINATE_UNITS: Self = Self::new_i16("COORDINATE_UNITS", 89);
     pub const CDP_X: Self = Self::new_i32("CDP_X", 181);
     pub const CDP_Y: Self = Self::new_i32("CDP_Y", 185);
     pub const INLINE_3D: Self = Self::new_i32("INLINE_3D", 189);

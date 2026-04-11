@@ -1,9 +1,14 @@
 use ndarray::Array3;
 use ophiolite::{
     AssetBindingInput, AssetKind, AssetStatus, ComputeAvailability, ComputeParameterValue,
+    CoordinateReferenceBinding, CoordinateReferenceDescriptor, CoordinateReferenceSource,
     CurveSemanticType, DatasetKind, DepthRangeQuery, GeometryProvenance, HeaderFieldSpec,
-    OphioliteProject, ProjectComputeRunRequest, SourceIdentity, TbvolManifest, VolumeAxes,
-    VolumeMetadata, WellPanelRequestDto, create_tbvol_store, examples, import_las_asset,
+    OphioliteProject, ProjectComputeRunRequest, ProjectedPoint2, ProjectedPolygon2,
+    ProjectedVector2, SourceIdentity, SurveyGridTransform, SurveyMapRequestDto,
+    SurveyMapSpatialAvailabilityDto, SurveyMapTransformStatusDto, SurveySpatialAvailability,
+    SurveySpatialDescriptor, TbvolManifest, VolumeAxes, VolumeMetadata, WellAzimuthReferenceKind,
+    WellPanelRequestDto, WellboreAnchorKind, WellboreAnchorReference, WellboreGeometry,
+    create_tbvol_store, examples, import_las_asset,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -159,6 +164,50 @@ fn project_reuses_well_and_wellbore_for_related_log_assets() {
     assert_eq!(wellbores.len(), 1);
     let collections = project.list_asset_collections(&wellbores[0].id).unwrap();
     assert_eq!(collections.len(), 2);
+}
+
+#[test]
+fn project_persists_wellbore_geometry_across_reopen() {
+    let root = temp_project_root("project_persists_wellbore_geometry_across_reopen");
+    let mut project = OphioliteProject::create(&root).unwrap();
+
+    project
+        .import_las(examples::path("6038187_v1.2_short.las"), Some("logs"))
+        .unwrap();
+
+    let well = project.list_wells().unwrap().remove(0);
+    let wellbore = project.list_wellbores(&well.id).unwrap().remove(0);
+    let geometry = WellboreGeometry {
+        anchor: Some(WellboreAnchorReference {
+            kind: WellboreAnchorKind::Surface,
+            coordinate_reference: Some(CoordinateReferenceDescriptor {
+                id: Some("EPSG:32631".to_string()),
+                name: Some("UTM 31N".to_string()),
+                geodetic_datum: Some("WGS 84".to_string()),
+                unit: Some("m".to_string()),
+            }),
+            location: ProjectedPoint2 {
+                x: 512345.0,
+                y: 6123456.0,
+            },
+            parent_wellbore_id: None,
+            parent_measured_depth_m: None,
+            notes: vec!["surveyed surface location".to_string()],
+        }),
+        vertical_datum: Some("KellyBushing".to_string()),
+        depth_unit: Some("m".to_string()),
+        azimuth_reference: WellAzimuthReferenceKind::GridNorth,
+        notes: vec!["authoritative anchor".to_string()],
+    };
+
+    let updated = project
+        .set_wellbore_geometry(&wellbore.id, Some(geometry.clone()))
+        .unwrap();
+    assert_eq!(updated.geometry, Some(geometry.clone()));
+
+    let reopened = OphioliteProject::open(&root).unwrap();
+    let reopened_wellbore = reopened.list_wellbores(&well.id).unwrap().remove(0);
+    assert_eq!(reopened_wellbore.geometry, Some(geometry));
 }
 
 #[test]
@@ -431,6 +480,184 @@ fn project_imports_seismic_trace_data_store_and_tracks_it_in_catalog() {
     assert!(metadata_json.contains("\"label\": \"survey\""));
     assert!(metadata_json.contains("\"trace_data_descriptor\""));
     assert!(metadata_json.contains("\"layout\": \"PostStack3D\""));
+}
+
+#[test]
+fn project_resolves_survey_map_source_with_explicit_spatial_gaps() {
+    let root = temp_project_root("project_resolves_survey_map_source_with_explicit_spatial_gaps");
+    let source_root = root.join("source").join("survey.tbvol");
+    let manifest = sample_store_manifest();
+    let data = Array3::from_shape_fn((2, 3, 4), |(iline, xline, sample)| {
+        iline as f32 * 100.0 + xline as f32 * 10.0 + sample as f32
+    });
+    create_tbvol_store(&source_root, manifest, &data, None).unwrap();
+
+    let trajectory_csv = write_csv(
+        &root,
+        "trajectory_map.csv",
+        "md,tvd,azimuth,inclination,northing_offset,easting_offset\n100.0,95.0,180,2,0,0\n105.0,100.0,182,3,10,4\n110.0,105.0,184,4,20,8\n",
+    );
+
+    let mut project = OphioliteProject::create(root.join("project")).unwrap();
+    let binding = AssetBindingInput {
+        well_name: "Map Well".to_string(),
+        wellbore_name: "Map WB".to_string(),
+        uwi: Some("MAP-UWI-001".to_string()),
+        api: None,
+        operator_aliases: vec!["Ophiolite".to_string()],
+    };
+
+    let seismic = project
+        .import_seismic_trace_data_store(&source_root, &binding, Some("survey-main"))
+        .unwrap();
+    project
+        .import_trajectory_csv(&trajectory_csv, &binding, Some("survey-main"))
+        .unwrap();
+
+    let resolved = project
+        .resolve_survey_map_source(&SurveyMapRequestDto {
+            schema_version: 1,
+            survey_asset_ids: vec![seismic.asset.id.0.clone()],
+            wellbore_ids: vec![seismic.resolution.wellbore_id.0.clone()],
+            display_coordinate_reference_id: None,
+        })
+        .unwrap();
+
+    assert_eq!(resolved.schema_version, 1);
+    assert_eq!(resolved.surveys.len(), 1);
+    assert_eq!(resolved.wells.len(), 1);
+    assert_eq!(resolved.surveys[0].index_grid.inline_axis.count, 2);
+    assert_eq!(resolved.surveys[0].index_grid.xline_axis.count, 3);
+    assert!(resolved.surveys[0].native_spatial.footprint.is_none());
+    assert!(resolved.surveys[0].display_spatial.is_none());
+    assert!(matches!(
+        resolved.surveys[0].native_spatial.availability,
+        SurveyMapSpatialAvailabilityDto::Unavailable
+    ));
+    assert!(matches!(
+        resolved.surveys[0].transform_status,
+        ophiolite::SurveyMapTransformStatusDto::NativeOnly
+    ));
+    assert!(matches!(
+        resolved.surveys[0].transform_diagnostics.policy,
+        ophiolite::SurveyMapTransformPolicyDto::BestAvailable
+    ));
+    assert!(
+        resolved.surveys[0]
+            .transform_diagnostics
+            .target_coordinate_reference_id
+            .is_none()
+    );
+    assert!(!resolved.surveys[0].native_spatial.notes.is_empty());
+    assert!(resolved.wells[0].surface_location.is_none());
+    assert_eq!(resolved.wells[0].trajectories.len(), 1);
+    assert_eq!(resolved.wells[0].trajectories[0].rows.len(), 3);
+}
+
+#[test]
+fn project_resolves_survey_map_source_with_proj_display_transform_and_cache() {
+    let root = temp_project_root(
+        "project_resolves_survey_map_source_with_proj_display_transform_and_cache",
+    );
+    let source_root = root.join("source").join("survey-4326.tbvol");
+    let mut manifest = sample_store_manifest();
+    let native_coordinate_reference = CoordinateReferenceDescriptor {
+        id: Some("EPSG:4326".to_string()),
+        name: Some("WGS 84".to_string()),
+        geodetic_datum: Some("WGS84".to_string()),
+        unit: Some("degree".to_string()),
+    };
+    manifest.volume.coordinate_reference_binding = Some(CoordinateReferenceBinding {
+        detected: Some(native_coordinate_reference.clone()),
+        effective: Some(native_coordinate_reference.clone()),
+        source: CoordinateReferenceSource::Header,
+        notes: Vec::new(),
+    });
+    manifest.volume.spatial = Some(SurveySpatialDescriptor {
+        coordinate_reference: Some(native_coordinate_reference),
+        grid_transform: Some(SurveyGridTransform {
+            origin: ProjectedPoint2 { x: 4.0, y: 52.0 },
+            inline_basis: ProjectedVector2 { x: 0.05, y: 0.0 },
+            xline_basis: ProjectedVector2 { x: 0.0, y: 0.05 },
+        }),
+        footprint: Some(ProjectedPolygon2 {
+            exterior: vec![
+                ProjectedPoint2 { x: 4.0, y: 52.0 },
+                ProjectedPoint2 { x: 4.0, y: 52.1 },
+                ProjectedPoint2 { x: 4.1, y: 52.1 },
+                ProjectedPoint2 { x: 4.1, y: 52.0 },
+                ProjectedPoint2 { x: 4.0, y: 52.0 },
+            ],
+        }),
+        availability: SurveySpatialAvailability::Available,
+        notes: vec!["synthetic test geometry".to_string()],
+    });
+    let data = Array3::from_shape_fn((2, 3, 4), |(iline, xline, sample)| {
+        iline as f32 * 100.0 + xline as f32 * 10.0 + sample as f32
+    });
+    create_tbvol_store(&source_root, manifest, &data, None).unwrap();
+
+    let mut project = OphioliteProject::create(root.join("project")).unwrap();
+    let binding = AssetBindingInput {
+        well_name: "Map Well".to_string(),
+        wellbore_name: "Map WB".to_string(),
+        uwi: Some("MAP-UWI-3857".to_string()),
+        api: None,
+        operator_aliases: vec!["Ophiolite".to_string()],
+    };
+    let seismic = project
+        .import_seismic_trace_data_store(&source_root, &binding, Some("survey-4326"))
+        .unwrap();
+
+    let resolved = project
+        .resolve_survey_map_source(&SurveyMapRequestDto {
+            schema_version: 1,
+            survey_asset_ids: vec![seismic.asset.id.0.clone()],
+            wellbore_ids: Vec::new(),
+            display_coordinate_reference_id: Some("EPSG:3857".to_string()),
+        })
+        .unwrap();
+
+    let display_spatial = resolved.surveys[0].display_spatial.as_ref().unwrap();
+    assert!(matches!(
+        resolved.surveys[0].transform_status,
+        SurveyMapTransformStatusDto::DisplayTransformed
+    ));
+    assert_eq!(
+        display_spatial
+            .coordinate_reference
+            .as_ref()
+            .and_then(|reference| reference.id.as_deref()),
+        Some("EPSG:3857")
+    );
+    assert!(display_spatial.grid_transform.as_ref().unwrap().origin.x > 400_000.0);
+    assert!(display_spatial.grid_transform.as_ref().unwrap().origin.y > 6_000_000.0);
+
+    let cache_dir = root
+        .join("project")
+        .join(".ophiolite")
+        .join("map-transform-cache");
+    let cache_entries = fs::read_dir(&cache_dir)
+        .unwrap()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(!cache_entries.is_empty());
+
+    let resolved_cached = project
+        .resolve_survey_map_source(&SurveyMapRequestDto {
+            schema_version: 1,
+            survey_asset_ids: vec![seismic.asset.id.0.clone()],
+            wellbore_ids: Vec::new(),
+            display_coordinate_reference_id: Some("EPSG:3857".to_string()),
+        })
+        .unwrap();
+    assert!(
+        resolved_cached.surveys[0]
+            .transform_diagnostics
+            .notes
+            .iter()
+            .any(|note| note.contains("loaded from cache"))
+    );
 }
 
 #[test]
@@ -758,6 +985,8 @@ fn sample_store_manifest() -> TbvolManifest {
                 xlines: vec![2000.0, 2001.0, 2002.0],
                 sample_axis_ms: vec![0.0, 2.0, 4.0, 6.0],
             },
+            coordinate_reference_binding: None,
+            spatial: None,
             created_by: "project_catalog_test".to_string(),
             processing_lineage: None,
         },

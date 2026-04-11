@@ -54,6 +54,8 @@ pub struct TrajectoryRowPatch {
     #[serde(default)]
     pub true_vertical_depth: Option<OptionalFieldPatch<f64>>,
     #[serde(default)]
+    pub true_vertical_depth_subsea: Option<OptionalFieldPatch<f64>>,
+    #[serde(default)]
     pub azimuth_deg: Option<OptionalFieldPatch<f64>>,
     #[serde(default)]
     pub inclination_deg: Option<OptionalFieldPatch<f64>>,
@@ -208,6 +210,16 @@ impl StructuredAssetEditSessionStore {
             AssetKind::DrillingObservation => StructuredRows::Drilling(
                 project.read_drilling_observations(&request.asset_id, None)?,
             ),
+            AssetKind::CheckshotVspObservationSet
+            | AssetKind::ManualTimeDepthPickSet
+            | AssetKind::WellTimeDepthAuthoredModel
+            |
+            AssetKind::WellTimeDepthModel => {
+                return Err(LasError::Validation(
+                    "structured edit sessions do not support well time-depth model assets"
+                        .to_string(),
+                ))
+            }
             AssetKind::Log => {
                 return Err(LasError::Validation(
                     "structured edit sessions only support trajectory, tops, pressure, and drilling assets".to_string(),
@@ -459,6 +471,10 @@ fn apply_trajectory_edit(
                 &mut row.true_vertical_depth,
                 patch.true_vertical_depth.as_ref(),
             )?;
+            apply_optional_field_patch(
+                &mut row.true_vertical_depth_subsea,
+                patch.true_vertical_depth_subsea.as_ref(),
+            )?;
             apply_optional_field_patch(&mut row.azimuth_deg, patch.azimuth_deg.as_ref())?;
             apply_optional_field_patch(&mut row.inclination_deg, patch.inclination_deg.as_ref())?;
             apply_optional_field_patch(&mut row.northing_offset, patch.northing_offset.as_ref())?;
@@ -677,6 +693,10 @@ fn asset_kind_name(kind: &AssetKind) -> &'static str {
         AssetKind::TopSet => "top_set",
         AssetKind::PressureObservation => "pressure_observation",
         AssetKind::DrillingObservation => "drilling_observation",
+        AssetKind::CheckshotVspObservationSet => "checkshot_vsp_observation_set",
+        AssetKind::ManualTimeDepthPickSet => "manual_time_depth_pick_set",
+        AssetKind::WellTimeDepthAuthoredModel => "well_time_depth_authored_model",
+        AssetKind::WellTimeDepthModel => "well_time_depth_model",
         AssetKind::SeismicTraceData => "seismic_trace_data",
     }
 }

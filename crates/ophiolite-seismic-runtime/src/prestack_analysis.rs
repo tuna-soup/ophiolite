@@ -370,6 +370,7 @@ mod tests {
                     samples_per_trace: 4,
                     sample_interval_us: 2000,
                     sample_format_code: 5,
+                    sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(5),
                     endianness: "big".to_string(),
                     revision_raw: 0,
                     fixed_length_trace_flag_raw: 1,

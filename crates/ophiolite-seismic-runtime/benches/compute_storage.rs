@@ -245,6 +245,8 @@ fn fixture_manifest(shape: [usize; 3]) -> TbvolManifest {
                 xlines: (0..shape[1]).map(|value| value as f64).collect(),
                 sample_axis_ms: (0..shape[2]).map(|value| value as f32 * 2.0).collect(),
             },
+            coordinate_reference_binding: None,
+            spatial: None,
             created_by: "criterion".to_string(),
             processing_lineage: None,
         },

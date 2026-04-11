@@ -5,10 +5,12 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.6.0", features = ["derive"] }
+lz4_flex = "0.11"
 memmap2 = "0.9"
 ndarray = "0.17.2"
 ophiolite-seismic = { path = "../ophiolite-seismic" }
 ophiolite-seismic-io = { path = "../ophiolite-seismic-io" }
+proj = { workspace = true }
 rayon = "1.11"
 realfft = "3.4"
 schemars = { workspace = true }
@@ -16,6 +18,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 ts-rs = { workspace = true }
+uuid = { version = "1.18", features = ["v4"] }
 zarrs = { version = "0.22.5", default-features = true }
 
 [dev-dependencies]

@@ -1,25 +1,26 @@
 use ophiolite::{
+    AssetBindingInput, AssetCollectionRecord, AssetKind, AssetRecord, DrillingObservationRow,
+    PressureObservationEditRequest, PressureObservationRow, ProjectComputeRunRequest,
+    ResolveSectionWellOverlaysResponse, ResolvedTrajectoryGeometry, SectionWellOverlayRequestDto,
+    WellTimeDepthModel1D, WellboreGeometry,
+};
+use ophiolite::{
     AssetSummaryDto, CloseSessionResultDto, CommandErrorKind, CommandGroup, CommandResponse,
     CurveCatalogDto, CurveStorageKind, CurveWindowDto, DepthRangeQuery, DepthWindowRequest,
-    DirtyStateDto, OphioliteProject, MetadataDto, PackageCommandService, PackagePathRequest,
+    DirtyStateDto, MetadataDto, OphioliteProject, PackageCommandService, PackagePathRequest,
     PackageStorageMetadata, RawLasWindowRequest, SavePackageResultDto, SessionCurveEditRequest,
     SessionDepthWindowRequest, SessionId, SessionMetadataDto, SessionMetadataEditRequest,
     SessionRequest, SessionSaveAsRequest, SessionSummaryDto, SessionWindowDto,
     SessionWindowRequest, TopRow, TrajectoryRow, ValidationReportDto, WellRecord, WellboreRecord,
     asset_summary_dto, command_error_dto, curve_catalog_dto, curve_depth_window_dto,
-    curve_window_dto, metadata_dto, parse_package_metadata, read_path, write_package_overwrite,
-    validation_report_dto,
-};
-use ophiolite::{
-    AssetBindingInput, AssetCollectionRecord, AssetKind, AssetRecord, DrillingObservationRow,
-    PressureObservationEditRequest, PressureObservationRow, ProjectComputeRunRequest,
+    curve_window_dto, metadata_dto, parse_package_metadata, read_path, validation_report_dto,
+    write_package_overwrite,
 };
 use ophiolite::{ComputeCatalog, ProjectComputeRunResult};
 use ophiolite::{
     DrillingObservationEditRequest, OpenStructuredAssetEditSessionRequest,
-    StructuredAssetEditSessionStore, StructuredAssetEditSessionSummary,
-    StructuredAssetSaveResult, StructuredAssetSessionRequest, TopSetEditRequest,
-    TrajectoryEditRequest,
+    StructuredAssetEditSessionStore, StructuredAssetEditSessionSummary, StructuredAssetSaveResult,
+    StructuredAssetSessionRequest, TopSetEditRequest, TrajectoryEditRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -104,6 +105,19 @@ pub struct ProjectWellboreRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetWellboreGeometryRequest {
+    pub project_root: String,
+    pub wellbore_id: String,
+    pub geometry: Option<WellboreGeometry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResolveWellboreTrajectoryRequest {
+    pub project_root: String,
+    pub wellbore_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectAssetsRequest {
     pub project_root: String,
     pub wellbore_id: String,
@@ -153,6 +167,14 @@ pub struct ProjectDepthReadRequest {
 pub struct ImportStructuredAssetRequest {
     pub project_root: String,
     pub csv_path: String,
+    pub binding: AssetBindingInput,
+    pub collection_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportProjectWellTimeDepthModelRequest {
+    pub project_root: String,
+    pub json_path: String,
     pub binding: AssetBindingInput,
     pub collection_name: Option<String>,
 }
@@ -484,9 +506,9 @@ fn list_project_wells_impl(request: ProjectPathRequest) -> CommandResponse<Vec<W
 fn list_project_wellbores_impl(
     request: ProjectWellRequest,
 ) -> CommandResponse<Vec<WellboreRecord>> {
-    match OphioliteProject::open(&request.project_root).and_then(|project| {
-        project.list_wellbores(&ophiolite::WellId(request.well_id))
-    }) {
+    match OphioliteProject::open(&request.project_root)
+        .and_then(|project| project.list_wellbores(&ophiolite::WellId(request.well_id)))
+    {
         Ok(wellbores) => CommandResponse::Ok(wellbores),
         Err(error) => project_read_error(error),
     }
@@ -499,6 +521,42 @@ fn list_project_asset_collections_impl(
         project.list_asset_collections(&ophiolite::WellboreId(request.wellbore_id))
     }) {
         Ok(collections) => CommandResponse::Ok(collections),
+        Err(error) => project_read_error(error),
+    }
+}
+
+fn set_wellbore_geometry_impl(
+    request: SetWellboreGeometryRequest,
+) -> CommandResponse<WellboreRecord> {
+    match OphioliteProject::open(&request.project_root).and_then(|project| {
+        project.set_wellbore_geometry(
+            &ophiolite::WellboreId(request.wellbore_id),
+            request.geometry,
+        )
+    }) {
+        Ok(wellbore) => CommandResponse::Ok(wellbore),
+        Err(error) => project_edit_error(error),
+    }
+}
+
+fn resolve_wellbore_trajectory_impl(
+    request: ResolveWellboreTrajectoryRequest,
+) -> CommandResponse<ResolvedTrajectoryGeometry> {
+    match OphioliteProject::open(&request.project_root).and_then(|project| {
+        project.resolve_wellbore_trajectory(&ophiolite::WellboreId(request.wellbore_id))
+    }) {
+        Ok(trajectory) => CommandResponse::Ok(trajectory),
+        Err(error) => project_read_error(error),
+    }
+}
+
+fn resolve_section_well_overlays_impl(
+    request: SectionWellOverlayRequestDto,
+) -> CommandResponse<ResolveSectionWellOverlaysResponse> {
+    match OphioliteProject::open(&request.project_root)
+        .and_then(|project| project.resolve_section_well_overlays(&request))
+    {
+        Ok(response) => CommandResponse::Ok(response),
         Err(error) => project_read_error(error),
     }
 }
@@ -566,45 +624,52 @@ fn import_project_las_impl(
 fn import_project_trajectory_csv_impl(
     request: ImportStructuredAssetRequest,
 ) -> CommandResponse<ophiolite::ProjectAssetImportResult> {
-    import_structured_asset(
-        request,
-        |project, csv_path, binding, collection_name| {
-            project.import_trajectory_csv(csv_path, binding, collection_name)
-        },
-    )
+    import_structured_asset(request, |project, csv_path, binding, collection_name| {
+        project.import_trajectory_csv(csv_path, binding, collection_name)
+    })
 }
 
 fn import_project_tops_csv_impl(
     request: ImportStructuredAssetRequest,
 ) -> CommandResponse<ophiolite::ProjectAssetImportResult> {
-    import_structured_asset(
-        request,
-        |project, csv_path, binding, collection_name| {
-            project.import_tops_csv(csv_path, binding, collection_name)
-        },
-    )
+    import_structured_asset(request, |project, csv_path, binding, collection_name| {
+        project.import_tops_csv(csv_path, binding, collection_name)
+    })
 }
 
 fn import_project_pressure_csv_impl(
     request: ImportStructuredAssetRequest,
 ) -> CommandResponse<ophiolite::ProjectAssetImportResult> {
-    import_structured_asset(
-        request,
-        |project, csv_path, binding, collection_name| {
-            project.import_pressure_csv(csv_path, binding, collection_name)
-        },
-    )
+    import_structured_asset(request, |project, csv_path, binding, collection_name| {
+        project.import_pressure_csv(csv_path, binding, collection_name)
+    })
 }
 
 fn import_project_drilling_csv_impl(
     request: ImportStructuredAssetRequest,
 ) -> CommandResponse<ophiolite::ProjectAssetImportResult> {
-    import_structured_asset(
-        request,
-        |project, csv_path, binding, collection_name| {
-            project.import_drilling_csv(csv_path, binding, collection_name)
-        },
-    )
+    import_structured_asset(request, |project, csv_path, binding, collection_name| {
+        project.import_drilling_csv(csv_path, binding, collection_name)
+    })
+}
+
+fn import_project_well_time_depth_model_impl(
+    request: ImportProjectWellTimeDepthModelRequest,
+) -> CommandResponse<ophiolite::ProjectAssetImportResult> {
+    match OphioliteProject::open(&request.project_root).and_then(|mut project| {
+        project.import_well_time_depth_model_json(
+            Path::new(&request.json_path),
+            request.binding,
+            request.collection_name.as_deref(),
+        )
+    }) {
+        Ok(result) => CommandResponse::Ok(result),
+        Err(error) => CommandResponse::Err(command_error_dto(
+            CommandGroup::EditPersist,
+            CommandErrorKind::ValidationFailed,
+            error.to_string(),
+        )),
+    }
 }
 
 fn project_assets_covering_depth_range_impl(
@@ -648,10 +713,7 @@ fn read_project_pressure_observations_impl(
 ) -> CommandResponse<Vec<PressureObservationRow>> {
     match OphioliteProject::open(&request.project_root).and_then(|project| {
         let query = depth_query(&request);
-        project.read_pressure_observations(
-            &ophiolite::AssetId(request.asset_id),
-            query.as_ref(),
-        )
+        project.read_pressure_observations(&ophiolite::AssetId(request.asset_id), query.as_ref())
     }) {
         Ok(rows) => CommandResponse::Ok(rows),
         Err(error) => project_read_error(error),
@@ -663,12 +725,20 @@ fn read_project_drilling_observations_impl(
 ) -> CommandResponse<Vec<DrillingObservationRow>> {
     match OphioliteProject::open(&request.project_root).and_then(|project| {
         let query = depth_query(&request);
-        project.read_drilling_observations(
-            &ophiolite::AssetId(request.asset_id),
-            query.as_ref(),
-        )
+        project.read_drilling_observations(&ophiolite::AssetId(request.asset_id), query.as_ref())
     }) {
         Ok(rows) => CommandResponse::Ok(rows),
+        Err(error) => project_read_error(error),
+    }
+}
+
+fn read_project_well_time_depth_model_impl(
+    request: ProjectAssetRequest,
+) -> CommandResponse<WellTimeDepthModel1D> {
+    match OphioliteProject::open(&request.project_root).and_then(|project| {
+        project.read_well_time_depth_model(&ophiolite::AssetId(request.asset_id))
+    }) {
+        Ok(model) => CommandResponse::Ok(model),
         Err(error) => project_read_error(error),
     }
 }
@@ -706,7 +776,8 @@ fn structured_session_summary_impl(
         .map_err(|error| {
             ophiolite::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
         })
-        .and_then(|sessions| sessions.session_summary(&request)) {
+        .and_then(|sessions| sessions.session_summary(&request))
+    {
         Ok(summary) => CommandResponse::Ok(summary),
         Err(error) => CommandResponse::Err(command_error_dto(
             CommandGroup::Inspect,
@@ -725,7 +796,8 @@ fn close_structured_asset_edit_session_impl(
         .map_err(|error| {
             ophiolite::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
         })
-        .and_then(|mut sessions| sessions.close_session(&request)) {
+        .and_then(|mut sessions| sessions.close_session(&request))
+    {
         Ok(closed) => CommandResponse::Ok(closed),
         Err(error) => CommandResponse::Err(command_error_dto(
             CommandGroup::EditPersist,
@@ -744,7 +816,8 @@ fn read_structured_session_trajectory_rows_impl(
         .map_err(|error| {
             ophiolite::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
         })
-        .and_then(|sessions| sessions.trajectory_rows(&request)) {
+        .and_then(|sessions| sessions.trajectory_rows(&request))
+    {
         Ok(rows) => CommandResponse::Ok(rows),
         Err(error) => CommandResponse::Err(command_error_dto(
             CommandGroup::Inspect,
@@ -763,7 +836,8 @@ fn read_structured_session_tops_impl(
         .map_err(|error| {
             ophiolite::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
         })
-        .and_then(|sessions| sessions.tops_rows(&request)) {
+        .and_then(|sessions| sessions.tops_rows(&request))
+    {
         Ok(rows) => CommandResponse::Ok(rows),
         Err(error) => CommandResponse::Err(command_error_dto(
             CommandGroup::Inspect,
@@ -782,7 +856,8 @@ fn read_structured_session_pressure_impl(
         .map_err(|error| {
             ophiolite::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
         })
-        .and_then(|sessions| sessions.pressure_rows(&request)) {
+        .and_then(|sessions| sessions.pressure_rows(&request))
+    {
         Ok(rows) => CommandResponse::Ok(rows),
         Err(error) => CommandResponse::Err(command_error_dto(
             CommandGroup::Inspect,
@@ -801,7 +876,8 @@ fn read_structured_session_drilling_impl(
         .map_err(|error| {
             ophiolite::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
         })
-        .and_then(|sessions| sessions.drilling_rows(&request)) {
+        .and_then(|sessions| sessions.drilling_rows(&request))
+    {
         Ok(rows) => CommandResponse::Ok(rows),
         Err(error) => CommandResponse::Err(command_error_dto(
             CommandGroup::Inspect,
@@ -924,7 +1000,8 @@ fn save_structured_asset_edit_session_impl(
         .map_err(|error| {
             ophiolite::LasError::Storage(format!("structured edit store lock poisoned: {error}"))
         })
-        .and_then(|mut sessions| sessions.save_session(&request)) {
+        .and_then(|mut sessions| sessions.save_session(&request))
+    {
         Ok(result) => CommandResponse::Ok(result),
         Err(error) => CommandResponse::Err(command_error_dto(
             CommandGroup::EditPersist,
@@ -980,6 +1057,14 @@ fn project_read_error<T>(error: ophiolite::LasError) -> CommandResponse<T> {
     CommandResponse::Err(command_error_dto(
         CommandGroup::Inspect,
         CommandErrorKind::OpenFailed,
+        error.to_string(),
+    ))
+}
+
+fn project_edit_error<T>(error: ophiolite::LasError) -> CommandResponse<T> {
+    CommandResponse::Err(command_error_dto(
+        CommandGroup::EditPersist,
+        CommandErrorKind::ValidationFailed,
         error.to_string(),
     ))
 }
@@ -1196,9 +1281,7 @@ pub fn list_project_wells(request: ProjectPathRequest) -> CommandResponse<Vec<We
 }
 
 #[tauri::command]
-pub fn list_project_wellbores(
-    request: ProjectWellRequest,
-) -> CommandResponse<Vec<WellboreRecord>> {
+pub fn list_project_wellbores(request: ProjectWellRequest) -> CommandResponse<Vec<WellboreRecord>> {
     list_project_wellbores_impl(request)
 }
 
@@ -1207,6 +1290,27 @@ pub fn list_project_asset_collections(
     request: ProjectWellboreRequest,
 ) -> CommandResponse<Vec<AssetCollectionRecord>> {
     list_project_asset_collections_impl(request)
+}
+
+#[tauri::command]
+pub fn set_wellbore_geometry(
+    request: SetWellboreGeometryRequest,
+) -> CommandResponse<WellboreRecord> {
+    set_wellbore_geometry_impl(request)
+}
+
+#[tauri::command]
+pub fn resolve_wellbore_trajectory(
+    request: ResolveWellboreTrajectoryRequest,
+) -> CommandResponse<ResolvedTrajectoryGeometry> {
+    resolve_wellbore_trajectory_impl(request)
+}
+
+#[tauri::command]
+pub fn resolve_section_well_overlays(
+    request: SectionWellOverlayRequestDto,
+) -> CommandResponse<ResolveSectionWellOverlaysResponse> {
+    resolve_section_well_overlays_impl(request)
 }
 
 #[tauri::command]
@@ -1264,6 +1368,13 @@ pub fn import_project_drilling_csv(
 }
 
 #[tauri::command]
+pub fn import_project_well_time_depth_model(
+    request: ImportProjectWellTimeDepthModelRequest,
+) -> CommandResponse<ophiolite::ProjectAssetImportResult> {
+    import_project_well_time_depth_model_impl(request)
+}
+
+#[tauri::command]
 pub fn project_assets_covering_depth_range(
     request: ProjectDepthCoverageRequest,
 ) -> CommandResponse<Vec<AssetRecord>> {
@@ -1294,6 +1405,13 @@ pub fn read_project_drilling_observations(
     request: ProjectDepthReadRequest,
 ) -> CommandResponse<Vec<DrillingObservationRow>> {
     read_project_drilling_observations_impl(request)
+}
+
+#[tauri::command]
+pub fn read_project_well_time_depth_model(
+    request: ProjectAssetRequest,
+) -> CommandResponse<WellTimeDepthModel1D> {
+    read_project_well_time_depth_model_impl(request)
 }
 
 #[tauri::command]
@@ -1398,20 +1516,21 @@ mod tests {
         apply_metadata_edit_impl, create_project_impl, import_las_into_workspace_impl,
         import_project_drilling_csv_impl, import_project_pressure_csv_impl,
         import_project_tops_csv_impl, import_project_trajectory_csv_impl,
-        inspect_las_summary_impl, inspect_las_window_impl, list_project_asset_collections_impl,
-        list_project_assets_impl, list_project_wellbores_impl, list_project_wells_impl,
-        open_package_session_impl, open_project_impl, project_assets_covering_depth_range_impl,
-        read_curve_window_impl, read_depth_window_impl, read_package_files_impl,
-        read_project_drilling_observations_impl, read_project_pressure_observations_impl,
-        read_project_tops_impl, read_project_trajectory_rows_impl, save_session_impl,
-        session_metadata_impl,
+        import_project_well_time_depth_model_impl, inspect_las_summary_impl,
+        inspect_las_window_impl, list_project_asset_collections_impl, list_project_assets_impl,
+        list_project_wellbores_impl, list_project_wells_impl, open_package_session_impl,
+        open_project_impl, project_assets_covering_depth_range_impl, read_curve_window_impl,
+        read_depth_window_impl, read_package_files_impl, read_project_drilling_observations_impl,
+        read_project_pressure_observations_impl, read_project_tops_impl,
+        read_project_trajectory_rows_impl, read_project_well_time_depth_model_impl,
+        save_session_impl, session_metadata_impl,
     };
     use ophiolite::{
-        AssetBindingInput, AssetKind,
-        CommandResponse, CurveWindowRequest, DepthWindowRequest, HeaderItemUpdate,
-        MetadataSectionDto, MetadataUpdateRequest, PackageCommandService, PackagePathRequest,
-        RawLasWindowRequest, SessionDepthWindowRequest, SessionMetadataEditRequest,
-        SessionRequest, SessionWindowRequest, examples, write_package,
+        AssetBindingInput, AssetKind, CommandResponse, CurveWindowRequest, DepthReferenceKind,
+        DepthWindowRequest, HeaderItemUpdate, MetadataSectionDto, MetadataUpdateRequest,
+        PackageCommandService, PackagePathRequest, RawLasWindowRequest, SessionDepthWindowRequest,
+        SessionMetadataEditRequest, SessionRequest, SessionWindowRequest, TimeDepthSample1D,
+        TravelTimeReference, WellTimeDepthModel1D, examples, write_package,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -1579,7 +1698,13 @@ mod tests {
 
         assert_eq!(session.root, package_dir.display().to_string());
         assert!(files.has_package_files);
-        assert!(files.metadata_json.as_ref().unwrap().contains("\"canonical\""));
+        assert!(
+            files
+                .metadata_json
+                .as_ref()
+                .unwrap()
+                .contains("\"canonical\"")
+        );
         assert!(files.parquet_exists);
         assert!(files.curve_count >= 1);
     }
@@ -1646,26 +1771,30 @@ mod tests {
                 collection_name: Some(String::from("Survey 1")),
             },
         ));
-        let tops = expect_ok(import_project_tops_csv_impl(super::ImportStructuredAssetRequest {
-            project_root: project_root.clone(),
-            csv_path: tops_csv.display().to_string(),
-            binding: binding.clone(),
-            collection_name: Some(String::from("Interp Tops")),
-        }));
-        let pressure =
-            expect_ok(import_project_pressure_csv_impl(super::ImportStructuredAssetRequest {
+        let tops = expect_ok(import_project_tops_csv_impl(
+            super::ImportStructuredAssetRequest {
+                project_root: project_root.clone(),
+                csv_path: tops_csv.display().to_string(),
+                binding: binding.clone(),
+                collection_name: Some(String::from("Interp Tops")),
+            },
+        ));
+        let pressure = expect_ok(import_project_pressure_csv_impl(
+            super::ImportStructuredAssetRequest {
                 project_root: project_root.clone(),
                 csv_path: pressure_csv.display().to_string(),
                 binding: binding.clone(),
                 collection_name: Some(String::from("Pressure 1")),
-            }));
-        let drilling =
-            expect_ok(import_project_drilling_csv_impl(super::ImportStructuredAssetRequest {
+            },
+        ));
+        let drilling = expect_ok(import_project_drilling_csv_impl(
+            super::ImportStructuredAssetRequest {
                 project_root: project_root.clone(),
                 csv_path: drilling_csv.display().to_string(),
                 binding,
                 collection_name: Some(String::from("Drill Obs 1")),
-            }));
+            },
+        ));
 
         let wells = expect_ok(list_project_wells_impl(super::ProjectPathRequest {
             path: project_root.clone(),
@@ -1678,11 +1807,12 @@ mod tests {
         }));
         assert_eq!(wellbores.len(), 1);
 
-        let collections =
-            expect_ok(list_project_asset_collections_impl(super::ProjectWellboreRequest {
+        let collections = expect_ok(list_project_asset_collections_impl(
+            super::ProjectWellboreRequest {
                 project_root: project_root.clone(),
                 wellbore_id: wellbores[0].id.0.clone(),
-            }));
+            },
+        ));
         assert_eq!(collections.len(), 4);
 
         let assets = expect_ok(list_project_assets_impl(super::ProjectAssetsRequest {
@@ -1692,15 +1822,14 @@ mod tests {
         }));
         assert_eq!(assets.len(), 4);
 
-        let depth_assets =
-            expect_ok(project_assets_covering_depth_range_impl(
-                super::ProjectDepthCoverageRequest {
-                    project_root: project_root.clone(),
-                    wellbore_id: wellbores[0].id.0.clone(),
-                    depth_min: 994.0,
-                    depth_max: 1004.0,
-                },
-            ));
+        let depth_assets = expect_ok(project_assets_covering_depth_range_impl(
+            super::ProjectDepthCoverageRequest {
+                project_root: project_root.clone(),
+                wellbore_id: wellbores[0].id.0.clone(),
+                depth_min: 994.0,
+                depth_max: 1004.0,
+            },
+        ));
         assert_eq!(depth_assets.len(), 4);
 
         let trajectory_rows = expect_ok(read_project_trajectory_rows_impl(
@@ -1740,6 +1869,76 @@ mod tests {
     }
 
     #[test]
+    fn project_commands_import_and_read_well_time_depth_model() {
+        let project_dir = temp_package_dir("harness-project-well-time-depth");
+        fs::create_dir_all(&project_dir).unwrap();
+        let project_root = project_dir.display().to_string();
+        expect_ok(create_project_impl(super::ProjectPathRequest {
+            path: project_root.clone(),
+        }));
+
+        let binding = AssetBindingInput {
+            well_name: String::from("Well Alpha"),
+            wellbore_name: String::from("Well Alpha WB1"),
+            uwi: Some(String::from("UWI-001")),
+            api: None,
+            operator_aliases: vec![String::from("Ophiolite Energy")],
+        };
+
+        let model_path = temp_json(
+            "well-time-depth-model",
+            &serde_json::to_string_pretty(&WellTimeDepthModel1D {
+                id: String::from("well-model-1"),
+                name: String::from("Well Alpha Time Model"),
+                wellbore_id: Some(String::from("Well Alpha WB1")),
+                source_kind: ophiolite::TimeDepthTransformSourceKind::CheckshotModel1D,
+                depth_reference: DepthReferenceKind::TrueVerticalDepth,
+                travel_time_reference: TravelTimeReference::TwoWay,
+                samples: vec![
+                    TimeDepthSample1D {
+                        depth: 0.0,
+                        time_ms: 0.0,
+                    },
+                    TimeDepthSample1D {
+                        depth: 1000.0,
+                        time_ms: 1200.0,
+                    },
+                ],
+                notes: vec![String::from("test model")],
+            })
+            .unwrap(),
+        );
+
+        let imported = expect_ok(import_project_well_time_depth_model_impl(
+            super::ImportProjectWellTimeDepthModelRequest {
+                project_root: project_root.clone(),
+                json_path: model_path.display().to_string(),
+                binding,
+                collection_name: Some(String::from("Well Models")),
+            },
+        ));
+
+        let wellbore_id = imported.resolution.wellbore_id.0.clone();
+        let assets = expect_ok(list_project_assets_impl(super::ProjectAssetsRequest {
+            project_root: project_root.clone(),
+            wellbore_id,
+            asset_kind: Some(AssetKind::WellTimeDepthModel),
+        }));
+        let model = expect_ok(read_project_well_time_depth_model_impl(
+            super::ProjectAssetRequest {
+                project_root,
+                asset_id: imported.asset.id.0.clone(),
+            },
+        ));
+
+        assert_eq!(imported.asset.asset_kind, AssetKind::WellTimeDepthModel);
+        assert_eq!(assets.len(), 1);
+        assert_eq!(model.name, "Well Alpha Time Model");
+        assert_eq!(model.samples.len(), 2);
+        assert_eq!(model.travel_time_reference, TravelTimeReference::TwoWay);
+    }
+
+    #[test]
     fn project_commands_list_and_run_type_safe_compute() {
         let project_dir = temp_package_dir("harness-project-compute");
         let project_root = project_dir.display().to_string();
@@ -1755,16 +1954,20 @@ mod tests {
             .join("logs")
             .join("6038187_v1.2_short.las");
 
-        let imported = expect_ok(super::import_project_las_impl(super::ImportProjectLasRequest {
-            project_root: project_root.clone(),
-            las_path: fixture_path.display().to_string(),
-            collection_name: Some(String::from("logs")),
-        }));
+        let imported = expect_ok(super::import_project_las_impl(
+            super::ImportProjectLasRequest {
+                project_root: project_root.clone(),
+                las_path: fixture_path.display().to_string(),
+                collection_name: Some(String::from("logs")),
+            },
+        ));
 
-        let catalog = expect_ok(super::list_project_compute_catalog_impl(super::ProjectAssetRequest {
-            project_root: project_root.clone(),
-            asset_id: imported.asset.id.0.clone(),
-        }));
+        let catalog = expect_ok(super::list_project_compute_catalog_impl(
+            super::ProjectAssetRequest {
+                project_root: project_root.clone(),
+                asset_id: imported.asset.id.0.clone(),
+            },
+        ));
 
         let vshale = catalog
             .functions
@@ -1808,7 +2011,8 @@ mod tests {
 
         assert_eq!(result.execution.output_curve_name, "VSH_LIN");
         assert_eq!(
-            result.asset
+            result
+                .asset
                 .manifest
                 .compute_manifest
                 .as_ref()
@@ -1848,14 +2052,18 @@ mod tests {
             },
         ));
 
-        let catalog = expect_ok(super::list_project_compute_catalog_impl(super::ProjectAssetRequest {
-            project_root: project_root.clone(),
-            asset_id: trajectory.asset.id.0.clone(),
-        }));
-        assert!(catalog
-            .functions
-            .iter()
-            .any(|entry| entry.metadata.id == "trajectory:normalize_azimuth"));
+        let catalog = expect_ok(super::list_project_compute_catalog_impl(
+            super::ProjectAssetRequest {
+                project_root: project_root.clone(),
+                asset_id: trajectory.asset.id.0.clone(),
+            },
+        ));
+        assert!(
+            catalog
+                .functions
+                .iter()
+                .any(|entry| entry.metadata.id == "trajectory:normalize_azimuth")
+        );
 
         let result = expect_ok(super::run_project_compute_impl(
             super::ProjectComputeRunCommandRequest {
@@ -1871,7 +2079,8 @@ mod tests {
 
         assert_eq!(result.asset.asset_kind, AssetKind::Trajectory);
         assert_eq!(
-            result.asset
+            result
+                .asset
                 .manifest
                 .compute_manifest
                 .as_ref()
@@ -1906,6 +2115,16 @@ mod tests {
             .unwrap()
             .as_nanos();
         let path = std::env::temp_dir().join(format!("ophiolite-{prefix}-{unique}.csv"));
+        fs::write(&path, contents).unwrap();
+        path
+    }
+
+    fn temp_json(prefix: &str, contents: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("ophiolite-{prefix}-{unique}.json"));
         fs::write(&path, contents).unwrap();
         path
     }

@@ -19,6 +19,8 @@ The current exported slice is intentionally narrow:
 
 - well-panel request DTOs
 - resolved well-panel source DTOs
+- survey-map request DTOs
+- resolved survey-map source DTOs
 - typed supporting rows for logs, trajectory, tops, pressure, and drilling
 
 Regenerate the TypeScript artifact from the repo root with:

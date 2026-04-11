@@ -42,6 +42,8 @@ Current properties:
 - `metadata.json` now groups package identity, document metadata, storage descriptors, raw preserved sections, and diagnostics explicitly
 - Arrow/Parquet are internal storage/package details, and now also power backend-session lazy window reads and depth-range query execution
 - non-v3 `lasio` read/model parity is the main compatibility baseline
+- seismic CRS identity, native/effective CRS binding, and display-CRS resolution are defined in `ADR-0014-seismic-crs-native-effective-display-boundary.md`
+- canonical wellbore geometry, resolved trajectory, well time/depth authored models, and section well overlays are defined in `ADR-0016-canonical-wellbore-geometry-and-resolved-trajectory-boundary.md`, `ADR-0017-well-time-depth-source-assets-authored-models-and-compiled-runtime-output.md`, and `ADR-0018-project-aware-well-on-section-overlay-dtos-and-backend-projection-rules.md`
 
 ## Layered Architecture
 
@@ -65,6 +67,49 @@ Current properties:
 
 This separation is intentional: the SDK owns well-domain semantics, DTOs own transfer shapes, and storage formats remain replaceable implementation details.
 
+## Asset And Compute Taxonomy
+
+As the seismic and subsurface scope expands, not every new capability should be forced into one "processing" bucket.
+
+The working taxonomy is:
+
+- `Source Assets`
+  - imported or referenced external data such as seismic volumes, horizons, sparse velocity functions, wells, logs, and velocity cubes
+- `Authored Models`
+  - user-authored or workflow-authored earth models built from multiple inputs, such as layered velocity models or future horizon-guided property models
+- `Compiled Runtime Assets`
+  - runtime-ready outputs derived from authored models, such as `SurveyTimeDepthTransform3D` or future survey property fields
+- `Analysis APIs`
+  - compute and estimation flows that inspect or estimate from data without becoming the canonical authored model itself
+- `Display DTOs`
+  - app/chart-facing views such as resolved sections, overlays, and map DTOs
+
+This distinction is intentional:
+
+- source assets preserve provenance and import semantics
+- authored models capture user intent and editable modeling structure
+- compiled runtime assets optimize query/display/materialization
+- analysis APIs remain separate from durable authored models
+- display DTOs stay transport- and rendering-oriented rather than becoming the canonical model
+
+### Classification Rule
+
+When adding a new capability, classify it before designing contracts:
+
+- if it maps traces to traces on unchanged geometry, it belongs in a processing operator family
+- if it estimates or inspects without becoming the source of truth, it belongs in an analysis API family
+- if it authors or refines an earth model from multiple inputs, it belongs in an authored-model family
+- if it compiles an authored model into a fast runtime field/transform/grid, it belongs in a compiled runtime asset family
+- if it only exists to drive app/chart rendering, it belongs in a display DTO family
+
+Phase 1 for this modeling taxonomy stays in the current crates:
+
+- contracts and canonical model types live in `ophiolite-seismic`
+- build/runtime implementations live in `ophiolite-seismic-runtime`
+- app-boundary DTOs continue to flow through existing Ophiolite and product-facing APIs
+
+That keeps the current repo structure stable while leaving room for a later `ophiolite-modeling` split if the authored-model/build surface becomes broad enough to justify it.
+
 ## Current Focus vs Later Ecosystem
 
 The current repo already implements the local-first core:
@@ -87,6 +132,7 @@ Sync/distribution and broader deployment remain roadmap items rather than curren
 - `../../ophiolite_roadmap.md`
 - `ADR-0009-future-ecosystem-boundaries.md`
 - `ADR-0013-shared-subsurface-core-and-seismic-expansion.md`
+- `ADR-0015-authored-models-compiled-runtime-assets-and-display-dtos.md`
 
 ## Multi-Well Layer
 
@@ -265,6 +311,11 @@ Only after those are stable should the project tighten runtime/package behavior 
 - `ADR-0011-structured-asset-edit-sessions.md`
 - `ADR-0012-revisioned-last-save-wins.md`
 - `ADR-0013-shared-subsurface-core-and-seismic-expansion.md`
+- `ADR-0014-seismic-crs-native-effective-display-boundary.md`
+- `ADR-0015-authored-models-compiled-runtime-assets-and-display-dtos.md`
+- `ADR-0016-canonical-wellbore-geometry-and-resolved-trajectory-boundary.md`
+- `ADR-0017-well-time-depth-source-assets-authored-models-and-compiled-runtime-output.md`
+- `ADR-0018-project-aware-well-on-section-overlay-dtos-and-backend-projection-rules.md`
 
 ## Related Docs
 

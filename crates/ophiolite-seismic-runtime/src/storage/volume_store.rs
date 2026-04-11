@@ -106,3 +106,56 @@ pub fn write_dense_volume<W: VolumeStoreWriter>(
 
     Ok(())
 }
+
+pub fn read_dense_volume<R: VolumeStoreReader>(
+    reader: &R,
+) -> Result<Array3<f32>, SeismicStoreError> {
+    let shape = reader.volume().shape;
+    let mut data = Array3::<f32>::zeros((shape[0], shape[1], shape[2]));
+    let tile_shape = reader.tile_geometry().tile_shape();
+
+    for tile in reader.tile_geometry().iter_tiles() {
+        let tile_data = reader.read_tile(tile)?;
+        let effective = reader.tile_geometry().effective_tile_shape(tile);
+        let origin = reader.tile_geometry().tile_origin(tile);
+        let tile_samples = tile_data.as_slice();
+        for local_i in 0..effective[0] {
+            for local_x in 0..effective[1] {
+                let src = ((local_i * tile_shape[1]) + local_x) * tile_shape[2];
+                for sample in 0..effective[2] {
+                    data[[origin[0] + local_i, origin[1] + local_x, sample]] =
+                        tile_samples[src + sample];
+                }
+            }
+        }
+    }
+
+    Ok(data)
+}
+
+pub fn read_dense_occupancy<R: VolumeStoreReader>(
+    reader: &R,
+) -> Result<Option<Array2<u8>>, SeismicStoreError> {
+    let shape = reader.volume().shape;
+    let mut occupancy = Array2::<u8>::zeros((shape[0], shape[1]));
+    let tile_shape = reader.tile_geometry().tile_shape();
+    let mut has_any = false;
+
+    for tile in reader.tile_geometry().iter_tiles() {
+        let Some(tile_occupancy) = reader.read_tile_occupancy(tile)? else {
+            continue;
+        };
+        has_any = true;
+        let effective = reader.tile_geometry().effective_tile_shape(tile);
+        let origin = reader.tile_geometry().tile_origin(tile);
+        let tile_values = tile_occupancy.as_slice();
+        for local_i in 0..effective[0] {
+            for local_x in 0..effective[1] {
+                let src = local_i * tile_shape[1] + local_x;
+                occupancy[[origin[0] + local_i, origin[1] + local_x]] = tile_values[src];
+            }
+        }
+    }
+
+    Ok(has_any.then_some(occupancy))
+}

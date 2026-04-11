@@ -107,7 +107,7 @@ pub fn apply_trace_local_pipeline_to_gather(
         gather.samples,
         sample_interval_ms,
         None,
-        &pipeline.operations,
+        &pipeline.operations().cloned().collect::<Vec<_>>(),
     )
 }
 
@@ -187,9 +187,9 @@ fn apply_stretch_mute(
 
             let input_time_ms =
                 nmo_input_time_ms(zero_offset_time_ms, offset as f32, velocity_model)?;
-            let stretch_ratio =
-                ((input_time_ms - zero_offset_time_ms) / zero_offset_time_ms.max(TIME_EPSILON_MS))
-                    .max(0.0);
+            let stretch_ratio = ((input_time_ms - zero_offset_time_ms)
+                / zero_offset_time_ms.max(TIME_EPSILON_MS))
+            .max(0.0);
             if stretch_ratio > max_stretch_ratio {
                 *sample = 0.0;
             }
@@ -264,7 +264,9 @@ fn validate_offset_gather(gather: &GatherPlane) -> Result<(), SeismicStoreError>
     Ok(())
 }
 
-pub(crate) fn sample_interval_ms_from_axis(sample_axis_ms: &[f32]) -> Result<f32, SeismicStoreError> {
+pub(crate) fn sample_interval_ms_from_axis(
+    sample_axis_ms: &[f32],
+) -> Result<f32, SeismicStoreError> {
     if sample_axis_ms.len() < MIN_SAMPLE_AXIS_LEN {
         return Err(SeismicStoreError::Message(
             "gather sample axis must contain at least two entries".to_string(),
@@ -305,10 +307,8 @@ pub(crate) fn validate_velocity_function_source(
                 )));
             }
             let mut previous_time = None;
-            for (index, (time_ms, velocity_m_per_s)) in times_ms
-                .iter()
-                .zip(velocities_m_per_s.iter())
-                .enumerate()
+            for (index, (time_ms, velocity_m_per_s)) in
+                times_ms.iter().zip(velocities_m_per_s.iter()).enumerate()
             {
                 if !time_ms.is_finite() || *time_ms < 0.0 {
                     return Err(SeismicStoreError::Message(format!(
@@ -392,11 +392,13 @@ pub(crate) fn nmo_input_time_ms(
     let velocity_m_per_s = velocity_at_time_ms(velocity_model, zero_offset_time_ms)?;
     let zero_offset_time_s = zero_offset_time_ms / 1000.0;
     let offset_term_s = offset_m.abs() / velocity_m_per_s;
-    Ok(((zero_offset_time_s * zero_offset_time_s) + (offset_term_s * offset_term_s)).sqrt()
-        * 1000.0)
+    Ok(
+        ((zero_offset_time_s * zero_offset_time_s) + (offset_term_s * offset_term_s)).sqrt()
+            * 1000.0,
+    )
 }
 
-fn velocity_at_time_ms(
+pub(crate) fn velocity_at_time_ms(
     source: &VelocityFunctionSource,
     time_ms: f32,
 ) -> Result<f32, SeismicStoreError> {
@@ -419,7 +421,9 @@ fn velocity_at_time_ms(
                 return Ok(velocities_m_per_s[0]);
             }
             if upper_index >= times_ms.len() {
-                return Ok(*velocities_m_per_s.last().expect("velocity model should not be empty"));
+                return Ok(*velocities_m_per_s
+                    .last()
+                    .expect("velocity model should not be empty"));
             }
 
             let lower_index = upper_index - 1;
@@ -434,11 +438,11 @@ fn velocity_at_time_ms(
             let upper_velocity = velocities_m_per_s[upper_index];
             Ok(lower_velocity + (upper_velocity - lower_velocity) * t)
         }
-        VelocityFunctionSource::VelocityAssetReference { asset_id } => Err(
-            SeismicStoreError::Message(format!(
+        VelocityFunctionSource::VelocityAssetReference { asset_id } => {
+            Err(SeismicStoreError::Message(format!(
                 "velocity asset references are not yet resolvable in the runtime kernel path: {asset_id}"
-            )),
-        ),
+            )))
+        }
     }
 }
 
@@ -449,7 +453,9 @@ pub(crate) fn interpolate_trace_sample(
     interpolation: GatherInterpolationMode,
 ) -> f32 {
     match interpolation {
-        GatherInterpolationMode::Linear => linear_interpolate_trace_sample(trace, time_ms, sample_interval_ms),
+        GatherInterpolationMode::Linear => {
+            linear_interpolate_trace_sample(trace, time_ms, sample_interval_ms)
+        }
     }
 }
 
@@ -511,8 +517,10 @@ mod tests {
             }],
         };
 
-        let result =
-            validate_gather_processing_pipeline_for_layout(&pipeline, SeismicLayout::PreStack3DAngle);
+        let result = validate_gather_processing_pipeline_for_layout(
+            &pipeline,
+            SeismicLayout::PreStack3DAngle,
+        );
         assert!(result.is_err());
     }
 
@@ -557,15 +565,19 @@ mod tests {
 
         for trace_index in [0usize, 3usize] {
             let start = trace_index * gather.samples;
-            assert!(gather.amplitudes[start..start + gather.samples]
-                .iter()
-                .all(|value| *value == 0.0));
+            assert!(
+                gather.amplitudes[start..start + gather.samples]
+                    .iter()
+                    .all(|value| *value == 0.0)
+            );
         }
         for trace_index in [1usize, 2usize] {
             let start = trace_index * gather.samples;
-            assert!(gather.amplitudes[start..start + gather.samples]
-                .iter()
-                .all(|value| *value == 1.0));
+            assert!(
+                gather.amplitudes[start..start + gather.samples]
+                    .iter()
+                    .all(|value| *value == 1.0)
+            );
         }
     }
 
@@ -642,7 +654,13 @@ mod tests {
 
         let near_trace = &gather.amplitudes[..gather.samples];
         let far_trace = &gather.amplitudes[gather.samples..];
-        assert!(near_trace.iter().skip(10).take(20).all(|value| *value == 1.0));
+        assert!(
+            near_trace
+                .iter()
+                .skip(10)
+                .take(20)
+                .all(|value| *value == 1.0)
+        );
         assert!(far_trace.iter().take(10).all(|value| *value == 0.0));
     }
 
@@ -658,20 +676,26 @@ mod tests {
             name: None,
             description: None,
             trace_local_pipeline: Some(TraceLocalProcessingPipeline {
-                schema_version: 1,
+                schema_version: 2,
                 revision: 1,
                 preset_id: None,
                 name: None,
                 description: None,
-                operations: vec![
-                    TraceLocalProcessingOperation::AmplitudeScalar { factor: 0.5 },
-                    TraceLocalProcessingOperation::BandpassFilter {
-                        f1_hz: 2.0,
-                        f2_hz: 4.0,
-                        f3_hz: 20.0,
-                        f4_hz: 28.0,
-                        phase: FrequencyPhaseMode::Zero,
-                        window: FrequencyWindowShape::CosineTaper,
+                steps: vec![
+                    ophiolite_seismic::TraceLocalProcessingStep {
+                        operation: TraceLocalProcessingOperation::AmplitudeScalar { factor: 0.5 },
+                        checkpoint: false,
+                    },
+                    ophiolite_seismic::TraceLocalProcessingStep {
+                        operation: TraceLocalProcessingOperation::BandpassFilter {
+                            f1_hz: 2.0,
+                            f2_hz: 4.0,
+                            f3_hz: 20.0,
+                            f4_hz: 28.0,
+                            phase: FrequencyPhaseMode::Zero,
+                            window: FrequencyWindowShape::CosineTaper,
+                        },
+                        checkpoint: false,
                     },
                 ],
             }),
@@ -683,11 +707,15 @@ mod tests {
 
         apply_gather_processing_pipeline(&mut gather, &pipeline).unwrap();
 
-        assert!(gather.amplitudes[..gather.samples]
-            .iter()
-            .any(|value| value.abs() <= 1.0));
-        assert!(gather.amplitudes[gather.samples..]
-            .iter()
-            .all(|value| *value == 0.0));
+        assert!(
+            gather.amplitudes[..gather.samples]
+                .iter()
+                .any(|value| value.abs() <= 1.0)
+        );
+        assert!(
+            gather.amplitudes[gather.samples..]
+                .iter()
+                .all(|value| *value == 0.0)
+        );
     }
 }

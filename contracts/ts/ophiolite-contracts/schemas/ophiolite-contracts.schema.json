@@ -1,6 +1,2545 @@
 {
+  "sectionWellOverlayContractVersion": 1,
+  "surveyMapContractVersion": 2,
   "wellPanelContractVersion": 1,
   "types": {
+    "CoordinateReferenceDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "CoordinateReferenceDto",
+      "type": "object",
+      "properties": {
+        "geodetic_datum": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "CoordinateReferenceBindingDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "CoordinateReferenceBindingDto",
+      "type": "object",
+      "required": [
+        "source"
+      ],
+      "properties": {
+        "detected": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "effective": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source": {
+          "$ref": "#/definitions/CoordinateReferenceSourceDto"
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDto": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "CoordinateReferenceSourceDto": {
+          "type": "string",
+          "enum": [
+            "header",
+            "import_manifest",
+            "user_override",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "CoordinateReferenceSourceDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "CoordinateReferenceSourceDto",
+      "type": "string",
+      "enum": [
+        "header",
+        "import_manifest",
+        "user_override",
+        "unknown"
+      ]
+    },
+    "ProjectedPoint2Dto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ProjectedPoint2Dto",
+      "type": "object",
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "ProjectedPolygon2Dto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ProjectedPolygon2Dto",
+      "type": "object",
+      "required": [
+        "exterior"
+      ],
+      "properties": {
+        "exterior": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ProjectedPoint2Dto"
+          }
+        }
+      },
+      "definitions": {
+        "ProjectedPoint2Dto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "ProjectedVector2Dto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ProjectedVector2Dto",
+      "type": "object",
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "SurveyMapRequestDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SurveyMapRequestDto",
+      "type": "object",
+      "required": [
+        "schema_version",
+        "survey_asset_ids",
+        "wellbore_ids"
+      ],
+      "properties": {
+        "display_coordinate_reference_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "survey_asset_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "wellbore_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "SurveyIndexAxisDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SurveyIndexAxisDto",
+      "type": "object",
+      "required": [
+        "count",
+        "first",
+        "last",
+        "regular"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "first": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "last": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "regular": {
+          "type": "boolean"
+        },
+        "step": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      }
+    },
+    "SurveyIndexGridDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SurveyIndexGridDto",
+      "type": "object",
+      "required": [
+        "inline_axis",
+        "xline_axis"
+      ],
+      "properties": {
+        "inline_axis": {
+          "$ref": "#/definitions/SurveyIndexAxisDto"
+        },
+        "xline_axis": {
+          "$ref": "#/definitions/SurveyIndexAxisDto"
+        }
+      },
+      "definitions": {
+        "SurveyIndexAxisDto": {
+          "type": "object",
+          "required": [
+            "count",
+            "first",
+            "last",
+            "regular"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "first": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "last": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "regular": {
+              "type": "boolean"
+            },
+            "step": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          }
+        }
+      }
+    },
+    "SurveyMapGridTransformDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SurveyMapGridTransformDto",
+      "type": "object",
+      "required": [
+        "inline_basis",
+        "origin",
+        "xline_basis"
+      ],
+      "properties": {
+        "inline_basis": {
+          "$ref": "#/definitions/ProjectedVector2Dto"
+        },
+        "origin": {
+          "$ref": "#/definitions/ProjectedPoint2Dto"
+        },
+        "xline_basis": {
+          "$ref": "#/definitions/ProjectedVector2Dto"
+        }
+      },
+      "definitions": {
+        "ProjectedPoint2Dto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "ProjectedVector2Dto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "SectionWellOverlayDomainDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SectionWellOverlayDomainDto",
+      "type": "string",
+      "enum": [
+        "depth",
+        "time"
+      ]
+    },
+    "SectionWellOverlayRequestDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SectionWellOverlayRequestDto",
+      "type": "object",
+      "required": [
+        "axis",
+        "display_domain",
+        "index",
+        "project_root",
+        "schema_version",
+        "survey_asset_id",
+        "wellbore_ids"
+      ],
+      "properties": {
+        "active_well_model_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "axis": {
+          "$ref": "#/definitions/SectionAxis"
+        },
+        "display_domain": {
+          "$ref": "#/definitions/SectionWellOverlayDomainDto"
+        },
+        "index": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "project_root": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "survey_asset_id": {
+          "type": "string"
+        },
+        "tolerance_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "wellbore_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "definitions": {
+        "SectionAxis": {
+          "type": "string",
+          "enum": [
+            "inline",
+            "xline"
+          ]
+        },
+        "SectionWellOverlayDomainDto": {
+          "type": "string",
+          "enum": [
+            "depth",
+            "time"
+          ]
+        }
+      }
+    },
+    "SectionWellOverlaySampleDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SectionWellOverlaySampleDto",
+      "type": "object",
+      "required": [
+        "measured_depth_m",
+        "trace_coordinate",
+        "trace_index",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "measured_depth_m": {
+          "type": "number",
+          "format": "double"
+        },
+        "sample_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "sample_value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "trace_coordinate": {
+          "type": "number",
+          "format": "double"
+        },
+        "trace_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "true_vertical_depth_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "true_vertical_depth_subsea_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "twt_ms": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "x": {
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "SectionWellOverlaySegmentDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SectionWellOverlaySegmentDto",
+      "type": "object",
+      "properties": {
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SectionWellOverlaySampleDto"
+          }
+        }
+      },
+      "definitions": {
+        "SectionWellOverlaySampleDto": {
+          "type": "object",
+          "required": [
+            "measured_depth_m",
+            "trace_coordinate",
+            "trace_index",
+            "x",
+            "y"
+          ],
+          "properties": {
+            "measured_depth_m": {
+              "type": "number",
+              "format": "double"
+            },
+            "sample_index": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "sample_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "trace_coordinate": {
+              "type": "number",
+              "format": "double"
+            },
+            "trace_index": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "true_vertical_depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "true_vertical_depth_subsea_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "twt_ms": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "ResolvedSectionWellOverlayDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolvedSectionWellOverlayDto",
+      "type": "object",
+      "required": [
+        "display_domain",
+        "name",
+        "well_id",
+        "wellbore_id"
+      ],
+      "properties": {
+        "active_model_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "depth_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DepthReferenceKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "display_domain": {
+          "$ref": "#/definitions/SectionWellOverlayDomainDto"
+        },
+        "name": {
+          "type": "string"
+        },
+        "segments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SectionWellOverlaySegmentDto"
+          }
+        },
+        "travel_time_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TravelTimeReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "well_id": {
+          "type": "string"
+        },
+        "wellbore_id": {
+          "type": "string"
+        }
+      },
+      "definitions": {
+        "DepthReferenceKind": {
+          "type": "string",
+          "enum": [
+            "measured_depth",
+            "true_vertical_depth",
+            "true_vertical_depth_subsea"
+          ]
+        },
+        "SectionWellOverlayDomainDto": {
+          "type": "string",
+          "enum": [
+            "depth",
+            "time"
+          ]
+        },
+        "SectionWellOverlaySampleDto": {
+          "type": "object",
+          "required": [
+            "measured_depth_m",
+            "trace_coordinate",
+            "trace_index",
+            "x",
+            "y"
+          ],
+          "properties": {
+            "measured_depth_m": {
+              "type": "number",
+              "format": "double"
+            },
+            "sample_index": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "sample_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "trace_coordinate": {
+              "type": "number",
+              "format": "double"
+            },
+            "trace_index": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "true_vertical_depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "true_vertical_depth_subsea_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "twt_ms": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "SectionWellOverlaySegmentDto": {
+          "type": "object",
+          "properties": {
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "samples": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/SectionWellOverlaySampleDto"
+              }
+            }
+          }
+        },
+        "TravelTimeReference": {
+          "type": "string",
+          "enum": [
+            "one_way",
+            "two_way"
+          ]
+        }
+      }
+    },
+    "ResolveSectionWellOverlaysResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolveSectionWellOverlaysResponse",
+      "type": "object",
+      "required": [
+        "schema_version"
+      ],
+      "properties": {
+        "overlays": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ResolvedSectionWellOverlayDto"
+          }
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      },
+      "definitions": {
+        "DepthReferenceKind": {
+          "type": "string",
+          "enum": [
+            "measured_depth",
+            "true_vertical_depth",
+            "true_vertical_depth_subsea"
+          ]
+        },
+        "ResolvedSectionWellOverlayDto": {
+          "type": "object",
+          "required": [
+            "display_domain",
+            "name",
+            "well_id",
+            "wellbore_id"
+          ],
+          "properties": {
+            "active_model_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "depth_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/DepthReferenceKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "diagnostics": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "display_domain": {
+              "$ref": "#/definitions/SectionWellOverlayDomainDto"
+            },
+            "name": {
+              "type": "string"
+            },
+            "segments": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/SectionWellOverlaySegmentDto"
+              }
+            },
+            "travel_time_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TravelTimeReference"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "well_id": {
+              "type": "string"
+            },
+            "wellbore_id": {
+              "type": "string"
+            }
+          }
+        },
+        "SectionWellOverlayDomainDto": {
+          "type": "string",
+          "enum": [
+            "depth",
+            "time"
+          ]
+        },
+        "SectionWellOverlaySampleDto": {
+          "type": "object",
+          "required": [
+            "measured_depth_m",
+            "trace_coordinate",
+            "trace_index",
+            "x",
+            "y"
+          ],
+          "properties": {
+            "measured_depth_m": {
+              "type": "number",
+              "format": "double"
+            },
+            "sample_index": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "sample_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "trace_coordinate": {
+              "type": "number",
+              "format": "double"
+            },
+            "trace_index": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "true_vertical_depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "true_vertical_depth_subsea_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "twt_ms": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "SectionWellOverlaySegmentDto": {
+          "type": "object",
+          "properties": {
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "samples": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/SectionWellOverlaySampleDto"
+              }
+            }
+          }
+        },
+        "TravelTimeReference": {
+          "type": "string",
+          "enum": [
+            "one_way",
+            "two_way"
+          ]
+        }
+      }
+    },
+    "SurveyMapSpatialAvailabilityDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SurveyMapSpatialAvailabilityDto",
+      "type": "string",
+      "enum": [
+        "available",
+        "partial",
+        "unavailable"
+      ]
+    },
+    "SurveyMapSpatialDescriptorDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SurveyMapSpatialDescriptorDto",
+      "type": "object",
+      "required": [
+        "availability",
+        "notes"
+      ],
+      "properties": {
+        "availability": {
+          "$ref": "#/definitions/SurveyMapSpatialAvailabilityDto"
+        },
+        "coordinate_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "footprint": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProjectedPolygon2Dto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grid_transform": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SurveyMapGridTransformDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDto": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "ProjectedPoint2Dto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "ProjectedPolygon2Dto": {
+          "type": "object",
+          "required": [
+            "exterior"
+          ],
+          "properties": {
+            "exterior": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ProjectedPoint2Dto"
+              }
+            }
+          }
+        },
+        "ProjectedVector2Dto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "SurveyMapGridTransformDto": {
+          "type": "object",
+          "required": [
+            "inline_basis",
+            "origin",
+            "xline_basis"
+          ],
+          "properties": {
+            "inline_basis": {
+              "$ref": "#/definitions/ProjectedVector2Dto"
+            },
+            "origin": {
+              "$ref": "#/definitions/ProjectedPoint2Dto"
+            },
+            "xline_basis": {
+              "$ref": "#/definitions/ProjectedVector2Dto"
+            }
+          }
+        },
+        "SurveyMapSpatialAvailabilityDto": {
+          "type": "string",
+          "enum": [
+            "available",
+            "partial",
+            "unavailable"
+          ]
+        }
+      }
+    },
+    "SurveyMapTrajectoryStationDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SurveyMapTrajectoryStationDto",
+      "type": "object",
+      "required": [
+        "measured_depth"
+      ],
+      "properties": {
+        "azimuth_deg": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "easting_offset": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "inclination_deg": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "measured_depth": {
+          "type": "number",
+          "format": "double"
+        },
+        "northing_offset": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "true_vertical_depth": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      }
+    },
+    "SurveyMapTrajectoryDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SurveyMapTrajectoryDto",
+      "type": "object",
+      "required": [
+        "asset_id",
+        "asset_name",
+        "logical_asset_id",
+        "rows"
+      ],
+      "properties": {
+        "asset_id": {
+          "type": "string"
+        },
+        "asset_name": {
+          "type": "string"
+        },
+        "logical_asset_id": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SurveyMapTrajectoryStationDto"
+          }
+        }
+      },
+      "definitions": {
+        "SurveyMapTrajectoryStationDto": {
+          "type": "object",
+          "required": [
+            "measured_depth"
+          ],
+          "properties": {
+            "azimuth_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "easting_offset": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "inclination_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "measured_depth": {
+              "type": "number",
+              "format": "double"
+            },
+            "northing_offset": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "true_vertical_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "ResolvedSurveyMapSurveyDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolvedSurveyMapSurveyDto",
+      "type": "object",
+      "required": [
+        "asset_id",
+        "index_grid",
+        "logical_asset_id",
+        "name",
+        "native_spatial",
+        "transform_diagnostics",
+        "transform_status"
+      ],
+      "properties": {
+        "asset_id": {
+          "type": "string"
+        },
+        "coordinate_reference_binding": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceBindingDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "display_spatial": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SurveyMapSpatialDescriptorDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "index_grid": {
+          "$ref": "#/definitions/SurveyIndexGridDto"
+        },
+        "logical_asset_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "native_spatial": {
+          "$ref": "#/definitions/SurveyMapSpatialDescriptorDto"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "transform_diagnostics": {
+          "$ref": "#/definitions/SurveyMapTransformDiagnosticsDto"
+        },
+        "transform_status": {
+          "$ref": "#/definitions/SurveyMapTransformStatusDto"
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceBindingDto": {
+          "type": "object",
+          "required": [
+            "source"
+          ],
+          "properties": {
+            "detected": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "effective": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "source": {
+              "$ref": "#/definitions/CoordinateReferenceSourceDto"
+            }
+          }
+        },
+        "CoordinateReferenceDto": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "CoordinateReferenceSourceDto": {
+          "type": "string",
+          "enum": [
+            "header",
+            "import_manifest",
+            "user_override",
+            "unknown"
+          ]
+        },
+        "ProjectedPoint2Dto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "ProjectedPolygon2Dto": {
+          "type": "object",
+          "required": [
+            "exterior"
+          ],
+          "properties": {
+            "exterior": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ProjectedPoint2Dto"
+              }
+            }
+          }
+        },
+        "ProjectedVector2Dto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "SurveyIndexAxisDto": {
+          "type": "object",
+          "required": [
+            "count",
+            "first",
+            "last",
+            "regular"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "first": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "last": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "regular": {
+              "type": "boolean"
+            },
+            "step": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          }
+        },
+        "SurveyIndexGridDto": {
+          "type": "object",
+          "required": [
+            "inline_axis",
+            "xline_axis"
+          ],
+          "properties": {
+            "inline_axis": {
+              "$ref": "#/definitions/SurveyIndexAxisDto"
+            },
+            "xline_axis": {
+              "$ref": "#/definitions/SurveyIndexAxisDto"
+            }
+          }
+        },
+        "SurveyMapGridTransformDto": {
+          "type": "object",
+          "required": [
+            "inline_basis",
+            "origin",
+            "xline_basis"
+          ],
+          "properties": {
+            "inline_basis": {
+              "$ref": "#/definitions/ProjectedVector2Dto"
+            },
+            "origin": {
+              "$ref": "#/definitions/ProjectedPoint2Dto"
+            },
+            "xline_basis": {
+              "$ref": "#/definitions/ProjectedVector2Dto"
+            }
+          }
+        },
+        "SurveyMapSpatialAvailabilityDto": {
+          "type": "string",
+          "enum": [
+            "available",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "SurveyMapSpatialDescriptorDto": {
+          "type": "object",
+          "required": [
+            "availability",
+            "notes"
+          ],
+          "properties": {
+            "availability": {
+              "$ref": "#/definitions/SurveyMapSpatialAvailabilityDto"
+            },
+            "coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "footprint": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProjectedPolygon2Dto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "grid_transform": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/SurveyMapGridTransformDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "SurveyMapTransformDiagnosticsDto": {
+          "type": "object",
+          "required": [
+            "degraded",
+            "policy"
+          ],
+          "properties": {
+            "accuracy_meters": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "degraded": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "operation_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "operation_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "policy": {
+              "$ref": "#/definitions/SurveyMapTransformPolicyDto"
+            },
+            "source_coordinate_reference_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "target_coordinate_reference_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "SurveyMapTransformPolicyDto": {
+          "type": "string",
+          "enum": [
+            "best_available",
+            "best_or_fail"
+          ]
+        },
+        "SurveyMapTransformStatusDto": {
+          "type": "string",
+          "enum": [
+            "native_only",
+            "display_equivalent",
+            "display_transformed",
+            "display_degraded",
+            "display_unavailable"
+          ]
+        }
+      }
+    },
+    "ResolvedSurveyMapWellDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolvedSurveyMapWellDto",
+      "type": "object",
+      "required": [
+        "name",
+        "notes",
+        "trajectories",
+        "well_id",
+        "wellbore_id"
+      ],
+      "properties": {
+        "coordinate_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "surface_location": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProjectedPoint2Dto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "trajectories": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SurveyMapTrajectoryDto"
+          }
+        },
+        "well_id": {
+          "type": "string"
+        },
+        "wellbore_id": {
+          "type": "string"
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDto": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "ProjectedPoint2Dto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "SurveyMapTrajectoryDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "asset_name",
+            "logical_asset_id",
+            "rows"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "asset_name": {
+              "type": "string"
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/SurveyMapTrajectoryStationDto"
+              }
+            }
+          }
+        },
+        "SurveyMapTrajectoryStationDto": {
+          "type": "object",
+          "required": [
+            "measured_depth"
+          ],
+          "properties": {
+            "azimuth_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "easting_offset": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "inclination_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "measured_depth": {
+              "type": "number",
+              "format": "double"
+            },
+            "northing_offset": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "true_vertical_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "ResolvedSurveyMapSourceDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolvedSurveyMapSourceDto",
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "schema_version",
+        "surveys",
+        "wells"
+      ],
+      "properties": {
+        "horizons": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ResolvedSurveyMapHorizonDto"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "scalar_field": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SurveyMapScalarFieldDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scalar_field_horizon_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "surveys": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ResolvedSurveyMapSurveyDto"
+          }
+        },
+        "wells": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ResolvedSurveyMapWellDto"
+          }
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceBindingDto": {
+          "type": "object",
+          "required": [
+            "source"
+          ],
+          "properties": {
+            "detected": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "effective": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "source": {
+              "$ref": "#/definitions/CoordinateReferenceSourceDto"
+            }
+          }
+        },
+        "CoordinateReferenceDto": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "CoordinateReferenceSourceDto": {
+          "type": "string",
+          "enum": [
+            "header",
+            "import_manifest",
+            "user_override",
+            "unknown"
+          ]
+        },
+        "ProjectedPoint2Dto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "ProjectedPolygon2Dto": {
+          "type": "object",
+          "required": [
+            "exterior"
+          ],
+          "properties": {
+            "exterior": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ProjectedPoint2Dto"
+              }
+            }
+          }
+        },
+        "ProjectedVector2Dto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "ResolvedSurveyMapHorizonDto": {
+          "type": "object",
+          "required": [
+            "id",
+            "mapped_point_count",
+            "missing_cell_count",
+            "name",
+            "point_count",
+            "preview_available",
+            "preview_status",
+            "source_path",
+            "survey_asset_id"
+          ],
+          "properties": {
+            "aligned_coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "mapped_point_count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "missing_cell_count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "name": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "point_count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "preview_available": {
+              "type": "boolean"
+            },
+            "preview_status": {
+              "$ref": "#/definitions/SurveyMapTransformStatusDto"
+            },
+            "source_coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "source_path": {
+              "type": "string"
+            },
+            "survey_asset_id": {
+              "type": "string"
+            },
+            "transformed": {
+              "default": false,
+              "type": "boolean"
+            }
+          }
+        },
+        "ResolvedSurveyMapSurveyDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "index_grid",
+            "logical_asset_id",
+            "name",
+            "native_spatial",
+            "transform_diagnostics",
+            "transform_status"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "coordinate_reference_binding": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceBindingDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "display_spatial": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/SurveyMapSpatialDescriptorDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "index_grid": {
+              "$ref": "#/definitions/SurveyIndexGridDto"
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "native_spatial": {
+              "$ref": "#/definitions/SurveyMapSpatialDescriptorDto"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "transform_diagnostics": {
+              "$ref": "#/definitions/SurveyMapTransformDiagnosticsDto"
+            },
+            "transform_status": {
+              "$ref": "#/definitions/SurveyMapTransformStatusDto"
+            }
+          }
+        },
+        "ResolvedSurveyMapWellDto": {
+          "type": "object",
+          "required": [
+            "name",
+            "notes",
+            "trajectories",
+            "well_id",
+            "wellbore_id"
+          ],
+          "properties": {
+            "coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "surface_location": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProjectedPoint2Dto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "trajectories": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/SurveyMapTrajectoryDto"
+              }
+            },
+            "well_id": {
+              "type": "string"
+            },
+            "wellbore_id": {
+              "type": "string"
+            }
+          }
+        },
+        "SurveyIndexAxisDto": {
+          "type": "object",
+          "required": [
+            "count",
+            "first",
+            "last",
+            "regular"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "first": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "last": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "regular": {
+              "type": "boolean"
+            },
+            "step": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          }
+        },
+        "SurveyIndexGridDto": {
+          "type": "object",
+          "required": [
+            "inline_axis",
+            "xline_axis"
+          ],
+          "properties": {
+            "inline_axis": {
+              "$ref": "#/definitions/SurveyIndexAxisDto"
+            },
+            "xline_axis": {
+              "$ref": "#/definitions/SurveyIndexAxisDto"
+            }
+          }
+        },
+        "SurveyMapGridTransformDto": {
+          "type": "object",
+          "required": [
+            "inline_basis",
+            "origin",
+            "xline_basis"
+          ],
+          "properties": {
+            "inline_basis": {
+              "$ref": "#/definitions/ProjectedVector2Dto"
+            },
+            "origin": {
+              "$ref": "#/definitions/ProjectedPoint2Dto"
+            },
+            "xline_basis": {
+              "$ref": "#/definitions/ProjectedVector2Dto"
+            }
+          }
+        },
+        "SurveyMapScalarFieldDto": {
+          "type": "object",
+          "required": [
+            "columns",
+            "id",
+            "name",
+            "origin",
+            "rows",
+            "step",
+            "values"
+          ],
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "id": {
+              "type": "string"
+            },
+            "max_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "min_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "name": {
+              "type": "string"
+            },
+            "origin": {
+              "$ref": "#/definitions/ProjectedPoint2Dto"
+            },
+            "rows": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "step": {
+              "$ref": "#/definitions/ProjectedPoint2Dto"
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              }
+            }
+          }
+        },
+        "SurveyMapSpatialAvailabilityDto": {
+          "type": "string",
+          "enum": [
+            "available",
+            "partial",
+            "unavailable"
+          ]
+        },
+        "SurveyMapSpatialDescriptorDto": {
+          "type": "object",
+          "required": [
+            "availability",
+            "notes"
+          ],
+          "properties": {
+            "availability": {
+              "$ref": "#/definitions/SurveyMapSpatialAvailabilityDto"
+            },
+            "coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "footprint": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProjectedPolygon2Dto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "grid_transform": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/SurveyMapGridTransformDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "SurveyMapTrajectoryDto": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "asset_name",
+            "logical_asset_id",
+            "rows"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "asset_name": {
+              "type": "string"
+            },
+            "logical_asset_id": {
+              "type": "string"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/SurveyMapTrajectoryStationDto"
+              }
+            }
+          }
+        },
+        "SurveyMapTrajectoryStationDto": {
+          "type": "object",
+          "required": [
+            "measured_depth"
+          ],
+          "properties": {
+            "azimuth_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "easting_offset": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "inclination_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "measured_depth": {
+              "type": "number",
+              "format": "double"
+            },
+            "northing_offset": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "true_vertical_depth": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        },
+        "SurveyMapTransformDiagnosticsDto": {
+          "type": "object",
+          "required": [
+            "degraded",
+            "policy"
+          ],
+          "properties": {
+            "accuracy_meters": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "degraded": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "operation_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "operation_name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "policy": {
+              "$ref": "#/definitions/SurveyMapTransformPolicyDto"
+            },
+            "source_coordinate_reference_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "target_coordinate_reference_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "SurveyMapTransformPolicyDto": {
+          "type": "string",
+          "enum": [
+            "best_available",
+            "best_or_fail"
+          ]
+        },
+        "SurveyMapTransformStatusDto": {
+          "type": "string",
+          "enum": [
+            "native_only",
+            "display_equivalent",
+            "display_transformed",
+            "display_degraded",
+            "display_unavailable"
+          ]
+        }
+      }
+    },
     "WellPanelRequestDto": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "WellPanelRequestDto",
@@ -1878,6 +4417,4541 @@
             "cursor",
             "pan_zoom"
           ]
+        }
+      }
+    },
+    "TimeDepthDomain": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "TimeDepthDomain",
+      "type": "string",
+      "enum": [
+        "time",
+        "depth"
+      ]
+    },
+    "TimeDepthTransformSourceKind": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "TimeDepthTransformSourceKind",
+      "type": "string",
+      "enum": [
+        "constant_velocity",
+        "velocity_function1_d",
+        "velocity_grid3_d",
+        "checkshot_model1_d",
+        "sonic_log1_d",
+        "vp_log1_d",
+        "horizon_layer_model"
+      ]
+    },
+    "VelocityQuantityKind": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "VelocityQuantityKind",
+      "type": "string",
+      "enum": [
+        "interval",
+        "rms",
+        "average"
+      ]
+    },
+    "TravelTimeReference": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "TravelTimeReference",
+      "type": "string",
+      "enum": [
+        "one_way",
+        "two_way"
+      ]
+    },
+    "DepthReferenceKind": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "DepthReferenceKind",
+      "type": "string",
+      "enum": [
+        "measured_depth",
+        "true_vertical_depth",
+        "true_vertical_depth_subsea"
+      ]
+    },
+    "StratigraphicBoundaryReference": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "StratigraphicBoundaryReference",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "survey_top",
+            "survey_base"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "horizon_asset"
+          ],
+          "properties": {
+            "horizon_asset": {
+              "type": "object",
+              "required": [
+                "horizon_id"
+              ],
+              "properties": {
+                "horizon_id": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "LateralInterpolationMethod": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "LateralInterpolationMethod",
+      "type": "string",
+      "enum": [
+        "nearest",
+        "linear",
+        "inverse_distance",
+        "minimum_curvature",
+        "kriging"
+      ]
+    },
+    "VerticalInterpolationMethod": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "VerticalInterpolationMethod",
+      "type": "string",
+      "enum": [
+        "step",
+        "linear",
+        "monotonic_cubic"
+      ]
+    },
+    "SpatialCoverageRelationship": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SpatialCoverageRelationship",
+      "type": "string",
+      "enum": [
+        "exact",
+        "contains",
+        "partial_overlap",
+        "disjoint",
+        "unknown"
+      ]
+    },
+    "VerticalAxisDescriptor": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "VerticalAxisDescriptor",
+      "type": "object",
+      "required": [
+        "count",
+        "domain",
+        "start",
+        "step",
+        "unit"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "domain": {
+          "$ref": "#/definitions/TimeDepthDomain"
+        },
+        "start": {
+          "type": "number",
+          "format": "float"
+        },
+        "step": {
+          "type": "number",
+          "format": "float"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "definitions": {
+        "TimeDepthDomain": {
+          "type": "string",
+          "enum": [
+            "time",
+            "depth"
+          ]
+        }
+      }
+    },
+    "SpatialCoverageSummary": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SpatialCoverageSummary",
+      "type": "object",
+      "required": [
+        "relationship"
+      ],
+      "properties": {
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "relationship": {
+          "$ref": "#/definitions/SpatialCoverageRelationship"
+        },
+        "source_coordinate_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target_coordinate_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDescriptor": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "SpatialCoverageRelationship": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "contains",
+            "partial_overlap",
+            "disjoint",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "VelocityControlProfileSample": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "VelocityControlProfileSample",
+      "type": "object",
+      "required": [
+        "time_ms"
+      ],
+      "properties": {
+        "depth_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "time_ms": {
+          "type": "number",
+          "format": "float"
+        },
+        "vavg_m_per_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "vint_m_per_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "vrms_m_per_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        }
+      }
+    },
+    "VelocityControlProfile": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "VelocityControlProfile",
+      "type": "object",
+      "required": [
+        "id",
+        "location"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/definitions/ProjectedPoint2"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/VelocityControlProfileSample"
+          }
+        },
+        "wellbore_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "definitions": {
+        "ProjectedPoint2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "VelocityControlProfileSample": {
+          "type": "object",
+          "required": [
+            "time_ms"
+          ],
+          "properties": {
+            "depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "time_ms": {
+              "type": "number",
+              "format": "float"
+            },
+            "vavg_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "vint_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "vrms_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            }
+          }
+        }
+      }
+    },
+    "VelocityControlProfileSet": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "VelocityControlProfileSet",
+      "type": "object",
+      "required": [
+        "depth_reference",
+        "id",
+        "name",
+        "travel_time_reference"
+      ],
+      "properties": {
+        "coordinate_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth_reference": {
+          "$ref": "#/definitions/DepthReferenceKind"
+        },
+        "derived_from": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "profiles": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/VelocityControlProfile"
+          }
+        },
+        "travel_time_reference": {
+          "$ref": "#/definitions/TravelTimeReference"
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDescriptor": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "DepthReferenceKind": {
+          "type": "string",
+          "enum": [
+            "measured_depth",
+            "true_vertical_depth",
+            "true_vertical_depth_subsea"
+          ]
+        },
+        "ProjectedPoint2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "TravelTimeReference": {
+          "type": "string",
+          "enum": [
+            "one_way",
+            "two_way"
+          ]
+        },
+        "VelocityControlProfile": {
+          "type": "object",
+          "required": [
+            "id",
+            "location"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "location": {
+              "$ref": "#/definitions/ProjectedPoint2"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "samples": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/VelocityControlProfileSample"
+              }
+            },
+            "wellbore_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "VelocityControlProfileSample": {
+          "type": "object",
+          "required": [
+            "time_ms"
+          ],
+          "properties": {
+            "depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "time_ms": {
+              "type": "number",
+              "format": "float"
+            },
+            "vavg_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "vint_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "vrms_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            }
+          }
+        }
+      }
+    },
+    "VelocityIntervalTrend": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "VelocityIntervalTrend",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "constant"
+          ],
+          "properties": {
+            "constant": {
+              "type": "object",
+              "required": [
+                "velocity_m_per_s"
+              ],
+              "properties": {
+                "velocity_m_per_s": {
+                  "type": "number",
+                  "format": "float"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "linear_with_depth"
+          ],
+          "properties": {
+            "linear_with_depth": {
+              "type": "object",
+              "required": [
+                "gradient_m_per_s_per_m",
+                "velocity_at_top_m_per_s"
+              ],
+              "properties": {
+                "gradient_m_per_s_per_m": {
+                  "type": "number",
+                  "format": "float"
+                },
+                "velocity_at_top_m_per_s": {
+                  "type": "number",
+                  "format": "float"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "linear_with_time"
+          ],
+          "properties": {
+            "linear_with_time": {
+              "type": "object",
+              "required": [
+                "gradient_m_per_s_per_ms",
+                "velocity_at_top_m_per_s"
+              ],
+              "properties": {
+                "gradient_m_per_s_per_ms": {
+                  "type": "number",
+                  "format": "float"
+                },
+                "velocity_at_top_m_per_s": {
+                  "type": "number",
+                  "format": "float"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "VelocitySource3D": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "VelocitySource3D",
+      "type": "object",
+      "required": [
+        "coverage",
+        "id",
+        "inline_count",
+        "name",
+        "source_kind",
+        "velocity_kind",
+        "velocity_unit",
+        "vertical_axis",
+        "vertical_domain",
+        "xline_count"
+      ],
+      "properties": {
+        "coordinate_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage": {
+          "$ref": "#/definitions/SpatialCoverageSummary"
+        },
+        "grid_transform": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SurveyGridTransform"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "inline_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_kind": {
+          "$ref": "#/definitions/TimeDepthTransformSourceKind"
+        },
+        "velocity_kind": {
+          "$ref": "#/definitions/VelocityQuantityKind"
+        },
+        "velocity_unit": {
+          "type": "string"
+        },
+        "vertical_axis": {
+          "$ref": "#/definitions/VerticalAxisDescriptor"
+        },
+        "vertical_domain": {
+          "$ref": "#/definitions/TimeDepthDomain"
+        },
+        "xline_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDescriptor": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "ProjectedPoint2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "ProjectedVector2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "SpatialCoverageRelationship": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "contains",
+            "partial_overlap",
+            "disjoint",
+            "unknown"
+          ]
+        },
+        "SpatialCoverageSummary": {
+          "type": "object",
+          "required": [
+            "relationship"
+          ],
+          "properties": {
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "relationship": {
+              "$ref": "#/definitions/SpatialCoverageRelationship"
+            },
+            "source_coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDescriptor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "target_coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDescriptor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "SurveyGridTransform": {
+          "type": "object",
+          "required": [
+            "inline_basis",
+            "origin",
+            "xline_basis"
+          ],
+          "properties": {
+            "inline_basis": {
+              "$ref": "#/definitions/ProjectedVector2"
+            },
+            "origin": {
+              "$ref": "#/definitions/ProjectedPoint2"
+            },
+            "xline_basis": {
+              "$ref": "#/definitions/ProjectedVector2"
+            }
+          }
+        },
+        "TimeDepthDomain": {
+          "type": "string",
+          "enum": [
+            "time",
+            "depth"
+          ]
+        },
+        "TimeDepthTransformSourceKind": {
+          "type": "string",
+          "enum": [
+            "constant_velocity",
+            "velocity_function1_d",
+            "velocity_grid3_d",
+            "checkshot_model1_d",
+            "sonic_log1_d",
+            "vp_log1_d",
+            "horizon_layer_model"
+          ]
+        },
+        "VelocityQuantityKind": {
+          "type": "string",
+          "enum": [
+            "interval",
+            "rms",
+            "average"
+          ]
+        },
+        "VerticalAxisDescriptor": {
+          "type": "object",
+          "required": [
+            "count",
+            "domain",
+            "start",
+            "step",
+            "unit"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "domain": {
+              "$ref": "#/definitions/TimeDepthDomain"
+            },
+            "start": {
+              "type": "number",
+              "format": "float"
+            },
+            "step": {
+              "type": "number",
+              "format": "float"
+            },
+            "unit": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "LayeredVelocityInterval": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "LayeredVelocityInterval",
+      "type": "object",
+      "required": [
+        "base_boundary",
+        "id",
+        "name",
+        "top_boundary",
+        "trend"
+      ],
+      "properties": {
+        "base_boundary": {
+          "$ref": "#/definitions/StratigraphicBoundaryReference"
+        },
+        "control_blend_weight": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "control_profile_set_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "control_profile_velocity_kind": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VelocityQuantityKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "lateral_interpolation": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LateralInterpolationMethod"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "top_boundary": {
+          "$ref": "#/definitions/StratigraphicBoundaryReference"
+        },
+        "trend": {
+          "$ref": "#/definitions/VelocityIntervalTrend"
+        },
+        "vertical_interpolation": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VerticalInterpolationMethod"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "definitions": {
+        "LateralInterpolationMethod": {
+          "type": "string",
+          "enum": [
+            "nearest",
+            "linear",
+            "inverse_distance",
+            "minimum_curvature",
+            "kriging"
+          ]
+        },
+        "StratigraphicBoundaryReference": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "survey_top",
+                "survey_base"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "horizon_asset"
+              ],
+              "properties": {
+                "horizon_asset": {
+                  "type": "object",
+                  "required": [
+                    "horizon_id"
+                  ],
+                  "properties": {
+                    "horizon_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "VelocityIntervalTrend": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "constant"
+              ],
+              "properties": {
+                "constant": {
+                  "type": "object",
+                  "required": [
+                    "velocity_m_per_s"
+                  ],
+                  "properties": {
+                    "velocity_m_per_s": {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "linear_with_depth"
+              ],
+              "properties": {
+                "linear_with_depth": {
+                  "type": "object",
+                  "required": [
+                    "gradient_m_per_s_per_m",
+                    "velocity_at_top_m_per_s"
+                  ],
+                  "properties": {
+                    "gradient_m_per_s_per_m": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "velocity_at_top_m_per_s": {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "linear_with_time"
+              ],
+              "properties": {
+                "linear_with_time": {
+                  "type": "object",
+                  "required": [
+                    "gradient_m_per_s_per_ms",
+                    "velocity_at_top_m_per_s"
+                  ],
+                  "properties": {
+                    "gradient_m_per_s_per_ms": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "velocity_at_top_m_per_s": {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "VelocityQuantityKind": {
+          "type": "string",
+          "enum": [
+            "interval",
+            "rms",
+            "average"
+          ]
+        },
+        "VerticalInterpolationMethod": {
+          "type": "string",
+          "enum": [
+            "step",
+            "linear",
+            "monotonic_cubic"
+          ]
+        }
+      }
+    },
+    "LayeredVelocityModel": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "LayeredVelocityModel",
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "vertical_domain"
+      ],
+      "properties": {
+        "coordinate_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/DepthReferenceKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "derived_from": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "grid_transform": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SurveyGridTransform"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "intervals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/LayeredVelocityInterval"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "travel_time_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TravelTimeReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "vertical_domain": {
+          "$ref": "#/definitions/TimeDepthDomain"
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDescriptor": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "DepthReferenceKind": {
+          "type": "string",
+          "enum": [
+            "measured_depth",
+            "true_vertical_depth",
+            "true_vertical_depth_subsea"
+          ]
+        },
+        "LateralInterpolationMethod": {
+          "type": "string",
+          "enum": [
+            "nearest",
+            "linear",
+            "inverse_distance",
+            "minimum_curvature",
+            "kriging"
+          ]
+        },
+        "LayeredVelocityInterval": {
+          "type": "object",
+          "required": [
+            "base_boundary",
+            "id",
+            "name",
+            "top_boundary",
+            "trend"
+          ],
+          "properties": {
+            "base_boundary": {
+              "$ref": "#/definitions/StratigraphicBoundaryReference"
+            },
+            "control_blend_weight": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "control_profile_set_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "control_profile_velocity_kind": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VelocityQuantityKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "lateral_interpolation": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/LateralInterpolationMethod"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "top_boundary": {
+              "$ref": "#/definitions/StratigraphicBoundaryReference"
+            },
+            "trend": {
+              "$ref": "#/definitions/VelocityIntervalTrend"
+            },
+            "vertical_interpolation": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VerticalInterpolationMethod"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "ProjectedPoint2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "ProjectedVector2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "StratigraphicBoundaryReference": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "survey_top",
+                "survey_base"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "horizon_asset"
+              ],
+              "properties": {
+                "horizon_asset": {
+                  "type": "object",
+                  "required": [
+                    "horizon_id"
+                  ],
+                  "properties": {
+                    "horizon_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "SurveyGridTransform": {
+          "type": "object",
+          "required": [
+            "inline_basis",
+            "origin",
+            "xline_basis"
+          ],
+          "properties": {
+            "inline_basis": {
+              "$ref": "#/definitions/ProjectedVector2"
+            },
+            "origin": {
+              "$ref": "#/definitions/ProjectedPoint2"
+            },
+            "xline_basis": {
+              "$ref": "#/definitions/ProjectedVector2"
+            }
+          }
+        },
+        "TimeDepthDomain": {
+          "type": "string",
+          "enum": [
+            "time",
+            "depth"
+          ]
+        },
+        "TravelTimeReference": {
+          "type": "string",
+          "enum": [
+            "one_way",
+            "two_way"
+          ]
+        },
+        "VelocityIntervalTrend": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "constant"
+              ],
+              "properties": {
+                "constant": {
+                  "type": "object",
+                  "required": [
+                    "velocity_m_per_s"
+                  ],
+                  "properties": {
+                    "velocity_m_per_s": {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "linear_with_depth"
+              ],
+              "properties": {
+                "linear_with_depth": {
+                  "type": "object",
+                  "required": [
+                    "gradient_m_per_s_per_m",
+                    "velocity_at_top_m_per_s"
+                  ],
+                  "properties": {
+                    "gradient_m_per_s_per_m": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "velocity_at_top_m_per_s": {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "linear_with_time"
+              ],
+              "properties": {
+                "linear_with_time": {
+                  "type": "object",
+                  "required": [
+                    "gradient_m_per_s_per_ms",
+                    "velocity_at_top_m_per_s"
+                  ],
+                  "properties": {
+                    "gradient_m_per_s_per_ms": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "velocity_at_top_m_per_s": {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "VelocityQuantityKind": {
+          "type": "string",
+          "enum": [
+            "interval",
+            "rms",
+            "average"
+          ]
+        },
+        "VerticalInterpolationMethod": {
+          "type": "string",
+          "enum": [
+            "step",
+            "linear",
+            "monotonic_cubic"
+          ]
+        }
+      }
+    },
+    "BuildSurveyTimeDepthTransformRequest": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "BuildSurveyTimeDepthTransformRequest",
+      "type": "object",
+      "required": [
+        "model",
+        "output_depth_unit",
+        "store_path"
+      ],
+      "properties": {
+        "control_profile_sets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/VelocityControlProfileSet"
+          }
+        },
+        "model": {
+          "$ref": "#/definitions/LayeredVelocityModel"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "output_depth_unit": {
+          "type": "string"
+        },
+        "output_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "preferred_velocity_kind": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/VelocityQuantityKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schema_version": {
+          "default": 2,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "store_path": {
+          "type": "string"
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDescriptor": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "DepthReferenceKind": {
+          "type": "string",
+          "enum": [
+            "measured_depth",
+            "true_vertical_depth",
+            "true_vertical_depth_subsea"
+          ]
+        },
+        "LateralInterpolationMethod": {
+          "type": "string",
+          "enum": [
+            "nearest",
+            "linear",
+            "inverse_distance",
+            "minimum_curvature",
+            "kriging"
+          ]
+        },
+        "LayeredVelocityInterval": {
+          "type": "object",
+          "required": [
+            "base_boundary",
+            "id",
+            "name",
+            "top_boundary",
+            "trend"
+          ],
+          "properties": {
+            "base_boundary": {
+              "$ref": "#/definitions/StratigraphicBoundaryReference"
+            },
+            "control_blend_weight": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "control_profile_set_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "control_profile_velocity_kind": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VelocityQuantityKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "lateral_interpolation": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/LateralInterpolationMethod"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "top_boundary": {
+              "$ref": "#/definitions/StratigraphicBoundaryReference"
+            },
+            "trend": {
+              "$ref": "#/definitions/VelocityIntervalTrend"
+            },
+            "vertical_interpolation": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VerticalInterpolationMethod"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "LayeredVelocityModel": {
+          "type": "object",
+          "required": [
+            "id",
+            "name",
+            "vertical_domain"
+          ],
+          "properties": {
+            "coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDescriptor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "depth_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/DepthReferenceKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "derived_from": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "grid_transform": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/SurveyGridTransform"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "intervals": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/LayeredVelocityInterval"
+              }
+            },
+            "name": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "travel_time_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TravelTimeReference"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "vertical_domain": {
+              "$ref": "#/definitions/TimeDepthDomain"
+            }
+          }
+        },
+        "ProjectedPoint2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "ProjectedVector2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "StratigraphicBoundaryReference": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "survey_top",
+                "survey_base"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "horizon_asset"
+              ],
+              "properties": {
+                "horizon_asset": {
+                  "type": "object",
+                  "required": [
+                    "horizon_id"
+                  ],
+                  "properties": {
+                    "horizon_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "SurveyGridTransform": {
+          "type": "object",
+          "required": [
+            "inline_basis",
+            "origin",
+            "xline_basis"
+          ],
+          "properties": {
+            "inline_basis": {
+              "$ref": "#/definitions/ProjectedVector2"
+            },
+            "origin": {
+              "$ref": "#/definitions/ProjectedPoint2"
+            },
+            "xline_basis": {
+              "$ref": "#/definitions/ProjectedVector2"
+            }
+          }
+        },
+        "TimeDepthDomain": {
+          "type": "string",
+          "enum": [
+            "time",
+            "depth"
+          ]
+        },
+        "TravelTimeReference": {
+          "type": "string",
+          "enum": [
+            "one_way",
+            "two_way"
+          ]
+        },
+        "VelocityControlProfile": {
+          "type": "object",
+          "required": [
+            "id",
+            "location"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "location": {
+              "$ref": "#/definitions/ProjectedPoint2"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "samples": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/VelocityControlProfileSample"
+              }
+            },
+            "wellbore_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "VelocityControlProfileSample": {
+          "type": "object",
+          "required": [
+            "time_ms"
+          ],
+          "properties": {
+            "depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "time_ms": {
+              "type": "number",
+              "format": "float"
+            },
+            "vavg_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "vint_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "vrms_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            }
+          }
+        },
+        "VelocityControlProfileSet": {
+          "type": "object",
+          "required": [
+            "depth_reference",
+            "id",
+            "name",
+            "travel_time_reference"
+          ],
+          "properties": {
+            "coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDescriptor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "depth_reference": {
+              "$ref": "#/definitions/DepthReferenceKind"
+            },
+            "derived_from": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "profiles": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/VelocityControlProfile"
+              }
+            },
+            "travel_time_reference": {
+              "$ref": "#/definitions/TravelTimeReference"
+            }
+          }
+        },
+        "VelocityIntervalTrend": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "constant"
+              ],
+              "properties": {
+                "constant": {
+                  "type": "object",
+                  "required": [
+                    "velocity_m_per_s"
+                  ],
+                  "properties": {
+                    "velocity_m_per_s": {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "linear_with_depth"
+              ],
+              "properties": {
+                "linear_with_depth": {
+                  "type": "object",
+                  "required": [
+                    "gradient_m_per_s_per_m",
+                    "velocity_at_top_m_per_s"
+                  ],
+                  "properties": {
+                    "gradient_m_per_s_per_m": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "velocity_at_top_m_per_s": {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "linear_with_time"
+              ],
+              "properties": {
+                "linear_with_time": {
+                  "type": "object",
+                  "required": [
+                    "gradient_m_per_s_per_ms",
+                    "velocity_at_top_m_per_s"
+                  ],
+                  "properties": {
+                    "gradient_m_per_s_per_ms": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "velocity_at_top_m_per_s": {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "VelocityQuantityKind": {
+          "type": "string",
+          "enum": [
+            "interval",
+            "rms",
+            "average"
+          ]
+        },
+        "VerticalInterpolationMethod": {
+          "type": "string",
+          "enum": [
+            "step",
+            "linear",
+            "monotonic_cubic"
+          ]
+        }
+      }
+    },
+    "BuildSurveyPropertyFieldRequest": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "BuildSurveyPropertyFieldRequest",
+      "type": "object",
+      "required": [
+        "model",
+        "output_vertical_domain",
+        "preferred_velocity_kind",
+        "property_name",
+        "property_unit",
+        "store_path"
+      ],
+      "properties": {
+        "control_profile_sets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/VelocityControlProfileSet"
+          }
+        },
+        "model": {
+          "$ref": "#/definitions/LayeredVelocityModel"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "output_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output_vertical_domain": {
+          "$ref": "#/definitions/TimeDepthDomain"
+        },
+        "preferred_velocity_kind": {
+          "$ref": "#/definitions/VelocityQuantityKind"
+        },
+        "property_name": {
+          "type": "string"
+        },
+        "property_unit": {
+          "type": "string"
+        },
+        "schema_version": {
+          "default": 2,
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "store_path": {
+          "type": "string"
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDescriptor": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "DepthReferenceKind": {
+          "type": "string",
+          "enum": [
+            "measured_depth",
+            "true_vertical_depth",
+            "true_vertical_depth_subsea"
+          ]
+        },
+        "LateralInterpolationMethod": {
+          "type": "string",
+          "enum": [
+            "nearest",
+            "linear",
+            "inverse_distance",
+            "minimum_curvature",
+            "kriging"
+          ]
+        },
+        "LayeredVelocityInterval": {
+          "type": "object",
+          "required": [
+            "base_boundary",
+            "id",
+            "name",
+            "top_boundary",
+            "trend"
+          ],
+          "properties": {
+            "base_boundary": {
+              "$ref": "#/definitions/StratigraphicBoundaryReference"
+            },
+            "control_blend_weight": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "control_profile_set_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "control_profile_velocity_kind": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VelocityQuantityKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "lateral_interpolation": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/LateralInterpolationMethod"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "top_boundary": {
+              "$ref": "#/definitions/StratigraphicBoundaryReference"
+            },
+            "trend": {
+              "$ref": "#/definitions/VelocityIntervalTrend"
+            },
+            "vertical_interpolation": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/VerticalInterpolationMethod"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "LayeredVelocityModel": {
+          "type": "object",
+          "required": [
+            "id",
+            "name",
+            "vertical_domain"
+          ],
+          "properties": {
+            "coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDescriptor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "depth_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/DepthReferenceKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "derived_from": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "grid_transform": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/SurveyGridTransform"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "intervals": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/LayeredVelocityInterval"
+              }
+            },
+            "name": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "travel_time_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TravelTimeReference"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "vertical_domain": {
+              "$ref": "#/definitions/TimeDepthDomain"
+            }
+          }
+        },
+        "ProjectedPoint2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "ProjectedVector2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "StratigraphicBoundaryReference": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "survey_top",
+                "survey_base"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "horizon_asset"
+              ],
+              "properties": {
+                "horizon_asset": {
+                  "type": "object",
+                  "required": [
+                    "horizon_id"
+                  ],
+                  "properties": {
+                    "horizon_id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "SurveyGridTransform": {
+          "type": "object",
+          "required": [
+            "inline_basis",
+            "origin",
+            "xline_basis"
+          ],
+          "properties": {
+            "inline_basis": {
+              "$ref": "#/definitions/ProjectedVector2"
+            },
+            "origin": {
+              "$ref": "#/definitions/ProjectedPoint2"
+            },
+            "xline_basis": {
+              "$ref": "#/definitions/ProjectedVector2"
+            }
+          }
+        },
+        "TimeDepthDomain": {
+          "type": "string",
+          "enum": [
+            "time",
+            "depth"
+          ]
+        },
+        "TravelTimeReference": {
+          "type": "string",
+          "enum": [
+            "one_way",
+            "two_way"
+          ]
+        },
+        "VelocityControlProfile": {
+          "type": "object",
+          "required": [
+            "id",
+            "location"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "location": {
+              "$ref": "#/definitions/ProjectedPoint2"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "samples": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/VelocityControlProfileSample"
+              }
+            },
+            "wellbore_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "VelocityControlProfileSample": {
+          "type": "object",
+          "required": [
+            "time_ms"
+          ],
+          "properties": {
+            "depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "time_ms": {
+              "type": "number",
+              "format": "float"
+            },
+            "vavg_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "vint_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "vrms_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            }
+          }
+        },
+        "VelocityControlProfileSet": {
+          "type": "object",
+          "required": [
+            "depth_reference",
+            "id",
+            "name",
+            "travel_time_reference"
+          ],
+          "properties": {
+            "coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDescriptor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "depth_reference": {
+              "$ref": "#/definitions/DepthReferenceKind"
+            },
+            "derived_from": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "profiles": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/VelocityControlProfile"
+              }
+            },
+            "travel_time_reference": {
+              "$ref": "#/definitions/TravelTimeReference"
+            }
+          }
+        },
+        "VelocityIntervalTrend": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "constant"
+              ],
+              "properties": {
+                "constant": {
+                  "type": "object",
+                  "required": [
+                    "velocity_m_per_s"
+                  ],
+                  "properties": {
+                    "velocity_m_per_s": {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "linear_with_depth"
+              ],
+              "properties": {
+                "linear_with_depth": {
+                  "type": "object",
+                  "required": [
+                    "gradient_m_per_s_per_m",
+                    "velocity_at_top_m_per_s"
+                  ],
+                  "properties": {
+                    "gradient_m_per_s_per_m": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "velocity_at_top_m_per_s": {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "linear_with_time"
+              ],
+              "properties": {
+                "linear_with_time": {
+                  "type": "object",
+                  "required": [
+                    "gradient_m_per_s_per_ms",
+                    "velocity_at_top_m_per_s"
+                  ],
+                  "properties": {
+                    "gradient_m_per_s_per_ms": {
+                      "type": "number",
+                      "format": "float"
+                    },
+                    "velocity_at_top_m_per_s": {
+                      "type": "number",
+                      "format": "float"
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "VelocityQuantityKind": {
+          "type": "string",
+          "enum": [
+            "interval",
+            "rms",
+            "average"
+          ]
+        },
+        "VerticalInterpolationMethod": {
+          "type": "string",
+          "enum": [
+            "step",
+            "linear",
+            "monotonic_cubic"
+          ]
+        }
+      }
+    },
+    "WellboreAnchorKind": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellboreAnchorKind",
+      "type": "string",
+      "enum": [
+        "surface",
+        "parent_tie_on"
+      ]
+    },
+    "WellAzimuthReferenceKind": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellAzimuthReferenceKind",
+      "type": "string",
+      "enum": [
+        "true_north",
+        "grid_north",
+        "magnetic_north",
+        "unknown"
+      ]
+    },
+    "WellboreAnchorReference": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellboreAnchorReference",
+      "type": "object",
+      "required": [
+        "kind",
+        "location"
+      ],
+      "properties": {
+        "coordinate_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "$ref": "#/definitions/WellboreAnchorKind"
+        },
+        "location": {
+          "$ref": "#/definitions/ProjectedPoint2"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parent_measured_depth_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "parent_wellbore_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDescriptor": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "ProjectedPoint2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "WellboreAnchorKind": {
+          "type": "string",
+          "enum": [
+            "surface",
+            "parent_tie_on"
+          ]
+        }
+      }
+    },
+    "WellboreGeometry": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellboreGeometry",
+      "type": "object",
+      "required": [
+        "azimuth_reference"
+      ],
+      "properties": {
+        "anchor": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WellboreAnchorReference"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "azimuth_reference": {
+          "$ref": "#/definitions/WellAzimuthReferenceKind"
+        },
+        "depth_unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "vertical_datum": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDescriptor": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "ProjectedPoint2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "WellAzimuthReferenceKind": {
+          "type": "string",
+          "enum": [
+            "true_north",
+            "grid_north",
+            "magnetic_north",
+            "unknown"
+          ]
+        },
+        "WellboreAnchorKind": {
+          "type": "string",
+          "enum": [
+            "surface",
+            "parent_tie_on"
+          ]
+        },
+        "WellboreAnchorReference": {
+          "type": "object",
+          "required": [
+            "kind",
+            "location"
+          ],
+          "properties": {
+            "coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDescriptor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "$ref": "#/definitions/WellboreAnchorKind"
+            },
+            "location": {
+              "$ref": "#/definitions/ProjectedPoint2"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parent_measured_depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "parent_wellbore_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "TrajectoryInputSchemaKind": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "TrajectoryInputSchemaKind",
+      "type": "string",
+      "enum": [
+        "md_inc_azi",
+        "md_tvd_inc_azi",
+        "md_tvdss_inc_azi",
+        "md_offset_tvd",
+        "md_offset_tvdss"
+      ]
+    },
+    "TrajectoryValueOrigin": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "TrajectoryValueOrigin",
+      "type": "string",
+      "enum": [
+        "imported",
+        "derived"
+      ]
+    },
+    "ResolvedTrajectoryStation": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolvedTrajectoryStation",
+      "type": "object",
+      "required": [
+        "measured_depth_m"
+      ],
+      "properties": {
+        "absolute_xy": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ProjectedPoint2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "azimuth_deg": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "azimuth_origin": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TrajectoryValueOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "easting_offset_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "easting_offset_origin": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TrajectoryValueOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inclination_deg": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "inclination_origin": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TrajectoryValueOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "measured_depth_m": {
+          "type": "number",
+          "format": "double"
+        },
+        "northing_offset_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "northing_offset_origin": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TrajectoryValueOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "true_vertical_depth_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "true_vertical_depth_origin": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TrajectoryValueOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "true_vertical_depth_subsea_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "true_vertical_depth_subsea_origin": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/TrajectoryValueOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "definitions": {
+        "ProjectedPoint2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "TrajectoryValueOrigin": {
+          "type": "string",
+          "enum": [
+            "imported",
+            "derived"
+          ]
+        }
+      }
+    },
+    "ResolvedTrajectoryGeometry": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolvedTrajectoryGeometry",
+      "type": "object",
+      "required": [
+        "id",
+        "wellbore_id"
+      ],
+      "properties": {
+        "anchor_fingerprint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "coordinate_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "source_asset_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ResolvedTrajectoryStation"
+          }
+        },
+        "wellbore_id": {
+          "type": "string"
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDescriptor": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "ProjectedPoint2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "ResolvedTrajectoryStation": {
+          "type": "object",
+          "required": [
+            "measured_depth_m"
+          ],
+          "properties": {
+            "absolute_xy": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ProjectedPoint2"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "azimuth_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "azimuth_origin": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TrajectoryValueOrigin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "easting_offset_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "easting_offset_origin": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TrajectoryValueOrigin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "inclination_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "inclination_origin": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TrajectoryValueOrigin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "measured_depth_m": {
+              "type": "number",
+              "format": "double"
+            },
+            "northing_offset_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "northing_offset_origin": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TrajectoryValueOrigin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "true_vertical_depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "true_vertical_depth_origin": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TrajectoryValueOrigin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "true_vertical_depth_subsea_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "true_vertical_depth_subsea_origin": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/TrajectoryValueOrigin"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "TrajectoryValueOrigin": {
+          "type": "string",
+          "enum": [
+            "imported",
+            "derived"
+          ]
+        }
+      }
+    },
+    "TimeDepthSample1D": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "TimeDepthSample1D",
+      "type": "object",
+      "required": [
+        "depth",
+        "time_ms"
+      ],
+      "properties": {
+        "depth": {
+          "type": "number",
+          "format": "float"
+        },
+        "time_ms": {
+          "type": "number",
+          "format": "float"
+        }
+      }
+    },
+    "WellTimeDepthObservationSample": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellTimeDepthObservationSample",
+      "type": "object",
+      "required": [
+        "depth_m",
+        "time_ms"
+      ],
+      "properties": {
+        "depth_m": {
+          "type": "number",
+          "format": "double"
+        },
+        "note": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quality": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "float"
+        },
+        "station_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "time_ms": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "CheckshotVspObservationSet1D": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "CheckshotVspObservationSet1D",
+      "type": "object",
+      "required": [
+        "depth_reference",
+        "id",
+        "name",
+        "travel_time_reference"
+      ],
+      "properties": {
+        "depth_reference": {
+          "$ref": "#/definitions/DepthReferenceKind"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellTimeDepthObservationSample"
+          }
+        },
+        "travel_time_reference": {
+          "$ref": "#/definitions/TravelTimeReference"
+        },
+        "wellbore_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "definitions": {
+        "DepthReferenceKind": {
+          "type": "string",
+          "enum": [
+            "measured_depth",
+            "true_vertical_depth",
+            "true_vertical_depth_subsea"
+          ]
+        },
+        "TravelTimeReference": {
+          "type": "string",
+          "enum": [
+            "one_way",
+            "two_way"
+          ]
+        },
+        "WellTimeDepthObservationSample": {
+          "type": "object",
+          "required": [
+            "depth_m",
+            "time_ms"
+          ],
+          "properties": {
+            "depth_m": {
+              "type": "number",
+              "format": "double"
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "quality": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "station_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "time_ms": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "ManualTimeDepthPickSet1D": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ManualTimeDepthPickSet1D",
+      "type": "object",
+      "required": [
+        "depth_reference",
+        "id",
+        "name",
+        "travel_time_reference"
+      ],
+      "properties": {
+        "depth_reference": {
+          "$ref": "#/definitions/DepthReferenceKind"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellTimeDepthObservationSample"
+          }
+        },
+        "travel_time_reference": {
+          "$ref": "#/definitions/TravelTimeReference"
+        },
+        "wellbore_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "definitions": {
+        "DepthReferenceKind": {
+          "type": "string",
+          "enum": [
+            "measured_depth",
+            "true_vertical_depth",
+            "true_vertical_depth_subsea"
+          ]
+        },
+        "TravelTimeReference": {
+          "type": "string",
+          "enum": [
+            "one_way",
+            "two_way"
+          ]
+        },
+        "WellTimeDepthObservationSample": {
+          "type": "object",
+          "required": [
+            "depth_m",
+            "time_ms"
+          ],
+          "properties": {
+            "depth_m": {
+              "type": "number",
+              "format": "double"
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "quality": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "float"
+            },
+            "station_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "time_ms": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "WellTimeDepthSourceBinding": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellTimeDepthSourceBinding",
+      "type": "object",
+      "required": [
+        "asset_id",
+        "enabled",
+        "priority",
+        "source_kind"
+      ],
+      "properties": {
+        "asset_id": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "priority": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "source_kind": {
+          "$ref": "#/definitions/TimeDepthTransformSourceKind"
+        },
+        "valid_from_depth_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "valid_to_depth_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "definitions": {
+        "TimeDepthTransformSourceKind": {
+          "type": "string",
+          "enum": [
+            "constant_velocity",
+            "velocity_function1_d",
+            "velocity_grid3_d",
+            "checkshot_model1_d",
+            "sonic_log1_d",
+            "vp_log1_d",
+            "horizon_layer_model"
+          ]
+        }
+      }
+    },
+    "WellTimeDepthAssumptionKind": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellTimeDepthAssumptionKind",
+      "type": "string",
+      "enum": [
+        "constant_velocity"
+      ]
+    },
+    "WellTimeDepthAssumptionInterval": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellTimeDepthAssumptionInterval",
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "from_depth_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "kind": {
+          "$ref": "#/definitions/WellTimeDepthAssumptionKind"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "overwrite_existing_source_coverage": {
+          "default": false,
+          "type": "boolean"
+        },
+        "to_depth_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "velocity_m_per_s": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "definitions": {
+        "WellTimeDepthAssumptionKind": {
+          "type": "string",
+          "enum": [
+            "constant_velocity"
+          ]
+        }
+      }
+    },
+    "WellTimeDepthAuthoredModel1D": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellTimeDepthAuthoredModel1D",
+      "type": "object",
+      "required": [
+        "depth_reference",
+        "id",
+        "name",
+        "resolved_trajectory_fingerprint",
+        "travel_time_reference",
+        "wellbore_id"
+      ],
+      "properties": {
+        "assumption_intervals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellTimeDepthAssumptionInterval"
+          }
+        },
+        "depth_reference": {
+          "$ref": "#/definitions/DepthReferenceKind"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "resolved_trajectory_fingerprint": {
+          "type": "string"
+        },
+        "sampling_step_m": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "source_bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/WellTimeDepthSourceBinding"
+          }
+        },
+        "travel_time_reference": {
+          "$ref": "#/definitions/TravelTimeReference"
+        },
+        "wellbore_id": {
+          "type": "string"
+        }
+      },
+      "definitions": {
+        "DepthReferenceKind": {
+          "type": "string",
+          "enum": [
+            "measured_depth",
+            "true_vertical_depth",
+            "true_vertical_depth_subsea"
+          ]
+        },
+        "TimeDepthTransformSourceKind": {
+          "type": "string",
+          "enum": [
+            "constant_velocity",
+            "velocity_function1_d",
+            "velocity_grid3_d",
+            "checkshot_model1_d",
+            "sonic_log1_d",
+            "vp_log1_d",
+            "horizon_layer_model"
+          ]
+        },
+        "TravelTimeReference": {
+          "type": "string",
+          "enum": [
+            "one_way",
+            "two_way"
+          ]
+        },
+        "WellTimeDepthAssumptionInterval": {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "from_depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "kind": {
+              "$ref": "#/definitions/WellTimeDepthAssumptionKind"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "overwrite_existing_source_coverage": {
+              "default": false,
+              "type": "boolean"
+            },
+            "to_depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "velocity_m_per_s": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        },
+        "WellTimeDepthAssumptionKind": {
+          "type": "string",
+          "enum": [
+            "constant_velocity"
+          ]
+        },
+        "WellTimeDepthSourceBinding": {
+          "type": "object",
+          "required": [
+            "asset_id",
+            "enabled",
+            "priority",
+            "source_kind"
+          ],
+          "properties": {
+            "asset_id": {
+              "type": "string"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "priority": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "source_kind": {
+              "$ref": "#/definitions/TimeDepthTransformSourceKind"
+            },
+            "valid_from_depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "valid_to_depth_m": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "CompiledWellTimeDepthLineage": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "CompiledWellTimeDepthLineage",
+      "type": "object",
+      "required": [
+        "authored_model_id",
+        "resolved_trajectory_fingerprint"
+      ],
+      "properties": {
+        "authored_model_id": {
+          "type": "string"
+        },
+        "resolved_trajectory_fingerprint": {
+          "type": "string"
+        },
+        "source_asset_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "WellTimeDepthModel1D": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "WellTimeDepthModel1D",
+      "type": "object",
+      "required": [
+        "depth_reference",
+        "id",
+        "name",
+        "source_kind",
+        "travel_time_reference"
+      ],
+      "properties": {
+        "depth_reference": {
+          "$ref": "#/definitions/DepthReferenceKind"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TimeDepthSample1D"
+          }
+        },
+        "source_kind": {
+          "$ref": "#/definitions/TimeDepthTransformSourceKind"
+        },
+        "travel_time_reference": {
+          "$ref": "#/definitions/TravelTimeReference"
+        },
+        "wellbore_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "definitions": {
+        "DepthReferenceKind": {
+          "type": "string",
+          "enum": [
+            "measured_depth",
+            "true_vertical_depth",
+            "true_vertical_depth_subsea"
+          ]
+        },
+        "TimeDepthSample1D": {
+          "type": "object",
+          "required": [
+            "depth",
+            "time_ms"
+          ],
+          "properties": {
+            "depth": {
+              "type": "number",
+              "format": "float"
+            },
+            "time_ms": {
+              "type": "number",
+              "format": "float"
+            }
+          }
+        },
+        "TimeDepthTransformSourceKind": {
+          "type": "string",
+          "enum": [
+            "constant_velocity",
+            "velocity_function1_d",
+            "velocity_grid3_d",
+            "checkshot_model1_d",
+            "sonic_log1_d",
+            "vp_log1_d",
+            "horizon_layer_model"
+          ]
+        },
+        "TravelTimeReference": {
+          "type": "string",
+          "enum": [
+            "one_way",
+            "two_way"
+          ]
+        }
+      }
+    },
+    "SurveyPropertyField3D": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SurveyPropertyField3D",
+      "type": "object",
+      "required": [
+        "coverage",
+        "id",
+        "inline_count",
+        "name",
+        "property_name",
+        "property_unit",
+        "sample_count",
+        "vertical_axis",
+        "xline_count"
+      ],
+      "properties": {
+        "coordinate_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage": {
+          "$ref": "#/definitions/SpatialCoverageSummary"
+        },
+        "derived_from": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "grid_transform": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SurveyGridTransform"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "inline_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "property_name": {
+          "type": "string"
+        },
+        "property_unit": {
+          "type": "string"
+        },
+        "sample_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "vertical_axis": {
+          "$ref": "#/definitions/VerticalAxisDescriptor"
+        },
+        "xline_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDescriptor": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "ProjectedPoint2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "ProjectedVector2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "SpatialCoverageRelationship": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "contains",
+            "partial_overlap",
+            "disjoint",
+            "unknown"
+          ]
+        },
+        "SpatialCoverageSummary": {
+          "type": "object",
+          "required": [
+            "relationship"
+          ],
+          "properties": {
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "relationship": {
+              "$ref": "#/definitions/SpatialCoverageRelationship"
+            },
+            "source_coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDescriptor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "target_coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDescriptor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "SurveyGridTransform": {
+          "type": "object",
+          "required": [
+            "inline_basis",
+            "origin",
+            "xline_basis"
+          ],
+          "properties": {
+            "inline_basis": {
+              "$ref": "#/definitions/ProjectedVector2"
+            },
+            "origin": {
+              "$ref": "#/definitions/ProjectedPoint2"
+            },
+            "xline_basis": {
+              "$ref": "#/definitions/ProjectedVector2"
+            }
+          }
+        },
+        "TimeDepthDomain": {
+          "type": "string",
+          "enum": [
+            "time",
+            "depth"
+          ]
+        },
+        "VerticalAxisDescriptor": {
+          "type": "object",
+          "required": [
+            "count",
+            "domain",
+            "start",
+            "step",
+            "unit"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "domain": {
+              "$ref": "#/definitions/TimeDepthDomain"
+            },
+            "start": {
+              "type": "number",
+              "format": "float"
+            },
+            "step": {
+              "type": "number",
+              "format": "float"
+            },
+            "unit": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "SurveyTimeDepthTransform3D": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "SurveyTimeDepthTransform3D",
+      "type": "object",
+      "required": [
+        "coverage",
+        "depth_unit",
+        "id",
+        "inline_count",
+        "name",
+        "sample_count",
+        "source_kind",
+        "time_axis",
+        "xline_count"
+      ],
+      "properties": {
+        "coordinate_reference": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CoordinateReferenceDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage": {
+          "$ref": "#/definitions/SpatialCoverageSummary"
+        },
+        "depth_unit": {
+          "type": "string"
+        },
+        "derived_from": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "grid_transform": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SurveyGridTransform"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "inline_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "name": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "sample_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        },
+        "source_kind": {
+          "$ref": "#/definitions/TimeDepthTransformSourceKind"
+        },
+        "time_axis": {
+          "$ref": "#/definitions/VerticalAxisDescriptor"
+        },
+        "xline_count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0.0
+        }
+      },
+      "definitions": {
+        "CoordinateReferenceDescriptor": {
+          "type": "object",
+          "properties": {
+            "geodetic_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "ProjectedPoint2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "ProjectedVector2": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "SpatialCoverageRelationship": {
+          "type": "string",
+          "enum": [
+            "exact",
+            "contains",
+            "partial_overlap",
+            "disjoint",
+            "unknown"
+          ]
+        },
+        "SpatialCoverageSummary": {
+          "type": "object",
+          "required": [
+            "relationship"
+          ],
+          "properties": {
+            "notes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "relationship": {
+              "$ref": "#/definitions/SpatialCoverageRelationship"
+            },
+            "source_coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDescriptor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "target_coordinate_reference": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/CoordinateReferenceDescriptor"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "SurveyGridTransform": {
+          "type": "object",
+          "required": [
+            "inline_basis",
+            "origin",
+            "xline_basis"
+          ],
+          "properties": {
+            "inline_basis": {
+              "$ref": "#/definitions/ProjectedVector2"
+            },
+            "origin": {
+              "$ref": "#/definitions/ProjectedPoint2"
+            },
+            "xline_basis": {
+              "$ref": "#/definitions/ProjectedVector2"
+            }
+          }
+        },
+        "TimeDepthDomain": {
+          "type": "string",
+          "enum": [
+            "time",
+            "depth"
+          ]
+        },
+        "TimeDepthTransformSourceKind": {
+          "type": "string",
+          "enum": [
+            "constant_velocity",
+            "velocity_function1_d",
+            "velocity_grid3_d",
+            "checkshot_model1_d",
+            "sonic_log1_d",
+            "vp_log1_d",
+            "horizon_layer_model"
+          ]
+        },
+        "VerticalAxisDescriptor": {
+          "type": "object",
+          "required": [
+            "count",
+            "domain",
+            "start",
+            "step",
+            "unit"
+          ],
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "domain": {
+              "$ref": "#/definitions/TimeDepthDomain"
+            },
+            "start": {
+              "type": "number",
+              "format": "float"
+            },
+            "step": {
+              "type": "number",
+              "format": "float"
+            },
+            "unit": {
+              "type": "string"
+            }
+          }
         }
       }
     }

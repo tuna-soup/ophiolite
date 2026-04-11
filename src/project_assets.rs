@@ -51,6 +51,7 @@ pub struct AssetBindingInput {
 pub struct TrajectoryRow {
     pub measured_depth: f64,
     pub true_vertical_depth: Option<f64>,
+    pub true_vertical_depth_subsea: Option<f64>,
     pub azimuth_deg: Option<f64>,
     pub inclination_deg: Option<f64>,
     pub northing_offset: Option<f64>,
@@ -110,6 +111,13 @@ pub fn trajectory_metadata(rows: &[TrajectoryRow]) -> AssetTableMetadata {
             ),
             column(
                 "true_vertical_depth",
+                AssetColumnType::Float64,
+                None,
+                false,
+                false,
+            ),
+            column(
+                "true_vertical_depth_subsea",
                 AssetColumnType::Float64,
                 None,
                 false,
@@ -203,6 +211,10 @@ pub fn depth_reference_for_kind(kind: &AssetKind) -> DepthReference {
     match kind {
         AssetKind::Log | AssetKind::Trajectory | AssetKind::TopSet => DepthReference::MeasuredDepth,
         AssetKind::PressureObservation | AssetKind::DrillingObservation => DepthReference::Unknown,
+        AssetKind::CheckshotVspObservationSet => DepthReference::Unknown,
+        AssetKind::ManualTimeDepthPickSet => DepthReference::Unknown,
+        AssetKind::WellTimeDepthAuthoredModel => DepthReference::Unknown,
+        AssetKind::WellTimeDepthModel => DepthReference::Unknown,
         AssetKind::SeismicTraceData => DepthReference::Unknown,
     }
 }
@@ -210,6 +222,10 @@ pub fn depth_reference_for_kind(kind: &AssetKind) -> DepthReference {
 pub fn vertical_datum_for_kind(kind: &AssetKind) -> Option<VerticalDatum> {
     match kind {
         AssetKind::Trajectory | AssetKind::TopSet => Some(VerticalDatum::Unknown),
+        AssetKind::CheckshotVspObservationSet => None,
+        AssetKind::ManualTimeDepthPickSet => None,
+        AssetKind::WellTimeDepthAuthoredModel => None,
+        AssetKind::WellTimeDepthModel => None,
         AssetKind::SeismicTraceData => None,
         _ => None,
     }
@@ -243,11 +259,26 @@ pub fn parse_trajectory_csv(path: &Path) -> Result<Vec<TrajectoryRow>> {
         .map_err(|error| LasError::Parse(format!("failed to read trajectory headers: {error}")))?
         .clone();
     let md_index = required_header(&headers, &["md", "measured_depth"])?;
-    let tvd_index = optional_header(&headers, &["tvd", "true_vertical_depth"]);
-    let azimuth_index = optional_header(&headers, &["azimuth", "azimuth_deg"]);
-    let inclination_index = optional_header(&headers, &["inclination", "inclination_deg"]);
-    let northing_index = optional_header(&headers, &["northing_offset", "northing"]);
-    let easting_index = optional_header(&headers, &["easting_offset", "easting"]);
+    let tvd_index = optional_header(&headers, &["tvd", "true_vertical_depth", "tvd_m"]);
+    let tvdss_index = optional_header(
+        &headers,
+        &[
+            "tvdss",
+            "true_vertical_depth_subsea",
+            "true_vertical_depth_ss",
+            "tvdss_m",
+        ],
+    );
+    let azimuth_index = optional_header(&headers, &["azimuth", "azimuth_deg", "azi"]);
+    let inclination_index = optional_header(&headers, &["inclination", "inclination_deg", "inc"]);
+    let northing_index = optional_header(
+        &headers,
+        &["northing_offset", "northing", "northing_m", "y_offset"],
+    );
+    let easting_index = optional_header(
+        &headers,
+        &["easting_offset", "easting", "easting_m", "x_offset"],
+    );
 
     reader
         .records()
@@ -256,6 +287,7 @@ pub fn parse_trajectory_csv(path: &Path) -> Result<Vec<TrajectoryRow>> {
             Ok(TrajectoryRow {
                 measured_depth: required_f64(&record, md_index, "measured_depth")?,
                 true_vertical_depth: optional_f64(&record, tvd_index),
+                true_vertical_depth_subsea: optional_f64(&record, tvdss_index),
                 azimuth_deg: optional_f64(&record, azimuth_index),
                 inclination_deg: optional_f64(&record, inclination_index),
                 northing_offset: optional_f64(&record, northing_index),
@@ -455,6 +487,15 @@ fn trajectory_batch(rows: &[TrajectoryRow]) -> RecordBatch {
             )) as ArrayRef,
         ),
         (
+            "true_vertical_depth_subsea",
+            float_field(true),
+            Arc::new(Float64Array::from(
+                rows.iter()
+                    .map(|row| row.true_vertical_depth_subsea)
+                    .collect::<Vec<_>>(),
+            )) as ArrayRef,
+        ),
+        (
             "azimuth_deg",
             float_field(true),
             Arc::new(Float64Array::from(
@@ -649,6 +690,7 @@ fn drilling_batch(rows: &[DrillingObservationRow]) -> RecordBatch {
 fn trajectory_rows_from_batch(batch: &RecordBatch) -> Result<Vec<TrajectoryRow>> {
     let md = float_column(batch, "measured_depth")?;
     let tvd = optional_float_column(batch, "true_vertical_depth")?;
+    let tvdss = optional_float_column(batch, "true_vertical_depth_subsea")?;
     let azimuth = optional_float_column(batch, "azimuth_deg")?;
     let inclination = optional_float_column(batch, "inclination_deg")?;
     let northing = optional_float_column(batch, "northing_offset")?;
@@ -657,6 +699,7 @@ fn trajectory_rows_from_batch(batch: &RecordBatch) -> Result<Vec<TrajectoryRow>>
         .map(|idx| TrajectoryRow {
             measured_depth: md[idx].unwrap_or(f64::NAN),
             true_vertical_depth: tvd[idx],
+            true_vertical_depth_subsea: tvdss[idx],
             azimuth_deg: azimuth[idx],
             inclination_deg: inclination[idx],
             northing_offset: northing[idx],

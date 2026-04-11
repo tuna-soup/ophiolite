@@ -7,11 +7,20 @@ use crate::project_assets::{
     write_trajectory_package,
 };
 use crate::project_contracts::{
-    ResolvedWellPanelSourceDto, ResolvedWellPanelWellDto, WELL_PANEL_CONTRACT_VERSION,
-    WellPanelDepthSampleDto, WellPanelDrillingObservationDto, WellPanelDrillingSetDto,
-    WellPanelLogCurveDto, WellPanelPressureObservationDto, WellPanelPressureSetDto,
-    WellPanelRequestDto, WellPanelTopRowDto, WellPanelTopSetDto, WellPanelTrajectoryDto,
-    WellPanelTrajectoryRowDto,
+    CoordinateReferenceBindingDto, CoordinateReferenceDto, CoordinateReferenceSourceDto,
+    ProjectedPoint2Dto, ProjectedPolygon2Dto, ProjectedVector2Dto,
+    ResolveSectionWellOverlaysResponse, ResolvedSectionWellOverlayDto, ResolvedSurveyMapHorizonDto,
+    ResolvedSurveyMapSourceDto, ResolvedSurveyMapSurveyDto, ResolvedSurveyMapWellDto,
+    ResolvedWellPanelSourceDto, ResolvedWellPanelWellDto, SECTION_WELL_OVERLAY_CONTRACT_VERSION,
+    SURVEY_MAP_CONTRACT_VERSION, SectionWellOverlayDomainDto, SectionWellOverlayRequestDto,
+    SectionWellOverlaySampleDto, SectionWellOverlaySegmentDto, SurveyIndexAxisDto,
+    SurveyIndexGridDto, SurveyMapGridTransformDto, SurveyMapRequestDto, SurveyMapScalarFieldDto,
+    SurveyMapSpatialAvailabilityDto, SurveyMapSpatialDescriptorDto, SurveyMapTrajectoryDto,
+    SurveyMapTrajectoryStationDto, SurveyMapTransformDiagnosticsDto, SurveyMapTransformPolicyDto,
+    SurveyMapTransformStatusDto, WELL_PANEL_CONTRACT_VERSION, WellPanelDepthSampleDto,
+    WellPanelDrillingObservationDto, WellPanelDrillingSetDto, WellPanelLogCurveDto,
+    WellPanelPressureObservationDto, WellPanelPressureSetDto, WellPanelRequestDto,
+    WellPanelTopRowDto, WellPanelTopSetDto, WellPanelTrajectoryDto, WellPanelTrajectoryRowDto,
 };
 use crate::{
     AssetBindingInput, AssetTableMetadata, DepthRangeQuery, DrillingObservationRow, IndexKind,
@@ -27,8 +36,17 @@ use ophiolite_compute::{
 };
 use ophiolite_core::{CurveItem, LasValue, SectionItems, derive_canonical_alias};
 use ophiolite_package::open_package;
-use ophiolite_seismic::{SeismicAssetFamily, SeismicTraceDataDescriptor, VolumeDescriptor};
-use ophiolite_seismic_runtime::{TbvolManifest, describe_store, open_store};
+use ophiolite_seismic::{
+    CheckshotVspObservationSet1D, CoordinateReferenceDescriptor, DatasetSummary,
+    DepthReferenceKind, ManualTimeDepthPickSet1D, ProjectedPoint2, ResolvedTrajectoryGeometry,
+    ResolvedTrajectoryStation, SectionAxis, SeismicAssetFamily, SeismicTraceDataDescriptor,
+    TimeDepthTransformSourceKind, TrajectoryValueOrigin, TravelTimeReference, VolumeDescriptor,
+    WellTimeDepthAuthoredModel1D, WellTimeDepthModel1D, WellboreGeometry,
+};
+use ophiolite_seismic_runtime::{
+    ImportedHorizonGrid, TbvolManifest, describe_store, load_horizon_grids, open_store,
+};
+use proj::{Proj, ProjBuilder};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -39,13 +57,20 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const PROJECT_SCHEMA_VERSION: &str = "0.1.0";
+const PROJECT_SCHEMA_VERSION: &str = "0.2.0";
 const PROJECT_MANIFEST_FILENAME: &str = "ophiolite-project.json";
 const PROJECT_CATALOG_FILENAME: &str = "catalog.sqlite";
 const ASSET_MANIFEST_FILENAME: &str = "asset_manifest.json";
 const PROJECT_REVISION_STORE_DIRNAME: &str = ".ophiolite";
 const PROJECT_ASSET_REVISION_STORE_DIRNAME: &str = "asset-revisions";
 const PROJECT_STAGING_DIRNAME: &str = "staging";
+const PROJECT_MAP_TRANSFORM_CACHE_DIRNAME: &str = "map-transform-cache";
+const SURVEY_MAP_TRANSFORM_CACHE_SCHEMA_VERSION: u32 = 1;
+const PROJ_RESOURCE_PATH_ENV: &str = "OPHIOLITE_PROJ_RESOURCE_PATH";
+const CHECKSHOT_VSP_OBSERVATION_SET_FILENAME: &str = "checkshot_vsp_observation_set.json";
+const MANUAL_TIME_DEPTH_PICK_SET_FILENAME: &str = "manual_time_depth_pick_set.json";
+const WELL_TIME_DEPTH_AUTHORED_MODEL_FILENAME: &str = "well_time_depth_authored_model.json";
+const WELL_TIME_DEPTH_MODEL_FILENAME: &str = "well_time_depth_model.json";
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -77,6 +102,10 @@ pub enum AssetKind {
     TopSet,
     PressureObservation,
     DrillingObservation,
+    CheckshotVspObservationSet,
+    ManualTimeDepthPickSet,
+    WellTimeDepthAuthoredModel,
+    WellTimeDepthModel,
     SeismicTraceData,
 }
 
@@ -88,6 +117,10 @@ impl AssetKind {
             Self::TopSet => "top_set",
             Self::PressureObservation => "pressure_observation",
             Self::DrillingObservation => "drilling_observation",
+            Self::CheckshotVspObservationSet => "checkshot_vsp_observation_set",
+            Self::ManualTimeDepthPickSet => "manual_time_depth_pick_set",
+            Self::WellTimeDepthAuthoredModel => "well_time_depth_authored_model",
+            Self::WellTimeDepthModel => "well_time_depth_model",
             Self::SeismicTraceData => "seismic_trace_data",
         }
     }
@@ -99,6 +132,10 @@ impl AssetKind {
             Self::TopSet => "tops",
             Self::PressureObservation => "pressure",
             Self::DrillingObservation => "drilling",
+            Self::CheckshotVspObservationSet => "checkshot-vsp-observations",
+            Self::ManualTimeDepthPickSet => "manual-time-depth-picks",
+            Self::WellTimeDepthAuthoredModel => "well-time-depth-authored-models",
+            Self::WellTimeDepthModel => "well-time-depth-models",
             Self::SeismicTraceData => "seismic-trace-data",
         }
     }
@@ -110,6 +147,10 @@ impl AssetKind {
             "top_set" => Ok(Self::TopSet),
             "pressure_observation" => Ok(Self::PressureObservation),
             "drilling_observation" => Ok(Self::DrillingObservation),
+            "checkshot_vsp_observation_set" => Ok(Self::CheckshotVspObservationSet),
+            "manual_time_depth_pick_set" => Ok(Self::ManualTimeDepthPickSet),
+            "well_time_depth_authored_model" => Ok(Self::WellTimeDepthAuthoredModel),
+            "well_time_depth_model" => Ok(Self::WellTimeDepthModel),
             "seismic_trace_data" => Ok(Self::SeismicTraceData),
             _ => Err(LasError::Validation(format!(
                 "unknown asset kind '{value}' in project catalog"
@@ -255,6 +296,10 @@ pub enum AssetDiffSummary {
     TopSet(StructuredAssetDiffSummary),
     PressureObservation(StructuredAssetDiffSummary),
     DrillingObservation(StructuredAssetDiffSummary),
+    CheckshotVspObservationSet(DirectoryAssetDiffSummary),
+    ManualTimeDepthPickSet(DirectoryAssetDiffSummary),
+    WellTimeDepthAuthoredModel(DirectoryAssetDiffSummary),
+    WellTimeDepthModel(DirectoryAssetDiffSummary),
     SeismicTraceData(DirectoryAssetDiffSummary),
     MetadataOnly { changed_fields: Vec<String> },
 }
@@ -328,12 +373,14 @@ pub struct WellRecord {
     pub identifiers: WellIdentifierSet,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WellboreRecord {
     pub id: WellboreId,
     pub well_id: WellId,
     pub name: String,
     pub identifiers: WellIdentifierSet,
+    pub geometry: Option<WellboreGeometry>,
+    pub active_well_time_depth_model_asset_id: Option<AssetId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -377,11 +424,41 @@ pub struct WellSummary {
     pub asset_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WellboreSummary {
     pub wellbore: WellboreRecord,
     pub collection_count: usize,
     pub asset_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectSurveyAssetInventoryItem {
+    pub asset_id: AssetId,
+    pub logical_asset_id: AssetId,
+    pub collection_id: AssetCollectionId,
+    pub name: String,
+    pub status: AssetStatus,
+    pub well_id: WellId,
+    pub well_name: String,
+    pub wellbore_id: WellboreId,
+    pub wellbore_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectWellboreInventoryItem {
+    pub well_id: WellId,
+    pub well_name: String,
+    pub wellbore_id: WellboreId,
+    pub wellbore_name: String,
+    pub trajectory_asset_count: usize,
+    pub well_time_depth_model_count: usize,
+    pub active_well_time_depth_model_asset_id: Option<AssetId>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectWellOverlayInventory {
+    pub surveys: Vec<ProjectSurveyAssetInventoryItem>,
+    pub wellbores: Vec<ProjectWellboreInventoryItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -447,6 +524,45 @@ pub struct OphioliteProject {
     root: PathBuf,
     catalog_path: PathBuf,
     connection: Connection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct SurveyMapTransformCacheArtifact {
+    schema_version: u32,
+    cache_key: String,
+    asset_id: String,
+    geometry_fingerprint: String,
+    source_coordinate_reference_id: String,
+    target_coordinate_reference_id: String,
+    policy: SurveyMapTransformPolicyDto,
+    display_spatial: SurveyMapSpatialDescriptorDto,
+    transform_status: SurveyMapTransformStatusDto,
+    transform_diagnostics: SurveyMapTransformDiagnosticsDto,
+}
+
+#[derive(Debug, Clone)]
+struct SectionAxisSpec {
+    axis: SectionAxis,
+    requested_coordinate: f64,
+    inline_first: f64,
+    inline_step: f64,
+    xline_first: f64,
+    xline_step: f64,
+    trace_count: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProjectedSectionSample {
+    trace_index: usize,
+    trace_coordinate: f64,
+    sample_value: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SectionTrajectoryDensificationSettings {
+    max_md_step_m: f64,
+    max_xy_step_m: f64,
+    max_vertical_step_m: f64,
 }
 
 impl OphioliteProject {
@@ -577,7 +693,7 @@ impl OphioliteProject {
 
     pub fn list_wellbores(&self, well_id: &WellId) -> Result<Vec<WellboreRecord>> {
         let mut statement = self.connection.prepare(
-            "SELECT id, well_id, primary_name, identifiers_json FROM wellbores WHERE well_id = ?1 ORDER BY primary_name",
+            "SELECT id, well_id, primary_name, identifiers_json, geometry_json, active_well_time_depth_model_asset_id FROM wellbores WHERE well_id = ?1 ORDER BY primary_name",
         ).map_err(sqlite_error)?;
         let rows = statement
             .query_map([&well_id.0], |row| {
@@ -589,12 +705,56 @@ impl OphioliteProject {
                         &row.get::<_, String>(3)?,
                     )
                     .map_err(sql_json_error)?,
+                    geometry: parse_optional_json_column::<WellboreGeometry>(row.get(4)?)
+                        .map_err(sql_json_error)?,
+                    active_well_time_depth_model_asset_id: row
+                        .get::<_, Option<String>>(5)?
+                        .map(AssetId),
                 })
             })
             .map_err(sqlite_error)?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sqlite_error)
+    }
+
+    pub fn set_wellbore_geometry(
+        &self,
+        wellbore_id: &WellboreId,
+        geometry: Option<WellboreGeometry>,
+    ) -> Result<WellboreRecord> {
+        let geometry_json = geometry.as_ref().map(serde_json::to_string).transpose()?;
+        self.connection
+            .execute(
+                "UPDATE wellbores SET geometry_json = ?2 WHERE id = ?1",
+                params![wellbore_id.0, geometry_json],
+            )
+            .map_err(sqlite_error)?;
+        self.wellbore_by_id(wellbore_id)
+    }
+
+    pub fn set_active_well_time_depth_model(
+        &self,
+        wellbore_id: &WellboreId,
+        asset_id: Option<&AssetId>,
+    ) -> Result<WellboreRecord> {
+        if let Some(asset_id) = asset_id {
+            let asset = self.asset_by_id(asset_id)?;
+            require_asset_kind(&asset, AssetKind::WellTimeDepthModel)?;
+            if asset.wellbore_id != *wellbore_id {
+                return Err(LasError::Validation(format!(
+                    "well time-depth model '{}' does not belong to wellbore '{}'",
+                    asset_id.0, wellbore_id.0
+                )));
+            }
+        }
+        self.connection
+            .execute(
+                "UPDATE wellbores SET active_well_time_depth_model_asset_id = ?2 WHERE id = ?1",
+                params![wellbore_id.0, asset_id.map(|value| value.0.clone())],
+            )
+            .map_err(sqlite_error)?;
+        self.wellbore_by_id(wellbore_id)
     }
 
     pub fn wellbore_summaries(&self, well_id: &WellId) -> Result<Vec<WellboreSummary>> {
@@ -610,6 +770,87 @@ impl OphioliteProject {
                 })
             })
             .collect()
+    }
+
+    pub fn project_well_overlay_inventory(&self) -> Result<ProjectWellOverlayInventory> {
+        let mut surveys = Vec::new();
+        let mut survey_statement = self
+            .connection
+            .prepare(
+                "SELECT a.id, a.logical_asset_id, a.collection_id, a.status,
+                        w.id, w.primary_name, wb.id, wb.primary_name, c.name
+                 FROM assets a
+                 JOIN wellbores wb ON wb.id = a.wellbore_id
+                 JOIN wells w ON w.id = a.well_id
+                 JOIN asset_collections c ON c.id = a.collection_id
+                 WHERE a.asset_kind = ?1 AND a.status = ?2
+                 ORDER BY c.name, wb.primary_name, a.id",
+            )
+            .map_err(sqlite_error)?;
+        let survey_rows = survey_statement
+            .query_map(
+                params![
+                    AssetKind::SeismicTraceData.as_str(),
+                    AssetStatus::Bound.as_str()
+                ],
+                |row| {
+                    Ok(ProjectSurveyAssetInventoryItem {
+                        asset_id: AssetId(row.get(0)?),
+                        logical_asset_id: AssetId(row.get(1)?),
+                        collection_id: AssetCollectionId(row.get(2)?),
+                        status: AssetStatus::from_str(&row.get::<_, String>(3)?)
+                            .map_err(sql_validation_error)?,
+                        well_id: WellId(row.get(4)?),
+                        well_name: row.get(5)?,
+                        wellbore_id: WellboreId(row.get(6)?),
+                        wellbore_name: row.get(7)?,
+                        name: row.get(8)?,
+                    })
+                },
+            )
+            .map_err(sqlite_error)?;
+        surveys.extend(
+            survey_rows
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(sqlite_error)?,
+        );
+
+        let mut wellbores = Vec::new();
+        let mut wellbore_statement = self
+            .connection
+            .prepare(
+                "SELECT wb.id, w.id, w.primary_name, wb.primary_name, wb.active_well_time_depth_model_asset_id,
+                        COALESCE(SUM(CASE WHEN a.asset_kind = 'trajectory' AND a.status = 'bound' THEN 1 ELSE 0 END), 0),
+                        COALESCE(SUM(CASE WHEN a.asset_kind = 'well_time_depth_model' AND a.status = 'bound' THEN 1 ELSE 0 END), 0)
+                 FROM wellbores wb
+                 JOIN wells w ON w.id = wb.well_id
+                 LEFT JOIN assets a ON a.wellbore_id = wb.id
+                 GROUP BY wb.id, w.id, w.primary_name, wb.primary_name, wb.active_well_time_depth_model_asset_id
+                 ORDER BY w.primary_name, wb.primary_name",
+            )
+            .map_err(sqlite_error)?;
+        let wellbore_rows = wellbore_statement
+            .query_map([], |row| {
+                Ok(ProjectWellboreInventoryItem {
+                    wellbore_id: WellboreId(row.get(0)?),
+                    well_id: WellId(row.get(1)?),
+                    well_name: row.get(2)?,
+                    wellbore_name: row.get(3)?,
+                    active_well_time_depth_model_asset_id: row
+                        .get::<_, Option<String>>(4)?
+                        .map(AssetId),
+                    trajectory_asset_count: row.get::<_, i64>(5)? as usize,
+                    well_time_depth_model_count: row.get::<_, i64>(6)? as usize,
+                })
+            })
+            .map_err(sqlite_error)?;
+        wellbores.extend(
+            wellbore_rows
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(sqlite_error)?,
+        );
+
+        Ok(ProjectWellOverlayInventory { surveys, wellbores })
     }
 
     pub fn list_asset_collections(
@@ -940,6 +1181,245 @@ impl OphioliteProject {
         read_trajectory_rows(Path::new(&asset.package_path), range)
     }
 
+    pub fn resolve_wellbore_trajectory(
+        &self,
+        wellbore_id: &WellboreId,
+    ) -> Result<ResolvedTrajectoryGeometry> {
+        let wellbore = self.wellbore_by_id(wellbore_id)?;
+        let current_assets = self
+            .asset_summaries(wellbore_id, Some(AssetKind::Trajectory))?
+            .into_iter()
+            .filter(|summary| summary.is_current)
+            .collect::<Vec<_>>();
+
+        let anchor = wellbore
+            .geometry
+            .as_ref()
+            .and_then(|geometry| geometry.anchor.as_ref());
+        let anchor_fingerprint = anchor
+            .map(serde_json::to_vec)
+            .transpose()?
+            .map(|bytes| stable_project_blob_hash("wellbore-anchor", &bytes));
+        let mut coordinate_reference = anchor.and_then(|item| item.coordinate_reference.clone());
+        let mut notes = Vec::new();
+        let mut source_asset_ids = Vec::new();
+        let mut stations = Vec::new();
+        let mut assumed_metric_depth_units = false;
+        let mut assumed_metric_coordinate_units = false;
+        let mut multiple_assets_note = false;
+
+        if current_assets.is_empty() {
+            notes.push(String::from(
+                "no current trajectory assets are available for this wellbore",
+            ));
+        }
+
+        for summary in current_assets {
+            if !multiple_assets_note && !source_asset_ids.is_empty() {
+                notes.push(String::from(
+                    "multiple current trajectory assets were merged in measured-depth order",
+                ));
+                multiple_assets_note = true;
+            }
+
+            let asset = summary.asset;
+            let rows = self.read_trajectory_rows(&asset.id, None)?;
+            if rows.is_empty() {
+                notes.push(format!(
+                    "trajectory asset '{}' has no trajectory rows",
+                    asset.id.0
+                ));
+                continue;
+            }
+
+            let asset_coordinate_reference = coordinate_reference_descriptor_from_project(
+                asset
+                    .manifest
+                    .reference_metadata
+                    .coordinate_reference
+                    .as_ref(),
+                asset
+                    .manifest
+                    .reference_metadata
+                    .unit_system
+                    .coordinate_unit
+                    .as_deref(),
+            );
+            validate_metric_length_unit(
+                asset
+                    .manifest
+                    .reference_metadata
+                    .unit_system
+                    .depth_unit
+                    .as_deref(),
+                "depth",
+                &asset.id,
+            )?;
+            validate_metric_length_unit(
+                asset
+                    .manifest
+                    .reference_metadata
+                    .unit_system
+                    .coordinate_unit
+                    .as_deref(),
+                "coordinate",
+                &asset.id,
+            )?;
+
+            if asset
+                .manifest
+                .reference_metadata
+                .unit_system
+                .depth_unit
+                .is_none()
+                && !assumed_metric_depth_units
+            {
+                notes.push(format!(
+                    "trajectory asset '{}' does not store a depth unit; resolved depth fields assume the source values are already meters",
+                    asset.id.0
+                ));
+                assumed_metric_depth_units = true;
+            }
+            if asset
+                .manifest
+                .reference_metadata
+                .unit_system
+                .coordinate_unit
+                .is_none()
+                && !assumed_metric_coordinate_units
+            {
+                notes.push(format!(
+                    "trajectory asset '{}' does not store a coordinate unit; resolved offset fields assume the source values are already meters",
+                    asset.id.0
+                ));
+                assumed_metric_coordinate_units = true;
+            }
+
+            if coordinate_reference.is_none() {
+                coordinate_reference = asset_coordinate_reference.clone();
+            } else if let (Some(existing), Some(candidate)) = (
+                coordinate_reference.as_ref(),
+                asset_coordinate_reference.as_ref(),
+            ) {
+                if !coordinate_reference_descriptors_compatible(existing, candidate) {
+                    notes.push(format!(
+                        "trajectory asset '{}' uses a different coordinate reference than the current resolved trajectory geometry; absolute XY was left unresolved",
+                        asset.id.0
+                    ));
+                    coordinate_reference = None;
+                }
+            }
+
+            let can_resolve_absolute_xy = can_resolve_absolute_xy(
+                anchor,
+                asset_coordinate_reference.as_ref(),
+                &asset.id,
+                &mut notes,
+            );
+
+            source_asset_ids.push(asset.id.0.clone());
+            for mut station in resolve_trajectory_rows(&rows, &asset.id, &mut notes) {
+                let absolute_xy = if can_resolve_absolute_xy {
+                    match (anchor, station.northing_offset_m, station.easting_offset_m) {
+                        (Some(anchor_reference), Some(northing), Some(easting)) => {
+                            Some(ProjectedPoint2 {
+                                x: anchor_reference.location.x + easting,
+                                y: anchor_reference.location.y + northing,
+                            })
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                station.absolute_xy = absolute_xy;
+                stations.push(station);
+            }
+        }
+
+        if anchor.is_none() {
+            notes.push(String::from(
+                "wellbore geometry has no anchor, so absolute XY could not be resolved from relative offsets",
+            ));
+        }
+
+        stations.sort_by(|left, right| {
+            left.measured_depth_m
+                .partial_cmp(&right.measured_depth_m)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let geometry_id = stable_project_blob_hash(
+            "resolved-trajectory",
+            format!(
+                "{}|{:?}|{}",
+                wellbore.id.0,
+                anchor_fingerprint,
+                source_asset_ids.join("|")
+            )
+            .as_bytes(),
+        );
+
+        Ok(ResolvedTrajectoryGeometry {
+            id: geometry_id,
+            wellbore_id: wellbore.id.0,
+            source_asset_ids,
+            coordinate_reference,
+            anchor_fingerprint,
+            stations,
+            notes,
+        })
+    }
+
+    pub fn resolve_section_well_overlays(
+        &self,
+        request: &SectionWellOverlayRequestDto,
+    ) -> Result<ResolveSectionWellOverlaysResponse> {
+        if request.survey_asset_id.trim().is_empty() {
+            return Err(LasError::Validation(
+                "section well overlay request requires a survey asset id".to_string(),
+            ));
+        }
+        if request.wellbore_ids.is_empty() {
+            return Err(LasError::Validation(
+                "section well overlay request requires at least one wellbore id".to_string(),
+            ));
+        }
+
+        let survey =
+            self.resolve_survey_map_survey(&AssetId(request.survey_asset_id.clone()), None)?;
+        let grid_transform = preferred_section_grid_transform(&survey).ok_or_else(|| {
+            LasError::Validation(format!(
+                "survey '{}' has no mappable grid transform for section overlays",
+                survey.name
+            ))
+        })?;
+        let section_axis = section_axis_spec(&survey.index_grid, request.axis, request.index)?;
+        let section_tolerance_m = request
+            .tolerance_m
+            .unwrap_or_else(|| default_section_tolerance_m(grid_transform, request.axis));
+
+        let overlays = request
+            .wellbore_ids
+            .iter()
+            .map(|wellbore_id| {
+                self.resolve_single_section_well_overlay(
+                    &WellboreId(wellbore_id.clone()),
+                    &survey,
+                    grid_transform,
+                    &section_axis,
+                    section_tolerance_m,
+                    request,
+                )
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(ResolveSectionWellOverlaysResponse {
+            schema_version: SECTION_WELL_OVERLAY_CONTRACT_VERSION,
+            overlays,
+        })
+    }
+
     pub fn read_tops(&self, asset_id: &AssetId) -> Result<Vec<TopRow>> {
         let asset = self.asset_by_id(asset_id)?;
         require_asset_kind(&asset, AssetKind::TopSet)?;
@@ -964,6 +1444,377 @@ impl OphioliteProject {
         let asset = self.asset_by_id(asset_id)?;
         require_asset_kind(&asset, AssetKind::DrillingObservation)?;
         read_drilling_rows(Path::new(&asset.package_path), range)
+    }
+
+    pub fn read_well_time_depth_model(&self, asset_id: &AssetId) -> Result<WellTimeDepthModel1D> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::WellTimeDepthModel)?;
+        read_well_time_depth_model_package(Path::new(&asset.package_path))
+    }
+
+    pub fn read_checkshot_vsp_observation_set(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<CheckshotVspObservationSet1D> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::CheckshotVspObservationSet)?;
+        read_checkshot_vsp_observation_set_package(Path::new(&asset.package_path))
+    }
+
+    pub fn read_manual_time_depth_pick_set(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<ManualTimeDepthPickSet1D> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::ManualTimeDepthPickSet)?;
+        read_manual_time_depth_pick_set_package(Path::new(&asset.package_path))
+    }
+
+    pub fn read_well_time_depth_authored_model(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<WellTimeDepthAuthoredModel1D> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::WellTimeDepthAuthoredModel)?;
+        read_well_time_depth_authored_model_package(Path::new(&asset.package_path))
+    }
+
+    pub fn import_checkshot_vsp_observation_set_json(
+        &mut self,
+        source_path: &Path,
+        binding: AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<ProjectAssetImportResult> {
+        let observation_set: CheckshotVspObservationSet1D =
+            serde_json::from_slice(&fs::read(source_path)?).map_err(|error| {
+                LasError::Parse(format!(
+                    "failed to parse checkshot/VSP observation json '{}': {error}",
+                    source_path.display()
+                ))
+            })?;
+        validate_checkshot_vsp_observation_set(&observation_set)?;
+        self.import_well_time_depth_json_asset(
+            source_path,
+            binding,
+            collection_name,
+            AssetKind::CheckshotVspObservationSet,
+            observation_set.name.clone(),
+            &observation_set,
+            write_checkshot_vsp_observation_set_package,
+        )
+    }
+
+    pub fn import_manual_time_depth_pick_set_json(
+        &mut self,
+        source_path: &Path,
+        binding: AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<ProjectAssetImportResult> {
+        let pick_set: ManualTimeDepthPickSet1D = serde_json::from_slice(&fs::read(source_path)?)
+            .map_err(|error| {
+                LasError::Parse(format!(
+                    "failed to parse manual time-depth pick json '{}': {error}",
+                    source_path.display()
+                ))
+            })?;
+        validate_manual_time_depth_pick_set(&pick_set)?;
+        self.import_well_time_depth_json_asset(
+            source_path,
+            binding,
+            collection_name,
+            AssetKind::ManualTimeDepthPickSet,
+            pick_set.name.clone(),
+            &pick_set,
+            write_manual_time_depth_pick_set_package,
+        )
+    }
+
+    pub fn import_well_time_depth_authored_model_json(
+        &mut self,
+        source_path: &Path,
+        binding: AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<ProjectAssetImportResult> {
+        let authored_model: WellTimeDepthAuthoredModel1D =
+            serde_json::from_slice(&fs::read(source_path)?).map_err(|error| {
+                LasError::Parse(format!(
+                    "failed to parse well time-depth authored model json '{}': {error}",
+                    source_path.display()
+                ))
+            })?;
+        validate_well_time_depth_authored_model(&authored_model)?;
+        self.import_well_time_depth_json_asset(
+            source_path,
+            binding,
+            collection_name,
+            AssetKind::WellTimeDepthAuthoredModel,
+            authored_model.name.clone(),
+            &authored_model,
+            write_well_time_depth_authored_model_package,
+        )
+    }
+
+    pub fn import_well_time_depth_model_json(
+        &mut self,
+        source_path: &Path,
+        binding: AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<ProjectAssetImportResult> {
+        let model: WellTimeDepthModel1D =
+            serde_json::from_slice(&fs::read(source_path)?).map_err(|error| {
+                LasError::Parse(format!(
+                    "failed to parse well time-depth model json '{}': {error}",
+                    source_path.display()
+                ))
+            })?;
+        validate_well_time_depth_model(&model)?;
+
+        let identifiers = identifiers_from_binding(&binding);
+        let (well, created_well) = self.resolve_or_create_well(&identifiers)?;
+        let (wellbore, created_wellbore) =
+            self.resolve_or_create_wellbore_for_binding(&well.id, &binding)?;
+        let collection_name = collection_name
+            .map(str::to_owned)
+            .or_else(|| Some(model.name.clone()))
+            .unwrap_or_else(|| AssetKind::WellTimeDepthModel.as_str().to_string());
+        let collection = self.resolve_or_create_collection(
+            &wellbore.id,
+            AssetKind::WellTimeDepthModel,
+            &collection_name,
+        )?;
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(AssetKind::WellTimeDepthModel.asset_dir_name())
+            .join(format!("{}.ophiolite-asset", storage_asset_id.0));
+        let package_root = self.root.join(&package_rel_path);
+        let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
+        write_well_time_depth_model_package(&staged.root, &model)?;
+        let supersedes = self
+            .latest_active_asset_for_collection(&collection.id)?
+            .map(|asset| asset.id);
+        let manifest = well_time_depth_model_manifest(
+            source_path,
+            &model,
+            &well.id,
+            &wellbore.id,
+            &collection.id,
+            &collection.logical_asset_id,
+            &storage_asset_id,
+            identifiers_from_binding(&binding),
+            supersedes.clone(),
+        )?;
+        write_asset_manifest(&staged.root, &manifest)?;
+        if let Some(asset_id) = &supersedes {
+            self.mark_asset_superseded(asset_id)?;
+        }
+        let asset = AssetRecord {
+            id: storage_asset_id.clone(),
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: well.id.clone(),
+            wellbore_id: wellbore.id.clone(),
+            asset_kind: AssetKind::WellTimeDepthModel,
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest,
+        };
+        let revision = self.build_asset_revision_from_snapshot(
+            &asset,
+            None,
+            AssetDiffSummary::WellTimeDepthModel(DirectoryAssetDiffSummary::default()),
+            &staged,
+        )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.insert_asset(&asset, &package_rel_path)?;
+
+        Ok(ProjectAssetImportResult {
+            resolution: ImportResolution {
+                status: AssetStatus::Bound,
+                well_id: well.id,
+                wellbore_id: wellbore.id,
+                created_well,
+                created_wellbore,
+            },
+            collection,
+            asset,
+        })
+    }
+
+    fn import_well_time_depth_json_asset<T, F>(
+        &mut self,
+        source_path: &Path,
+        binding: AssetBindingInput,
+        collection_name: Option<&str>,
+        asset_kind: AssetKind,
+        default_name: String,
+        asset_payload: &T,
+        writer: F,
+    ) -> Result<ProjectAssetImportResult>
+    where
+        T: Serialize,
+        F: Fn(&Path, &T) -> Result<()>,
+    {
+        let identifiers = identifiers_from_binding(&binding);
+        let (well, created_well) = self.resolve_or_create_well(&identifiers)?;
+        let (wellbore, created_wellbore) =
+            self.resolve_or_create_wellbore_for_binding(&well.id, &binding)?;
+        let collection_name = collection_name.map(str::to_owned).unwrap_or(default_name);
+        let collection =
+            self.resolve_or_create_collection(&wellbore.id, asset_kind.clone(), &collection_name)?;
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(asset_kind.asset_dir_name())
+            .join(format!("{}.ophiolite-asset", storage_asset_id.0));
+        let package_root = self.root.join(&package_rel_path);
+        let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
+        writer(&staged.root, asset_payload)?;
+        let supersedes = self
+            .latest_active_asset_for_collection(&collection.id)?
+            .map(|asset| asset.id);
+        let manifest = well_time_depth_json_manifest(
+            source_path,
+            &well.id,
+            &wellbore.id,
+            &collection.id,
+            &collection.logical_asset_id,
+            &storage_asset_id,
+            asset_kind.clone(),
+            identifiers_from_binding(&binding),
+            supersedes.clone(),
+        )?;
+        write_asset_manifest(&staged.root, &manifest)?;
+        if let Some(asset_id) = &supersedes {
+            self.mark_asset_superseded(asset_id)?;
+        }
+        let asset = AssetRecord {
+            id: storage_asset_id.clone(),
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: well.id.clone(),
+            wellbore_id: wellbore.id.clone(),
+            asset_kind: asset_kind.clone(),
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest,
+        };
+        let revision = self.build_asset_revision_from_snapshot(
+            &asset,
+            None,
+            default_asset_diff_summary(&asset_kind),
+            &staged,
+        )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.insert_asset(&asset, &package_rel_path)?;
+        Ok(ProjectAssetImportResult {
+            resolution: ImportResolution {
+                status: AssetStatus::Bound,
+                well_id: well.id,
+                wellbore_id: wellbore.id,
+                created_well,
+                created_wellbore,
+            },
+            collection,
+            asset,
+        })
+    }
+
+    pub fn compile_well_time_depth_authored_model_to_asset(
+        &mut self,
+        authored_model_asset_id: &AssetId,
+        output_collection_name: Option<&str>,
+        set_active: bool,
+    ) -> Result<ProjectAssetImportResult> {
+        let authored_asset = self.asset_by_id(authored_model_asset_id)?;
+        require_asset_kind(&authored_asset, AssetKind::WellTimeDepthAuthoredModel)?;
+        let authored_model = self.read_well_time_depth_authored_model(authored_model_asset_id)?;
+        let resolved_trajectory =
+            self.resolve_wellbore_trajectory(&WellboreId(authored_model.wellbore_id.clone()))?;
+        if resolved_trajectory.id != authored_model.resolved_trajectory_fingerprint {
+            return Err(LasError::Validation(format!(
+                "authored well time-depth model '{}' targets resolved trajectory '{}' but the current wellbore trajectory fingerprint is '{}'",
+                authored_model_asset_id.0,
+                authored_model.resolved_trajectory_fingerprint,
+                resolved_trajectory.id
+            )));
+        }
+        let compiled_model =
+            compile_well_time_depth_authored_model(&authored_model, &resolved_trajectory, self)?;
+        let collection_name = output_collection_name
+            .map(str::to_owned)
+            .unwrap_or_else(|| authored_model.name.clone());
+        let collection = self.resolve_or_create_collection(
+            &authored_asset.wellbore_id,
+            AssetKind::WellTimeDepthModel,
+            &collection_name,
+        )?;
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(AssetKind::WellTimeDepthModel.asset_dir_name())
+            .join(format!("{}.ophiolite-asset", storage_asset_id.0));
+        let package_root = self.root.join(&package_rel_path);
+        let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
+        write_well_time_depth_model_package(&staged.root, &compiled_model)?;
+        let supersedes = self
+            .latest_active_asset_for_collection(&collection.id)?
+            .map(|asset| asset.id);
+        let source_path =
+            Path::new(&authored_asset.package_path).join(WELL_TIME_DEPTH_AUTHORED_MODEL_FILENAME);
+        let mut manifest = well_time_depth_model_manifest(
+            &source_path,
+            &compiled_model,
+            &authored_asset.well_id,
+            &authored_asset.wellbore_id,
+            &collection.id,
+            &collection.logical_asset_id,
+            &storage_asset_id,
+            authored_asset
+                .manifest
+                .reference_metadata
+                .identifiers
+                .clone(),
+            supersedes.clone(),
+        )?;
+        manifest.derived_from = Some(authored_asset.logical_asset_id.clone());
+        write_asset_manifest(&staged.root, &manifest)?;
+        if let Some(asset_id) = &supersedes {
+            self.mark_asset_superseded(asset_id)?;
+        }
+        let asset = AssetRecord {
+            id: storage_asset_id.clone(),
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: authored_asset.well_id.clone(),
+            wellbore_id: authored_asset.wellbore_id.clone(),
+            asset_kind: AssetKind::WellTimeDepthModel,
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest,
+        };
+        let revision = self.build_asset_revision_from_snapshot(
+            &asset,
+            None,
+            AssetDiffSummary::WellTimeDepthModel(DirectoryAssetDiffSummary::default()),
+            &staged,
+        )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.insert_asset(&asset, &package_rel_path)?;
+        if set_active {
+            self.set_active_well_time_depth_model(
+                &authored_asset.wellbore_id,
+                Some(&storage_asset_id),
+            )?;
+        }
+        Ok(ProjectAssetImportResult {
+            resolution: ImportResolution {
+                status: AssetStatus::Bound,
+                well_id: authored_asset.well_id,
+                wellbore_id: authored_asset.wellbore_id,
+                created_well: false,
+                created_wellbore: false,
+            },
+            collection,
+            asset,
+        })
     }
 
     pub fn read_log_curve_data(&self, asset_id: &AssetId) -> Result<Vec<LogCurveData>> {
@@ -1012,6 +1863,70 @@ impl OphioliteProject {
             id: format!("well-panel:{}", request.wellbore_ids.join(",")),
             name: "Resolved Well Panel Source".to_string(),
             wells,
+        })
+    }
+
+    pub fn resolve_survey_map_source(
+        &self,
+        request: &SurveyMapRequestDto,
+    ) -> Result<ResolvedSurveyMapSourceDto> {
+        if request.survey_asset_ids.is_empty() && request.wellbore_ids.is_empty() {
+            return Err(LasError::Validation(
+                "survey-map request requires at least one survey asset id or wellbore id"
+                    .to_string(),
+            ));
+        }
+
+        let mut surveys = Vec::with_capacity(request.survey_asset_ids.len());
+        let mut horizons = Vec::new();
+        let mut scalar_field = None;
+        let mut scalar_field_horizon_id = None;
+        for asset_id in &request.survey_asset_ids {
+            let asset_id = AssetId(asset_id.clone());
+            let mut survey = self.resolve_survey_map_survey(
+                &asset_id,
+                request.display_coordinate_reference_id.as_deref(),
+            )?;
+            let store_root = Path::new(&self.asset_by_id(&asset_id)?.package_path).join("store");
+            match resolve_survey_map_horizons_for_store(
+                &asset_id.0,
+                &store_root,
+                &survey,
+                request.display_coordinate_reference_id.as_deref(),
+            ) {
+                Ok(resolved) => {
+                    if scalar_field.is_none() {
+                        scalar_field = resolved.scalar_field;
+                        scalar_field_horizon_id = resolved.scalar_field_horizon_id;
+                    }
+                    horizons.extend(resolved.horizons);
+                }
+                Err(error) => survey.notes.push(format!(
+                    "failed to resolve imported horizons for survey '{}': {error}",
+                    survey.name
+                )),
+            }
+            surveys.push(survey);
+        }
+        let wells = request
+            .wellbore_ids
+            .iter()
+            .map(|wellbore_id| self.resolve_survey_map_well(&WellboreId(wellbore_id.clone())))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(ResolvedSurveyMapSourceDto {
+            schema_version: SURVEY_MAP_CONTRACT_VERSION,
+            id: format!(
+                "survey-map:{}:{}",
+                request.survey_asset_ids.join(","),
+                request.wellbore_ids.join(",")
+            ),
+            name: "Resolved Survey Map Source".to_string(),
+            surveys,
+            wells,
+            horizons,
+            scalar_field,
+            scalar_field_horizon_id,
         })
     }
 
@@ -1297,6 +2212,15 @@ impl OphioliteProject {
             AssetKind::TopSet => Ok(registry.catalog_for_top_set_asset()),
             AssetKind::PressureObservation => Ok(registry.catalog_for_pressure_asset()),
             AssetKind::DrillingObservation => Ok(registry.catalog_for_drilling_asset()),
+            AssetKind::CheckshotVspObservationSet
+            | AssetKind::ManualTimeDepthPickSet
+            | AssetKind::WellTimeDepthAuthoredModel => Err(LasError::Validation(
+                "compute catalog is not implemented for well time-depth observation/model assets"
+                    .to_string(),
+            )),
+            AssetKind::WellTimeDepthModel => Err(LasError::Validation(
+                "compute catalog is not implemented for well time-depth model assets".to_string(),
+            )),
             AssetKind::SeismicTraceData => Err(LasError::Validation(
                 "compute catalog is not implemented for seismic assets yet".to_string(),
             )),
@@ -1464,6 +2388,20 @@ impl OphioliteProject {
                     AssetKind::DrillingObservation,
                 )?
             }
+            AssetKind::CheckshotVspObservationSet
+            | AssetKind::ManualTimeDepthPickSet
+            | AssetKind::WellTimeDepthAuthoredModel => {
+                return Err(LasError::Validation(
+                    "compute execution is not implemented for well time-depth observation/model assets"
+                        .to_string(),
+                ));
+            }
+            AssetKind::WellTimeDepthModel => {
+                return Err(LasError::Validation(
+                    "compute execution is not implemented for well time-depth model assets"
+                        .to_string(),
+                ));
+            }
             AssetKind::SeismicTraceData => {
                 return Err(LasError::Validation(
                     "compute execution is not implemented for seismic assets yet".to_string(),
@@ -1629,6 +2567,7 @@ impl OphioliteProject {
                             .map(|row| WellPanelTrajectoryRowDto {
                                 measured_depth: row.measured_depth,
                                 true_vertical_depth: row.true_vertical_depth,
+                                true_vertical_depth_subsea: row.true_vertical_depth_subsea,
                                 azimuth_deg: row.azimuth_deg,
                                 inclination_deg: row.inclination_deg,
                                 northing_offset: row.northing_offset,
@@ -1710,6 +2649,10 @@ impl OphioliteProject {
                             .collect(),
                     });
                 }
+                AssetKind::CheckshotVspObservationSet => {}
+                AssetKind::ManualTimeDepthPickSet => {}
+                AssetKind::WellTimeDepthAuthoredModel => {}
+                AssetKind::WellTimeDepthModel => {}
                 AssetKind::SeismicTraceData => {}
             }
         }
@@ -1727,6 +2670,504 @@ impl OphioliteProject {
             pressure_observations,
             drilling_observations,
         })
+    }
+
+    fn resolve_survey_map_survey(
+        &self,
+        asset_id: &AssetId,
+        display_coordinate_reference_id: Option<&str>,
+    ) -> Result<ResolvedSurveyMapSurveyDto> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::SeismicTraceData)?;
+        let collection = self.collection_by_id(&asset.collection_id)?;
+        let metadata = read_seismic_asset_metadata(Path::new(&asset.package_path))?;
+        let inline_axis = &metadata.descriptor.geometry.summary.inline_axis;
+        let xline_axis = &metadata.descriptor.geometry.summary.xline_axis;
+        let survey_name = if collection.name.trim().is_empty() {
+            metadata.descriptor.label.clone()
+        } else {
+            collection.name.clone()
+        };
+        let coordinate_reference_binding = metadata
+            .descriptor
+            .coordinate_reference_binding
+            .as_ref()
+            .map(coordinate_reference_binding_dto_from_seismic);
+        let native_spatial = metadata
+            .descriptor
+            .spatial
+            .as_ref()
+            .map(survey_spatial_descriptor_dto_from_seismic)
+            .unwrap_or_else(|| SurveyMapSpatialDescriptorDto {
+                coordinate_reference: coordinate_reference_dto(
+                    asset
+                        .manifest
+                        .reference_metadata
+                        .coordinate_reference
+                        .as_ref(),
+                    asset
+                        .manifest
+                        .reference_metadata
+                        .unit_system
+                        .coordinate_unit
+                        .as_deref(),
+                ),
+                grid_transform: None,
+                footprint: None,
+                availability: SurveyMapSpatialAvailabilityDto::Unavailable,
+                notes: vec![String::from(
+                    "projected seismic survey geometry is not yet materialized from ingest metadata",
+                )],
+            });
+        let transform_cache_dir = project_map_transform_cache_dir(&self.root);
+        let mut notes = Vec::new();
+        let (display_spatial, transform_status, transform_diagnostics) =
+            resolve_display_spatial_descriptor(
+                Some(&transform_cache_dir),
+                &asset.id.0,
+                &metadata.descriptor.geometry.fingerprint,
+                coordinate_reference_binding.as_ref(),
+                &native_spatial,
+                display_coordinate_reference_id,
+                &mut notes,
+            );
+
+        Ok(ResolvedSurveyMapSurveyDto {
+            asset_id: asset.id.0.clone(),
+            logical_asset_id: asset.logical_asset_id.0.clone(),
+            name: survey_name,
+            index_grid: SurveyIndexGridDto {
+                inline_axis: SurveyIndexAxisDto {
+                    count: inline_axis.count,
+                    first: inline_axis.first,
+                    last: inline_axis.last,
+                    step: inline_axis.step,
+                    regular: inline_axis.regular,
+                },
+                xline_axis: SurveyIndexAxisDto {
+                    count: xline_axis.count,
+                    first: xline_axis.first,
+                    last: xline_axis.last,
+                    step: xline_axis.step,
+                    regular: xline_axis.regular,
+                },
+            },
+            coordinate_reference_binding,
+            native_spatial,
+            display_spatial,
+            transform_status,
+            transform_diagnostics,
+            notes,
+        })
+    }
+
+    fn resolve_survey_map_well(
+        &self,
+        wellbore_id: &WellboreId,
+    ) -> Result<ResolvedSurveyMapWellDto> {
+        let wellbore = self.wellbore_by_id(wellbore_id)?;
+        let current_assets = self
+            .asset_summaries(wellbore_id, Some(AssetKind::Trajectory))?
+            .into_iter()
+            .filter(|summary| summary.is_current)
+            .collect::<Vec<_>>();
+
+        let mut trajectories = Vec::new();
+        let mut coordinate_reference = None;
+        let mut notes = Vec::new();
+
+        for summary in current_assets {
+            let asset = summary.asset;
+            let collection = self.collection_by_id(&asset.collection_id)?;
+            let asset_coordinate_reference = coordinate_reference_dto(
+                asset
+                    .manifest
+                    .reference_metadata
+                    .coordinate_reference
+                    .as_ref(),
+                asset
+                    .manifest
+                    .reference_metadata
+                    .unit_system
+                    .coordinate_unit
+                    .as_deref(),
+            );
+            if coordinate_reference.is_none() {
+                coordinate_reference = asset_coordinate_reference;
+            }
+
+            let rows = self.read_trajectory_rows(&asset.id, None)?;
+            if rows.is_empty() {
+                continue;
+            }
+            trajectories.push(SurveyMapTrajectoryDto {
+                asset_id: asset.id.0.clone(),
+                logical_asset_id: asset.logical_asset_id.0.clone(),
+                asset_name: collection.name,
+                rows: rows
+                    .into_iter()
+                    .map(|row| SurveyMapTrajectoryStationDto {
+                        measured_depth: row.measured_depth,
+                        true_vertical_depth: row.true_vertical_depth,
+                        true_vertical_depth_subsea: row.true_vertical_depth_subsea,
+                        azimuth_deg: row.azimuth_deg,
+                        inclination_deg: row.inclination_deg,
+                        northing_offset: row.northing_offset,
+                        easting_offset: row.easting_offset,
+                    })
+                    .collect(),
+            });
+        }
+
+        if trajectories.is_empty() {
+            notes.push(String::from(
+                "no current trajectory assets are available for this wellbore",
+            ));
+        }
+        if coordinate_reference.is_none() {
+            notes.push(String::from(
+                "no coordinate reference is stored on current trajectory assets",
+            ));
+        }
+        notes.push(String::from(
+            "trajectory offsets are relative and require a surface origin before they can be mapped into projected survey coordinates",
+        ));
+
+        Ok(ResolvedSurveyMapWellDto {
+            well_id: wellbore.well_id.0.clone(),
+            wellbore_id: wellbore.id.0.clone(),
+            name: wellbore.name,
+            coordinate_reference,
+            surface_location: None,
+            trajectories,
+            notes,
+        })
+    }
+
+    fn resolve_single_section_well_overlay(
+        &self,
+        wellbore_id: &WellboreId,
+        survey: &ResolvedSurveyMapSurveyDto,
+        grid_transform: &SurveyMapGridTransformDto,
+        section_axis: &SectionAxisSpec,
+        tolerance_m: f64,
+        request: &SectionWellOverlayRequestDto,
+    ) -> Result<ResolvedSectionWellOverlayDto> {
+        let wellbore = self.wellbore_by_id(wellbore_id)?;
+        let resolved_trajectory = self.resolve_wellbore_trajectory(wellbore_id)?;
+        let mut diagnostics = resolved_trajectory.notes.clone();
+        diagnostics.push(format!(
+            "section overlay projected against survey '{}'",
+            survey.name
+        ));
+        diagnostics.push(format!("section tolerance is {:.3} m", tolerance_m));
+        let densification = section_densification_settings(grid_transform, tolerance_m);
+        let densified_stations =
+            densify_trajectory_for_section(&resolved_trajectory.stations, densification);
+        if densified_stations.len() > resolved_trajectory.stations.len() {
+            diagnostics.push(format!(
+                "trajectory densified from {} to {} stations before section projection",
+                resolved_trajectory.stations.len(),
+                densified_stations.len()
+            ));
+        }
+
+        if request.display_domain == SectionWellOverlayDomainDto::Time {
+            return self.resolve_time_section_well_overlay(
+                wellbore,
+                &densified_stations,
+                grid_transform,
+                section_axis,
+                tolerance_m,
+                request,
+                diagnostics,
+            );
+        }
+
+        let mut segments = Vec::new();
+        let mut current_samples = Vec::new();
+        let mut current_notes = vec![format!(
+            "depth overlay uses a densified trajectory polyline with max MD step {:.3} m, max XY chord {:.3} m, and max vertical chord {:.3} m",
+            densification.max_md_step_m,
+            densification.max_xy_step_m,
+            densification.max_vertical_step_m
+        )];
+        let mut depth_reference = None;
+
+        for station in &densified_stations {
+            let Some(absolute_xy) = station.absolute_xy.as_ref() else {
+                if !current_samples.is_empty() {
+                    segments.push(SectionWellOverlaySegmentDto {
+                        samples: std::mem::take(&mut current_samples),
+                        notes: current_notes.clone(),
+                    });
+                }
+                current_notes = vec![String::from(
+                    "segment was split because a resolved trajectory station has no absolute XY",
+                )];
+                continue;
+            };
+
+            let Some(projected) = project_well_station_onto_section(
+                station,
+                absolute_xy,
+                grid_transform,
+                section_axis,
+                tolerance_m,
+            ) else {
+                if !current_samples.is_empty() {
+                    segments.push(SectionWellOverlaySegmentDto {
+                        samples: std::mem::take(&mut current_samples),
+                        notes: current_notes.clone(),
+                    });
+                }
+                current_notes = vec![String::from(
+                    "segment was split because the resolved trajectory moved outside the section tolerance ribbon",
+                )];
+                continue;
+            };
+
+            let Some(sample_value) = projected.sample_value else {
+                diagnostics.push(format!(
+                    "station at measured depth {:.3} m has no TVD/TVDSS depth, so it was omitted from the depth overlay",
+                    station.measured_depth_m
+                ));
+                if !current_samples.is_empty() {
+                    segments.push(SectionWellOverlaySegmentDto {
+                        samples: std::mem::take(&mut current_samples),
+                        notes: current_notes.clone(),
+                    });
+                }
+                current_notes = vec![String::from(
+                    "segment was split because a resolved trajectory station has no depth-domain value",
+                )];
+                continue;
+            };
+
+            if depth_reference.is_none() {
+                depth_reference = if station.true_vertical_depth_m.is_some() {
+                    Some(DepthReferenceKind::TrueVerticalDepth)
+                } else if station.true_vertical_depth_subsea_m.is_some() {
+                    Some(DepthReferenceKind::TrueVerticalDepthSubsea)
+                } else {
+                    None
+                };
+            }
+            current_samples.push(SectionWellOverlaySampleDto {
+                trace_index: projected.trace_index,
+                trace_coordinate: projected.trace_coordinate,
+                sample_index: None,
+                sample_value: Some(sample_value),
+                x: absolute_xy.x,
+                y: absolute_xy.y,
+                measured_depth_m: station.measured_depth_m,
+                true_vertical_depth_m: station.true_vertical_depth_m,
+                true_vertical_depth_subsea_m: station.true_vertical_depth_subsea_m,
+                twt_ms: None,
+            });
+        }
+
+        if !current_samples.is_empty() {
+            segments.push(SectionWellOverlaySegmentDto {
+                samples: current_samples,
+                notes: current_notes,
+            });
+        }
+
+        if segments.is_empty() {
+            diagnostics.push(String::from(
+                "no resolved trajectory stations fell within the requested section tolerance and depth-domain coverage",
+            ));
+        }
+
+        Ok(ResolvedSectionWellOverlayDto {
+            well_id: wellbore.well_id.0,
+            wellbore_id: wellbore.id.0,
+            name: wellbore.name,
+            display_domain: request.display_domain,
+            segments,
+            diagnostics,
+            active_model_id: None,
+            depth_reference,
+            travel_time_reference: None,
+        })
+    }
+
+    fn resolve_time_section_well_overlay(
+        &self,
+        wellbore: WellboreRecord,
+        densified_stations: &[ResolvedTrajectoryStation],
+        grid_transform: &SurveyMapGridTransformDto,
+        section_axis: &SectionAxisSpec,
+        tolerance_m: f64,
+        request: &SectionWellOverlayRequestDto,
+        mut diagnostics: Vec<String>,
+    ) -> Result<ResolvedSectionWellOverlayDto> {
+        let Some((active_model_id, model)) = self
+            .resolve_active_well_time_depth_model(&wellbore.id, &request.active_well_model_ids)?
+        else {
+            diagnostics.push(String::from(
+                "time-domain section overlay requires an active compiled well time-depth model for this wellbore",
+            ));
+            return Ok(ResolvedSectionWellOverlayDto {
+                well_id: wellbore.well_id.0,
+                wellbore_id: wellbore.id.0,
+                name: wellbore.name,
+                display_domain: request.display_domain,
+                segments: Vec::new(),
+                diagnostics,
+                active_model_id: request.active_well_model_ids.first().cloned(),
+                depth_reference: None,
+                travel_time_reference: None,
+            });
+        };
+
+        let mut segments = Vec::new();
+        let mut current_samples = Vec::new();
+        let mut current_notes = vec![String::from(
+            "time overlay uses the active compiled well time-depth model evaluated along the densified trajectory polyline",
+        )];
+        let display_reference = TravelTimeReference::TwoWay;
+        if model.travel_time_reference == TravelTimeReference::OneWay {
+            diagnostics.push(format!(
+                "active well model '{}' is one-way time; section overlay converts it to two-way time for display",
+                active_model_id
+            ));
+        }
+
+        for station in densified_stations {
+            let Some(absolute_xy) = station.absolute_xy.as_ref() else {
+                if !current_samples.is_empty() {
+                    segments.push(SectionWellOverlaySegmentDto {
+                        samples: std::mem::take(&mut current_samples),
+                        notes: current_notes.clone(),
+                    });
+                }
+                current_notes = vec![String::from(
+                    "segment was split because a resolved trajectory station has no absolute XY",
+                )];
+                continue;
+            };
+
+            let Some(projected) = project_well_station_onto_section(
+                station,
+                absolute_xy,
+                grid_transform,
+                section_axis,
+                tolerance_m,
+            ) else {
+                if !current_samples.is_empty() {
+                    segments.push(SectionWellOverlaySegmentDto {
+                        samples: std::mem::take(&mut current_samples),
+                        notes: current_notes.clone(),
+                    });
+                }
+                current_notes = vec![String::from(
+                    "segment was split because the resolved trajectory moved outside the section tolerance ribbon",
+                )];
+                continue;
+            };
+
+            let Some(depth_m) = depth_for_model(station, model.depth_reference) else {
+                if !current_samples.is_empty() {
+                    segments.push(SectionWellOverlaySegmentDto {
+                        samples: std::mem::take(&mut current_samples),
+                        notes: current_notes.clone(),
+                    });
+                }
+                current_notes = vec![String::from(
+                    "segment was split because a resolved trajectory station does not contain the depth reference required by the active well model",
+                )];
+                continue;
+            };
+
+            let Some(time_ms) = interpolate_well_time_depth_model_ms(&model, depth_m) else {
+                if !current_samples.is_empty() {
+                    segments.push(SectionWellOverlaySegmentDto {
+                        samples: std::mem::take(&mut current_samples),
+                        notes: current_notes.clone(),
+                    });
+                }
+                current_notes = vec![String::from(
+                    "segment was split because the active well model has no time coverage for that trajectory interval",
+                )];
+                continue;
+            };
+
+            let twt_ms = display_time_ms(time_ms, model.travel_time_reference, display_reference);
+            current_samples.push(SectionWellOverlaySampleDto {
+                trace_index: projected.trace_index,
+                trace_coordinate: projected.trace_coordinate,
+                sample_index: None,
+                sample_value: Some(twt_ms),
+                x: absolute_xy.x,
+                y: absolute_xy.y,
+                measured_depth_m: station.measured_depth_m,
+                true_vertical_depth_m: station.true_vertical_depth_m,
+                true_vertical_depth_subsea_m: station.true_vertical_depth_subsea_m,
+                twt_ms: Some(twt_ms),
+            });
+        }
+
+        if !current_samples.is_empty() {
+            segments.push(SectionWellOverlaySegmentDto {
+                samples: current_samples,
+                notes: current_notes,
+            });
+        }
+
+        if segments.is_empty() {
+            diagnostics.push(String::from(
+                "no resolved trajectory stations fell within both the section tolerance ribbon and the active well-model time coverage",
+            ));
+        }
+
+        Ok(ResolvedSectionWellOverlayDto {
+            well_id: wellbore.well_id.0,
+            wellbore_id: wellbore.id.0,
+            name: wellbore.name,
+            display_domain: request.display_domain,
+            segments,
+            diagnostics,
+            active_model_id: Some(active_model_id),
+            depth_reference: Some(model.depth_reference),
+            travel_time_reference: Some(display_reference),
+        })
+    }
+
+    fn resolve_active_well_time_depth_model(
+        &self,
+        wellbore_id: &WellboreId,
+        requested_ids: &[String],
+    ) -> Result<Option<(String, WellTimeDepthModel1D)>> {
+        for requested_id in requested_ids {
+            let asset_id = AssetId(requested_id.clone());
+            let Ok(model) = self.read_well_time_depth_model(&asset_id) else {
+                continue;
+            };
+            if model
+                .wellbore_id
+                .as_deref()
+                .is_some_and(|model_wellbore_id| model_wellbore_id != wellbore_id.0)
+            {
+                continue;
+            }
+            return Ok(Some((requested_id.clone(), model)));
+        }
+        if let Some(active_asset_id) = self
+            .wellbore_by_id(wellbore_id)?
+            .active_well_time_depth_model_asset_id
+        {
+            let model = self.read_well_time_depth_model(&active_asset_id)?;
+            if model
+                .wellbore_id
+                .as_deref()
+                .is_none_or(|model_wellbore_id| model_wellbore_id == wellbore_id.0)
+            {
+                return Ok(Some((active_asset_id.0, model)));
+            }
+        }
+        Ok(None)
     }
 
     fn import_structured_asset<F>(
@@ -1959,7 +3400,7 @@ impl OphioliteProject {
     fn wellbore_by_id(&self, wellbore_id: &WellboreId) -> Result<WellboreRecord> {
         self.connection
             .query_row(
-                "SELECT id, well_id, primary_name, identifiers_json
+                "SELECT id, well_id, primary_name, identifiers_json, geometry_json, active_well_time_depth_model_asset_id
                  FROM wellbores
                  WHERE id = ?1",
                 params![wellbore_id.0],
@@ -1972,6 +3413,11 @@ impl OphioliteProject {
                             &row.get::<_, String>(3)?,
                         )
                         .map_err(sql_json_error)?,
+                        geometry: parse_optional_json_column::<WellboreGeometry>(row.get(4)?)
+                            .map_err(sql_json_error)?,
+                        active_well_time_depth_model_asset_id: row
+                            .get::<_, Option<String>>(5)?
+                            .map(AssetId),
                     })
                 },
             )
@@ -2023,7 +3469,7 @@ impl OphioliteProject {
         let existing = self
             .connection
             .query_row(
-                "SELECT id, well_id, primary_name, identifiers_json
+                "SELECT id, well_id, primary_name, identifiers_json, geometry_json, active_well_time_depth_model_asset_id
                  FROM wellbores
                  WHERE well_id = ?1 AND normalized_name = ?2",
                 params![well_id.0, normalized],
@@ -2036,6 +3482,11 @@ impl OphioliteProject {
                             &row.get::<_, String>(3)?,
                         )
                         .map_err(sql_json_error)?,
+                        geometry: parse_optional_json_column::<WellboreGeometry>(row.get(4)?)
+                            .map_err(sql_json_error)?,
+                        active_well_time_depth_model_asset_id: row
+                            .get::<_, Option<String>>(5)?
+                            .map(AssetId),
                     })
                 },
             )
@@ -2050,16 +3501,20 @@ impl OphioliteProject {
             well_id: well_id.clone(),
             name: wellbore_name,
             identifiers: identifiers.clone(),
+            geometry: None,
+            active_well_time_depth_model_asset_id: None,
         };
         self.connection.execute(
-            "INSERT INTO wellbores (id, well_id, primary_name, normalized_name, identifiers_json, created_at_unix_seconds)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO wellbores (id, well_id, primary_name, normalized_name, identifiers_json, geometry_json, active_well_time_depth_model_asset_id, created_at_unix_seconds)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 wellbore.id.0,
                 wellbore.well_id.0,
                 wellbore.name,
                 normalized_text(&wellbore.name),
                 serde_json::to_string(&wellbore.identifiers)?,
+                Option::<String>::None,
+                Option::<String>::None,
                 now_unix_seconds() as i64,
             ],
         ).map_err(sqlite_error)?;
@@ -2418,6 +3873,378 @@ impl OphioliteProject {
     }
 }
 
+pub fn resolve_dataset_summary_survey_map_source(
+    dataset: &DatasetSummary,
+    display_coordinate_reference_id: Option<&str>,
+    cache_dir: Option<&Path>,
+    store_root: Option<&Path>,
+) -> Result<ResolvedSurveyMapSourceDto> {
+    let inline_axis = &dataset.descriptor.geometry.summary.inline_axis;
+    let xline_axis = &dataset.descriptor.geometry.summary.xline_axis;
+    let coordinate_reference_binding = dataset
+        .descriptor
+        .coordinate_reference_binding
+        .as_ref()
+        .map(coordinate_reference_binding_dto_from_seismic);
+    let native_spatial = dataset
+        .descriptor
+        .spatial
+        .as_ref()
+        .map(survey_spatial_descriptor_dto_from_seismic)
+        .unwrap_or_else(|| SurveyMapSpatialDescriptorDto {
+            coordinate_reference: None,
+            grid_transform: None,
+            footprint: None,
+            availability: SurveyMapSpatialAvailabilityDto::Unavailable,
+            notes: vec![String::from(
+                "dataset does not expose native survey map geometry in its descriptor",
+            )],
+        });
+    let mut notes = Vec::new();
+    let dataset_id = dataset.descriptor.id.0.clone();
+    let (display_spatial, transform_status, transform_diagnostics) =
+        resolve_display_spatial_descriptor(
+            cache_dir,
+            &dataset_id,
+            &dataset.descriptor.geometry.fingerprint,
+            coordinate_reference_binding.as_ref(),
+            &native_spatial,
+            display_coordinate_reference_id,
+            &mut notes,
+        );
+
+    let mut survey = ResolvedSurveyMapSurveyDto {
+        asset_id: dataset_id.clone(),
+        logical_asset_id: dataset_id.clone(),
+        name: dataset.descriptor.label.clone(),
+        index_grid: SurveyIndexGridDto {
+            inline_axis: SurveyIndexAxisDto {
+                count: inline_axis.count,
+                first: inline_axis.first,
+                last: inline_axis.last,
+                step: inline_axis.step,
+                regular: inline_axis.regular,
+            },
+            xline_axis: SurveyIndexAxisDto {
+                count: xline_axis.count,
+                first: xline_axis.first,
+                last: xline_axis.last,
+                step: xline_axis.step,
+                regular: xline_axis.regular,
+            },
+        },
+        coordinate_reference_binding,
+        native_spatial,
+        display_spatial,
+        transform_status,
+        transform_diagnostics,
+        notes,
+    };
+    let mut horizons = Vec::new();
+    let mut scalar_field = None;
+    let mut scalar_field_horizon_id = None;
+    if let Some(store_root) = store_root {
+        match resolve_survey_map_horizons_for_store(
+            &survey.asset_id,
+            store_root,
+            &survey,
+            display_coordinate_reference_id,
+        ) {
+            Ok(resolved) => {
+                horizons = resolved.horizons;
+                scalar_field = resolved.scalar_field;
+                scalar_field_horizon_id = resolved.scalar_field_horizon_id;
+            }
+            Err(error) => survey.notes.push(format!(
+                "failed to resolve imported horizons for dataset '{}': {error}",
+                survey.name
+            )),
+        }
+    }
+
+    Ok(ResolvedSurveyMapSourceDto {
+        schema_version: SURVEY_MAP_CONTRACT_VERSION,
+        id: format!("{dataset_id}-survey-map"),
+        name: dataset.descriptor.label.clone(),
+        surveys: vec![survey],
+        wells: Vec::new(),
+        horizons,
+        scalar_field,
+        scalar_field_horizon_id,
+    })
+}
+
+const SURVEY_MAP_SCALAR_ALIGNMENT_EPSILON: f64 = 1e-6;
+
+struct ResolvedSurveyMapHorizonCollection {
+    horizons: Vec<ResolvedSurveyMapHorizonDto>,
+    scalar_field: Option<SurveyMapScalarFieldDto>,
+    scalar_field_horizon_id: Option<String>,
+}
+
+struct ResolvedSurveyMapHorizonPreview {
+    horizon: ResolvedSurveyMapHorizonDto,
+    scalar_field: Option<SurveyMapScalarFieldDto>,
+}
+
+fn resolve_survey_map_horizons_for_store(
+    survey_asset_id: &str,
+    store_root: &Path,
+    survey: &ResolvedSurveyMapSurveyDto,
+    display_coordinate_reference_id: Option<&str>,
+) -> Result<ResolvedSurveyMapHorizonCollection> {
+    let imported = load_horizon_grids(store_root).map_err(|error| {
+        LasError::Storage(format!(
+            "failed to load imported horizons from '{}': {error}",
+            store_root.display()
+        ))
+    })?;
+    let mut horizons = Vec::with_capacity(imported.len());
+    let mut scalar_field = None;
+    let mut scalar_field_horizon_id = None;
+    for horizon in imported {
+        let resolved = resolve_survey_map_horizon_preview(
+            survey_asset_id,
+            survey,
+            &horizon,
+            display_coordinate_reference_id,
+        );
+        if scalar_field.is_none() {
+            scalar_field = resolved.scalar_field;
+            scalar_field_horizon_id = scalar_field.as_ref().map(|_| resolved.horizon.id.clone());
+        }
+        horizons.push(resolved.horizon);
+    }
+    Ok(ResolvedSurveyMapHorizonCollection {
+        horizons,
+        scalar_field,
+        scalar_field_horizon_id,
+    })
+}
+
+fn resolve_survey_map_horizon_preview(
+    survey_asset_id: &str,
+    survey: &ResolvedSurveyMapSurveyDto,
+    horizon: &ImportedHorizonGrid,
+    display_coordinate_reference_id: Option<&str>,
+) -> ResolvedSurveyMapHorizonPreview {
+    let display_requested = display_coordinate_reference_id
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty());
+    let resolved_horizon_id = format!("{survey_asset_id}::{}", horizon.descriptor.id);
+    let mut notes = horizon.descriptor.notes.clone();
+    let native_scalar_field = survey_map_scalar_field_from_horizon_grid(
+        horizon,
+        &resolved_horizon_id,
+        &horizon.descriptor.name,
+        survey.native_spatial.grid_transform.as_ref(),
+        "native",
+        &mut notes,
+    );
+
+    let display_scalar_field = if display_requested {
+        match survey.display_spatial.as_ref() {
+            Some(display_spatial) => survey_map_scalar_field_from_horizon_grid(
+                horizon,
+                &resolved_horizon_id,
+                &horizon.descriptor.name,
+                display_spatial.grid_transform.as_ref(),
+                "display",
+                &mut notes,
+            ),
+            None => {
+                notes.push(format!(
+                    "display horizon preview is unavailable because the survey map transform status is {}",
+                    survey_map_transform_status_label(survey.transform_status)
+                ));
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let preview_status = if display_requested {
+        if display_scalar_field.is_some() {
+            match survey.transform_status {
+                SurveyMapTransformStatusDto::DisplayEquivalent => {
+                    SurveyMapTransformStatusDto::DisplayEquivalent
+                }
+                SurveyMapTransformStatusDto::DisplayTransformed => {
+                    SurveyMapTransformStatusDto::DisplayTransformed
+                }
+                _ => SurveyMapTransformStatusDto::DisplayEquivalent,
+            }
+        } else if native_scalar_field.is_some() && survey.display_spatial.is_some() {
+            notes.push(String::from(
+                "map preview fell back to native survey coordinates because the display-transformed horizon grid cannot be represented by the current axis-aligned scalar-field renderer",
+            ));
+            SurveyMapTransformStatusDto::DisplayDegraded
+        } else if survey.display_spatial.is_none() {
+            SurveyMapTransformStatusDto::DisplayUnavailable
+        } else {
+            SurveyMapTransformStatusDto::DisplayDegraded
+        }
+    } else {
+        SurveyMapTransformStatusDto::NativeOnly
+    };
+
+    let scalar_field = if display_requested {
+        display_scalar_field.or(native_scalar_field)
+    } else {
+        native_scalar_field
+    };
+
+    ResolvedSurveyMapHorizonPreview {
+        horizon: ResolvedSurveyMapHorizonDto {
+            id: resolved_horizon_id,
+            survey_asset_id: survey_asset_id.to_string(),
+            name: horizon.descriptor.name.clone(),
+            source_path: horizon.descriptor.source_path.clone(),
+            point_count: horizon.descriptor.point_count,
+            mapped_point_count: horizon.descriptor.mapped_point_count,
+            missing_cell_count: horizon.descriptor.missing_cell_count,
+            source_coordinate_reference: horizon
+                .descriptor
+                .source_coordinate_reference
+                .as_ref()
+                .map(coordinate_reference_dto_from_seismic),
+            aligned_coordinate_reference: horizon
+                .descriptor
+                .aligned_coordinate_reference
+                .as_ref()
+                .map(coordinate_reference_dto_from_seismic),
+            transformed: horizon.descriptor.transformed,
+            preview_available: scalar_field.is_some(),
+            preview_status,
+            notes,
+        },
+        scalar_field,
+    }
+}
+
+fn survey_map_scalar_field_from_horizon_grid(
+    horizon: &ImportedHorizonGrid,
+    field_id: &str,
+    field_name: &str,
+    grid_transform: Option<&SurveyMapGridTransformDto>,
+    label: &str,
+    notes: &mut Vec<String>,
+) -> Option<SurveyMapScalarFieldDto> {
+    let Some(grid_transform) = grid_transform else {
+        notes.push(format!(
+            "{label} horizon preview is unavailable because the survey grid transform is missing"
+        ));
+        return None;
+    };
+
+    let inline_axis_aligned_y = grid_transform.inline_basis.x.abs()
+        <= SURVEY_MAP_SCALAR_ALIGNMENT_EPSILON
+        && grid_transform.inline_basis.y.abs() > SURVEY_MAP_SCALAR_ALIGNMENT_EPSILON;
+    let xline_axis_aligned_x = grid_transform.xline_basis.y.abs()
+        <= SURVEY_MAP_SCALAR_ALIGNMENT_EPSILON
+        && grid_transform.xline_basis.x.abs() > SURVEY_MAP_SCALAR_ALIGNMENT_EPSILON;
+    let inline_axis_aligned_x = grid_transform.inline_basis.y.abs()
+        <= SURVEY_MAP_SCALAR_ALIGNMENT_EPSILON
+        && grid_transform.inline_basis.x.abs() > SURVEY_MAP_SCALAR_ALIGNMENT_EPSILON;
+    let xline_axis_aligned_y = grid_transform.xline_basis.x.abs()
+        <= SURVEY_MAP_SCALAR_ALIGNMENT_EPSILON
+        && grid_transform.xline_basis.y.abs() > SURVEY_MAP_SCALAR_ALIGNMENT_EPSILON;
+
+    let (columns, rows, step, values) = if inline_axis_aligned_y && xline_axis_aligned_x {
+        (
+            horizon.xline_count,
+            horizon.inline_count,
+            ProjectedPoint2Dto {
+                x: grid_transform.xline_basis.x,
+                y: grid_transform.inline_basis.y,
+            },
+            horizon_scalar_values_inline_rows(horizon),
+        )
+    } else if inline_axis_aligned_x && xline_axis_aligned_y {
+        (
+            horizon.inline_count,
+            horizon.xline_count,
+            ProjectedPoint2Dto {
+                x: grid_transform.inline_basis.x,
+                y: grid_transform.xline_basis.y,
+            },
+            horizon_scalar_values_transposed(horizon),
+        )
+    } else {
+        notes.push(format!(
+            "{label} horizon preview is unavailable because the survey grid is rotated or skewed and the current map scalar-field renderer only supports axis-aligned rectilinear grids"
+        ));
+        return None;
+    };
+
+    let (min_value, max_value) = finite_f32_range(&values);
+    Some(SurveyMapScalarFieldDto {
+        id: field_id.to_string(),
+        name: field_name.to_string(),
+        columns,
+        rows,
+        values,
+        origin: grid_transform.origin.clone(),
+        step,
+        unit: None,
+        min_value,
+        max_value,
+    })
+}
+
+fn horizon_scalar_values_inline_rows(horizon: &ImportedHorizonGrid) -> Vec<f32> {
+    horizon
+        .values
+        .iter()
+        .zip(&horizon.validity)
+        .map(|(value, valid)| if *valid == 0 { f32::NAN } else { *value })
+        .collect()
+}
+
+fn horizon_scalar_values_transposed(horizon: &ImportedHorizonGrid) -> Vec<f32> {
+    let mut values = vec![f32::NAN; horizon.inline_count * horizon.xline_count];
+    for inline_index in 0..horizon.inline_count {
+        for xline_index in 0..horizon.xline_count {
+            let source_offset = inline_index * horizon.xline_count + xline_index;
+            let target_offset = xline_index * horizon.inline_count + inline_index;
+            values[target_offset] = if horizon.validity[source_offset] == 0 {
+                f32::NAN
+            } else {
+                horizon.values[source_offset]
+            };
+        }
+    }
+    values
+}
+
+fn finite_f32_range(values: &[f32]) -> (Option<f32>, Option<f32>) {
+    let mut min = f32::INFINITY;
+    let mut max = f32::NEG_INFINITY;
+    for value in values {
+        if !value.is_finite() {
+            continue;
+        }
+        min = min.min(*value);
+        max = max.max(*value);
+    }
+    if min.is_finite() && max.is_finite() {
+        (Some(min), Some(max))
+    } else {
+        (None, None)
+    }
+}
+
+fn survey_map_transform_status_label(status: SurveyMapTransformStatusDto) -> &'static str {
+    match status {
+        SurveyMapTransformStatusDto::NativeOnly => "native_only",
+        SurveyMapTransformStatusDto::DisplayEquivalent => "display_equivalent",
+        SurveyMapTransformStatusDto::DisplayTransformed => "display_transformed",
+        SurveyMapTransformStatusDto::DisplayDegraded => "display_degraded",
+        SurveyMapTransformStatusDto::DisplayUnavailable => "display_unavailable",
+    }
+}
+
 fn copy_if_exists(source: &Path, target: &Path) -> Result<()> {
     if source.exists() {
         copy_path(source, target)?;
@@ -2672,6 +4499,18 @@ fn default_asset_diff_summary(asset_kind: &AssetKind) -> AssetDiffSummary {
         AssetKind::DrillingObservation => {
             AssetDiffSummary::DrillingObservation(StructuredAssetDiffSummary::default())
         }
+        AssetKind::CheckshotVspObservationSet => {
+            AssetDiffSummary::CheckshotVspObservationSet(DirectoryAssetDiffSummary::default())
+        }
+        AssetKind::ManualTimeDepthPickSet => {
+            AssetDiffSummary::ManualTimeDepthPickSet(DirectoryAssetDiffSummary::default())
+        }
+        AssetKind::WellTimeDepthAuthoredModel => {
+            AssetDiffSummary::WellTimeDepthAuthoredModel(DirectoryAssetDiffSummary::default())
+        }
+        AssetKind::WellTimeDepthModel => {
+            AssetDiffSummary::WellTimeDepthModel(DirectoryAssetDiffSummary::default())
+        }
         AssetKind::SeismicTraceData => {
             AssetDiffSummary::SeismicTraceData(DirectoryAssetDiffSummary::default())
         }
@@ -2701,6 +4540,18 @@ fn diff_structured_rows<T: PartialEq>(
         AssetKind::PressureObservation => AssetDiffSummary::PressureObservation(summary),
         AssetKind::DrillingObservation => AssetDiffSummary::DrillingObservation(summary),
         AssetKind::Log => AssetDiffSummary::Log(LogAssetDiffSummary::default()),
+        AssetKind::CheckshotVspObservationSet => {
+            AssetDiffSummary::CheckshotVspObservationSet(DirectoryAssetDiffSummary::default())
+        }
+        AssetKind::ManualTimeDepthPickSet => {
+            AssetDiffSummary::ManualTimeDepthPickSet(DirectoryAssetDiffSummary::default())
+        }
+        AssetKind::WellTimeDepthAuthoredModel => {
+            AssetDiffSummary::WellTimeDepthAuthoredModel(DirectoryAssetDiffSummary::default())
+        }
+        AssetKind::WellTimeDepthModel => {
+            AssetDiffSummary::WellTimeDepthModel(DirectoryAssetDiffSummary::default())
+        }
         AssetKind::SeismicTraceData => {
             AssetDiffSummary::SeismicTraceData(DirectoryAssetDiffSummary::default())
         }
@@ -2806,6 +4657,18 @@ fn summarize_asset_diff(asset_kind: &AssetKind, diff: &AssetDiffSummary) -> Stri
         }
         AssetDiffSummary::DrillingObservation(summary) => {
             summarize_structured_asset_diff("drilling observations", summary)
+        }
+        AssetDiffSummary::CheckshotVspObservationSet(summary) => {
+            summarize_directory_asset_diff("checkshot/VSP observations", summary)
+        }
+        AssetDiffSummary::ManualTimeDepthPickSet(summary) => {
+            summarize_directory_asset_diff("manual time-depth picks", summary)
+        }
+        AssetDiffSummary::WellTimeDepthAuthoredModel(summary) => {
+            summarize_directory_asset_diff("well time-depth authored model", summary)
+        }
+        AssetDiffSummary::WellTimeDepthModel(summary) => {
+            summarize_directory_asset_diff("well time-depth model", summary)
         }
         AssetDiffSummary::SeismicTraceData(summary) => {
             summarize_directory_asset_diff("seismic trace data", summary)
@@ -2920,6 +4783,8 @@ fn initialize_project_schema(connection: &Connection) -> Result<()> {
             primary_name TEXT NOT NULL,
             normalized_name TEXT NOT NULL,
             identifiers_json TEXT NOT NULL,
+            geometry_json TEXT,
+            active_well_time_depth_model_asset_id TEXT,
             created_at_unix_seconds INTEGER NOT NULL
         );
         CREATE TABLE IF NOT EXISTS asset_collections (
@@ -2964,7 +4829,40 @@ fn initialize_project_schema(connection: &Connection) -> Result<()> {
             params![PROJECT_SCHEMA_VERSION],
         )
         .map_err(sqlite_error)?;
+    ensure_optional_text_column(connection, "wellbores", "geometry_json")?;
+    ensure_optional_text_column(
+        connection,
+        "wellbores",
+        "active_well_time_depth_model_asset_id",
+    )?;
     Ok(())
+}
+
+fn ensure_optional_text_column(connection: &Connection, table: &str, column: &str) -> Result<()> {
+    let pragma = format!("PRAGMA table_info({table})");
+    let mut statement = connection.prepare(&pragma).map_err(sqlite_error)?;
+    let mut rows = statement.query([]).map_err(sqlite_error)?;
+    while let Some(row) = rows.next().map_err(sqlite_error)? {
+        let existing: String = row.get(1).map_err(sqlite_error)?;
+        if existing == column {
+            return Ok(());
+        }
+    }
+    connection
+        .execute(&format!("ALTER TABLE {table} ADD COLUMN {column} TEXT"), [])
+        .map_err(sqlite_error)?;
+    Ok(())
+}
+
+fn parse_optional_json_column<T>(
+    value: Option<String>,
+) -> std::result::Result<Option<T>, serde_json::Error>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    value
+        .map(|json| serde_json::from_str::<T>(&json))
+        .transpose()
 }
 
 fn classify_log_curves_from_file(file: &LasFile) -> Vec<CurveSemanticDescriptor> {
@@ -3149,6 +5047,7 @@ fn trajectory_rows_from_compute(rows: &[TrajectoryDataRow]) -> StructuredCompute
             .map(|row| TrajectoryRow {
                 measured_depth: row.measured_depth,
                 true_vertical_depth: row.true_vertical_depth,
+                true_vertical_depth_subsea: None,
                 azimuth_deg: row.azimuth_deg,
                 inclination_deg: row.inclination_deg,
                 northing_offset: row.northing_offset,
@@ -3411,6 +5310,155 @@ fn structured_asset_manifest(
             depth_reference: depth_reference_for_kind(&asset_kind),
             unit_system: UnitSystem {
                 depth_unit: None,
+                coordinate_unit: None,
+                pressure_unit: None,
+            },
+        },
+        created_at_unix_seconds: imported_at,
+        imported_at_unix_seconds: imported_at,
+        supersedes,
+        derived_from: None,
+        curve_semantics: Vec::new(),
+        compute_manifest: None,
+    })
+}
+
+fn well_time_depth_model_manifest(
+    source_path: &Path,
+    model: &WellTimeDepthModel1D,
+    well_id: &WellId,
+    wellbore_id: &WellboreId,
+    collection_id: &AssetCollectionId,
+    logical_asset_id: &AssetId,
+    storage_asset_id: &AssetId,
+    identifiers: WellIdentifierSet,
+    supersedes: Option<AssetId>,
+) -> Result<AssetManifest> {
+    let imported_at = now_unix_seconds();
+    let source_bytes = fs::read(source_path)?;
+    let fingerprint = source_fingerprint(&source_bytes);
+    let provenance = Provenance::from_path(source_path, fingerprint.clone(), imported_at);
+    let start = model.samples.first().map(|sample| f64::from(sample.depth));
+    let stop = model.samples.last().map(|sample| f64::from(sample.depth));
+    Ok(AssetManifest {
+        asset_kind: AssetKind::WellTimeDepthModel,
+        asset_schema_version: "0.1.0".to_string(),
+        logical_asset_id: logical_asset_id.clone(),
+        storage_asset_id: storage_asset_id.clone(),
+        well_id: well_id.clone(),
+        wellbore_id: wellbore_id.clone(),
+        asset_collection_id: collection_id.clone(),
+        source_artifacts: vec![SourceArtifactRef {
+            source_path: provenance.source_path.clone(),
+            original_filename: provenance.original_filename.clone(),
+            source_fingerprint: provenance.source_fingerprint.clone(),
+        }],
+        provenance,
+        diagnostics: Vec::new(),
+        extents: AssetExtent {
+            index_kind: Some(IndexKind::Depth),
+            start,
+            stop,
+            row_count: Some(model.samples.len()),
+        },
+        bulk_data_descriptors: vec![
+            BulkDataDescriptor {
+                relative_path: "metadata.json".to_string(),
+                media_type: "application/json".to_string(),
+                role: "metadata".to_string(),
+            },
+            BulkDataDescriptor {
+                relative_path: WELL_TIME_DEPTH_MODEL_FILENAME.to_string(),
+                media_type: "application/json".to_string(),
+                role: "well_time_depth_model".to_string(),
+            },
+        ],
+        reference_metadata: AssetReferenceMetadata {
+            identifiers,
+            coordinate_reference: None,
+            vertical_datum: None,
+            depth_reference: project_depth_reference_from_model(model.depth_reference),
+            unit_system: UnitSystem {
+                depth_unit: Some("m".to_string()),
+                coordinate_unit: None,
+                pressure_unit: None,
+            },
+        },
+        created_at_unix_seconds: imported_at,
+        imported_at_unix_seconds: imported_at,
+        supersedes,
+        derived_from: None,
+        curve_semantics: Vec::new(),
+        compute_manifest: None,
+    })
+}
+
+fn well_time_depth_json_manifest(
+    source_path: &Path,
+    well_id: &WellId,
+    wellbore_id: &WellboreId,
+    collection_id: &AssetCollectionId,
+    logical_asset_id: &AssetId,
+    storage_asset_id: &AssetId,
+    asset_kind: AssetKind,
+    identifiers: WellIdentifierSet,
+    supersedes: Option<AssetId>,
+) -> Result<AssetManifest> {
+    let imported_at = now_unix_seconds();
+    let source_bytes = fs::read(source_path)?;
+    let fingerprint = source_fingerprint(&source_bytes);
+    let provenance = Provenance::from_path(source_path, fingerprint.clone(), imported_at);
+    let payload_filename = match asset_kind {
+        AssetKind::CheckshotVspObservationSet => CHECKSHOT_VSP_OBSERVATION_SET_FILENAME,
+        AssetKind::ManualTimeDepthPickSet => MANUAL_TIME_DEPTH_PICK_SET_FILENAME,
+        AssetKind::WellTimeDepthAuthoredModel => WELL_TIME_DEPTH_AUTHORED_MODEL_FILENAME,
+        _ => {
+            return Err(LasError::Validation(format!(
+                "asset kind '{}' is not supported by the well time-depth json manifest helper",
+                asset_kind.as_str()
+            )));
+        }
+    };
+    Ok(AssetManifest {
+        asset_kind,
+        asset_schema_version: "0.1.0".to_string(),
+        logical_asset_id: logical_asset_id.clone(),
+        storage_asset_id: storage_asset_id.clone(),
+        well_id: well_id.clone(),
+        wellbore_id: wellbore_id.clone(),
+        asset_collection_id: collection_id.clone(),
+        source_artifacts: vec![SourceArtifactRef {
+            source_path: provenance.source_path.clone(),
+            original_filename: provenance.original_filename.clone(),
+            source_fingerprint: provenance.source_fingerprint.clone(),
+        }],
+        provenance,
+        diagnostics: Vec::new(),
+        extents: AssetExtent {
+            index_kind: Some(IndexKind::Depth),
+            start: None,
+            stop: None,
+            row_count: None,
+        },
+        bulk_data_descriptors: vec![
+            BulkDataDescriptor {
+                relative_path: "metadata.json".to_string(),
+                media_type: "application/json".to_string(),
+                role: "metadata".to_string(),
+            },
+            BulkDataDescriptor {
+                relative_path: payload_filename.to_string(),
+                media_type: "application/json".to_string(),
+                role: "payload".to_string(),
+            },
+        ],
+        reference_metadata: AssetReferenceMetadata {
+            identifiers,
+            coordinate_reference: None,
+            vertical_datum: None,
+            depth_reference: DepthReference::Unknown,
+            unit_system: UnitSystem {
+                depth_unit: Some("m".to_string()),
                 coordinate_unit: None,
                 pressure_unit: None,
             },
@@ -3693,7 +5741,11 @@ fn structured_asset_extent(
             AssetKind::Trajectory
             | AssetKind::TopSet
             | AssetKind::PressureObservation
-            | AssetKind::DrillingObservation => Some(IndexKind::Depth),
+            | AssetKind::DrillingObservation
+            | AssetKind::CheckshotVspObservationSet
+            | AssetKind::ManualTimeDepthPickSet
+            | AssetKind::WellTimeDepthAuthoredModel
+            | AssetKind::WellTimeDepthModel => Some(IndexKind::Depth),
             AssetKind::Log => Some(IndexKind::Depth),
             AssetKind::SeismicTraceData => Some(IndexKind::Time),
         },
@@ -3710,6 +5762,1807 @@ fn seismic_asset_extent(metadata: &SeismicAssetMetadata) -> AssetExtent {
         start: sample_axis.first().copied().map(f64::from),
         stop: sample_axis.last().copied().map(f64::from),
         row_count: Some(metadata.store.volume.shape[0] * metadata.store.volume.shape[1]),
+    }
+}
+
+fn write_well_time_depth_model_package(
+    package_root: &Path,
+    model: &WellTimeDepthModel1D,
+) -> Result<()> {
+    validate_well_time_depth_model(model)?;
+    fs::create_dir_all(package_root)?;
+    fs::write(
+        package_root.join("metadata.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": "0.1.0",
+            "asset_kind": "well_time_depth_model",
+            "id": model.id,
+            "name": model.name,
+            "wellbore_id": model.wellbore_id,
+            "source_kind": model.source_kind,
+            "depth_reference": model.depth_reference,
+            "travel_time_reference": model.travel_time_reference,
+            "sample_count": model.samples.len(),
+            "depth_start": model.samples.first().map(|sample| sample.depth),
+            "depth_stop": model.samples.last().map(|sample| sample.depth),
+        }))?,
+    )?;
+    fs::write(
+        package_root.join(WELL_TIME_DEPTH_MODEL_FILENAME),
+        serde_json::to_vec_pretty(model)?,
+    )?;
+    Ok(())
+}
+
+fn write_checkshot_vsp_observation_set_package(
+    package_root: &Path,
+    observation_set: &CheckshotVspObservationSet1D,
+) -> Result<()> {
+    validate_checkshot_vsp_observation_set(observation_set)?;
+    write_well_time_depth_json_package(
+        package_root,
+        CHECKSHOT_VSP_OBSERVATION_SET_FILENAME,
+        observation_set,
+    )
+}
+
+fn write_manual_time_depth_pick_set_package(
+    package_root: &Path,
+    pick_set: &ManualTimeDepthPickSet1D,
+) -> Result<()> {
+    validate_manual_time_depth_pick_set(pick_set)?;
+    write_well_time_depth_json_package(package_root, MANUAL_TIME_DEPTH_PICK_SET_FILENAME, pick_set)
+}
+
+fn write_well_time_depth_authored_model_package(
+    package_root: &Path,
+    model: &WellTimeDepthAuthoredModel1D,
+) -> Result<()> {
+    validate_well_time_depth_authored_model(model)?;
+    write_well_time_depth_json_package(package_root, WELL_TIME_DEPTH_AUTHORED_MODEL_FILENAME, model)
+}
+
+fn read_well_time_depth_model_package(package_root: &Path) -> Result<WellTimeDepthModel1D> {
+    let model: WellTimeDepthModel1D = serde_json::from_slice(&fs::read(
+        package_root.join(WELL_TIME_DEPTH_MODEL_FILENAME),
+    )?)
+    .map_err(|error| {
+        LasError::Parse(format!(
+            "failed to parse well time-depth model package '{}': {error}",
+            package_root.display()
+        ))
+    })?;
+    validate_well_time_depth_model(&model)?;
+    Ok(model)
+}
+
+fn read_checkshot_vsp_observation_set_package(
+    package_root: &Path,
+) -> Result<CheckshotVspObservationSet1D> {
+    let observation_set: CheckshotVspObservationSet1D =
+        read_well_time_depth_json_package(package_root, CHECKSHOT_VSP_OBSERVATION_SET_FILENAME)?;
+    validate_checkshot_vsp_observation_set(&observation_set)?;
+    Ok(observation_set)
+}
+
+fn read_manual_time_depth_pick_set_package(
+    package_root: &Path,
+) -> Result<ManualTimeDepthPickSet1D> {
+    let pick_set: ManualTimeDepthPickSet1D =
+        read_well_time_depth_json_package(package_root, MANUAL_TIME_DEPTH_PICK_SET_FILENAME)?;
+    validate_manual_time_depth_pick_set(&pick_set)?;
+    Ok(pick_set)
+}
+
+fn read_well_time_depth_authored_model_package(
+    package_root: &Path,
+) -> Result<WellTimeDepthAuthoredModel1D> {
+    let model: WellTimeDepthAuthoredModel1D =
+        read_well_time_depth_json_package(package_root, WELL_TIME_DEPTH_AUTHORED_MODEL_FILENAME)?;
+    validate_well_time_depth_authored_model(&model)?;
+    Ok(model)
+}
+
+fn write_well_time_depth_json_package<T: Serialize>(
+    package_root: &Path,
+    payload_filename: &str,
+    payload: &T,
+) -> Result<()> {
+    fs::create_dir_all(package_root)?;
+    fs::write(
+        package_root.join("metadata.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": "0.1.0",
+            "asset_kind": payload_filename.strip_suffix(".json").unwrap_or(payload_filename),
+            "payload_filename": payload_filename,
+        }))?,
+    )?;
+    fs::write(
+        package_root.join(payload_filename),
+        serde_json::to_vec_pretty(payload)?,
+    )?;
+    Ok(())
+}
+
+fn read_well_time_depth_json_package<T: for<'de> Deserialize<'de>>(
+    package_root: &Path,
+    payload_filename: &str,
+) -> Result<T> {
+    serde_json::from_slice(&fs::read(package_root.join(payload_filename))?).map_err(|error| {
+        LasError::Parse(format!(
+            "failed to parse well time-depth json package '{}': {error}",
+            package_root.display()
+        ))
+    })
+}
+
+fn read_seismic_asset_metadata(package_root: &Path) -> Result<SeismicAssetMetadata> {
+    let metadata_path = package_root.join("metadata.json");
+    let bytes = fs::read(&metadata_path).map_err(|error| {
+        LasError::Storage(format!(
+            "failed to read seismic asset metadata '{}': {error}",
+            metadata_path.display()
+        ))
+    })?;
+    serde_json::from_slice(&bytes).map_err(|error| {
+        LasError::Storage(format!(
+            "failed to parse seismic asset metadata '{}': {error}",
+            metadata_path.display()
+        ))
+    })
+}
+
+fn coordinate_reference_dto(
+    reference: Option<&CoordinateReference>,
+    unit: Option<&str>,
+) -> Option<CoordinateReferenceDto> {
+    reference.map(|reference| CoordinateReferenceDto {
+        id: None,
+        name: reference.name.clone(),
+        geodetic_datum: reference.geodetic_datum.clone(),
+        unit: unit.map(str::to_owned),
+    })
+}
+
+fn survey_spatial_descriptor_dto_from_seismic(
+    spatial: &ophiolite_seismic::SurveySpatialDescriptor,
+) -> SurveyMapSpatialDescriptorDto {
+    SurveyMapSpatialDescriptorDto {
+        coordinate_reference: spatial
+            .coordinate_reference
+            .as_ref()
+            .map(coordinate_reference_dto_from_seismic),
+        grid_transform: spatial.grid_transform.as_ref().map(|transform| {
+            SurveyMapGridTransformDto {
+                origin: projected_point_dto_from_seismic(&transform.origin),
+                inline_basis: ProjectedVector2Dto {
+                    x: transform.inline_basis.x,
+                    y: transform.inline_basis.y,
+                },
+                xline_basis: ProjectedVector2Dto {
+                    x: transform.xline_basis.x,
+                    y: transform.xline_basis.y,
+                },
+            }
+        }),
+        footprint: spatial
+            .footprint
+            .as_ref()
+            .map(|polygon| ProjectedPolygon2Dto {
+                exterior: polygon
+                    .exterior
+                    .iter()
+                    .map(projected_point_dto_from_seismic)
+                    .collect(),
+            }),
+        availability: match spatial.availability {
+            ophiolite_seismic::SurveySpatialAvailability::Available => {
+                SurveyMapSpatialAvailabilityDto::Available
+            }
+            ophiolite_seismic::SurveySpatialAvailability::Partial => {
+                SurveyMapSpatialAvailabilityDto::Partial
+            }
+            ophiolite_seismic::SurveySpatialAvailability::Unavailable => {
+                SurveyMapSpatialAvailabilityDto::Unavailable
+            }
+        },
+        notes: spatial.notes.clone(),
+    }
+}
+
+fn coordinate_reference_binding_dto_from_seismic(
+    binding: &ophiolite_seismic::CoordinateReferenceBinding,
+) -> CoordinateReferenceBindingDto {
+    CoordinateReferenceBindingDto {
+        detected: binding
+            .detected
+            .as_ref()
+            .map(coordinate_reference_dto_from_seismic),
+        effective: binding
+            .effective
+            .as_ref()
+            .map(coordinate_reference_dto_from_seismic),
+        source: match binding.source {
+            ophiolite_seismic::CoordinateReferenceSource::Header => {
+                CoordinateReferenceSourceDto::Header
+            }
+            ophiolite_seismic::CoordinateReferenceSource::ImportManifest => {
+                CoordinateReferenceSourceDto::ImportManifest
+            }
+            ophiolite_seismic::CoordinateReferenceSource::UserOverride => {
+                CoordinateReferenceSourceDto::UserOverride
+            }
+            ophiolite_seismic::CoordinateReferenceSource::Unknown => {
+                CoordinateReferenceSourceDto::Unknown
+            }
+        },
+        notes: binding.notes.clone(),
+    }
+}
+
+fn resolve_display_spatial_descriptor(
+    cache_dir: Option<&Path>,
+    asset_id: &str,
+    geometry_fingerprint: &str,
+    coordinate_reference_binding: Option<&CoordinateReferenceBindingDto>,
+    native_spatial: &SurveyMapSpatialDescriptorDto,
+    display_coordinate_reference_id: Option<&str>,
+    notes: &mut Vec<String>,
+) -> (
+    Option<SurveyMapSpatialDescriptorDto>,
+    SurveyMapTransformStatusDto,
+    SurveyMapTransformDiagnosticsDto,
+) {
+    let policy = SurveyMapTransformPolicyDto::BestAvailable;
+    let source_coordinate_reference_id = coordinate_reference_binding
+        .and_then(|binding| binding.effective.as_ref())
+        .and_then(|reference| reference.id.clone());
+    let Some(display_coordinate_reference_id) = display_coordinate_reference_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return (
+            None,
+            SurveyMapTransformStatusDto::NativeOnly,
+            SurveyMapTransformDiagnosticsDto {
+                source_coordinate_reference_id,
+                target_coordinate_reference_id: None,
+                policy,
+                operation_id: None,
+                operation_name: None,
+                accuracy_meters: None,
+                degraded: false,
+                notes: Vec::new(),
+            },
+        );
+    };
+
+    if !is_supported_epsg_identifier(display_coordinate_reference_id) {
+        let note = format!(
+            "display coordinate reference '{display_coordinate_reference_id}' is not yet supported; phase 2 currently accepts only EPSG identifiers"
+        );
+        notes.push(note.clone());
+        return (
+            None,
+            SurveyMapTransformStatusDto::DisplayUnavailable,
+            SurveyMapTransformDiagnosticsDto {
+                source_coordinate_reference_id,
+                target_coordinate_reference_id: Some(display_coordinate_reference_id.to_string()),
+                policy,
+                operation_id: None,
+                operation_name: None,
+                accuracy_meters: None,
+                degraded: false,
+                notes: vec![note],
+            },
+        );
+    }
+
+    let effective_id = coordinate_reference_binding
+        .and_then(|binding| binding.effective.as_ref())
+        .and_then(|reference| reference.id.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let target_coordinate_reference_id = Some(display_coordinate_reference_id.to_string());
+
+    match effective_id {
+        Some(effective_id)
+            if effective_id.eq_ignore_ascii_case(display_coordinate_reference_id) =>
+        {
+            let mut display_spatial = native_spatial.clone();
+            if let Some(binding) = coordinate_reference_binding {
+                display_spatial.coordinate_reference = binding.effective.clone();
+            } else {
+                display_spatial.coordinate_reference = Some(CoordinateReferenceDto {
+                    id: Some(display_coordinate_reference_id.to_string()),
+                    name: None,
+                    geodetic_datum: None,
+                    unit: native_spatial
+                        .coordinate_reference
+                        .as_ref()
+                        .and_then(|reference| reference.unit.clone()),
+                });
+            }
+            (
+                Some(display_spatial),
+                SurveyMapTransformStatusDto::DisplayEquivalent,
+                SurveyMapTransformDiagnosticsDto {
+                    source_coordinate_reference_id,
+                    target_coordinate_reference_id,
+                    policy,
+                    operation_id: None,
+                    operation_name: Some("identity".to_string()),
+                    accuracy_meters: Some(0.0),
+                    degraded: false,
+                    notes: Vec::new(),
+                },
+            )
+        }
+        Some(source_coordinate_reference_id) => {
+            if !is_supported_epsg_identifier(source_coordinate_reference_id) {
+                let note = format!(
+                    "survey effective native CRS '{source_coordinate_reference_id}' is not yet supported for reprojection; phase 2 currently accepts only EPSG identifiers"
+                );
+                notes.push(note.clone());
+                return (
+                    None,
+                    SurveyMapTransformStatusDto::DisplayUnavailable,
+                    SurveyMapTransformDiagnosticsDto {
+                        source_coordinate_reference_id: Some(
+                            source_coordinate_reference_id.to_string(),
+                        ),
+                        target_coordinate_reference_id,
+                        policy,
+                        operation_id: None,
+                        operation_name: None,
+                        accuracy_meters: None,
+                        degraded: false,
+                        notes: vec![note],
+                    },
+                );
+            }
+
+            if !native_spatial_has_transformable_geometry(native_spatial) {
+                let note = format!(
+                    "display coordinate reference '{display_coordinate_reference_id}' was requested but the survey has no transformable native map geometry"
+                );
+                notes.push(note.clone());
+                return (
+                    None,
+                    SurveyMapTransformStatusDto::DisplayUnavailable,
+                    SurveyMapTransformDiagnosticsDto {
+                        source_coordinate_reference_id: Some(
+                            source_coordinate_reference_id.to_string(),
+                        ),
+                        target_coordinate_reference_id,
+                        policy,
+                        operation_id: None,
+                        operation_name: None,
+                        accuracy_meters: None,
+                        degraded: false,
+                        notes: vec![note],
+                    },
+                );
+            }
+
+            let cache_key = survey_map_transform_cache_key(
+                asset_id,
+                geometry_fingerprint,
+                source_coordinate_reference_id,
+                display_coordinate_reference_id,
+                policy,
+            );
+            if let Some(cached) = read_survey_map_transform_cache(cache_dir, &cache_key) {
+                let mut diagnostics = cached.transform_diagnostics.clone();
+                diagnostics
+                    .notes
+                    .push("display spatial loaded from cache".to_string());
+                return (
+                    Some(cached.display_spatial),
+                    cached.transform_status,
+                    diagnostics,
+                );
+            }
+
+            match transform_survey_map_spatial_descriptor(
+                native_spatial,
+                source_coordinate_reference_id,
+                display_coordinate_reference_id,
+            ) {
+                Ok(display_spatial) => {
+                    let diagnostics = SurveyMapTransformDiagnosticsDto {
+                        source_coordinate_reference_id: Some(
+                            source_coordinate_reference_id.to_string(),
+                        ),
+                        target_coordinate_reference_id,
+                        policy,
+                        operation_id: Some("proj_crs_to_crs".to_string()),
+                        operation_name: Some(format!(
+                            "proj_crs_to_crs:{source_coordinate_reference_id}->{display_coordinate_reference_id}"
+                        )),
+                        accuracy_meters: None,
+                        degraded: false,
+                        notes: vec![format!(
+                            "display spatial was reprojected from {source_coordinate_reference_id} to {display_coordinate_reference_id}"
+                        )],
+                    };
+                    let artifact = SurveyMapTransformCacheArtifact {
+                        schema_version: SURVEY_MAP_TRANSFORM_CACHE_SCHEMA_VERSION,
+                        cache_key,
+                        asset_id: asset_id.to_string(),
+                        geometry_fingerprint: geometry_fingerprint.to_string(),
+                        source_coordinate_reference_id: source_coordinate_reference_id.to_string(),
+                        target_coordinate_reference_id: display_coordinate_reference_id.to_string(),
+                        policy,
+                        display_spatial: display_spatial.clone(),
+                        transform_status: SurveyMapTransformStatusDto::DisplayTransformed,
+                        transform_diagnostics: diagnostics.clone(),
+                    };
+                    if let Err(error) = write_survey_map_transform_cache(cache_dir, &artifact) {
+                        notes.push(format!(
+                            "failed to persist survey-map transform cache artifact: {error}"
+                        ));
+                    }
+                    (
+                        Some(display_spatial),
+                        SurveyMapTransformStatusDto::DisplayTransformed,
+                        diagnostics,
+                    )
+                }
+                Err(error) => {
+                    let note = format!(
+                        "display coordinate reference '{display_coordinate_reference_id}' could not be resolved from '{source_coordinate_reference_id}': {error}"
+                    );
+                    notes.push(note.clone());
+                    (
+                        None,
+                        SurveyMapTransformStatusDto::DisplayUnavailable,
+                        SurveyMapTransformDiagnosticsDto {
+                            source_coordinate_reference_id: Some(
+                                source_coordinate_reference_id.to_string(),
+                            ),
+                            target_coordinate_reference_id,
+                            policy,
+                            operation_id: Some("proj_crs_to_crs".to_string()),
+                            operation_name: Some(format!(
+                                "proj_crs_to_crs:{source_coordinate_reference_id}->{display_coordinate_reference_id}"
+                            )),
+                            accuracy_meters: None,
+                            degraded: false,
+                            notes: vec![note],
+                        },
+                    )
+                }
+            }
+        }
+        None => {
+            let note = format!(
+                "display coordinate reference '{display_coordinate_reference_id}' was requested but the survey effective native CRS is unknown"
+            );
+            notes.push(note.clone());
+            (
+                None,
+                SurveyMapTransformStatusDto::DisplayUnavailable,
+                SurveyMapTransformDiagnosticsDto {
+                    source_coordinate_reference_id,
+                    target_coordinate_reference_id,
+                    policy,
+                    operation_id: None,
+                    operation_name: None,
+                    accuracy_meters: None,
+                    degraded: false,
+                    notes: vec![note],
+                },
+            )
+        }
+    }
+}
+
+fn is_supported_epsg_identifier(value: &str) -> bool {
+    value.trim().to_ascii_uppercase().starts_with("EPSG:")
+}
+
+fn native_spatial_has_transformable_geometry(spatial: &SurveyMapSpatialDescriptorDto) -> bool {
+    spatial.grid_transform.is_some() || spatial.footprint.is_some()
+}
+
+fn transform_survey_map_spatial_descriptor(
+    native_spatial: &SurveyMapSpatialDescriptorDto,
+    source_coordinate_reference_id: &str,
+    target_coordinate_reference_id: &str,
+) -> Result<SurveyMapSpatialDescriptorDto> {
+    let transformer = build_proj_transformer(
+        source_coordinate_reference_id,
+        target_coordinate_reference_id,
+    )?;
+    let grid_transform = native_spatial
+        .grid_transform
+        .as_ref()
+        .map(|transform| transform_grid_transform(&transformer, transform))
+        .transpose()?;
+    let footprint = native_spatial
+        .footprint
+        .as_ref()
+        .map(|polygon| transform_polygon(&transformer, polygon))
+        .transpose()?;
+
+    let mut display_spatial = native_spatial.clone();
+    display_spatial.coordinate_reference = Some(CoordinateReferenceDto {
+        id: Some(target_coordinate_reference_id.to_string()),
+        name: None,
+        geodetic_datum: None,
+        unit: None,
+    });
+    display_spatial.grid_transform = grid_transform;
+    display_spatial.footprint = footprint;
+    display_spatial.notes.push(format!(
+        "display spatial was reprojected from {source_coordinate_reference_id} to {target_coordinate_reference_id}"
+    ));
+    Ok(display_spatial)
+}
+
+fn build_proj_transformer(
+    source_coordinate_reference_id: &str,
+    target_coordinate_reference_id: &str,
+) -> Result<Proj> {
+    let mut builder = ProjBuilder::new();
+    if let Ok(resource_path) = std::env::var(PROJ_RESOURCE_PATH_ENV) {
+        let resource_path = resource_path.trim();
+        if !resource_path.is_empty() {
+            builder.set_search_paths(resource_path).map_err(|error| {
+                LasError::Storage(format!("failed to set PROJ search path: {error}"))
+            })?;
+        }
+    }
+    builder
+        .proj_known_crs(
+            source_coordinate_reference_id,
+            target_coordinate_reference_id,
+            None,
+        )
+        .map_err(|error| LasError::Storage(format!("failed to build PROJ transformer: {error}")))
+}
+
+fn transform_grid_transform(
+    transformer: &Proj,
+    transform: &SurveyMapGridTransformDto,
+) -> Result<SurveyMapGridTransformDto> {
+    let origin = transform_point(transformer, &transform.origin)?;
+    let inline_endpoint = transform_point(
+        transformer,
+        &ProjectedPoint2Dto {
+            x: transform.origin.x + transform.inline_basis.x,
+            y: transform.origin.y + transform.inline_basis.y,
+        },
+    )?;
+    let xline_endpoint = transform_point(
+        transformer,
+        &ProjectedPoint2Dto {
+            x: transform.origin.x + transform.xline_basis.x,
+            y: transform.origin.y + transform.xline_basis.y,
+        },
+    )?;
+    Ok(SurveyMapGridTransformDto {
+        origin: origin.clone(),
+        inline_basis: ProjectedVector2Dto {
+            x: inline_endpoint.x - origin.x,
+            y: inline_endpoint.y - origin.y,
+        },
+        xline_basis: ProjectedVector2Dto {
+            x: xline_endpoint.x - origin.x,
+            y: xline_endpoint.y - origin.y,
+        },
+    })
+}
+
+fn transform_polygon(
+    transformer: &Proj,
+    polygon: &ProjectedPolygon2Dto,
+) -> Result<ProjectedPolygon2Dto> {
+    Ok(ProjectedPolygon2Dto {
+        exterior: polygon
+            .exterior
+            .iter()
+            .map(|point| transform_point(transformer, point))
+            .collect::<Result<Vec<_>>>()?,
+    })
+}
+
+fn transform_point(transformer: &Proj, point: &ProjectedPoint2Dto) -> Result<ProjectedPoint2Dto> {
+    let transformed = transformer
+        .convert((point.x, point.y))
+        .map_err(|error| LasError::Storage(format!("PROJ coordinate transform failed: {error}")))?;
+    Ok(ProjectedPoint2Dto {
+        x: transformed.0,
+        y: transformed.1,
+    })
+}
+
+fn project_map_transform_cache_dir(project_root: &Path) -> PathBuf {
+    project_root
+        .join(PROJECT_REVISION_STORE_DIRNAME)
+        .join(PROJECT_MAP_TRANSFORM_CACHE_DIRNAME)
+}
+
+fn survey_map_transform_cache_key(
+    asset_id: &str,
+    geometry_fingerprint: &str,
+    source_coordinate_reference_id: &str,
+    target_coordinate_reference_id: &str,
+    policy: SurveyMapTransformPolicyDto,
+) -> String {
+    stable_project_blob_hash(
+        "survey-map-transform",
+        format!(
+            "{asset_id}|{geometry_fingerprint}|{source_coordinate_reference_id}|{target_coordinate_reference_id}|{policy:?}"
+        )
+        .as_bytes(),
+    )
+}
+
+fn survey_map_transform_cache_path(cache_dir: &Path, cache_key: &str) -> PathBuf {
+    cache_dir.join(format!("{cache_key}.json"))
+}
+
+fn read_survey_map_transform_cache(
+    cache_dir: Option<&Path>,
+    cache_key: &str,
+) -> Option<SurveyMapTransformCacheArtifact> {
+    let cache_dir = cache_dir?;
+    let cache_path = survey_map_transform_cache_path(cache_dir, cache_key);
+    let bytes = fs::read(cache_path).ok()?;
+    let artifact = serde_json::from_slice::<SurveyMapTransformCacheArtifact>(&bytes).ok()?;
+    if artifact.schema_version != SURVEY_MAP_TRANSFORM_CACHE_SCHEMA_VERSION {
+        return None;
+    }
+    if artifact.cache_key != cache_key {
+        return None;
+    }
+    Some(artifact)
+}
+
+fn write_survey_map_transform_cache(
+    cache_dir: Option<&Path>,
+    artifact: &SurveyMapTransformCacheArtifact,
+) -> Result<()> {
+    let Some(cache_dir) = cache_dir else {
+        return Ok(());
+    };
+    fs::create_dir_all(&cache_dir)?;
+    fs::write(
+        survey_map_transform_cache_path(cache_dir, &artifact.cache_key),
+        serde_json::to_vec_pretty(artifact)?,
+    )?;
+    Ok(())
+}
+
+fn preferred_section_grid_transform(
+    survey: &ResolvedSurveyMapSurveyDto,
+) -> Option<&SurveyMapGridTransformDto> {
+    survey
+        .display_spatial
+        .as_ref()
+        .and_then(|display_spatial| display_spatial.grid_transform.as_ref())
+        .or(survey.native_spatial.grid_transform.as_ref())
+}
+
+fn section_axis_spec(
+    index_grid: &SurveyIndexGridDto,
+    axis: SectionAxis,
+    requested_index: i32,
+) -> Result<SectionAxisSpec> {
+    let inline_step = required_regular_axis_step(&index_grid.inline_axis, "inline")?;
+    let xline_step = required_regular_axis_step(&index_grid.xline_axis, "xline")?;
+    Ok(match axis {
+        SectionAxis::Inline => SectionAxisSpec {
+            axis,
+            requested_coordinate: f64::from(requested_index),
+            inline_first: f64::from(index_grid.inline_axis.first),
+            inline_step,
+            xline_first: f64::from(index_grid.xline_axis.first),
+            xline_step,
+            trace_count: index_grid.xline_axis.count,
+        },
+        SectionAxis::Xline => SectionAxisSpec {
+            axis,
+            requested_coordinate: f64::from(requested_index),
+            inline_first: f64::from(index_grid.inline_axis.first),
+            inline_step,
+            xline_first: f64::from(index_grid.xline_axis.first),
+            xline_step,
+            trace_count: index_grid.inline_axis.count,
+        },
+    })
+}
+
+fn required_regular_axis_step(axis: &SurveyIndexAxisDto, axis_name: &str) -> Result<f64> {
+    let step = axis.step.ok_or_else(|| {
+        LasError::Validation(format!(
+            "survey {axis_name} axis is irregular; section overlays currently require regular inline/xline axes"
+        ))
+    })?;
+    if step == 0 {
+        return Err(LasError::Validation(format!(
+            "survey {axis_name} axis step cannot be zero"
+        )));
+    }
+    Ok(f64::from(step))
+}
+
+fn default_section_tolerance_m(
+    grid_transform: &SurveyMapGridTransformDto,
+    axis: SectionAxis,
+) -> f64 {
+    0.5 * match axis {
+        SectionAxis::Inline => vector_length_m(&grid_transform.inline_basis),
+        SectionAxis::Xline => vector_length_m(&grid_transform.xline_basis),
+    }
+}
+
+fn section_densification_settings(
+    grid_transform: &SurveyMapGridTransformDto,
+    tolerance_m: f64,
+) -> SectionTrajectoryDensificationSettings {
+    let inline_spacing_m = vector_length_m(&grid_transform.inline_basis);
+    let xline_spacing_m = vector_length_m(&grid_transform.xline_basis);
+    let nominal_spacing_m = inline_spacing_m.min(xline_spacing_m).max(1.0);
+    let max_xy_step_m = (nominal_spacing_m * 0.5).min(tolerance_m.max(1.0));
+    let max_vertical_step_m = max_xy_step_m;
+    let max_md_step_m = max_xy_step_m.max(5.0);
+    SectionTrajectoryDensificationSettings {
+        max_md_step_m,
+        max_xy_step_m,
+        max_vertical_step_m,
+    }
+}
+
+fn densify_trajectory_for_section(
+    stations: &[ResolvedTrajectoryStation],
+    settings: SectionTrajectoryDensificationSettings,
+) -> Vec<ResolvedTrajectoryStation> {
+    if stations.len() <= 1 {
+        return stations.to_vec();
+    }
+
+    let mut densified = Vec::with_capacity(stations.len());
+    densified.push(stations[0].clone());
+
+    for pair in stations.windows(2) {
+        let start = &pair[0];
+        let end = &pair[1];
+        let subdivisions = required_section_subdivisions(start, end, settings);
+        for step in 1..subdivisions {
+            densified.push(interpolate_resolved_trajectory_station(
+                start,
+                end,
+                step as f64 / subdivisions as f64,
+            ));
+        }
+        densified.push(end.clone());
+    }
+
+    densified
+}
+
+fn required_section_subdivisions(
+    start: &ResolvedTrajectoryStation,
+    end: &ResolvedTrajectoryStation,
+    settings: SectionTrajectoryDensificationSettings,
+) -> usize {
+    let md_subdivisions = required_axis_subdivisions(
+        end.measured_depth_m - start.measured_depth_m,
+        settings.max_md_step_m,
+    );
+    let xy_subdivisions = match (start.absolute_xy.as_ref(), end.absolute_xy.as_ref()) {
+        (Some(start_xy), Some(end_xy)) => required_axis_subdivisions(
+            planar_distance_m(start_xy.x, start_xy.y, end_xy.x, end_xy.y),
+            settings.max_xy_step_m,
+        ),
+        _ => match (
+            start.easting_offset_m,
+            start.northing_offset_m,
+            end.easting_offset_m,
+            end.northing_offset_m,
+        ) {
+            (Some(start_e), Some(start_n), Some(end_e), Some(end_n)) => required_axis_subdivisions(
+                planar_distance_m(start_e, start_n, end_e, end_n),
+                settings.max_xy_step_m,
+            ),
+            _ => 1,
+        },
+    };
+    let vertical_subdivisions = start
+        .true_vertical_depth_m
+        .zip(end.true_vertical_depth_m)
+        .map(|(start_depth, end_depth)| {
+            required_axis_subdivisions(end_depth - start_depth, settings.max_vertical_step_m)
+        })
+        .or_else(|| {
+            start
+                .true_vertical_depth_subsea_m
+                .zip(end.true_vertical_depth_subsea_m)
+                .map(|(start_depth, end_depth)| {
+                    required_axis_subdivisions(
+                        end_depth - start_depth,
+                        settings.max_vertical_step_m,
+                    )
+                })
+        })
+        .unwrap_or(1);
+
+    md_subdivisions
+        .max(xy_subdivisions)
+        .max(vertical_subdivisions)
+}
+
+fn required_axis_subdivisions(delta: f64, max_step: f64) -> usize {
+    if !delta.is_finite() || !max_step.is_finite() || max_step <= 0.0 {
+        return 1;
+    }
+    let subdivisions = (delta.abs() / max_step).ceil() as usize;
+    subdivisions.max(1)
+}
+
+fn interpolate_resolved_trajectory_station(
+    start: &ResolvedTrajectoryStation,
+    end: &ResolvedTrajectoryStation,
+    fraction: f64,
+) -> ResolvedTrajectoryStation {
+    ResolvedTrajectoryStation {
+        measured_depth_m: lerp(start.measured_depth_m, end.measured_depth_m, fraction),
+        true_vertical_depth_m: lerp_option(
+            start.true_vertical_depth_m,
+            end.true_vertical_depth_m,
+            fraction,
+        ),
+        true_vertical_depth_subsea_m: lerp_option(
+            start.true_vertical_depth_subsea_m,
+            end.true_vertical_depth_subsea_m,
+            fraction,
+        ),
+        northing_offset_m: lerp_option(start.northing_offset_m, end.northing_offset_m, fraction),
+        easting_offset_m: lerp_option(start.easting_offset_m, end.easting_offset_m, fraction),
+        absolute_xy: match (start.absolute_xy.as_ref(), end.absolute_xy.as_ref()) {
+            (Some(start_xy), Some(end_xy)) => Some(ProjectedPoint2 {
+                x: lerp(start_xy.x, end_xy.x, fraction),
+                y: lerp(start_xy.y, end_xy.y, fraction),
+            }),
+            _ => None,
+        },
+        inclination_deg: lerp_option(start.inclination_deg, end.inclination_deg, fraction),
+        azimuth_deg: lerp_option(start.azimuth_deg, end.azimuth_deg, fraction),
+        true_vertical_depth_origin: start
+            .true_vertical_depth_m
+            .zip(end.true_vertical_depth_m)
+            .map(|_| TrajectoryValueOrigin::Derived),
+        true_vertical_depth_subsea_origin: start
+            .true_vertical_depth_subsea_m
+            .zip(end.true_vertical_depth_subsea_m)
+            .map(|_| TrajectoryValueOrigin::Derived),
+        northing_offset_origin: start
+            .northing_offset_m
+            .zip(end.northing_offset_m)
+            .map(|_| TrajectoryValueOrigin::Derived),
+        easting_offset_origin: start
+            .easting_offset_m
+            .zip(end.easting_offset_m)
+            .map(|_| TrajectoryValueOrigin::Derived),
+        inclination_origin: start
+            .inclination_deg
+            .zip(end.inclination_deg)
+            .map(|_| TrajectoryValueOrigin::Derived),
+        azimuth_origin: start
+            .azimuth_deg
+            .zip(end.azimuth_deg)
+            .map(|_| TrajectoryValueOrigin::Derived),
+    }
+}
+
+fn lerp(start: f64, end: f64, fraction: f64) -> f64 {
+    start + (end - start) * fraction
+}
+
+fn lerp_option(start: Option<f64>, end: Option<f64>, fraction: f64) -> Option<f64> {
+    start
+        .zip(end)
+        .map(|(start, end)| lerp(start, end, fraction))
+}
+
+fn project_well_station_onto_section(
+    station: &ResolvedTrajectoryStation,
+    absolute_xy: &ProjectedPoint2,
+    grid_transform: &SurveyMapGridTransformDto,
+    section_axis: &SectionAxisSpec,
+    tolerance_m: f64,
+) -> Option<ProjectedSectionSample> {
+    let (inline_ordinal, xline_ordinal) =
+        invert_survey_grid_transform(grid_transform, absolute_xy.x, absolute_xy.y)?;
+    let inline_value = section_axis.inline_first + inline_ordinal * section_axis.inline_step;
+    let xline_value = section_axis.xline_first + xline_ordinal * section_axis.xline_step;
+    let inline_basis_length = vector_length_m(&grid_transform.inline_basis);
+    let xline_basis_length = vector_length_m(&grid_transform.xline_basis);
+    let (section_coordinate, section_step, section_basis_length_m, trace_value, trace_ordinal) =
+        match section_axis.axis {
+            SectionAxis::Inline => (
+                inline_value,
+                section_axis.inline_step,
+                inline_basis_length,
+                xline_value,
+                xline_ordinal,
+            ),
+            SectionAxis::Xline => (
+                xline_value,
+                section_axis.xline_step,
+                xline_basis_length,
+                inline_value,
+                inline_ordinal,
+            ),
+        };
+    let distance_m = ((section_coordinate - section_axis.requested_coordinate) / section_step)
+        .abs()
+        * section_basis_length_m;
+    if distance_m > tolerance_m {
+        return None;
+    }
+
+    let trace_index = rounded_trace_index(trace_ordinal, section_axis.trace_count)?;
+    Some(ProjectedSectionSample {
+        trace_index,
+        trace_coordinate: trace_value,
+        sample_value: station
+            .true_vertical_depth_m
+            .or(station.true_vertical_depth_subsea_m),
+    })
+}
+
+fn rounded_trace_index(trace_ordinal: f64, trace_count: usize) -> Option<usize> {
+    let rounded = trace_ordinal.round();
+    if !rounded.is_finite() || rounded < 0.0 || rounded > (trace_count.saturating_sub(1)) as f64 {
+        return None;
+    }
+    Some(rounded as usize)
+}
+
+fn invert_survey_grid_transform(
+    transform: &SurveyMapGridTransformDto,
+    x: f64,
+    y: f64,
+) -> Option<(f64, f64)> {
+    let determinant = transform.inline_basis.x * transform.xline_basis.y
+        - transform.inline_basis.y * transform.xline_basis.x;
+    if determinant.abs() <= f64::EPSILON {
+        return None;
+    }
+
+    let dx = x - transform.origin.x;
+    let dy = y - transform.origin.y;
+    let inline_ordinal =
+        (dx * transform.xline_basis.y - dy * transform.xline_basis.x) / determinant;
+    let xline_ordinal =
+        (dy * transform.inline_basis.x - dx * transform.inline_basis.y) / determinant;
+    Some((inline_ordinal, xline_ordinal))
+}
+
+fn vector_length_m(vector: &ProjectedVector2Dto) -> f64 {
+    (vector.x * vector.x + vector.y * vector.y).sqrt()
+}
+
+fn planar_distance_m(start_x: f64, start_y: f64, end_x: f64, end_y: f64) -> f64 {
+    let dx = end_x - start_x;
+    let dy = end_y - start_y;
+    (dx * dx + dy * dy).sqrt()
+}
+
+fn depth_for_model(
+    station: &ResolvedTrajectoryStation,
+    depth_reference: DepthReferenceKind,
+) -> Option<f64> {
+    match depth_reference {
+        DepthReferenceKind::MeasuredDepth => Some(station.measured_depth_m),
+        DepthReferenceKind::TrueVerticalDepth => station.true_vertical_depth_m,
+        DepthReferenceKind::TrueVerticalDepthSubsea => station.true_vertical_depth_subsea_m,
+    }
+}
+
+fn interpolate_well_time_depth_model_ms(model: &WellTimeDepthModel1D, depth_m: f64) -> Option<f64> {
+    let (first, last) = (model.samples.first()?, model.samples.last()?);
+    if depth_m < f64::from(first.depth) || depth_m > f64::from(last.depth) {
+        return None;
+    }
+    for pair in model.samples.windows(2) {
+        let start = &pair[0];
+        let end = &pair[1];
+        let start_depth = f64::from(start.depth);
+        let end_depth = f64::from(end.depth);
+        if depth_m < start_depth || depth_m > end_depth {
+            continue;
+        }
+        if (end_depth - start_depth).abs() <= f64::EPSILON {
+            return Some(f64::from(start.time_ms));
+        }
+        let fraction = (depth_m - start_depth) / (end_depth - start_depth);
+        let start_time_ms = f64::from(start.time_ms);
+        let end_time_ms = f64::from(end.time_ms);
+        return Some(lerp(start_time_ms, end_time_ms, fraction));
+    }
+    model.samples.last().and_then(|sample| {
+        ((f64::from(sample.depth) - depth_m).abs() <= f64::EPSILON)
+            .then_some(f64::from(sample.time_ms))
+    })
+}
+
+fn display_time_ms(
+    time_ms: f64,
+    source_reference: TravelTimeReference,
+    display_reference: TravelTimeReference,
+) -> f64 {
+    match (source_reference, display_reference) {
+        (TravelTimeReference::OneWay, TravelTimeReference::TwoWay) => time_ms * 2.0,
+        (TravelTimeReference::TwoWay, TravelTimeReference::OneWay) => time_ms * 0.5,
+        _ => time_ms,
+    }
+}
+
+fn validate_well_time_depth_model(model: &WellTimeDepthModel1D) -> Result<()> {
+    if model.samples.is_empty() {
+        return Err(LasError::Validation(
+            "well time-depth model requires at least one sample".to_string(),
+        ));
+    }
+    for pair in model.samples.windows(2) {
+        let start = &pair[0];
+        let end = &pair[1];
+        if end.depth < start.depth {
+            return Err(LasError::Validation(
+                "well time-depth model depths must be monotonically increasing".to_string(),
+            ));
+        }
+        if end.time_ms < start.time_ms {
+            return Err(LasError::Validation(
+                "well time-depth model times must be monotonically increasing".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_checkshot_vsp_observation_set(
+    observation_set: &CheckshotVspObservationSet1D,
+) -> Result<()> {
+    validate_well_time_depth_observation_samples(
+        &observation_set.samples,
+        "checkshot/VSP observation set",
+    )
+}
+
+fn validate_manual_time_depth_pick_set(pick_set: &ManualTimeDepthPickSet1D) -> Result<()> {
+    validate_well_time_depth_observation_samples(&pick_set.samples, "manual time-depth pick set")
+}
+
+fn validate_well_time_depth_authored_model(model: &WellTimeDepthAuthoredModel1D) -> Result<()> {
+    if model.wellbore_id.trim().is_empty() {
+        return Err(LasError::Validation(
+            "well time-depth authored model requires a wellbore id".to_string(),
+        ));
+    }
+    if model.resolved_trajectory_fingerprint.trim().is_empty() {
+        return Err(LasError::Validation(
+            "well time-depth authored model requires a resolved trajectory fingerprint".to_string(),
+        ));
+    }
+    if let Some(step_m) = model.sampling_step_m {
+        if !step_m.is_finite() || step_m <= 0.0 {
+            return Err(LasError::Validation(
+                "well time-depth authored model sampling_step_m must be positive".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_well_time_depth_observation_samples(
+    samples: &[ophiolite_seismic::WellTimeDepthObservationSample],
+    label: &str,
+) -> Result<()> {
+    for pair in samples.windows(2) {
+        let start = &pair[0];
+        let end = &pair[1];
+        if end.depth_m < start.depth_m {
+            return Err(LasError::Validation(format!(
+                "{label} depths must be monotonically increasing"
+            )));
+        }
+        if end.time_ms < start.time_ms {
+            return Err(LasError::Validation(format!(
+                "{label} times must be monotonically increasing"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn compile_well_time_depth_authored_model(
+    authored_model: &WellTimeDepthAuthoredModel1D,
+    resolved_trajectory: &ResolvedTrajectoryGeometry,
+    project: &OphioliteProject,
+) -> Result<WellTimeDepthModel1D> {
+    validate_well_time_depth_authored_model(authored_model)?;
+
+    let mut bindings = authored_model
+        .source_bindings
+        .iter()
+        .filter(|binding| binding.enabled)
+        .cloned()
+        .collect::<Vec<_>>();
+    bindings.sort_by_key(|binding| binding.priority);
+
+    let mut source_sets = Vec::new();
+    for binding in &bindings {
+        source_sets.push((
+            binding.clone(),
+            read_well_time_depth_source_samples(project, authored_model, binding)?,
+        ));
+    }
+
+    let mut trajectory_depths = resolved_trajectory
+        .stations
+        .iter()
+        .filter_map(|station| depth_for_model(station, authored_model.depth_reference))
+        .collect::<Vec<_>>();
+    trajectory_depths
+        .sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+
+    let source_depth_range = source_sets
+        .iter()
+        .flat_map(|(_, samples)| samples.iter().map(|sample| f64::from(sample.depth)))
+        .fold(None, |acc, depth| match acc {
+            None => Some((depth, depth)),
+            Some((min_depth, max_depth)) => Some((min_depth.min(depth), max_depth.max(depth))),
+        });
+    let (depth_start, depth_stop) = match (
+        trajectory_depths.first().copied(),
+        trajectory_depths.last().copied(),
+        source_depth_range,
+    ) {
+        (Some(start), Some(stop), _) => (start, stop),
+        (None, None, Some((start, stop))) => (start, stop),
+        _ => {
+            return Err(LasError::Validation(
+                "authored well time-depth model compilation requires trajectory depth coverage or source depth coverage".to_string(),
+            ))
+        }
+    };
+
+    let sampling_step_m = authored_model.sampling_step_m.unwrap_or(10.0);
+    let mut compiled_samples: Vec<ophiolite_seismic::TimeDepthSample1D> = Vec::new();
+    let mut depth_m = depth_start;
+    while depth_m <= depth_stop + (sampling_step_m * 0.5) {
+        let source_time_ms = source_sets.iter().find_map(|(binding, samples)| {
+            if depth_outside_binding_interval(depth_m, binding) {
+                return None;
+            }
+            interpolate_observation_time_ms(samples, depth_m)
+        });
+
+        let time_ms = match source_time_ms {
+            Some(time_ms) => time_ms,
+            None => {
+                let anchor_sample = compiled_samples
+                    .last()
+                    .map(|sample| ophiolite_seismic::TimeDepthSample1D {
+                        depth: sample.depth,
+                        time_ms: sample.time_ms,
+                    })
+                    .or_else(|| {
+                        source_sets
+                            .iter()
+                            .flat_map(|(_, samples)| samples.iter())
+                            .find(|sample| f64::from(sample.depth) >= depth_m)
+                            .cloned()
+                    });
+                let Some(anchor_sample) = anchor_sample else {
+                    depth_m += sampling_step_m;
+                    continue;
+                };
+                let Some(assumed_time_ms) = assumption_time_ms_for_depth(
+                    &authored_model.assumption_intervals,
+                    depth_m,
+                    &anchor_sample,
+                    authored_model.travel_time_reference,
+                    source_time_ms.is_some(),
+                ) else {
+                    depth_m += sampling_step_m;
+                    continue;
+                };
+                assumed_time_ms
+            }
+        };
+
+        compiled_samples.push(ophiolite_seismic::TimeDepthSample1D {
+            depth: depth_m as f32,
+            time_ms: time_ms as f32,
+        });
+        depth_m += sampling_step_m;
+    }
+
+    let source_kind = bindings
+        .first()
+        .map(|binding| binding.source_kind)
+        .unwrap_or(TimeDepthTransformSourceKind::ConstantVelocity);
+    let compiled = WellTimeDepthModel1D {
+        id: format!("compiled-{}", authored_model.id),
+        name: format!("{} (compiled)", authored_model.name),
+        wellbore_id: Some(authored_model.wellbore_id.clone()),
+        source_kind,
+        depth_reference: authored_model.depth_reference,
+        travel_time_reference: authored_model.travel_time_reference,
+        samples: compiled_samples,
+        notes: vec![format!(
+            "compiled from authored model '{}' against trajectory '{}'",
+            authored_model.id, authored_model.resolved_trajectory_fingerprint
+        )],
+    };
+    validate_well_time_depth_model(&compiled)?;
+    Ok(compiled)
+}
+
+fn read_well_time_depth_source_samples(
+    project: &OphioliteProject,
+    authored_model: &WellTimeDepthAuthoredModel1D,
+    binding: &ophiolite_seismic::WellTimeDepthSourceBinding,
+) -> Result<Vec<ophiolite_seismic::TimeDepthSample1D>> {
+    let asset_id = AssetId(binding.asset_id.clone());
+    let asset = project.asset_by_id(&asset_id)?;
+    match asset.asset_kind {
+        AssetKind::CheckshotVspObservationSet => {
+            let source = project.read_checkshot_vsp_observation_set(&asset_id)?;
+            if source.depth_reference != authored_model.depth_reference
+                || source.travel_time_reference != authored_model.travel_time_reference
+            {
+                return Err(LasError::Validation(format!(
+                    "checkshot/VSP source '{}' does not match the authored model depth/time references",
+                    asset_id.0
+                )));
+            }
+            Ok(source
+                .samples
+                .into_iter()
+                .map(|sample| ophiolite_seismic::TimeDepthSample1D {
+                    depth: sample.depth_m as f32,
+                    time_ms: sample.time_ms as f32,
+                })
+                .collect())
+        }
+        AssetKind::ManualTimeDepthPickSet => {
+            let source = project.read_manual_time_depth_pick_set(&asset_id)?;
+            if source.depth_reference != authored_model.depth_reference
+                || source.travel_time_reference != authored_model.travel_time_reference
+            {
+                return Err(LasError::Validation(format!(
+                    "manual time-depth pick source '{}' does not match the authored model depth/time references",
+                    asset_id.0
+                )));
+            }
+            Ok(source
+                .samples
+                .into_iter()
+                .map(|sample| ophiolite_seismic::TimeDepthSample1D {
+                    depth: sample.depth_m as f32,
+                    time_ms: sample.time_ms as f32,
+                })
+                .collect())
+        }
+        AssetKind::WellTimeDepthModel => {
+            let source = project.read_well_time_depth_model(&asset_id)?;
+            if source.depth_reference != authored_model.depth_reference
+                || source.travel_time_reference != authored_model.travel_time_reference
+            {
+                return Err(LasError::Validation(format!(
+                    "well time-depth model source '{}' does not match the authored model depth/time references",
+                    asset_id.0
+                )));
+            }
+            Ok(source.samples)
+        }
+        _ => Err(LasError::Validation(format!(
+            "source asset '{}' is not a supported well time-depth source asset",
+            asset_id.0
+        ))),
+    }
+}
+
+fn depth_outside_binding_interval(
+    depth_m: f64,
+    binding: &ophiolite_seismic::WellTimeDepthSourceBinding,
+) -> bool {
+    binding
+        .valid_from_depth_m
+        .is_some_and(|min_depth| depth_m < min_depth)
+        || binding
+            .valid_to_depth_m
+            .is_some_and(|max_depth| depth_m > max_depth)
+}
+
+fn interpolate_observation_time_ms(
+    samples: &[ophiolite_seismic::TimeDepthSample1D],
+    depth_m: f64,
+) -> Option<f64> {
+    let first = samples.first()?;
+    let last = samples.last()?;
+    let first_depth = f64::from(first.depth);
+    let last_depth = f64::from(last.depth);
+    if depth_m < first_depth || depth_m > last_depth {
+        return None;
+    }
+    for pair in samples.windows(2) {
+        let start = &pair[0];
+        let end = &pair[1];
+        let start_depth = f64::from(start.depth);
+        let end_depth = f64::from(end.depth);
+        if depth_m < start_depth || depth_m > end_depth {
+            continue;
+        }
+        let span = end_depth - start_depth;
+        if span.abs() < f64::EPSILON {
+            return Some(f64::from(start.time_ms));
+        }
+        let fraction = (depth_m - start_depth) / span;
+        return Some(
+            f64::from(start.time_ms)
+                + (f64::from(end.time_ms) - f64::from(start.time_ms)) * fraction,
+        );
+    }
+    Some(f64::from(last.time_ms))
+}
+
+fn assumption_time_ms_for_depth(
+    assumptions: &[ophiolite_seismic::WellTimeDepthAssumptionInterval],
+    depth_m: f64,
+    anchor_sample: &ophiolite_seismic::TimeDepthSample1D,
+    travel_time_reference: TravelTimeReference,
+    has_source_coverage: bool,
+) -> Option<f64> {
+    assumptions.iter().find_map(|assumption| {
+        if !assumption.overwrite_existing_source_coverage && has_source_coverage {
+            return None;
+        }
+        if assumption
+            .from_depth_m
+            .is_some_and(|min_depth| depth_m < min_depth)
+            || assumption
+                .to_depth_m
+                .is_some_and(|max_depth| depth_m > max_depth)
+        {
+            return None;
+        }
+        match assumption.kind {
+            ophiolite_seismic::WellTimeDepthAssumptionKind::ConstantVelocity => {
+                let velocity = assumption.velocity_m_per_s?;
+                if !velocity.is_finite() || velocity <= 0.0 {
+                    return None;
+                }
+                let scale = match travel_time_reference {
+                    TravelTimeReference::OneWay => 1000.0,
+                    TravelTimeReference::TwoWay => 2000.0,
+                };
+                let delta_depth = depth_m - f64::from(anchor_sample.depth);
+                Some(f64::from(anchor_sample.time_ms) + (delta_depth / velocity) * scale)
+            }
+        }
+    })
+}
+
+fn project_depth_reference_from_model(reference: DepthReferenceKind) -> DepthReference {
+    match reference {
+        DepthReferenceKind::MeasuredDepth => DepthReference::MeasuredDepth,
+        DepthReferenceKind::TrueVerticalDepth => DepthReference::TrueVerticalDepth,
+        DepthReferenceKind::TrueVerticalDepthSubsea => DepthReference::TrueVerticalDepthSubsea,
+    }
+}
+
+fn value_origin(value: Option<f64>) -> Option<TrajectoryValueOrigin> {
+    value.map(|_| TrajectoryValueOrigin::Imported)
+}
+
+fn derived_value_origin(value: Option<f64>, derived: bool) -> Option<TrajectoryValueOrigin> {
+    value.map(|_| {
+        if derived {
+            TrajectoryValueOrigin::Derived
+        } else {
+            TrajectoryValueOrigin::Imported
+        }
+    })
+}
+
+fn resolve_trajectory_rows(
+    rows: &[TrajectoryRow],
+    asset_id: &AssetId,
+    notes: &mut Vec<String>,
+) -> Vec<ResolvedTrajectoryStation> {
+    let mut ordered_rows = rows.to_vec();
+    ordered_rows.sort_by(|left, right| {
+        left.measured_depth
+            .partial_cmp(&right.measured_depth)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    if ordered_rows.len() >= 2
+        && ordered_rows
+            .windows(2)
+            .all(|window| window[0].inclination_deg.is_some() && window[0].azimuth_deg.is_some())
+        && ordered_rows
+            .last()
+            .is_some_and(|row| row.inclination_deg.is_some() && row.azimuth_deg.is_some())
+    {
+        return resolve_trajectory_rows_with_minimum_curvature(&ordered_rows, asset_id, notes);
+    }
+
+    ordered_rows
+        .into_iter()
+        .map(|row| ResolvedTrajectoryStation {
+            measured_depth_m: row.measured_depth,
+            true_vertical_depth_m: row.true_vertical_depth,
+            true_vertical_depth_subsea_m: row.true_vertical_depth_subsea,
+            northing_offset_m: row.northing_offset,
+            easting_offset_m: row.easting_offset,
+            absolute_xy: None,
+            inclination_deg: row.inclination_deg,
+            azimuth_deg: row.azimuth_deg,
+            true_vertical_depth_origin: value_origin(row.true_vertical_depth),
+            true_vertical_depth_subsea_origin: value_origin(row.true_vertical_depth_subsea),
+            northing_offset_origin: value_origin(row.northing_offset),
+            easting_offset_origin: value_origin(row.easting_offset),
+            inclination_origin: value_origin(row.inclination_deg),
+            azimuth_origin: value_origin(row.azimuth_deg),
+        })
+        .collect()
+}
+
+fn resolve_trajectory_rows_with_minimum_curvature(
+    rows: &[TrajectoryRow],
+    asset_id: &AssetId,
+    notes: &mut Vec<String>,
+) -> Vec<ResolvedTrajectoryStation> {
+    let derive_offsets = rows
+        .iter()
+        .any(|row| row.northing_offset.is_none() || row.easting_offset.is_none());
+    let derive_tvd = rows.iter().any(|row| row.true_vertical_depth.is_none())
+        && rows.iter().any(|row| row.true_vertical_depth.is_some())
+        || (rows.iter().all(|row| row.true_vertical_depth.is_none())
+            && rows
+                .iter()
+                .all(|row| row.true_vertical_depth_subsea.is_none()));
+    let derive_tvdss = rows
+        .iter()
+        .any(|row| row.true_vertical_depth_subsea.is_some());
+
+    if derive_offsets {
+        notes.push(format!(
+            "trajectory asset '{}' used minimum-curvature interpolation to resolve missing lateral offsets from MD/inc/azi stations",
+            asset_id.0
+        ));
+    }
+    if derive_tvd {
+        notes.push(format!(
+            "trajectory asset '{}' used minimum-curvature interpolation to resolve true vertical depth from MD/inc/azi stations",
+            asset_id.0
+        ));
+    }
+    if derive_tvdss
+        && rows
+            .iter()
+            .any(|row| row.true_vertical_depth_subsea.is_none())
+    {
+        notes.push(format!(
+            "trajectory asset '{}' used minimum-curvature interpolation to fill missing TVDSS samples from MD/inc/azi stations",
+            asset_id.0
+        ));
+    }
+
+    let first = rows
+        .first()
+        .expect("minimum-curvature rows require at least one row");
+    let mut cumulative_northing = first.northing_offset.unwrap_or(0.0);
+    let mut cumulative_easting = first.easting_offset.unwrap_or(0.0);
+    let mut cumulative_tvd = first.true_vertical_depth.unwrap_or(0.0);
+    let mut cumulative_tvdss = first.true_vertical_depth_subsea.unwrap_or(0.0);
+
+    if derive_offsets && (first.northing_offset.is_none() || first.easting_offset.is_none()) {
+        notes.push(format!(
+            "trajectory asset '{}' is missing offset values at its first station; minimum-curvature offsets assume a zero-origin there",
+            asset_id.0
+        ));
+    }
+    if derive_tvd && first.true_vertical_depth.is_none() {
+        notes.push(format!(
+            "trajectory asset '{}' is missing TVD at its first station; minimum-curvature TVD assumes a zero-origin there",
+            asset_id.0
+        ));
+    }
+    if derive_tvdss && first.true_vertical_depth_subsea.is_none() {
+        notes.push(format!(
+            "trajectory asset '{}' is missing TVDSS at its first station; minimum-curvature TVDSS assumes a zero-origin there",
+            asset_id.0
+        ));
+    }
+
+    let mut stations = Vec::with_capacity(rows.len());
+    stations.push(ResolvedTrajectoryStation {
+        measured_depth_m: first.measured_depth,
+        true_vertical_depth_m: first
+            .true_vertical_depth
+            .or(derive_tvd.then_some(cumulative_tvd)),
+        true_vertical_depth_subsea_m: first
+            .true_vertical_depth_subsea
+            .or(derive_tvdss.then_some(cumulative_tvdss)),
+        northing_offset_m: first
+            .northing_offset
+            .or(derive_offsets.then_some(cumulative_northing)),
+        easting_offset_m: first
+            .easting_offset
+            .or(derive_offsets.then_some(cumulative_easting)),
+        absolute_xy: None,
+        inclination_deg: first.inclination_deg,
+        azimuth_deg: first.azimuth_deg,
+        true_vertical_depth_origin: derived_value_origin(
+            first
+                .true_vertical_depth
+                .or(derive_tvd.then_some(cumulative_tvd)),
+            first.true_vertical_depth.is_none()
+                && first
+                    .true_vertical_depth
+                    .or(derive_tvd.then_some(cumulative_tvd))
+                    .is_some(),
+        ),
+        true_vertical_depth_subsea_origin: derived_value_origin(
+            first
+                .true_vertical_depth_subsea
+                .or(derive_tvdss.then_some(cumulative_tvdss)),
+            first.true_vertical_depth_subsea.is_none()
+                && first
+                    .true_vertical_depth_subsea
+                    .or(derive_tvdss.then_some(cumulative_tvdss))
+                    .is_some(),
+        ),
+        northing_offset_origin: derived_value_origin(
+            first
+                .northing_offset
+                .or(derive_offsets.then_some(cumulative_northing)),
+            first.northing_offset.is_none()
+                && first
+                    .northing_offset
+                    .or(derive_offsets.then_some(cumulative_northing))
+                    .is_some(),
+        ),
+        easting_offset_origin: derived_value_origin(
+            first
+                .easting_offset
+                .or(derive_offsets.then_some(cumulative_easting)),
+            first.easting_offset.is_none()
+                && first
+                    .easting_offset
+                    .or(derive_offsets.then_some(cumulative_easting))
+                    .is_some(),
+        ),
+        inclination_origin: value_origin(first.inclination_deg),
+        azimuth_origin: value_origin(first.azimuth_deg),
+    });
+
+    for window in rows.windows(2) {
+        let start = &window[0];
+        let end = &window[1];
+        let (northing_delta, easting_delta, tvd_delta) = minimum_curvature_delta(
+            start.measured_depth,
+            start.inclination_deg.unwrap_or(0.0),
+            start.azimuth_deg.unwrap_or(0.0),
+            end.measured_depth,
+            end.inclination_deg.unwrap_or(0.0),
+            end.azimuth_deg.unwrap_or(0.0),
+        );
+        cumulative_northing += northing_delta;
+        cumulative_easting += easting_delta;
+        cumulative_tvd += tvd_delta;
+        cumulative_tvdss += tvd_delta;
+
+        let true_vertical_depth_m = end
+            .true_vertical_depth
+            .or(derive_tvd.then_some(cumulative_tvd));
+        let true_vertical_depth_subsea_m = end
+            .true_vertical_depth_subsea
+            .or(derive_tvdss.then_some(cumulative_tvdss));
+        let northing_offset_m = end
+            .northing_offset
+            .or(derive_offsets.then_some(cumulative_northing));
+        let easting_offset_m = end
+            .easting_offset
+            .or(derive_offsets.then_some(cumulative_easting));
+
+        stations.push(ResolvedTrajectoryStation {
+            measured_depth_m: end.measured_depth,
+            true_vertical_depth_m,
+            true_vertical_depth_subsea_m,
+            northing_offset_m,
+            easting_offset_m,
+            absolute_xy: None,
+            inclination_deg: end.inclination_deg,
+            azimuth_deg: end.azimuth_deg,
+            true_vertical_depth_origin: derived_value_origin(
+                true_vertical_depth_m,
+                end.true_vertical_depth.is_none() && true_vertical_depth_m.is_some(),
+            ),
+            true_vertical_depth_subsea_origin: derived_value_origin(
+                true_vertical_depth_subsea_m,
+                end.true_vertical_depth_subsea.is_none() && true_vertical_depth_subsea_m.is_some(),
+            ),
+            northing_offset_origin: derived_value_origin(
+                northing_offset_m,
+                end.northing_offset.is_none() && northing_offset_m.is_some(),
+            ),
+            easting_offset_origin: derived_value_origin(
+                easting_offset_m,
+                end.easting_offset.is_none() && easting_offset_m.is_some(),
+            ),
+            inclination_origin: value_origin(end.inclination_deg),
+            azimuth_origin: value_origin(end.azimuth_deg),
+        });
+    }
+
+    stations
+}
+
+fn minimum_curvature_delta(
+    start_md_m: f64,
+    start_inclination_deg: f64,
+    start_azimuth_deg: f64,
+    end_md_m: f64,
+    end_inclination_deg: f64,
+    end_azimuth_deg: f64,
+) -> (f64, f64, f64) {
+    let delta_md = end_md_m - start_md_m;
+    if !delta_md.is_finite() || delta_md <= 0.0 {
+        return (0.0, 0.0, 0.0);
+    }
+
+    let start_inclination_rad = start_inclination_deg.to_radians();
+    let end_inclination_rad = end_inclination_deg.to_radians();
+    let start_azimuth_rad = start_azimuth_deg.to_radians();
+    let end_azimuth_rad = end_azimuth_deg.to_radians();
+
+    let dogleg_argument = (start_inclination_rad.cos() * end_inclination_rad.cos()
+        + start_inclination_rad.sin()
+            * end_inclination_rad.sin()
+            * (end_azimuth_rad - start_azimuth_rad).cos())
+    .clamp(-1.0, 1.0);
+    let dogleg = dogleg_argument.acos();
+    let ratio_factor = if dogleg.abs() < 1.0e-12 {
+        1.0
+    } else {
+        (2.0 / dogleg) * (dogleg / 2.0).tan()
+    };
+
+    let northing_delta = (delta_md / 2.0)
+        * (start_inclination_rad.sin() * start_azimuth_rad.cos()
+            + end_inclination_rad.sin() * end_azimuth_rad.cos())
+        * ratio_factor;
+    let easting_delta = (delta_md / 2.0)
+        * (start_inclination_rad.sin() * start_azimuth_rad.sin()
+            + end_inclination_rad.sin() * end_azimuth_rad.sin())
+        * ratio_factor;
+    let tvd_delta =
+        (delta_md / 2.0) * (start_inclination_rad.cos() + end_inclination_rad.cos()) * ratio_factor;
+
+    (northing_delta, easting_delta, tvd_delta)
+}
+
+fn validate_metric_length_unit(unit: Option<&str>, axis: &str, asset_id: &AssetId) -> Result<()> {
+    let Some(unit) = unit else {
+        return Ok(());
+    };
+    if is_metric_length_unit(unit) {
+        return Ok(());
+    }
+    Err(LasError::Validation(format!(
+        "trajectory asset '{}' declares a non-metric {axis} unit '{}'; the resolved trajectory contract currently requires meter-based inputs",
+        asset_id.0, unit
+    )))
+}
+
+fn is_metric_length_unit(unit: &str) -> bool {
+    matches!(
+        unit.trim().to_ascii_lowercase().as_str(),
+        "m" | "meter" | "meters" | "metre" | "metres"
+    )
+}
+
+fn coordinate_reference_descriptor_from_project(
+    reference: Option<&CoordinateReference>,
+    unit: Option<&str>,
+) -> Option<CoordinateReferenceDescriptor> {
+    reference.map(|value| CoordinateReferenceDescriptor {
+        id: None,
+        name: value.name.clone(),
+        geodetic_datum: value.geodetic_datum.clone(),
+        unit: unit.map(str::to_string),
+    })
+}
+
+fn coordinate_reference_descriptors_compatible(
+    left: &CoordinateReferenceDescriptor,
+    right: &CoordinateReferenceDescriptor,
+) -> bool {
+    if let (Some(left_id), Some(right_id)) = (left.id.as_ref(), right.id.as_ref()) {
+        return left_id.eq_ignore_ascii_case(right_id);
+    }
+    if let (Some(left_name), Some(right_name)) = (left.name.as_ref(), right.name.as_ref()) {
+        return left_name.eq_ignore_ascii_case(right_name);
+    }
+    left.geodetic_datum == right.geodetic_datum && left.unit == right.unit
+}
+
+fn can_resolve_absolute_xy(
+    anchor: Option<&ophiolite_seismic::WellboreAnchorReference>,
+    asset_coordinate_reference: Option<&CoordinateReferenceDescriptor>,
+    asset_id: &AssetId,
+    notes: &mut Vec<String>,
+) -> bool {
+    let Some(anchor_reference) = anchor else {
+        return false;
+    };
+
+    if let Some(anchor_coordinate_reference) = anchor_reference.coordinate_reference.as_ref() {
+        if let Some(anchor_unit) = anchor_coordinate_reference.unit.as_deref() {
+            if !is_metric_length_unit(anchor_unit) {
+                notes.push(format!(
+                    "wellbore anchor for asset '{}' is not expressed in a metric coordinate system, so relative offsets were not promoted to absolute XY",
+                    asset_id.0
+                ));
+                return false;
+            }
+        }
+    } else {
+        notes.push(format!(
+            "wellbore anchor for asset '{}' has no coordinate reference; absolute XY assumes the anchor location already uses the same projected units as the trajectory offsets",
+            asset_id.0
+        ));
+    }
+
+    match (
+        anchor_reference.coordinate_reference.as_ref(),
+        asset_coordinate_reference,
+    ) {
+        (Some(anchor_coordinate_reference), Some(asset_coordinate_reference))
+            if !coordinate_reference_descriptors_compatible(
+                anchor_coordinate_reference,
+                asset_coordinate_reference,
+            ) =>
+        {
+            notes.push(format!(
+                "trajectory asset '{}' does not share the wellbore anchor coordinate reference, so absolute XY was left unresolved",
+                asset_id.0
+            ));
+            false
+        }
+        _ => true,
+    }
+}
+
+fn coordinate_reference_dto_from_seismic(
+    reference: &ophiolite_seismic::CoordinateReferenceDescriptor,
+) -> CoordinateReferenceDto {
+    CoordinateReferenceDto {
+        id: reference.id.clone(),
+        name: reference.name.clone(),
+        geodetic_datum: reference.geodetic_datum.clone(),
+        unit: reference.unit.clone(),
+    }
+}
+
+fn projected_point_dto_from_seismic(
+    point: &ophiolite_seismic::ProjectedPoint2,
+) -> ProjectedPoint2Dto {
+    ProjectedPoint2Dto {
+        x: point.x,
+        y: point.y,
     }
 }
 
@@ -3789,4 +7642,316 @@ fn source_fingerprint(bytes: &[u8]) -> String {
         acc.wrapping_mul(16777619).wrapping_add(u64::from(*byte))
     });
     revision_token_for_bytes("source", &format!("{}:{checksum}", bytes.len())).0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ophiolite_seismic::{
+        CoordinateReferenceDescriptor, WellAzimuthReferenceKind, WellboreAnchorKind,
+        WellboreAnchorReference,
+    };
+
+    #[test]
+    fn resolve_wellbore_trajectory_projects_offsets_from_anchor() {
+        let root = temp_project_root("resolve_wellbore_trajectory_projects_offsets_from_anchor");
+        let csv_path = root.join("trajectory.csv");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            &csv_path,
+            "md,tvd,northing,easting,inclination,azimuth\n0,0,0,0,0,0\n100,90,20,10,12,45\n",
+        )
+        .unwrap();
+
+        let mut project = OphioliteProject::create(&root).unwrap();
+        let binding = AssetBindingInput {
+            well_name: "Well A".to_string(),
+            wellbore_name: "Well A".to_string(),
+            uwi: None,
+            api: None,
+            operator_aliases: Vec::new(),
+        };
+        let import = project
+            .import_trajectory_csv(&csv_path, binding, Some("trajectory"))
+            .unwrap();
+        let geometry = WellboreGeometry {
+            anchor: Some(WellboreAnchorReference {
+                kind: WellboreAnchorKind::Surface,
+                coordinate_reference: Some(CoordinateReferenceDescriptor {
+                    id: Some("EPSG:23031".to_string()),
+                    name: Some("ED50 / UTM zone 31N".to_string()),
+                    geodetic_datum: Some("ED50".to_string()),
+                    unit: Some("m".to_string()),
+                }),
+                location: ProjectedPoint2 {
+                    x: 500_000.0,
+                    y: 6_200_000.0,
+                },
+                parent_wellbore_id: None,
+                parent_measured_depth_m: None,
+                notes: Vec::new(),
+            }),
+            vertical_datum: Some("KB".to_string()),
+            depth_unit: Some("m".to_string()),
+            azimuth_reference: WellAzimuthReferenceKind::GridNorth,
+            notes: Vec::new(),
+        };
+        project
+            .set_wellbore_geometry(&import.resolution.wellbore_id, Some(geometry))
+            .unwrap();
+
+        let resolved = project
+            .resolve_wellbore_trajectory(&import.resolution.wellbore_id)
+            .unwrap();
+
+        assert_eq!(resolved.wellbore_id, import.resolution.wellbore_id.0);
+        assert_eq!(resolved.source_asset_ids.len(), 1);
+        assert_eq!(resolved.source_asset_ids[0], import.asset.id.0);
+        assert_eq!(resolved.stations.len(), 2);
+        assert_eq!(
+            resolved.stations[1].absolute_xy,
+            Some(ProjectedPoint2 {
+                x: 500_010.0,
+                y: 6_200_020.0,
+            })
+        );
+        assert_eq!(
+            resolved
+                .coordinate_reference
+                .as_ref()
+                .and_then(|value| value.id.as_deref()),
+            Some("EPSG:23031")
+        );
+        assert!(resolved.notes.iter().any(|note| {
+            note.contains("does not store a depth unit")
+                || note.contains("does not store a coordinate unit")
+        }));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn project_well_station_onto_inline_section_uses_inverse_grid_transform() {
+        let grid_transform = SurveyMapGridTransformDto {
+            origin: ProjectedPoint2Dto {
+                x: 1000.0,
+                y: 2000.0,
+            },
+            inline_basis: ProjectedVector2Dto { x: 0.0, y: 25.0 },
+            xline_basis: ProjectedVector2Dto { x: 25.0, y: 0.0 },
+        };
+        let section_axis = section_axis_spec(
+            &SurveyIndexGridDto {
+                inline_axis: SurveyIndexAxisDto {
+                    count: 10,
+                    first: 1000,
+                    last: 1009,
+                    step: Some(1),
+                    regular: true,
+                },
+                xline_axis: SurveyIndexAxisDto {
+                    count: 20,
+                    first: 2000,
+                    last: 2019,
+                    step: Some(1),
+                    regular: true,
+                },
+            },
+            SectionAxis::Inline,
+            1002,
+        )
+        .unwrap();
+        let station = ResolvedTrajectoryStation {
+            measured_depth_m: 1500.0,
+            true_vertical_depth_m: Some(1400.0),
+            true_vertical_depth_subsea_m: None,
+            northing_offset_m: Some(50.0),
+            easting_offset_m: Some(75.0),
+            absolute_xy: Some(ProjectedPoint2 {
+                x: 1075.0,
+                y: 2050.0,
+            }),
+            inclination_deg: None,
+            azimuth_deg: None,
+            true_vertical_depth_origin: Some(TrajectoryValueOrigin::Imported),
+            true_vertical_depth_subsea_origin: None,
+            northing_offset_origin: Some(TrajectoryValueOrigin::Imported),
+            easting_offset_origin: Some(TrajectoryValueOrigin::Imported),
+            inclination_origin: None,
+            azimuth_origin: None,
+        };
+
+        let projected = project_well_station_onto_section(
+            &station,
+            station.absolute_xy.as_ref().unwrap(),
+            &grid_transform,
+            &section_axis,
+            12.5,
+        )
+        .unwrap();
+
+        assert_eq!(projected.trace_index, 3);
+        assert_eq!(projected.trace_coordinate, 2003.0);
+        assert_eq!(projected.sample_value, Some(1400.0));
+    }
+
+    #[test]
+    fn densify_trajectory_for_section_inserts_intermediate_station() {
+        let stations = vec![
+            ResolvedTrajectoryStation {
+                measured_depth_m: 0.0,
+                true_vertical_depth_m: Some(0.0),
+                true_vertical_depth_subsea_m: None,
+                northing_offset_m: Some(0.0),
+                easting_offset_m: Some(0.0),
+                absolute_xy: Some(ProjectedPoint2 { x: 0.0, y: 0.0 }),
+                inclination_deg: None,
+                azimuth_deg: None,
+                true_vertical_depth_origin: Some(TrajectoryValueOrigin::Imported),
+                true_vertical_depth_subsea_origin: None,
+                northing_offset_origin: Some(TrajectoryValueOrigin::Imported),
+                easting_offset_origin: Some(TrajectoryValueOrigin::Imported),
+                inclination_origin: None,
+                azimuth_origin: None,
+            },
+            ResolvedTrajectoryStation {
+                measured_depth_m: 20.0,
+                true_vertical_depth_m: Some(10.0),
+                true_vertical_depth_subsea_m: None,
+                northing_offset_m: Some(0.0),
+                easting_offset_m: Some(20.0),
+                absolute_xy: Some(ProjectedPoint2 { x: 20.0, y: 0.0 }),
+                inclination_deg: None,
+                azimuth_deg: None,
+                true_vertical_depth_origin: Some(TrajectoryValueOrigin::Imported),
+                true_vertical_depth_subsea_origin: None,
+                northing_offset_origin: Some(TrajectoryValueOrigin::Imported),
+                easting_offset_origin: Some(TrajectoryValueOrigin::Imported),
+                inclination_origin: None,
+                azimuth_origin: None,
+            },
+        ];
+
+        let densified = densify_trajectory_for_section(
+            &stations,
+            SectionTrajectoryDensificationSettings {
+                max_md_step_m: 10.0,
+                max_xy_step_m: 10.0,
+                max_vertical_step_m: 10.0,
+            },
+        );
+
+        assert_eq!(densified.len(), 3);
+        assert_eq!(densified[1].measured_depth_m, 10.0);
+        assert_eq!(densified[1].true_vertical_depth_m, Some(5.0));
+        assert_eq!(
+            densified[1].absolute_xy,
+            Some(ProjectedPoint2 { x: 10.0, y: 0.0 })
+        );
+        assert_eq!(
+            densified[1].true_vertical_depth_origin,
+            Some(TrajectoryValueOrigin::Derived)
+        );
+        assert_eq!(
+            densified[1].easting_offset_origin,
+            Some(TrajectoryValueOrigin::Derived)
+        );
+    }
+
+    #[test]
+    fn interpolate_well_time_depth_model_ms_linearly_interpolates() {
+        let model = WellTimeDepthModel1D {
+            id: "model-1".to_string(),
+            name: "Model 1".to_string(),
+            wellbore_id: Some("wb-1".to_string()),
+            source_kind: ophiolite_seismic::TimeDepthTransformSourceKind::CheckshotModel1D,
+            depth_reference: DepthReferenceKind::TrueVerticalDepth,
+            travel_time_reference: TravelTimeReference::OneWay,
+            samples: vec![
+                ophiolite_seismic::TimeDepthSample1D {
+                    depth: 1000.0,
+                    time_ms: 800.0,
+                },
+                ophiolite_seismic::TimeDepthSample1D {
+                    depth: 1200.0,
+                    time_ms: 1000.0,
+                },
+            ],
+            notes: Vec::new(),
+        };
+
+        assert_eq!(interpolate_well_time_depth_model_ms(&model, 900.0), None);
+        assert_eq!(
+            interpolate_well_time_depth_model_ms(&model, 1100.0),
+            Some(900.0)
+        );
+        assert_eq!(
+            display_time_ms(
+                900.0,
+                TravelTimeReference::OneWay,
+                TravelTimeReference::TwoWay
+            ),
+            1800.0
+        );
+    }
+
+    #[test]
+    fn import_well_time_depth_model_json_round_trips() {
+        let root = temp_project_root("import_well_time_depth_model_json_round_trips");
+        fs::create_dir_all(&root).unwrap();
+        let model_path = root.join("well-model.json");
+        fs::write(
+            &model_path,
+            serde_json::to_vec_pretty(&WellTimeDepthModel1D {
+                id: "model-1".to_string(),
+                name: "Well Model".to_string(),
+                wellbore_id: Some("Well A".to_string()),
+                source_kind: ophiolite_seismic::TimeDepthTransformSourceKind::CheckshotModel1D,
+                depth_reference: DepthReferenceKind::TrueVerticalDepth,
+                travel_time_reference: TravelTimeReference::TwoWay,
+                samples: vec![
+                    ophiolite_seismic::TimeDepthSample1D {
+                        depth: 0.0,
+                        time_ms: 0.0,
+                    },
+                    ophiolite_seismic::TimeDepthSample1D {
+                        depth: 1000.0,
+                        time_ms: 1200.0,
+                    },
+                ],
+                notes: vec!["test".to_string()],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut project = OphioliteProject::create(&root).unwrap();
+        let result = project
+            .import_well_time_depth_model_json(
+                &model_path,
+                AssetBindingInput {
+                    well_name: "Well A".to_string(),
+                    wellbore_name: "Well A".to_string(),
+                    uwi: None,
+                    api: None,
+                    operator_aliases: Vec::new(),
+                },
+                Some("well model"),
+            )
+            .unwrap();
+
+        let round_trip = project
+            .read_well_time_depth_model(&result.asset.id)
+            .unwrap();
+        assert_eq!(result.asset.asset_kind, AssetKind::WellTimeDepthModel);
+        assert_eq!(result.resolution.status, AssetStatus::Bound);
+        assert_eq!(round_trip.name, "Well Model");
+        assert_eq!(round_trip.samples.len(), 2);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn temp_project_root(test_name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("ophiolite-{}-{}", test_name, now_unix_nanos()))
+    }
 }

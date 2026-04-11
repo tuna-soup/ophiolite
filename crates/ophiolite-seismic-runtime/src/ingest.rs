@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ndarray::{Array2, Array3};
 use ophiolite_seismic_io::{
@@ -11,14 +11,19 @@ use crate::TileCoord;
 use crate::error::SeismicStoreError;
 use crate::metadata::{
     DatasetKind, GeometryProvenance, HeaderFieldSpec, RegularizationProvenance, SourceIdentity,
-    VolumeAxes, VolumeMetadata, generate_store_id,
+    VolumeAxes, VolumeMetadata, generate_store_id, segy_sample_data_fidelity,
 };
+use crate::openvds::{ingest_openvds_store, looks_like_openvds_path};
 use crate::prestack_store::{PrestackStoreHandle, TbgathManifest, create_tbgath_store};
 use crate::segy_export::attach_store_segy_export;
 use crate::storage::tbvol::{
     TbvolWriter, recommended_default_tbvol_tile_target_mib, recommended_tbvol_tile_shape,
 };
-use crate::storage::volume_store::{VolumeStoreWriter, write_dense_volume};
+use crate::storage::volume_store::{
+    VolumeStoreReader, VolumeStoreWriter, read_dense_occupancy, read_dense_volume,
+    write_dense_volume,
+};
+use crate::storage::zarr::ZarrVolumeStoreReader;
 use crate::store::{StoreHandle, open_store};
 use ophiolite_seismic::{
     CoordinateReferenceBinding, CoordinateReferenceDescriptor, CoordinateReferenceSource,
@@ -69,6 +74,13 @@ pub struct IngestOptions {
     pub validation_mode: ValidationMode,
     pub geometry: SeisGeometryOptions,
     pub sparse_survey_policy: SparseSurveyPolicy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VolumeImportFormat {
+    Segy,
+    ZarrStore,
+    OpenVdsStore,
 }
 
 impl Default for IngestOptions {
@@ -160,6 +172,90 @@ pub fn ingest_segy(
         &geometry_report,
         volume.occupancy.is_some(),
     )?;
+    open_store(store_root)
+}
+
+pub fn ingest_volume(
+    input_path: impl AsRef<Path>,
+    store_root: impl AsRef<Path>,
+    options: IngestOptions,
+) -> Result<StoreHandle, SeismicStoreError> {
+    let input_path = normalize_volume_import_path(input_path);
+    match detect_volume_import_format(&input_path)? {
+        VolumeImportFormat::Segy => ingest_segy(&input_path, store_root, options),
+        VolumeImportFormat::ZarrStore => ingest_zarr_store(&input_path, store_root, options),
+        VolumeImportFormat::OpenVdsStore => ingest_openvds_store(&input_path, store_root, options),
+    }
+}
+
+pub fn detect_volume_import_format(
+    input_path: impl AsRef<Path>,
+) -> Result<VolumeImportFormat, SeismicStoreError> {
+    let input_path = normalize_volume_import_path(input_path);
+    let extension = input_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+
+    match extension.as_deref() {
+        Some("sgy") | Some("segy") => return Ok(VolumeImportFormat::Segy),
+        Some("zarr") => return Ok(VolumeImportFormat::ZarrStore),
+        Some("vds") => return Ok(VolumeImportFormat::OpenVdsStore),
+        _ => {}
+    }
+
+    if input_path.is_dir()
+        && input_path
+            .join(crate::metadata::StoreManifest::FILE_NAME)
+            .exists()
+    {
+        return Ok(VolumeImportFormat::ZarrStore);
+    }
+
+    if looks_like_openvds_path(&input_path) {
+        return Ok(VolumeImportFormat::OpenVdsStore);
+    }
+
+    Err(SeismicStoreError::Message(format!(
+        "unsupported volume import format: {}",
+        input_path.display()
+    )))
+}
+
+pub fn normalize_volume_import_path(input_path: impl AsRef<Path>) -> PathBuf {
+    let input_path = input_path.as_ref();
+    let file_name = input_path.file_name().and_then(|value| value.to_str());
+    match file_name.map(|value| value.to_ascii_lowercase()) {
+        Some(name) if name == crate::metadata::StoreManifest::FILE_NAME || name == "zarr.json" => {
+            input_path.parent().unwrap_or(input_path).to_path_buf()
+        }
+        _ => input_path.to_path_buf(),
+    }
+}
+
+pub fn ingest_zarr_store(
+    input_root: impl AsRef<Path>,
+    store_root: impl AsRef<Path>,
+    options: IngestOptions,
+) -> Result<StoreHandle, SeismicStoreError> {
+    let input_root = normalize_volume_import_path(input_root);
+    let reader = ZarrVolumeStoreReader::open(&input_root)?;
+    let data = read_dense_volume(&reader)?;
+    let occupancy = read_dense_occupancy(&reader)?;
+    let shape = [data.shape()[0], data.shape()[1], data.shape()[2]];
+    let mut volume_metadata = reader.volume().clone();
+    volume_metadata.store_id = generate_store_id();
+    volume_metadata.shape = shape;
+    volume_metadata.created_by = "ophiolite-seismic-runtime-0.1.0".to_string();
+    let tile_shape = resolve_chunk_shape(options.chunk_shape, shape);
+    let writer = TbvolWriter::create(
+        &store_root,
+        volume_metadata,
+        tile_shape,
+        occupancy.is_some(),
+    )?;
+    write_dense_volume(&writer, &data, occupancy.as_ref())?;
+    writer.finalize()?;
     open_store(store_root)
 }
 
@@ -554,6 +650,7 @@ fn build_source_identity(
         samples_per_trace,
         sample_interval_us,
         sample_format_code: summary.sample_format_code,
+        sample_data_fidelity: segy_sample_data_fidelity(summary.sample_format_code),
         endianness: match summary.endianness {
             ophiolite_seismic_io::Endianness::Big => "big".to_string(),
             ophiolite_seismic_io::Endianness::Little => "little".to_string(),
@@ -1062,6 +1159,11 @@ mod tests {
             .join("../../../TraceBoost/test-data/small-ps.sgy")
     }
 
+    fn zarr_fixture_path() -> std::path::PathBuf {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../TraceBoost/test-data/survey.zarr")
+    }
+
     #[test]
     fn ingest_prestack_offset_segy_builds_offset_gather_store_when_fixture_is_available() {
         let fixture = prestack_fixture_path();
@@ -1097,6 +1199,64 @@ mod tests {
             .expect("first prestack gather should be readable");
         assert_eq!(gather.traces, handle.manifest.gather_axis_values.len());
         assert_eq!(gather.samples, handle.manifest.volume.shape[2]);
+    }
+
+    #[test]
+    fn detect_volume_import_format_handles_zarr_fixture_and_manifest_file() {
+        let fixture = zarr_fixture_path();
+        if !fixture.exists() {
+            return;
+        }
+
+        assert_eq!(
+            detect_volume_import_format(&fixture).expect("zarr store should be detected"),
+            VolumeImportFormat::ZarrStore
+        );
+        assert_eq!(
+            detect_volume_import_format(fixture.join("seisrefine.manifest.json"))
+                .expect("zarr manifest should resolve to store root"),
+            VolumeImportFormat::ZarrStore
+        );
+    }
+
+    #[test]
+    fn detect_volume_import_format_handles_openvds_extension() {
+        assert_eq!(
+            detect_volume_import_format("synthetic.vds").expect("vds should be detected"),
+            VolumeImportFormat::OpenVdsStore
+        );
+    }
+
+    #[test]
+    fn ingest_volume_reports_explicit_openvds_boundary_error() {
+        let temp_dir = tempdir().expect("temp dir");
+        let input = temp_dir.path().join("synthetic.vds");
+        std::fs::write(&input, b"placeholder").expect("placeholder vds file");
+        let output_root = temp_dir.path().join("synthetic.tbvol");
+
+        let error = ingest_volume(&input, &output_root, IngestOptions::default())
+            .expect_err("openvds scaffold should fail fast");
+        let message = error.to_string();
+        assert!(message.contains("OpenVDS import is not wired"));
+        assert!(message.contains("synthetic.vds"));
+    }
+
+    #[test]
+    fn ingest_volume_imports_zarr_store_fixture_to_tbvol_when_available() {
+        let fixture = zarr_fixture_path();
+        if !fixture.exists() {
+            return;
+        }
+
+        let temp_dir = tempdir().expect("temp dir");
+        let output_root = temp_dir.path().join("survey.tbvol");
+        let handle =
+            ingest_volume(&fixture, &output_root, IngestOptions::default()).expect("zarr ingest");
+
+        assert_eq!(handle.manifest.volume.shape, [23, 18, 75]);
+        assert_eq!(handle.manifest.tile_shape[2], 75);
+        assert_eq!(handle.manifest.volume.axes.ilines.len(), 23);
+        assert_eq!(handle.manifest.volume.axes.xlines.len(), 18);
     }
 
     #[test]

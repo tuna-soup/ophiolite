@@ -16,6 +16,7 @@ use zarrs::storage::{ReadableWritableListableStorage, ReadableWritableListableSt
 use crate::error::SeismicStoreError;
 use crate::metadata::{
     CompressionKind, StorageLayout, StoreManifest, VolumeMetadata, generate_store_id,
+    normalize_source_identity,
 };
 
 use super::tile_geometry::{TileCoord, TileGeometry};
@@ -23,6 +24,10 @@ use super::volume_store::{OccupancyTile, TileBuffer, VolumeStoreReader, VolumeSt
 
 const ARRAY_PATH: &str = "/amplitude";
 const OCCUPANCY_PATH: &str = "/occupancy";
+const METADATA_GROUP_PATH: &str = "/metadata";
+const ILINE_COORD_PATH: &str = "/metadata/iline";
+const XLINE_COORD_PATH: &str = "/metadata/xline";
+const SAMPLE_COORD_PATH: &str = "/metadata/sample_ms";
 
 pub struct ZarrVolumeStoreReader {
     _root: PathBuf,
@@ -36,8 +41,11 @@ impl ZarrVolumeStoreReader {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, SeismicStoreError> {
         let root = root.as_ref().to_path_buf();
         let manifest_path = root.join(StoreManifest::FILE_NAME);
-        let manifest: StoreManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
-        let geometry = TileGeometry::new(manifest.shape, manifest.chunk_shape);
+        let mut manifest: StoreManifest = serde_json::from_slice(&fs::read(&manifest_path)?)?;
+        if normalize_source_identity(&mut manifest.source) {
+            fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+        }
+        let geometry = TileGeometry::new(manifest.shape, logical_tile_shape(&manifest));
         let array = open_array_at_path(&root, &manifest.array_path)?;
         let occupancy = manifest
             .occupancy_array_path
@@ -112,7 +120,10 @@ impl ZarrVolumeStoreWriter {
         if volume.store_id.trim().is_empty() {
             volume.store_id = generate_store_id();
         }
-        let geometry = TileGeometry::new(volume.shape, tile_shape);
+        let geometry = TileGeometry::new(
+            volume.shape,
+            [tile_shape[0], tile_shape[1], volume.shape[2].max(1)],
+        );
         let manifest = StoreManifest {
             version: 1,
             store_id: volume.store_id.clone(),
@@ -218,18 +229,11 @@ fn create_empty_store(
             .map_err(|error| SeismicStoreError::Message(error.to_string()))?,
     );
     GroupBuilder::new()
-        .attributes(
-            serde_json::json!({
-                "producer": "ophiolite-seismic-runtime",
-                "manifest": StoreManifest::FILE_NAME,
-            })
-            .as_object()
-            .expect("object literal")
-            .clone(),
-        )
+        .attributes(root_group_attributes(root, manifest))
         .build(store.clone(), "/")
         .map_err(|error| SeismicStoreError::Message(error.to_string()))?
         .store_metadata()?;
+    create_metadata_group(&store, root, manifest)?;
 
     let array = build_amplitude_array(&store, ARRAY_PATH, manifest)?;
     array.store_metadata()?;
@@ -264,6 +268,137 @@ fn create_empty_store(
         serde_json::to_vec_pretty(manifest)?,
     )?;
     Ok(())
+}
+
+fn create_metadata_group(
+    store: &ReadableWritableListableStorage,
+    root: &Path,
+    manifest: &StoreManifest,
+) -> Result<(), SeismicStoreError> {
+    GroupBuilder::new()
+        .attributes(metadata_group_attributes(root, manifest))
+        .build(store.clone(), METADATA_GROUP_PATH)
+        .map_err(|error| SeismicStoreError::Message(error.to_string()))?
+        .store_metadata()?;
+
+    create_axis_array_f64(store, ILINE_COORD_PATH, "iline", &manifest.axes.ilines)?;
+    create_axis_array_f64(store, XLINE_COORD_PATH, "xline", &manifest.axes.xlines)?;
+    create_axis_array_f32(
+        store,
+        SAMPLE_COORD_PATH,
+        "sample_ms",
+        &manifest.axes.sample_axis_ms,
+    )?;
+    Ok(())
+}
+
+fn create_axis_array_f64(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    dimension_name: &str,
+    values: &[f64],
+) -> Result<(), SeismicStoreError> {
+    let array = ArrayBuilder::new(
+        vec![values.len() as u64],
+        vec![values.len().max(1) as u64],
+        DataType::Float64,
+        0.0_f64,
+    )
+    .dimension_names([dimension_name].into())
+    .build(store.clone(), path)
+    .map_err(|error| SeismicStoreError::Message(error.to_string()))?;
+    array.store_metadata()?;
+    array.store_array_subset_elements(
+        &ArraySubset::new_with_ranges(&[0_u64..values.len() as u64]),
+        values,
+    )?;
+    Ok(())
+}
+
+fn create_axis_array_f32(
+    store: &ReadableWritableListableStorage,
+    path: &str,
+    dimension_name: &str,
+    values: &[f32],
+) -> Result<(), SeismicStoreError> {
+    let array = ArrayBuilder::new(
+        vec![values.len() as u64],
+        vec![values.len().max(1) as u64],
+        DataType::Float32,
+        0.0_f32,
+    )
+    .dimension_names([dimension_name].into())
+    .build(store.clone(), path)
+    .map_err(|error| SeismicStoreError::Message(error.to_string()))?;
+    array.store_metadata()?;
+    array.store_array_subset_elements(
+        &ArraySubset::new_with_ranges(&[0_u64..values.len() as u64]),
+        values,
+    )?;
+    Ok(())
+}
+
+fn root_group_attributes(
+    root: &Path,
+    manifest: &StoreManifest,
+) -> serde_json::Map<String, serde_json::Value> {
+    serde_json::json!({
+        "producer": "ophiolite-seismic-runtime",
+        "manifest": StoreManifest::FILE_NAME,
+        "traceboost": {
+            "format": "traceboost-zarr-v1",
+            "storeId": manifest.store_id,
+            "datasetKind": manifest.kind,
+            "shape": manifest.shape,
+            "chunkShape": manifest.chunk_shape,
+            "sourcePath": manifest.source.source_path,
+        },
+        "mdio": {
+            "apiVersion": "traceboost-mdio-compat-v1",
+            "name": dataset_name(root, manifest),
+            "dimensionNames": ["iline", "xline", "sample"],
+            "spatialDimensionNames": ["iline", "xline"],
+            "traceDomain": "sample",
+            "attributes": {
+                "surveyDimensionality": "3D",
+                "stackingState": "poststack",
+                "traceCount": manifest.source.trace_count,
+                "samplesPerTrace": manifest.source.samples_per_trace,
+                "sampleIntervalMs": manifest.source.sample_interval_us as f64 / 1000.0,
+            }
+        }
+    })
+    .as_object()
+    .expect("object literal")
+    .clone()
+}
+
+fn metadata_group_attributes(
+    root: &Path,
+    manifest: &StoreManifest,
+) -> serde_json::Map<String, serde_json::Value> {
+    serde_json::json!({
+        "datasetName": dataset_name(root, manifest),
+        "axisUnits": {
+            "iline": "index",
+            "xline": "index",
+            "sample_ms": "ms",
+        },
+        "source": manifest.source,
+        "coordinateReferenceBinding": manifest.coordinate_reference_binding,
+        "spatial": manifest.spatial,
+    })
+    .as_object()
+    .expect("object literal")
+    .clone()
+}
+
+fn dataset_name(root: &Path, manifest: &StoreManifest) -> String {
+    root.file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| manifest.store_id.clone())
 }
 
 fn open_array_at_path(
@@ -313,6 +448,14 @@ fn effective_array_chunk_shape(manifest: &StoreManifest, layout: &StorageLayout)
         .iter()
         .map(|value| *value as u64)
         .collect()
+}
+
+fn logical_tile_shape(manifest: &StoreManifest) -> [usize; 3] {
+    [
+        manifest.chunk_shape[0].max(1),
+        manifest.chunk_shape[1].max(1),
+        manifest.shape[2].max(1),
+    ]
 }
 
 fn compression_codec(
@@ -377,4 +520,67 @@ fn pad_occupancy_tile(geometry: &TileGeometry, effective: [usize; 3], raw: &[u8]
         out[dst..dst + effective[1]].copy_from_slice(&raw[src..src + effective[1]]);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::logical_tile_shape;
+    use crate::metadata::{
+        DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, StoreManifest, VolumeAxes,
+    };
+    use std::path::PathBuf;
+
+    #[test]
+    fn logical_tile_shape_keeps_full_sample_axis_for_runtime_tiles() {
+        let manifest = StoreManifest {
+            version: 1,
+            store_id: String::new(),
+            kind: DatasetKind::Source,
+            source: SourceIdentity {
+                source_path: PathBuf::from("fixture.sgy"),
+                file_size: 0,
+                trace_count: 0,
+                samples_per_trace: 75,
+                sample_interval_us: 4000,
+                sample_format_code: 3,
+                sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(3),
+                endianness: "big".to_string(),
+                revision_raw: 0,
+                fixed_length_trace_flag_raw: 1,
+                extended_textual_headers: 0,
+                geometry: GeometryProvenance {
+                    inline_field: HeaderFieldSpec {
+                        name: "INLINE_3D".to_string(),
+                        start_byte: 189,
+                        value_type: "I32".to_string(),
+                    },
+                    crossline_field: HeaderFieldSpec {
+                        name: "CROSSLINE_3D".to_string(),
+                        start_byte: 193,
+                        value_type: "I32".to_string(),
+                    },
+                    third_axis_field: None,
+                },
+                regularization: None,
+            },
+            shape: [23, 18, 75],
+            chunk_shape: [16, 16, 64],
+            axes: VolumeAxes {
+                ilines: Vec::new(),
+                xlines: Vec::new(),
+                sample_axis_ms: Vec::new(),
+            },
+            segy_export: None,
+            coordinate_reference_binding: None,
+            spatial: None,
+            array_path: "/amplitude".to_string(),
+            occupancy_array_path: None,
+            created_by: "test".to_string(),
+            derived_from: None,
+            processing_lineage: None,
+            storage_layout: None,
+        };
+
+        assert_eq!(logical_tile_shape(&manifest), [16, 16, 75]);
+    }
 }

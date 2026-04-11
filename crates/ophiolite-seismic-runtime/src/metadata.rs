@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 
-use ophiolite_seismic::CoordinateReferenceBinding;
-use ophiolite_seismic::ProcessingArtifactRole;
-use ophiolite_seismic::ProcessingPipelineSpec;
-use ophiolite_seismic::SurveySpatialDescriptor;
+use ophiolite_seismic::{
+    CoordinateReferenceBinding, ProcessingArtifactRole, ProcessingPipelineSpec,
+    SampleDataConversionKind, SampleDataFidelity, SampleValuePreservation, SurveySpatialDescriptor,
+};
+use ophiolite_seismic_io::SampleFormat;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -50,9 +51,15 @@ pub struct SourceIdentity {
     pub samples_per_trace: usize,
     pub sample_interval_us: u16,
     pub sample_format_code: u16,
+    #[serde(default)]
+    pub sample_data_fidelity: SampleDataFidelity,
+    #[serde(default = "default_source_endianness")]
     pub endianness: String,
+    #[serde(default)]
     pub revision_raw: u16,
+    #[serde(default = "default_fixed_length_trace_flag_raw")]
     pub fixed_length_trace_flag_raw: u16,
+    #[serde(default)]
     pub extended_textual_headers: i16,
     pub geometry: GeometryProvenance,
     pub regularization: Option<RegularizationProvenance>,
@@ -121,6 +128,7 @@ pub struct ProcessingLineage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolumeMetadata {
     pub kind: DatasetKind,
+    #[serde(default)]
     pub store_id: String,
     pub source: SourceIdentity,
     pub shape: [usize; 3],
@@ -139,6 +147,7 @@ pub struct VolumeMetadata {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoreManifest {
     pub version: u32,
+    #[serde(default)]
     pub store_id: String,
     pub kind: DatasetKind,
     pub source: SourceIdentity,
@@ -184,4 +193,112 @@ impl From<&StoreManifest> for VolumeMetadata {
 
 pub fn generate_store_id() -> String {
     Uuid::new_v4().to_string()
+}
+
+pub fn segy_sample_data_fidelity(sample_format_code: u16) -> SampleDataFidelity {
+    match SampleFormat::from_code(sample_format_code) {
+        Some(SampleFormat::IeeeFloat32) => SampleDataFidelity {
+            source_sample_type: "ieee_float32".to_string(),
+            working_sample_type: "f32".to_string(),
+            conversion: SampleDataConversionKind::Identity,
+            preservation: SampleValuePreservation::Exact,
+            notes: vec![
+                "SEG-Y IEEE float32 samples are stored in the working volume without numeric narrowing."
+                    .to_string(),
+            ],
+        },
+        Some(SampleFormat::IbmFloat32) => SampleDataFidelity {
+            source_sample_type: "ibm_float32".to_string(),
+            working_sample_type: "f32".to_string(),
+            conversion: SampleDataConversionKind::FormatTranscode,
+            preservation: SampleValuePreservation::PotentiallyLossy,
+            notes: vec![
+                "SEG-Y IBM float32 samples are transcoded into IEEE f32 for the working store."
+                    .to_string(),
+            ],
+        },
+        Some(SampleFormat::Int16) => exact_cast_fidelity("int16"),
+        Some(SampleFormat::UInt16) => exact_cast_fidelity("uint16"),
+        Some(SampleFormat::Int24) => exact_cast_fidelity("int24"),
+        Some(SampleFormat::UInt24) => exact_cast_fidelity("uint24"),
+        Some(SampleFormat::Int8) => exact_cast_fidelity("int8"),
+        Some(SampleFormat::UInt8) => exact_cast_fidelity("uint8"),
+        Some(SampleFormat::Int32) => potentially_lossy_cast_fidelity(
+            "int32",
+            "Large 32-bit integers can exceed the exact integer range of IEEE f32.",
+        ),
+        Some(SampleFormat::UInt32) => potentially_lossy_cast_fidelity(
+            "uint32",
+            "Large 32-bit integers can exceed the exact integer range of IEEE f32.",
+        ),
+        Some(SampleFormat::Int64) => potentially_lossy_cast_fidelity(
+            "int64",
+            "64-bit integers are generally not exactly representable in IEEE f32.",
+        ),
+        Some(SampleFormat::UInt64) => potentially_lossy_cast_fidelity(
+            "uint64",
+            "64-bit integers are generally not exactly representable in IEEE f32.",
+        ),
+        Some(SampleFormat::IeeeFloat64) => potentially_lossy_cast_fidelity(
+            "ieee_float64",
+            "IEEE float64 samples are narrowed to IEEE f32 for the working store.",
+        ),
+        Some(SampleFormat::FixedPoint32) => potentially_lossy_cast_fidelity(
+            "fixed_point32",
+            "Fixed-point 32-bit samples do not map exactly to the working IEEE f32 representation.",
+        ),
+        None => SampleDataFidelity {
+            source_sample_type: format!("unknown_code_{sample_format_code}"),
+            working_sample_type: "f32".to_string(),
+            conversion: SampleDataConversionKind::Cast,
+            preservation: SampleValuePreservation::PotentiallyLossy,
+            notes: vec![format!(
+                "SEG-Y sample format code {sample_format_code} is not recognized; fidelity to the working f32 store could not be classified."
+            )],
+        },
+    }
+}
+
+pub fn normalize_source_identity(source: &mut SourceIdentity) -> bool {
+    let needs_update = source.sample_data_fidelity.source_sample_type == "unknown"
+        || source
+            .sample_data_fidelity
+            .working_sample_type
+            .trim()
+            .is_empty();
+    if needs_update {
+        source.sample_data_fidelity = segy_sample_data_fidelity(source.sample_format_code);
+    }
+    needs_update
+}
+
+fn default_source_endianness() -> String {
+    "big".to_string()
+}
+
+fn default_fixed_length_trace_flag_raw() -> u16 {
+    1
+}
+
+fn exact_cast_fidelity(source_sample_type: &str) -> SampleDataFidelity {
+    SampleDataFidelity {
+        source_sample_type: source_sample_type.to_string(),
+        working_sample_type: "f32".to_string(),
+        conversion: SampleDataConversionKind::Cast,
+        preservation: SampleValuePreservation::Exact,
+        notes: vec![
+            "This source sample type is exactly representable in the working IEEE f32 store."
+                .to_string(),
+        ],
+    }
+}
+
+fn potentially_lossy_cast_fidelity(source_sample_type: &str, note: &str) -> SampleDataFidelity {
+    SampleDataFidelity {
+        source_sample_type: source_sample_type.to_string(),
+        working_sample_type: "f32".to_string(),
+        conversion: SampleDataConversionKind::Cast,
+        preservation: SampleValuePreservation::PotentiallyLossy,
+        notes: vec![note.to_string()],
+    }
 }

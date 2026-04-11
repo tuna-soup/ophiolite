@@ -13,7 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::SeismicStoreError;
 use crate::gather_processing::{GatherPlane, apply_gather_processing_pipeline};
-use crate::metadata::{DatasetKind, ProcessingLineage, VolumeMetadata, generate_store_id};
+use crate::metadata::{
+    DatasetKind, ProcessingLineage, VolumeMetadata, generate_store_id, normalize_source_identity,
+};
 use crate::store::apply_native_coordinate_reference_override;
 
 const MANIFEST_FILE: &str = "manifest.json";
@@ -103,7 +105,10 @@ impl TbgathReader {
     pub fn open(root: impl AsRef<Path>) -> Result<Self, SeismicStoreError> {
         let root = root.as_ref();
         let manifest_path = root.join(MANIFEST_FILE);
-        let manifest = serde_json::from_slice::<TbgathManifest>(&fs::read(&manifest_path)?)?;
+        let mut manifest = serde_json::from_slice::<TbgathManifest>(&fs::read(&manifest_path)?)?;
+        if normalize_source_identity(&mut manifest.volume.source) {
+            fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+        }
         validate_manifest(&manifest)?;
 
         let amplitude_file = File::open(root.join(AMPLITUDE_FILE))?;
@@ -243,6 +248,7 @@ impl PrestackStoreHandle {
             shape: self.manifest.volume.shape,
             chunk_shape: [1, 1, self.manifest.volume.shape[2]],
             sample_interval_ms: self.manifest.volume.source.sample_interval_us as f32 / 1000.0,
+            sample_data_fidelity: self.manifest.volume.source.sample_data_fidelity.clone(),
             geometry: self.geometry_descriptor(),
             coordinate_reference_binding: self.manifest.volume.coordinate_reference_binding.clone(),
             spatial: self.manifest.volume.spatial.clone(),
@@ -958,6 +964,7 @@ mod tests {
                     samples_per_trace: 4,
                     sample_interval_us: 2000,
                     sample_format_code: 5,
+                    sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(5),
                     endianness: "big".to_string(),
                     revision_raw: 0,
                     fixed_length_trace_flag_raw: 1,

@@ -1,4 +1,11 @@
 /target/
+/tmp/
 /apps/*/node_modules/
 /apps/*/dist/
 /apps/*/src-tauri/target/
+/lossless_float_storage_bench.obj
+/openvds_storage_bench.obj
+/lossless_float_storage_bench.exe
+/openvds_storage_bench.exe
+**/__pycache__/
+*.py[cod]

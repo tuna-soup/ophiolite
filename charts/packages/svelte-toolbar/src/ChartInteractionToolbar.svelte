@@ -60,6 +60,12 @@
                 <path d="M12 3V21M3 12H21" stroke-linecap="round" />
                 <path d="M8 6L12 2L16 6M18 8L22 12L18 16M16 18L12 22L8 18M6 16L2 12L6 8" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
+            {:else if item.icon === "orbit"}
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8">
+                <ellipse cx="12" cy="12" rx="7.5" ry="3.8" />
+                <path d="M12 4.5C15.8 4.5 19 7.8 19 12s-3.2 7.5-7 7.5S5 16.2 5 12" stroke-linecap="round" />
+                <path d="M18.8 8.5L20.8 7.8L20.1 5.8" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
             {/if}
           </span>
           {#if !iconOnly}

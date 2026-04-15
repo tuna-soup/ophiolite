@@ -142,6 +142,42 @@
       }
     },
     {
+      "id": "ophiolite.project_operator_lock",
+      "summary": "Return the operator package lock for a local Ophiolite project.",
+      "owner": "ophiolite",
+      "domain": "operators",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::operator_lock",
+        "rust_cli": "project-operator-lock"
+      }
+    },
+    {
+      "id": "ophiolite.install_operator_package",
+      "summary": "Install an operator package manifest into a local Ophiolite project and pin it in the project lock.",
+      "owner": "ophiolite",
+      "domain": "operators",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::install_operator_package",
+        "rust_cli": "install-operator-package"
+      }
+    },
+    {
+      "id": "ophiolite.list_project_compute_catalog",
+      "summary": "List typed compute operators available for a specific project asset under the current operator lock.",
+      "owner": "ophiolite",
+      "domain": "compute",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::list_compute_catalog",
+        "rust_cli": "list-project-compute-catalog"
+      }
+    },
+    {
       "id": "ophiolite.list_asset_collections",
       "summary": "List asset collections grouped under a project wellbore.",
       "owner": "ophiolite",
@@ -224,9 +260,46 @@
       "owner": "ophiolite",
       "domain": "compute",
       "stability": "beta",
-      "surfaces": ["rust-api"],
+      "surfaces": ["rust-api", "rust-cli"],
       "bindings": {
-        "rust_function": "ophiolite::OphioliteProject::run_compute"
+        "rust_function": "ophiolite::OphioliteProject::run_compute",
+        "rust_cli": "run-project-compute"
+      }
+    },
+    {
+      "id": "ophiolite.run_avo_reflectivity",
+      "summary": "Evaluate PP AVO reflectivity for elastic property contrasts across one or more angles.",
+      "owner": "ophiolite",
+      "domain": "seismic-analysis",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite_seismic_runtime::avo_reflectivity",
+        "rust_cli": "run-avo-reflectivity"
+      }
+    },
+    {
+      "id": "ophiolite.run_rock_physics_attribute",
+      "summary": "Evaluate rock-physics attributes over flattened 1D/2D/3D sample arrays.",
+      "owner": "ophiolite",
+      "domain": "rock-physics",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite_seismic_runtime::rock_physics_attribute",
+        "rust_cli": "run-rock-physics-attribute"
+      }
+    },
+    {
+      "id": "ophiolite.run_avo_intercept_gradient_attribute",
+      "summary": "Project AVO intercept-gradient attributes into chi or fluid-factor style responses.",
+      "owner": "ophiolite",
+      "domain": "seismic-analysis",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite_seismic_runtime::avo_intercept_gradient_attribute",
+        "rust_cli": "run-avo-intercept-gradient-attribute"
       }
     },
     {

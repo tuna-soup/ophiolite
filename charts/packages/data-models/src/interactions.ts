@@ -1,4 +1,14 @@
-export type ChartInteractionTool = "pointer" | "pan" | "zoomRect" | "topEdit" | "lassoSelect";
+export type ChartInteractionTool =
+  | "pointer"
+  | "pan"
+  | "zoomRect"
+  | "topEdit"
+  | "lassoSelect"
+  | "orbit"
+  | "slice-drag"
+  | "crop"
+  | "select"
+  | "interpret-seed";
 export type ChartInteractionToggle = "crosshair";
 export type PrimaryInteractionMode = "cursor" | "panZoom" | "zoomRect" | "topEdit" | "lassoSelect";
 export type SecondaryInteractionModifier = "crosshair";
@@ -34,7 +44,15 @@ export interface InteractionTarget {
     | "seismic-section-sample"
     | "seismic-section-horizon-anchor"
     | "horizon-anchor"
-    | "lasso-selection";
+    | "lasso-selection"
+    | "empty-scene"
+    | "volume-slice-plane"
+    | "volume-slice-sample"
+    | "volume-horizon-surface"
+    | "volume-horizon-contour"
+    | "volume-well-trajectory"
+    | "volume-well-marker"
+    | "volume-annotation";
   chartId?: string;
   wellId?: string;
   trackId?: string;

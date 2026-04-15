@@ -1,13 +1,20 @@
 mod operation_catalog;
 
 use operation_catalog::operation_catalog;
-use ophiolite_core::Result;
+use ophiolite_core::{LasError, Result};
 use ophiolite_package::{StoredLasFile, write_bundle};
 use ophiolite_parser::{ReadOptions, import_las_file};
-use ophiolite_project::{OphioliteProject, WellId};
+use ophiolite_project::{AssetId, OphioliteProject, ProjectComputeRunRequest, WellId};
+use ophiolite_seismic::{
+    AvoInterceptGradientAttributeRequest, AvoReflectivityRequest, RockPhysicsAttributeRequest,
+};
+use ophiolite_seismic_runtime::{
+    avo_intercept_gradient_attribute, avo_reflectivity, rock_physics_attribute,
+};
 use serde_json::json;
 use std::env;
 use std::fs;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 pub fn supported_cli_commands() -> &'static [&'static str] {
@@ -18,6 +25,13 @@ pub fn supported_cli_commands() -> &'static [&'static str] {
         "project-summary",
         "list-project-wells",
         "list-project-wellbores",
+        "project-operator-lock",
+        "install-operator-package",
+        "list-project-compute-catalog",
+        "run-project-compute",
+        "run-avo-reflectivity",
+        "run-rock-physics-attribute",
+        "run-avo-intercept-gradient-attribute",
         "import",
         "inspect-file",
         "summary",
@@ -66,6 +80,72 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&project.list_wellbores(&WellId(args[3].clone()))?)?
+            );
+        }
+        "project-operator-lock" if args.len() == 3 => {
+            let project = OphioliteProject::open(&args[2])?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.operator_lock()?)?
+            );
+        }
+        "install-operator-package" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.install_operator_package(&args[3])?)?
+            );
+        }
+        "list-project-compute-catalog" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &project.list_compute_catalog(&AssetId(args[3].clone()))?
+                )?
+            );
+        }
+        "run-project-compute" if args.len() == 4 => {
+            let mut project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request = serde_json::from_str::<ProjectComputeRunRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.run_compute(&request)?)?
+            );
+        }
+        "run-avo-reflectivity" if args.len() == 3 => {
+            let request_json = read_json_argument(&args[2])?;
+            let request = serde_json::from_str::<AvoReflectivityRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &avo_reflectivity(request)
+                        .map_err(|error| LasError::Validation(error.to_string()))?
+                )?
+            );
+        }
+        "run-rock-physics-attribute" if args.len() == 3 => {
+            let request_json = read_json_argument(&args[2])?;
+            let request = serde_json::from_str::<RockPhysicsAttributeRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &rock_physics_attribute(request)
+                        .map_err(|error| LasError::Validation(error.to_string()))?
+                )?
+            );
+        }
+        "run-avo-intercept-gradient-attribute" if args.len() == 3 => {
+            let request_json = read_json_argument(&args[2])?;
+            let request =
+                serde_json::from_str::<AvoInterceptGradientAttributeRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &avo_intercept_gradient_attribute(request)
+                        .map_err(|error| LasError::Validation(error.to_string()))?
+                )?
             );
         }
         "import" if args.len() == 4 => {
@@ -201,9 +281,25 @@ fn print_usage() {
     eprintln!("  {binary} project-summary <project_root>");
     eprintln!("  {binary} list-project-wells <project_root>");
     eprintln!("  {binary} list-project-wellbores <project_root> <well_id>");
+    eprintln!("  {binary} project-operator-lock <project_root>");
+    eprintln!("  {binary} install-operator-package <project_root> <manifest_path>");
+    eprintln!("  {binary} list-project-compute-catalog <project_root> <asset_id>");
+    eprintln!("  {binary} run-project-compute <project_root> <request_json_path|->");
+    eprintln!("  {binary} run-avo-reflectivity <request_json_path|->");
+    eprintln!("  {binary} run-rock-physics-attribute <request_json_path|->");
+    eprintln!("  {binary} run-avo-intercept-gradient-attribute <request_json_path|->");
     eprintln!("  {binary} import <input.las> <bundle_dir>");
     eprintln!("  {binary} inspect-file <input.las>");
     eprintln!("  {binary} summary <bundle_dir>");
     eprintln!("  {binary} list-curves <bundle_dir>");
     eprintln!("  {binary} generate-fixture-packages <input_root> <output_root>");
+}
+
+fn read_json_argument(argument: &str) -> Result<String> {
+    if argument == "-" {
+        let mut buffer = String::new();
+        io::stdin().read_to_string(&mut buffer)?;
+        return Ok(buffer);
+    }
+    Ok(fs::read_to_string(argument)?)
 }

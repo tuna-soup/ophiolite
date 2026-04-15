@@ -1,0 +1,315 @@
+{
+  "schema_version": 1,
+  "catalog_name": "traceboost-operations",
+  "product": "TraceBoost",
+  "operations": [
+    {
+      "id": "traceboost.backend_info",
+      "summary": "Report backend wiring and current policy hints for the local app shell.",
+      "owner": "traceboost",
+      "domain": "diagnostics",
+      "stability": "internal",
+      "surfaces": ["rust-cli", "python-api", "python-cli"],
+      "bindings": {
+        "rust_cli": "backend-info",
+        "python_method": "backend_info",
+        "python_cli": "backend-info"
+      }
+    },
+    {
+      "id": "traceboost.operation_catalog",
+      "summary": "Return the declared TraceBoost automation catalog used for surface conformance.",
+      "owner": "traceboost",
+      "domain": "diagnostics",
+      "stability": "beta",
+      "surfaces": ["rust-cli", "python-api", "python-cli"],
+      "bindings": {
+        "rust_cli": "operation-catalog",
+        "python_method": "operation_catalog",
+        "python_cli": "operation-catalog"
+      }
+    },
+    {
+      "id": "traceboost.inspect_segy",
+      "summary": "Inspect raw SEG-Y metadata before workflow ingestion.",
+      "owner": "traceboost",
+      "domain": "ingest",
+      "stability": "internal",
+      "surfaces": ["rust-cli"],
+      "bindings": {
+        "rust_cli": "inspect"
+      }
+    },
+    {
+      "id": "traceboost.analyze_segy",
+      "summary": "Analyze SEG-Y geometry assumptions using explicit header mappings.",
+      "owner": "traceboost",
+      "domain": "ingest",
+      "stability": "internal",
+      "surfaces": ["rust-cli"],
+      "bindings": {
+        "rust_cli": "analyze"
+      }
+    },
+    {
+      "id": "traceboost.ingest_segy",
+      "summary": "Ingest SEG-Y into a local store using low-level runtime ingest controls.",
+      "owner": "traceboost",
+      "domain": "ingest",
+      "stability": "internal",
+      "surfaces": ["rust-cli"],
+      "bindings": {
+        "rust_cli": "ingest"
+      }
+    },
+    {
+      "id": "traceboost.validate_store",
+      "summary": "Run strict validation over one or more output datasets.",
+      "owner": "traceboost",
+      "domain": "validation",
+      "stability": "internal",
+      "surfaces": ["rust-cli"],
+      "bindings": {
+        "rust_cli": "validate"
+      }
+    },
+    {
+      "id": "traceboost.preflight_import",
+      "summary": "Preflight an incoming SEG-Y file and recommend the next import action.",
+      "owner": "traceboost",
+      "domain": "ingest",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "request_type": "SurveyPreflightRequest",
+      "response_type": "SurveyPreflightResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::preflight_dataset",
+        "rust_cli": "preflight-import",
+        "python_method": "preflight_import",
+        "python_cli": "preflight-import"
+      }
+    },
+    {
+      "id": "traceboost.import_dataset",
+      "summary": "Import a post-stack seismic dataset into a local TraceBoost store.",
+      "owner": "traceboost",
+      "domain": "ingest",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "request_type": "ImportDatasetRequest",
+      "response_type": "ImportDatasetResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::import_dataset",
+        "rust_cli": "import-dataset",
+        "python_method": "import_dataset",
+        "python_cli": "import-dataset"
+      }
+    },
+    {
+      "id": "traceboost.open_dataset",
+      "summary": "Open a stored dataset and return its summary DTO.",
+      "owner": "traceboost",
+      "domain": "catalog",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "request_type": "OpenDatasetRequest",
+      "response_type": "OpenDatasetResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::open_dataset_summary",
+        "rust_cli": "open-dataset",
+        "python_method": "open_dataset",
+        "python_cli": "open-dataset"
+      }
+    },
+    {
+      "id": "traceboost.set_native_coordinate_reference",
+      "summary": "Set or update the dataset native coordinate reference metadata.",
+      "owner": "traceboost",
+      "domain": "metadata",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "request_type": "SetDatasetNativeCoordinateReferenceRequest",
+      "response_type": "SetDatasetNativeCoordinateReferenceResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::set_dataset_native_coordinate_reference",
+        "rust_cli": "set-native-coordinate-reference",
+        "python_method": "set_native_coordinate_reference",
+        "python_cli": "set-native-coordinate-reference"
+      }
+    },
+    {
+      "id": "traceboost.resolve_survey_map",
+      "summary": "Resolve the map payload needed for survey display and embedding.",
+      "owner": "traceboost",
+      "domain": "map",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "request_type": "ResolveSurveyMapRequest",
+      "response_type": "ResolveSurveyMapResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::resolve_survey_map",
+        "rust_cli": "resolve-survey-map",
+        "python_method": "resolve_survey_map",
+        "python_cli": "resolve-survey-map"
+      }
+    },
+    {
+      "id": "traceboost.export_segy",
+      "summary": "Export a stored dataset back to SEG-Y.",
+      "owner": "traceboost",
+      "domain": "export",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "request_type": "ExportSegyRequest",
+      "response_type": "ExportSegyResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::export_dataset_segy",
+        "rust_cli": "export-segy",
+        "python_method": "export_segy",
+        "python_cli": "export-segy"
+      }
+    },
+    {
+      "id": "traceboost.export_zarr",
+      "summary": "Export a stored dataset to Zarr.",
+      "owner": "traceboost",
+      "domain": "export",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "response_type": "ExportZarrResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::export_dataset_zarr",
+        "rust_cli": "export-zarr",
+        "python_method": "export_zarr",
+        "python_cli": "export-zarr"
+      }
+    },
+    {
+      "id": "traceboost.import_horizons",
+      "summary": "Import one or more horizon XYZ files into the current store.",
+      "owner": "traceboost",
+      "domain": "interpretation",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "request_type": "ImportHorizonXyzRequest",
+      "response_type": "ImportHorizonXyzResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::import_horizon_xyz",
+        "rust_cli": "import-horizons",
+        "python_method": "import_horizons",
+        "python_cli": "import-horizons"
+      }
+    },
+    {
+      "id": "traceboost.view_section",
+      "summary": "Load a seismic inline or crossline section from a store.",
+      "owner": "traceboost",
+      "domain": "view",
+      "stability": "beta",
+      "surfaces": ["rust-cli", "python-api", "python-cli"],
+      "response_type": "SectionView",
+      "bindings": {
+        "rust_cli": "view-section",
+        "python_method": "view_section",
+        "python_cli": "view-section"
+      }
+    },
+    {
+      "id": "traceboost.view_section_horizons",
+      "summary": "Load horizon overlays for a seismic inline or crossline section.",
+      "owner": "traceboost",
+      "domain": "view",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "request_type": "LoadSectionHorizonsRequest",
+      "response_type": "LoadSectionHorizonsResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::load_section_horizons",
+        "rust_cli": "view-section-horizons",
+        "python_method": "view_section_horizons",
+        "python_cli": "view-section-horizons"
+      }
+    },
+    {
+      "id": "traceboost.load_velocity_models",
+      "summary": "Load available velocity models and transforms associated with the survey.",
+      "owner": "traceboost",
+      "domain": "velocity",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "response_type": "LoadVelocityModelsResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::load_velocity_models",
+        "rust_cli": "load-velocity-models",
+        "python_method": "load_velocity_models",
+        "python_cli": "load-velocity-models"
+      }
+    },
+    {
+      "id": "traceboost.ensure_demo_survey_time_depth_transform",
+      "summary": "Ensure the demo survey has a time-depth transform for end-to-end workflows.",
+      "owner": "traceboost",
+      "domain": "velocity",
+      "stability": "internal",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "bindings": {
+        "rust_function": "traceboost_app::ensure_demo_survey_time_depth_transform",
+        "rust_cli": "ensure-demo-survey-time-depth-transform",
+        "python_method": "ensure_demo_survey_time_depth_transform",
+        "python_cli": "ensure-demo-survey-time-depth-transform"
+      }
+    },
+    {
+      "id": "traceboost.build_paired_horizon_transform",
+      "summary": "Build a survey time-depth transform from paired time and depth horizons.",
+      "owner": "traceboost",
+      "domain": "velocity",
+      "stability": "experimental",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "traceboost_app::build_paired_horizon_transform",
+        "rust_cli": "build-paired-horizon-transform"
+      }
+    },
+    {
+      "id": "traceboost.convert_horizon_domain",
+      "summary": "Convert a horizon between time and depth domains using an existing transform.",
+      "owner": "traceboost",
+      "domain": "velocity",
+      "stability": "experimental",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "traceboost_app::convert_horizon_domain",
+        "rust_cli": "convert-horizon-domain"
+      }
+    },
+    {
+      "id": "traceboost.import_velocity_functions_model",
+      "summary": "Import a velocity functions model into the survey transform set.",
+      "owner": "traceboost",
+      "domain": "velocity",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "bindings": {
+        "rust_function": "traceboost_app::import_velocity_functions_model",
+        "rust_cli": "import-velocity-functions-model",
+        "python_method": "import_velocity_functions_model",
+        "python_cli": "import-velocity-functions-model"
+      }
+    },
+    {
+      "id": "traceboost.prepare_survey_demo",
+      "summary": "Compose multiple existing automation calls into a demo-ready survey preparation flow.",
+      "owner": "traceboost",
+      "domain": "workflow",
+      "stability": "experimental",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "bindings": {
+        "rust_function": "traceboost_app::TraceBoostWorkflowService::prepare_survey_demo",
+        "rust_cli": "prepare-survey-demo",
+        "python_method": "prepare_survey_demo",
+        "python_cli": "prepare-survey-demo"
+      }
+    }
+  ]
+}

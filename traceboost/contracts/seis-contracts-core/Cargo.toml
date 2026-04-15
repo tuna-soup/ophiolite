@@ -1,0 +1,14 @@
+[package]
+name = "seis-contracts-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "seis_contracts_core"
+
+[dependencies]
+ophiolite-seismic = { path = "../../../crates/ophiolite-seismic" }
+schemars.workspace = true
+serde.workspace = true
+ts-rs.workspace = true

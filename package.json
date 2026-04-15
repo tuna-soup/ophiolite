@@ -13,6 +13,10 @@
     "charts:dev": "bun run --cwd ./charts dev",
     "charts:playground": "bun run --cwd ./charts dev:svelte",
     "charts:build": "bun run --cwd ./charts build",
-    "charts:typecheck": "bun run --cwd ./charts typecheck"
+    "charts:typecheck": "bun run --cwd ./charts typecheck",
+    "traceboost:doctor": "bun run --cwd ./apps/traceboost-demo doctor",
+    "traceboost:dev": "bun run --cwd ./apps/traceboost-demo dev",
+    "traceboost:typecheck": "bun run --cwd ./apps/traceboost-demo typecheck",
+    "traceboost:build": "bun run --cwd ./apps/traceboost-demo build"
   }
 }

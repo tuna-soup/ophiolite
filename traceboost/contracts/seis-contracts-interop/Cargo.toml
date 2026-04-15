@@ -1,0 +1,11 @@
+[package]
+name = "seis-contracts-interop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "seis_contracts_interop"
+
+[dependencies]
+seis-contracts-operations = { path = "../seis-contracts-operations" }

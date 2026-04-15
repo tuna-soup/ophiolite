@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "svelte": ["./node_modules/svelte"],
+      "svelte/*": ["./node_modules/svelte/*"],
+      "@ophiolite/charts": ["../../charts/packages/svelte/src/index.ts"],
+      "@ophiolite/charts-toolbar": ["../../charts/packages/svelte-toolbar/src/index.ts"],
+      "@ophiolite/charts-renderer": ["../../charts/packages/renderer/src/index.ts"],
+      "@ophiolite/charts-domain": ["../../charts/packages/domain-geoscience/src/index.ts"],
+      "@ophiolite/charts-data-models": ["../../charts/packages/data-models/src/index.ts"],
+      "@ophiolite/charts-core": ["../../charts/packages/chart-core/src/index.ts"],
+      "@ophiolite/contracts": ["../../contracts/ts/ophiolite-contracts/src/index.ts"],
+      "@traceboost/seis-contracts": ["../../traceboost/contracts/ts/seis-contracts/src/index.ts"]
+    },
+    "strict": true,
+    "allowJs": false,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "preserveSymlinks": true,
+    "skipLibCheck": true,
+    "types": ["svelte", "node"]
+  },
+  "include": ["src/**/*", "vite.config.ts"]
+}

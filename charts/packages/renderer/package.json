@@ -6,6 +6,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@kitware/vtk.js": "^35.7.2",
     "@ophiolite/charts-core": "workspace:*",
     "@ophiolite/charts-data-models": "workspace:*"
   },

@@ -1,4 +1,5 @@
 import type { DisplayTransform, SectionPayload, SectionDimensions } from "./seismic";
+import { validateGatherPayload, validateSectionPayload, OphioliteSeismicValidationError } from "./ophiolite-seismic-adapter";
 
 export type GatherAxisKind =
   | "offset"
@@ -34,7 +35,12 @@ export interface GatherPayload {
 }
 
 export function gatherToSectionPayload(gather: GatherPayload): SectionPayload {
-  return {
+  const gatherIssues = validateGatherPayload(gather);
+  if (gatherIssues.length > 0) {
+    throw new OphioliteSeismicValidationError(gatherIssues);
+  }
+
+  const payload: SectionPayload = {
     axis: "inline",
     coordinate: { index: 0, value: 0 },
     horizontalAxis: gather.horizontalAxis,
@@ -55,6 +61,11 @@ export function gatherToSectionPayload(gather: GatherPayload): SectionPayload {
       ]
     }
   };
+  const sectionIssues = validateSectionPayload(payload);
+  if (sectionIssues.length > 0) {
+    throw new OphioliteSeismicValidationError(sectionIssues);
+  }
+  return payload;
 }
 
 function horizontalAxisLabel(kind: GatherAxisKind): string {

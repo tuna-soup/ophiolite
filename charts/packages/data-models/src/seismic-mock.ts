@@ -5,6 +5,7 @@ import type {
   SectionScalarOverlayColorMap,
   SectionWellOverlay
 } from "./seismic";
+import { validateSectionPayload, OphioliteSeismicValidationError } from "./ophiolite-seismic-adapter";
 
 export type MockSectionKind = "inline" | "arbitrary";
 export type MockSectionDomain = "time" | "depth";
@@ -43,7 +44,7 @@ export function createMockSection(
   const sampleAxisLabel = domain === "depth" ? "Depth" : "Time";
   const titleSuffix = domain === "depth" ? "Depth" : "TWT";
 
-  return {
+  const payload: SectionPayload = {
     axis: "inline",
     coordinate: kind === "arbitrary" ? { index: 42, value: 1042 } : { index: 0, value: 111 },
     horizontalAxis: model.horizontalAxis,
@@ -84,6 +85,11 @@ export function createMockSection(
       opacity: 0.24
     }
   };
+  const issues = validateSectionPayload(payload);
+  if (issues.length > 0) {
+    throw new OphioliteSeismicValidationError(issues);
+  }
+  return payload;
 }
 
 export function createMockSectionScalarOverlays(

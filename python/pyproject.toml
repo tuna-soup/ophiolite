@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ophiolite-automation"
 version = "0.1.0"
-description = "Thin Python automation wrapper around the local Ophiolite CLI"
+description = "Local-first Python automation and SDK surfaces for Ophiolite"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []

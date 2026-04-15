@@ -13,11 +13,13 @@ The active platform layout is:
 - `charts/` for `Ophiolite Charts`
 - `python/` for the thin `ophiolite-automation` wrapper over platform CLI operations
 - `apps/ophiolite-docs` for the public docs site at `https://ophiolite.dev`
+- `apps/traceboost-demo` for the flagship demo consumer of `Ophiolite Charts`
 
 The intended product story is:
 
 - `Ophiolite` is the platform
 - `Ophiolite Charts` is the embeddable charts SDK within the platform
+- `TraceBoost Demo` is the first-party workflow demo that consumes the chart SDK
 - applications can build workflow products on top of the platform
 
 Today, Ophiolite can:
@@ -705,7 +707,11 @@ Before contributing large changes, open an issue first to discuss direction. Oph
 ```text
 src/                    root compatibility crate and thin CLI entrypoint
 crates/                 workspace crates for core, parser, table, package, seismic, and CLI
+contracts/              shared schemas and generated TypeScript contract surfaces
+charts/                 Ophiolite Charts packages and demo/playground apps
 apps/ophiolite-harness/    internal Tauri + React capability harness
+apps/traceboost-demo/   first-party demo consumer of Ophiolite Charts
+traceboost/             demo support runtime, IO, contracts, and workflow crates
 docs/                   architecture notes and ADRs
 examples/               LAS example corpus
 tests/                  parity and package/editing integration tests

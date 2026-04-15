@@ -1,0 +1,25 @@
+{
+  "name": "@traceboost/seis-contracts",
+  "description": "Generated TypeScript contracts for TraceBoost runtime/app IPC and shared seismic view models",
+  "version": "0.1.0",
+  "type": "module",
+  "sideEffects": false,
+  "keywords": [
+    "traceboost",
+    "seismic",
+    "contracts",
+    "typescript"
+  ],
+  "files": [
+    "src",
+    "schemas",
+    "README.md"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./schemas/seis-contracts.schema.json": "./schemas/seis-contracts.schema.json"
+  },
+  "dependencies": {
+    "@ophiolite/contracts": "file:../../../contracts/ts/ophiolite-contracts"
+  }
+}

@@ -35,6 +35,32 @@ def build_parser() -> argparse.ArgumentParser:
     list_project_wellbores.add_argument("project_root")
     list_project_wellbores.add_argument("well_id")
 
+    project_operator_lock = subparsers.add_parser("project-operator-lock")
+    project_operator_lock.add_argument("project_root")
+
+    install_operator_package = subparsers.add_parser("install-operator-package")
+    install_operator_package.add_argument("project_root")
+    install_operator_package.add_argument("manifest_path")
+
+    list_project_compute_catalog = subparsers.add_parser("list-project-compute-catalog")
+    list_project_compute_catalog.add_argument("project_root")
+    list_project_compute_catalog.add_argument("asset_id")
+
+    run_project_compute = subparsers.add_parser("run-project-compute")
+    run_project_compute.add_argument("project_root")
+    run_project_compute.add_argument("request_json")
+
+    run_avo_reflectivity = subparsers.add_parser("run-avo-reflectivity")
+    run_avo_reflectivity.add_argument("request_json")
+
+    run_rock_physics_attribute = subparsers.add_parser("run-rock-physics-attribute")
+    run_rock_physics_attribute.add_argument("request_json")
+
+    run_avo_intercept_gradient_attribute = subparsers.add_parser(
+        "run-avo-intercept-gradient-attribute"
+    )
+    run_avo_intercept_gradient_attribute.add_argument("request_json")
+
     import_bundle = subparsers.add_parser("import")
     import_bundle.add_argument("input")
     import_bundle.add_argument("bundle_dir")
@@ -85,6 +111,40 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = app.list_project_wells(args.project_root)
         elif args.command == "list-project-wellbores":
             result = app.list_project_wellbores(args.project_root, args.well_id)
+        elif args.command == "project-operator-lock":
+            result = app.project_operator_lock(args.project_root)
+        elif args.command == "install-operator-package":
+            result = app.install_operator_package(args.project_root, args.manifest_path)
+        elif args.command == "list-project-compute-catalog":
+            result = app.list_project_compute_catalog(args.project_root, args.asset_id)
+        elif args.command == "run-project-compute":
+            if args.request_json == "-":
+                payload = json.load(sys.stdin)
+            else:
+                with open(args.request_json, encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            result = app.run_project_compute(args.project_root, payload)
+        elif args.command == "run-avo-reflectivity":
+            if args.request_json == "-":
+                payload = json.load(sys.stdin)
+            else:
+                with open(args.request_json, encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            result = app.run_avo_reflectivity(payload)
+        elif args.command == "run-rock-physics-attribute":
+            if args.request_json == "-":
+                payload = json.load(sys.stdin)
+            else:
+                with open(args.request_json, encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            result = app.run_rock_physics_attribute(payload)
+        elif args.command == "run-avo-intercept-gradient-attribute":
+            if args.request_json == "-":
+                payload = json.load(sys.stdin)
+            else:
+                with open(args.request_json, encoding="utf-8") as handle:
+                    payload = json.load(handle)
+            result = app.run_avo_intercept_gradient_attribute(payload)
         elif args.command == "import":
             result = app.import_las_bundle(args.input, args.bundle_dir)
         elif args.command == "inspect-file":

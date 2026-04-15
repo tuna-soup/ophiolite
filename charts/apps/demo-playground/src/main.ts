@@ -1,5 +1,6 @@
 import {
   STANDARD_ROCK_PHYSICS_TEMPLATE_IDS,
+  createMockVolumeInterpretationModel,
   createMockRockPhysicsCrossplotModel,
   createMockSection,
   createMockWellPanel,
@@ -12,11 +13,13 @@ import {
 import {
   RockPhysicsCrossplotController,
   SeismicViewerController,
+  VolumeInterpretationController,
   WellCorrelationController
 } from "@ophiolite/charts-domain";
 import {
   MockCanvasRenderer,
   PointCloudSpikeRenderer,
+  VolumeInterpretationVtkRenderer,
   WellCorrelationCanvasRenderer
 } from "@ophiolite/charts-renderer";
 import "./styles.css";
@@ -31,7 +34,7 @@ app.innerHTML = `
     <aside class="sidebar">
       <div>
         <h1>Ophiolite Charts</h1>
-        <p>Fresh SDK workspace proving a shared engine for seismic sections and well correlation panels.</p>
+        <p>Shared chart workspace spanning sections, panels, crossplots, and a VTK-backed volume interpretation spike.</p>
       </div>
       <section class="group">
         <h2>Seismic</h2>
@@ -61,6 +64,17 @@ app.innerHTML = `
         <button id="rock-density">Load Dense Spike</button>
       </section>
       <div class="readout" id="rock-readout">Rock-physics template gallery ready.</div>
+      <section class="group">
+        <h2>Volume Interpretation</h2>
+        <button id="volume-tool-pointer">Pointer</button>
+        <button id="volume-tool-orbit">Orbit</button>
+        <button id="volume-tool-pan">Pan</button>
+        <button id="volume-tool-slice">Slice Drag</button>
+        <button id="volume-tool-seed">Interpret Seed</button>
+        <button id="volume-fit">Fit View</button>
+        <button id="volume-center">Center Selection</button>
+      </section>
+      <div class="readout" id="volume-readout">Volume scene ready.</div>
     </aside>
     <main class="content">
       <section class="card">
@@ -84,6 +98,13 @@ app.innerHTML = `
         </header>
         <div id="rock-physics-viewer" class="viewer"></div>
       </section>
+      <section class="card">
+        <header>
+          <h2>Volume Interpretation Workspace</h2>
+          <p>Orthogonal slice planes, horizon surfaces, wells, picks, and semantic interpretation requests over one resolved scene DTO.</p>
+        </header>
+        <div id="volume-interpretation-viewer" class="viewer"></div>
+      </section>
     </main>
   </div>
 `;
@@ -91,19 +112,31 @@ app.innerHTML = `
 const seismicElement = document.querySelector<HTMLElement>("#seismic-viewer");
 const correlationElement = document.querySelector<HTMLElement>("#correlation-viewer");
 const rockPhysicsElement = document.querySelector<HTMLElement>("#rock-physics-viewer");
-if (!seismicElement || !correlationElement || !rockPhysicsElement) {
+const volumeInterpretationElement = document.querySelector<HTMLElement>("#volume-interpretation-viewer");
+if (!seismicElement || !correlationElement || !rockPhysicsElement || !volumeInterpretationElement) {
   throw new Error("Viewer roots not found.");
 }
 
 const seismicController = new SeismicViewerController(new MockCanvasRenderer());
 const correlationController = new WellCorrelationController(new WellCorrelationCanvasRenderer());
 const rockPhysicsController = new RockPhysicsCrossplotController(new PointCloudSpikeRenderer());
+const volumeInterpretationController = new VolumeInterpretationController(new VolumeInterpretationVtkRenderer());
 const seismicSection = createMockSection();
 const correlationPanel = createMockWellPanel();
 let rockPhysicsTemplateId: (typeof STANDARD_ROCK_PHYSICS_TEMPLATE_IDS)[number] = "vp-vs-vs-ai";
 let rockPhysicsColorMode: RockPhysicsMockColorMode = getDefaultRockPhysicsMockColorMode("vp-vs-vs-ai");
 let rockPhysicsDense = false;
 let rockPhysicsModel = buildRockPhysicsModel();
+let volumeInterpretationModel = createMockVolumeInterpretationModel();
+let volumeInterpretationTool: "pointer" | "orbit" | "pan" | "slice-drag" | "interpret-seed" = "pointer";
+let volumeInterpretationPendingMessage = "Volume scene ready.";
+let volumePointerDrag:
+  | {
+      pointerId: number;
+      x: number;
+      y: number;
+    }
+  | null = null;
 
 seismicController.mount(seismicElement);
 seismicController.setSection(seismicSection);
@@ -111,6 +144,9 @@ correlationController.mount(correlationElement);
 correlationController.setPanel(correlationPanel);
 rockPhysicsController.mount(rockPhysicsElement);
 rockPhysicsController.setModel(rockPhysicsModel);
+volumeInterpretationController.mount(volumeInterpretationElement);
+volumeInterpretationController.setModel(volumeInterpretationModel);
+volumeInterpretationController.setTool(volumeInterpretationTool);
 
 let seismicWiggle = false;
 let seismicColor = false;
@@ -182,6 +218,19 @@ document.querySelector<HTMLButtonElement>("#rock-density")?.addEventListener("cl
   if (event.currentTarget instanceof HTMLButtonElement) {
     event.currentTarget.textContent = rockPhysicsDense ? "Load Standard Spike" : "Load Dense Spike";
   }
+  syncReadouts();
+});
+document.querySelector<HTMLButtonElement>("#volume-tool-pointer")?.addEventListener("click", () => setVolumeInterpretationTool("pointer"));
+document.querySelector<HTMLButtonElement>("#volume-tool-orbit")?.addEventListener("click", () => setVolumeInterpretationTool("orbit"));
+document.querySelector<HTMLButtonElement>("#volume-tool-pan")?.addEventListener("click", () => setVolumeInterpretationTool("pan"));
+document.querySelector<HTMLButtonElement>("#volume-tool-slice")?.addEventListener("click", () => setVolumeInterpretationTool("slice-drag"));
+document.querySelector<HTMLButtonElement>("#volume-tool-seed")?.addEventListener("click", () => setVolumeInterpretationTool("interpret-seed"));
+document.querySelector<HTMLButtonElement>("#volume-fit")?.addEventListener("click", () => {
+  volumeInterpretationController.fitToData();
+  syncReadouts();
+});
+document.querySelector<HTMLButtonElement>("#volume-center")?.addEventListener("click", () => {
+  volumeInterpretationController.centerSelection();
   syncReadouts();
 });
 
@@ -272,7 +321,102 @@ rockPhysicsElement.addEventListener(
   },
   { passive: false }
 );
+volumeInterpretationElement.addEventListener("pointermove", (event) => {
+  const point = toLocalPoint(volumeInterpretationElement, event);
+  if (volumePointerDrag?.pointerId === event.pointerId) {
+    const deltaX = point.x - volumePointerDrag.x;
+    const deltaY = point.y - volumePointerDrag.y;
+    if (volumeInterpretationTool === "orbit") {
+      volumeInterpretationController.orbit(deltaX * 0.35, deltaY * 0.28);
+    } else if (volumeInterpretationTool === "pan") {
+      volumeInterpretationController.pan(deltaX, deltaY);
+    } else if (volumeInterpretationTool === "slice-drag") {
+      volumeInterpretationController.moveActiveSlice(-deltaY * 2.2);
+    }
+    volumePointerDrag = {
+      pointerId: event.pointerId,
+      x: point.x,
+      y: point.y
+    };
+  }
+  volumeInterpretationController.updatePointer(point.x, point.y);
+  syncReadouts();
+});
+volumeInterpretationElement.addEventListener("pointerdown", (event) => {
+  volumePointerDrag = {
+    pointerId: event.pointerId,
+    x: event.offsetX,
+    y: event.offsetY
+  };
+  volumeInterpretationElement.setPointerCapture(event.pointerId);
+});
+volumeInterpretationElement.addEventListener("pointerup", (event) => {
+  if (volumePointerDrag?.pointerId === event.pointerId) {
+    volumePointerDrag = null;
+  }
+  if (volumeInterpretationElement.hasPointerCapture(event.pointerId)) {
+    volumeInterpretationElement.releasePointerCapture(event.pointerId);
+  }
+});
+volumeInterpretationElement.addEventListener("pointercancel", (event) => {
+  if (volumePointerDrag?.pointerId === event.pointerId) {
+    volumePointerDrag = null;
+  }
+  if (volumeInterpretationElement.hasPointerCapture(event.pointerId)) {
+    volumeInterpretationElement.releasePointerCapture(event.pointerId);
+  }
+});
+volumeInterpretationElement.addEventListener("pointerleave", () => {
+  volumeInterpretationController.clearPointer();
+  syncReadouts();
+});
+volumeInterpretationElement.addEventListener("click", (event) => {
+  const point = toLocalPoint(volumeInterpretationElement, event);
+  volumeInterpretationController.handlePrimaryAction(point.x, point.y);
+  syncReadouts();
+});
+volumeInterpretationElement.addEventListener(
+  "wheel",
+  (event) => {
+    if (volumeInterpretationTool === "orbit") {
+      volumeInterpretationController.orbit(event.deltaX * 0.08, event.deltaY * 0.08);
+    } else if (volumeInterpretationTool === "slice-drag") {
+      volumeInterpretationController.moveActiveSlice(event.deltaY * 2.4);
+    } else {
+      volumeInterpretationController.zoom(event.deltaY < 0 ? 1.08 : 0.92);
+    }
+    syncReadouts();
+    event.preventDefault();
+  },
+  { passive: false }
+);
+volumeInterpretationController.onInterpretationRequest((request) => {
+  const targetHorizonId = request.targetHorizonId ?? volumeInterpretationModel.horizons[0]?.id;
+  if (!targetHorizonId) {
+    return;
+  }
+  volumeInterpretationPendingMessage = `Interpretation request: ${request.kind} @ (${request.worldX.toFixed(0)}, ${request.worldY.toFixed(0)}, ${request.worldZ.toFixed(0)})`;
+  volumeInterpretationModel = {
+    ...volumeInterpretationModel,
+    horizons: volumeInterpretationModel.horizons.map((horizon) =>
+      horizon.id === targetHorizonId
+        ? {
+            ...horizon,
+            points: Float32Array.from(horizon.points, (value, index) =>
+              index % 3 === 2
+                ? value + Math.sin(request.worldX * 0.002 + request.worldY * 0.001 + index * 0.03) * 18
+                : value
+            )
+          }
+        : horizon
+    )
+  };
+  volumeInterpretationController.setModel(volumeInterpretationModel);
+  volumeInterpretationController.setTool(volumeInterpretationTool);
+  syncReadouts();
+});
 
+updateVolumeInterpretationToolButtons();
 syncReadouts();
 
 function syncReadouts(): void {
@@ -322,6 +466,26 @@ function syncReadouts(): void {
           `guides ${rockPhysicsModel.templateOverlays?.length ?? rockPhysicsModel.templateLines?.length ?? 0}`
         ].join("\n");
   }
+
+  const volumeReadout = document.querySelector<HTMLElement>("#volume-readout");
+  const volumeState = volumeInterpretationController.getState();
+  if (volumeReadout) {
+    volumeReadout.textContent = volumeState.probe
+      ? [
+          `${volumeState.tool} / ${volumeState.probe.target.itemName ?? volumeState.probe.target.itemId ?? volumeState.probe.target.kind}`,
+          `world ${volumeState.probe.worldX.toFixed(0)}, ${volumeState.probe.worldY.toFixed(0)}, ${volumeState.probe.worldZ.toFixed(0)}`,
+          volumeState.selection
+            ? `selection ${volumeState.selection.kind} ${volumeState.selection.itemName ?? volumeState.selection.itemId}`
+            : "selection none",
+          volumeInterpretationPendingMessage
+        ].join("\n")
+      : [
+          `${volumeInterpretationModel.name} / tool ${volumeState.tool}`,
+          `volumes ${volumeInterpretationModel.volumes.length} horizons ${volumeInterpretationModel.horizons.length}`,
+          `wells ${volumeInterpretationModel.wells.length} markers ${volumeInterpretationModel.markers.length}`,
+          volumeInterpretationPendingMessage
+        ].join("\n");
+  }
 }
 
 function toLocalPoint(element: HTMLElement, event: PointerEvent | WheelEvent): { x: number; y: number } {
@@ -346,6 +510,32 @@ function toCorrelationLocalPoint(
 
 function getCorrelationScrollHost(element: HTMLElement): HTMLElement {
   return element.querySelector<HTMLElement>(".ophiolite-charts-correlation-scroll-host") ?? element;
+}
+
+function setVolumeInterpretationTool(
+  tool: "pointer" | "orbit" | "pan" | "slice-drag" | "interpret-seed"
+): void {
+  volumeInterpretationTool = tool;
+  volumeInterpretationController.setTool(tool);
+  updateVolumeInterpretationToolButtons();
+  syncReadouts();
+}
+
+function updateVolumeInterpretationToolButtons(): void {
+  const buttons = [
+    ["#volume-tool-pointer", "pointer", "Pointer"],
+    ["#volume-tool-orbit", "orbit", "Orbit"],
+    ["#volume-tool-pan", "pan", "Pan"],
+    ["#volume-tool-slice", "slice-drag", "Slice Drag"],
+    ["#volume-tool-seed", "interpret-seed", "Interpret Seed"]
+  ] as const;
+
+  for (const [selector, tool, label] of buttons) {
+    const button = document.querySelector<HTMLButtonElement>(selector);
+    if (button) {
+      button.textContent = volumeInterpretationTool === tool ? `${label} Active` : label;
+    }
+  }
 }
 
 function buildRockPhysicsModel() {

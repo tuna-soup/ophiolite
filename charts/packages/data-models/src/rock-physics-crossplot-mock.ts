@@ -366,8 +366,8 @@ function generateSample(
   const shearImpedance = sVelocity * bulkDensity;
   const vpKm = pVelocityClamped / 1_000;
   const vsKm = sVelocity / 1_000;
-  const muRho = clamp(bulkDensity * vsKm * vsKm * 7, 5, 130);
-  const lambdaRho = clamp(bulkDensity * (vpKm * vpKm - 2 * vsKm * vsKm) * 7, -30, 180);
+  const muRho = clamp(bulkDensity * vsKm * vsKm, 5, 130);
+  const lambdaRho = clamp(bulkDensity * (vpKm * vpKm - 2 * vsKm * vsKm), -30, 180);
   const poissonsRatio = clamp(
     (vpVsRatio * vpVsRatio - 2) / Math.max(0.1, 2 * (vpVsRatio * vpVsRatio - 1)),
     0.08,
@@ -416,6 +416,10 @@ function valueForSemantic(sample: GeneratedRockPhysicsSample, semantic: RockPhys
     case "vp-vs-ratio":
       return sample.vpVsRatio;
     case "acoustic-impedance":
+      return sample.acousticImpedance;
+    case "elastic-impedance":
+      return sample.acousticImpedance;
+    case "extended-elastic-impedance":
       return sample.acousticImpedance;
     case "shear-impedance":
       return sample.shearImpedance;
@@ -493,6 +497,10 @@ function curveTokenForSemantic(semantic: RockPhysicsCurveSemantic | RockPhysicsM
       return "vpvs";
     case "acoustic-impedance":
       return "ai";
+    case "elastic-impedance":
+      return "ei";
+    case "extended-elastic-impedance":
+      return "eei";
     case "shear-impedance":
       return "si";
     case "lambda-rho":

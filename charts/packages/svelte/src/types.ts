@@ -33,6 +33,12 @@ import type {
   SectionHorizonOverlay,
   SectionWellOverlay,
   SectionScalarOverlay,
+  VolumeInterpretationInterpretationRequest,
+  VolumeInterpretationModel,
+  VolumeInterpretationProbe,
+  VolumeInterpretationSelection,
+  VolumeInterpretationTool,
+  VolumeInterpretationView,
   SurveyMapModel,
   SurveyMapProbe,
   SurveyMapViewport,
@@ -374,6 +380,90 @@ export type RockPhysicsCrossplotProbeChangeHandler = (payload: RockPhysicsCrossp
 export type RockPhysicsCrossplotInteractionStateChangeHandler = (payload: RockPhysicsCrossplotChartInteractionState) => void;
 export type RockPhysicsCrossplotInteractionEventHandler = (payload: RockPhysicsCrossplotInteractionEventPayload) => void;
 
+export type VolumeInterpretationChartTool = VolumeInterpretationTool;
+export type VolumeInterpretationChartAction = "fitToData" | "resetView" | "centerSelection";
+export type VolumeInterpretationChartRenderer = "vtk" | "placeholder";
+
+export interface VolumeInterpretationChartInteractionConfig {
+  tool?: VolumeInterpretationChartTool;
+}
+
+export interface VolumeInterpretationChartInteractionCapabilities {
+  tools: VolumeInterpretationChartTool[];
+  actions: VolumeInterpretationChartAction[];
+}
+
+export const VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES: VolumeInterpretationChartInteractionCapabilities =
+  chartInteractionCapabilities<VolumeInterpretationChartTool, VolumeInterpretationChartAction>("volume-interpretation");
+
+export interface VolumeInterpretationChartInteractionState {
+  capabilities: VolumeInterpretationChartInteractionCapabilities;
+  tool: VolumeInterpretationChartTool;
+}
+
+export interface VolumeInterpretationProbeChangePayload {
+  chartId: string;
+  probe: VolumeInterpretationProbe | null;
+}
+
+export interface VolumeInterpretationSelectionChangePayload {
+  chartId: string;
+  selection: VolumeInterpretationSelection | null;
+}
+
+export interface VolumeInterpretationViewStateChangePayload {
+  chartId: string;
+  view: VolumeInterpretationView | null;
+}
+
+export interface VolumeInterpretationInterpretationRequestPayload {
+  chartId: string;
+  request: VolumeInterpretationInterpretationRequest;
+}
+
+export interface VolumeInterpretationInteractionEventPayload {
+  chartId: string;
+  event: InteractionEvent;
+}
+
+export interface VolumeInterpretationChartOverlayProps {
+  stageTopLeft?: Snippet;
+  plotTopCenter?: Snippet;
+  plotTopRight?: Snippet;
+  plotBottomRight?: Snippet;
+  plotBottomLeft?: Snippet;
+  stageScale?: number;
+}
+
+export interface VolumeInterpretationChartProps extends VolumeInterpretationChartOverlayProps {
+  chartId: string;
+  model: VolumeInterpretationModel | null;
+  tool?: VolumeInterpretationChartTool;
+  renderer?: VolumeInterpretationChartRenderer;
+  interactions?: VolumeInterpretationChartInteractionConfig;
+  loading?: boolean;
+  emptyMessage?: string;
+  errorMessage?: string | null;
+  resetToken?: string | number | null;
+  onProbeChange?: VolumeInterpretationProbeChangeHandler;
+  onSelectionChange?: VolumeInterpretationSelectionChangeHandler;
+  onViewStateChange?: VolumeInterpretationViewStateChangeHandler;
+  onInteractionStateChange?: VolumeInterpretationInteractionStateChangeHandler;
+  onInteractionEvent?: VolumeInterpretationInteractionEventHandler;
+  onInterpretationRequest?: VolumeInterpretationInterpretationRequestHandler;
+}
+
+export type VolumeInterpretationProbeChangeHandler = (payload: VolumeInterpretationProbeChangePayload) => void;
+export type VolumeInterpretationSelectionChangeHandler = (payload: VolumeInterpretationSelectionChangePayload) => void;
+export type VolumeInterpretationViewStateChangeHandler = (payload: VolumeInterpretationViewStateChangePayload) => void;
+export type VolumeInterpretationInteractionStateChangeHandler = (
+  payload: VolumeInterpretationChartInteractionState
+) => void;
+export type VolumeInterpretationInteractionEventHandler = (payload: VolumeInterpretationInteractionEventPayload) => void;
+export type VolumeInterpretationInterpretationRequestHandler = (
+  payload: VolumeInterpretationInterpretationRequestPayload
+) => void;
+
 export type AvoChartTool = "pointer" | "crosshair" | "pan";
 export type AvoChartAction = "fitToData";
 
@@ -486,6 +576,7 @@ function chartInteractionCapabilities<TTool extends ChartInteractionToolId, TAct
     | "well-correlation-panel"
     | "survey-map"
     | "rock-physics-crossplot"
+    | "volume-interpretation"
     | "avo-response-plot"
     | "avo-intercept-gradient-crossplot"
     | "avo-chi-projection-histogram"

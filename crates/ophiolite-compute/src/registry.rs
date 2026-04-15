@@ -3,6 +3,10 @@ use crate::functions::{
     ComputedCurve, DrillingObservationDataRow, LogCurveData, PressureObservationDataRow,
     TopDataRow, TrajectoryDataRow,
 };
+use crate::operators::{
+    BUILTIN_OPERATOR_PACKAGE_NAME, OperatorManifest, OperatorOutputLifecycle,
+    OperatorPackageCompatibility, OperatorPackageManifest, OperatorRuntimeKind, OperatorStability,
+};
 use crate::semantics::{
     AssetSemanticFamily, CurveBindingCandidate, CurveSemanticDescriptor, CurveSemanticType,
 };
@@ -41,7 +45,7 @@ pub enum ComputeInputSpec {
     DrillingObservation,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ComputeBindingCandidate {
     pub parameter_name: String,
     pub allowed_types: Vec<CurveSemanticType>,
@@ -169,8 +173,17 @@ struct VShaleClavierFunction;
 struct VShaleSteiberFunction;
 struct SonicToVpFunction;
 struct ShearSonicToVsFunction;
+struct VpVsRatioFunction;
 struct AcousticImpedanceFunction;
+struct ElasticImpedanceFunction;
+struct ExtendedElasticImpedanceFunction;
+struct ShearImpedanceFunction;
+struct LambdaRhoFunction;
+struct MuRhoFunction;
 struct PoissonsRatioFunction;
+struct GassmannSubstitutedDensityFunction;
+struct GassmannSubstitutedVpFunction;
+struct GassmannSubstitutedVsFunction;
 struct TrajectorySmoothInclinationFunction;
 struct TrajectoryNormalizeAzimuthFunction;
 struct TopSortByDepthFunction;
@@ -193,8 +206,17 @@ impl ComputeRegistry {
                 Box::new(VShaleSteiberFunction),
                 Box::new(SonicToVpFunction),
                 Box::new(ShearSonicToVsFunction),
+                Box::new(VpVsRatioFunction),
                 Box::new(AcousticImpedanceFunction),
+                Box::new(ElasticImpedanceFunction),
+                Box::new(ExtendedElasticImpedanceFunction),
+                Box::new(ShearImpedanceFunction),
+                Box::new(LambdaRhoFunction),
+                Box::new(MuRhoFunction),
                 Box::new(PoissonsRatioFunction),
+                Box::new(GassmannSubstitutedDensityFunction),
+                Box::new(GassmannSubstitutedVpFunction),
+                Box::new(GassmannSubstitutedVsFunction),
             ],
             trajectory_functions: vec![
                 Box::new(TrajectorySmoothInclinationFunction),
@@ -300,6 +322,48 @@ impl ComputeRegistry {
         }
     }
 
+    pub fn built_in_operator_package_manifest(&self) -> OperatorPackageManifest {
+        let mut operators = Vec::new();
+        operators.extend(
+            self.log_functions
+                .iter()
+                .map(|function| operator_manifest_for_log(function.as_ref())),
+        );
+        operators.extend(
+            self.trajectory_functions
+                .iter()
+                .map(|function| operator_manifest_for_trajectory(function.as_ref())),
+        );
+        operators.extend(
+            self.top_set_functions
+                .iter()
+                .map(|function| operator_manifest_for_top_set(function.as_ref())),
+        );
+        operators.extend(
+            self.pressure_functions
+                .iter()
+                .map(|function| operator_manifest_for_pressure(function.as_ref())),
+        );
+        operators.extend(
+            self.drilling_functions
+                .iter()
+                .map(|function| operator_manifest_for_drilling(function.as_ref())),
+        );
+
+        OperatorPackageManifest {
+            schema_version: 1,
+            package_name: BUILTIN_OPERATOR_PACKAGE_NAME.to_string(),
+            package_version: env!("CARGO_PKG_VERSION").to_string(),
+            provider: "ophiolite".to_string(),
+            runtime: OperatorRuntimeKind::Rust,
+            compatibility: OperatorPackageCompatibility {
+                ophiolite_api: env!("CARGO_PKG_VERSION").to_string(),
+            },
+            entrypoint: None,
+            operators,
+        }
+    }
+
     pub fn run_log_compute(
         &self,
         function_id: &str,
@@ -316,59 +380,11 @@ impl ComputeRegistry {
                 LasError::Validation(format!("unknown compute function '{function_id}'"))
             })?;
 
-        let available = curves
-            .iter()
-            .map(|curve| (curve.curve_name.clone(), curve))
-            .collect::<BTreeMap<_, _>>();
-        let mut resolved_inputs = BTreeMap::new();
-        let mut manifest_inputs = Vec::new();
-
-        for spec in function.input_specs() {
-            match spec {
-                ComputeInputSpec::SingleCurve {
-                    parameter_name,
-                    allowed_types,
-                } => bind_curve_input(
-                    &available,
-                    &mut resolved_inputs,
-                    &mut manifest_inputs,
-                    bindings,
-                    &parameter_name,
-                    &allowed_types,
-                )?,
-                ComputeInputSpec::CurvePair {
-                    left_parameter_name,
-                    left_allowed_types,
-                    right_parameter_name,
-                    right_allowed_types,
-                } => {
-                    bind_curve_input(
-                        &available,
-                        &mut resolved_inputs,
-                        &mut manifest_inputs,
-                        bindings,
-                        &left_parameter_name,
-                        &left_allowed_types,
-                    )?;
-                    bind_curve_input(
-                        &available,
-                        &mut resolved_inputs,
-                        &mut manifest_inputs,
-                        bindings,
-                        &right_parameter_name,
-                        &right_allowed_types,
-                    )?;
-                }
-                _ => {
-                    return Err(LasError::Validation(format!(
-                        "function '{function_id}' is not supported for log execution",
-                    )));
-                }
-            }
-        }
-
-        ensure_shared_depths(&resolved_inputs)?;
-        validate_parameters(function.parameters(), parameters)?;
+        let input_specs = function.input_specs();
+        let parameter_definitions = function.parameters();
+        let (resolved_inputs, manifest_inputs) =
+            resolve_log_input_bindings(function_id, &input_specs, curves, bindings)?;
+        validate_compute_parameters(&parameter_definitions, parameters)?;
         let output = function.execute(&resolved_inputs, parameters, output_mnemonic)?;
         let metadata = function.metadata();
 
@@ -378,6 +394,9 @@ impl ComputeRegistry {
                 provider: metadata.provider,
                 function_name: metadata.name,
                 function_version: function.version().to_string(),
+                operator_package: Some(BUILTIN_OPERATOR_PACKAGE_NAME.to_string()),
+                operator_package_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+                operator_runtime: Some(OperatorRuntimeKind::Rust),
                 deterministic: function.is_deterministic(),
                 source_asset_id: String::new(),
                 source_logical_asset_id: String::new(),
@@ -404,7 +423,8 @@ impl ComputeRegistry {
             .ok_or_else(|| {
                 LasError::Validation(format!("unknown compute function '{function_id}'"))
             })?;
-        validate_parameters(function.parameters(), parameters)?;
+        let parameter_definitions = function.parameters();
+        validate_compute_parameters(&parameter_definitions, parameters)?;
         let metadata = function.metadata();
         let output = function.execute(rows, parameters)?;
         Ok((
@@ -433,7 +453,8 @@ impl ComputeRegistry {
             .ok_or_else(|| {
                 LasError::Validation(format!("unknown compute function '{function_id}'"))
             })?;
-        validate_parameters(function.parameters(), parameters)?;
+        let parameter_definitions = function.parameters();
+        validate_compute_parameters(&parameter_definitions, parameters)?;
         let metadata = function.metadata();
         let output = function.execute(rows, parameters)?;
         Ok((
@@ -462,7 +483,8 @@ impl ComputeRegistry {
             .ok_or_else(|| {
                 LasError::Validation(format!("unknown compute function '{function_id}'"))
             })?;
-        validate_parameters(function.parameters(), parameters)?;
+        let parameter_definitions = function.parameters();
+        validate_compute_parameters(&parameter_definitions, parameters)?;
         let metadata = function.metadata();
         let output = function.execute(rows, parameters)?;
         Ok((
@@ -491,7 +513,8 @@ impl ComputeRegistry {
             .ok_or_else(|| {
                 LasError::Validation(format!("unknown compute function '{function_id}'"))
             })?;
-        validate_parameters(function.parameters(), parameters)?;
+        let parameter_definitions = function.parameters();
+        validate_compute_parameters(&parameter_definitions, parameters)?;
         let metadata = function.metadata();
         let output = function.execute(rows, parameters)?;
         Ok((
@@ -543,7 +566,31 @@ fn catalog_entry_for_log_function(
     let metadata = function.metadata();
     let input_specs = function.input_specs();
     let parameters = function.parameters();
-    let binding_candidates = input_specs
+    let binding_candidates =
+        binding_candidates_for_input_specs(&input_specs, curves, numeric_curve_names);
+
+    ComputeCatalogEntry {
+        metadata,
+        input_specs,
+        parameters,
+        binding_candidates: binding_candidates.clone(),
+        availability: availability_for_binding_candidates(&binding_candidates),
+    }
+}
+
+pub fn catalog_entry_for_operator_manifest(
+    operator: &OperatorManifest,
+    curves: Option<(&[CurveSemanticDescriptor], &[String])>,
+) -> ComputeCatalogEntry {
+    crate::operators::available_catalog_entry_for_operator(operator, curves)
+}
+
+pub fn binding_candidates_for_input_specs(
+    input_specs: &[ComputeInputSpec],
+    curves: &[CurveSemanticDescriptor],
+    numeric_curve_names: &[String],
+) -> Vec<ComputeBindingCandidate> {
+    input_specs
         .iter()
         .flat_map(|spec| match spec {
             ComputeInputSpec::SingleCurve {
@@ -576,8 +623,12 @@ fn catalog_entry_for_log_function(
             ],
             _ => Vec::new(),
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
 
+pub fn availability_for_binding_candidates(
+    binding_candidates: &[ComputeBindingCandidate],
+) -> ComputeAvailability {
     let reasons = binding_candidates
         .iter()
         .filter(|candidate| candidate.matches.is_empty())
@@ -599,17 +650,72 @@ fn catalog_entry_for_log_function(
         })
         .collect::<Vec<_>>();
 
-    ComputeCatalogEntry {
-        metadata,
-        input_specs,
-        parameters,
-        binding_candidates,
-        availability: if reasons.is_empty() {
-            ComputeAvailability::Available
-        } else {
-            ComputeAvailability::Unavailable { reasons }
-        },
+    if reasons.is_empty() {
+        ComputeAvailability::Available
+    } else {
+        ComputeAvailability::Unavailable { reasons }
     }
+}
+
+pub fn resolve_log_input_bindings(
+    function_id: &str,
+    input_specs: &[ComputeInputSpec],
+    curves: &[LogCurveData],
+    bindings: &BTreeMap<String, String>,
+) -> Result<(BTreeMap<String, LogCurveData>, Vec<ComputeInputBinding>)> {
+    let available = curves
+        .iter()
+        .map(|curve| (curve.curve_name.clone(), curve))
+        .collect::<BTreeMap<_, _>>();
+    let mut resolved_inputs = BTreeMap::new();
+    let mut manifest_inputs = Vec::new();
+
+    for spec in input_specs {
+        match spec {
+            ComputeInputSpec::SingleCurve {
+                parameter_name,
+                allowed_types,
+            } => bind_curve_input(
+                &available,
+                &mut resolved_inputs,
+                &mut manifest_inputs,
+                bindings,
+                parameter_name,
+                allowed_types,
+            )?,
+            ComputeInputSpec::CurvePair {
+                left_parameter_name,
+                left_allowed_types,
+                right_parameter_name,
+                right_allowed_types,
+            } => {
+                bind_curve_input(
+                    &available,
+                    &mut resolved_inputs,
+                    &mut manifest_inputs,
+                    bindings,
+                    left_parameter_name,
+                    left_allowed_types,
+                )?;
+                bind_curve_input(
+                    &available,
+                    &mut resolved_inputs,
+                    &mut manifest_inputs,
+                    bindings,
+                    right_parameter_name,
+                    right_allowed_types,
+                )?;
+            }
+            _ => {
+                return Err(LasError::Validation(format!(
+                    "function '{function_id}' is not supported for log execution",
+                )));
+            }
+        }
+    }
+
+    ensure_shared_depths(&resolved_inputs)?;
+    Ok((resolved_inputs, manifest_inputs))
 }
 
 fn binding_candidates_for(
@@ -639,6 +745,7 @@ fn binding_candidates_for(
             original_mnemonic: curve.original_mnemonic.clone(),
             semantic_type: curve.semantic_type.clone(),
             unit: curve.unit.clone(),
+            semantic_parameters: curve.semantic_parameters.clone(),
         })
         .collect();
 
@@ -663,6 +770,81 @@ fn structured_entry(
     }
 }
 
+fn operator_manifest(
+    metadata: ComputeFunctionMetadata,
+    asset_family: AssetSemanticFamily,
+    input_specs: Vec<ComputeInputSpec>,
+    parameters: Vec<ComputeParameterDefinition>,
+    deterministic: bool,
+) -> OperatorManifest {
+    OperatorManifest {
+        id: metadata.id,
+        provider: metadata.provider,
+        name: metadata.name,
+        asset_family,
+        category: metadata.category,
+        description: metadata.description,
+        default_output_mnemonic: metadata.default_output_mnemonic,
+        output_curve_type: metadata.output_curve_type,
+        input_specs,
+        parameters,
+        output_lifecycle: OperatorOutputLifecycle::DerivedAsset,
+        deterministic,
+        stability: OperatorStability::Preview,
+        tags: metadata.tags,
+    }
+}
+
+fn operator_manifest_for_log(function: &dyn LogComputeFunction) -> OperatorManifest {
+    operator_manifest(
+        function.metadata(),
+        AssetSemanticFamily::Log,
+        function.input_specs(),
+        function.parameters(),
+        function.is_deterministic(),
+    )
+}
+
+fn operator_manifest_for_trajectory(function: &dyn TrajectoryComputeFunction) -> OperatorManifest {
+    operator_manifest(
+        function.metadata(),
+        AssetSemanticFamily::Trajectory,
+        vec![ComputeInputSpec::Trajectory],
+        function.parameters(),
+        function.is_deterministic(),
+    )
+}
+
+fn operator_manifest_for_top_set(function: &dyn TopSetComputeFunction) -> OperatorManifest {
+    operator_manifest(
+        function.metadata(),
+        AssetSemanticFamily::TopSet,
+        vec![ComputeInputSpec::TopSet],
+        function.parameters(),
+        function.is_deterministic(),
+    )
+}
+
+fn operator_manifest_for_pressure(function: &dyn PressureComputeFunction) -> OperatorManifest {
+    operator_manifest(
+        function.metadata(),
+        AssetSemanticFamily::PressureObservation,
+        vec![ComputeInputSpec::PressureObservation],
+        function.parameters(),
+        function.is_deterministic(),
+    )
+}
+
+fn operator_manifest_for_drilling(function: &dyn DrillingComputeFunction) -> OperatorManifest {
+    operator_manifest(
+        function.metadata(),
+        AssetSemanticFamily::DrillingObservation,
+        vec![ComputeInputSpec::DrillingObservation],
+        function.parameters(),
+        function.is_deterministic(),
+    )
+}
+
 fn structured_manifest(
     metadata: ComputeFunctionMetadata,
     function_version: &str,
@@ -676,6 +858,9 @@ fn structured_manifest(
         provider: metadata.provider,
         function_name: metadata.name,
         function_version: function_version.to_string(),
+        operator_package: Some(BUILTIN_OPERATOR_PACKAGE_NAME.to_string()),
+        operator_package_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        operator_runtime: Some(OperatorRuntimeKind::Rust),
         deterministic,
         source_asset_id: String::new(),
         source_logical_asset_id: String::new(),
@@ -691,8 +876,8 @@ fn structured_manifest(
     }
 }
 
-fn validate_parameters(
-    definitions: Vec<ComputeParameterDefinition>,
+pub fn validate_compute_parameters(
+    definitions: &[ComputeParameterDefinition],
     parameters: &BTreeMap<String, ComputeParameterValue>,
 ) -> Result<()> {
     for definition in definitions {
@@ -705,9 +890,9 @@ fn validate_parameters(
                 ..
             } => {
                 let value = parameters
-                    .get(&name)
+                    .get(name)
                     .and_then(ComputeParameterValue::as_f64)
-                    .or(default)
+                    .or(*default)
                     .ok_or_else(|| {
                         LasError::Validation(format!(
                             "numeric compute parameter '{}' is required",
@@ -715,7 +900,7 @@ fn validate_parameters(
                         ))
                     })?;
                 if let Some(minimum) = min
-                    && value < minimum
+                    && value < *minimum
                 {
                     return Err(LasError::Validation(format!(
                         "parameter '{}' must be >= {}",
@@ -723,7 +908,7 @@ fn validate_parameters(
                     )));
                 }
                 if let Some(maximum) = max
-                    && value > maximum
+                    && value > *maximum
                 {
                     return Err(LasError::Validation(format!(
                         "parameter '{}' must be <= {}",
@@ -847,6 +1032,380 @@ fn slowness_to_velocity(slowness: f64) -> Option<f64> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct GassmannParameters {
+    matrix_bulk_modulus_gpa: f64,
+    initial_fluid_bulk_modulus_gpa: f64,
+    substituted_fluid_bulk_modulus_gpa: f64,
+    initial_fluid_density_gcc: f64,
+    substituted_fluid_density_gcc: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GassmannSubstitution {
+    substituted_vp_m_per_s: f64,
+    substituted_vs_m_per_s: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ImpedanceReferenceTerms {
+    vp0_m_per_s: f64,
+    vs0_m_per_s: f64,
+    density0_gcc: f64,
+    velocity_ratio_k: f64,
+}
+
+fn density_to_gcc(value: f64, unit: Option<&str>) -> Option<f64> {
+    if !value.is_finite() || value <= 0.0 {
+        return None;
+    }
+    let normalized = unit
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .replace(' ', "");
+    if normalized.contains("kg/m3") || normalized.contains("kg/m^3") || normalized.contains("kg/m³")
+    {
+        Some(value / 1000.0)
+    } else if value > 10.0 {
+        Some(value / 1000.0)
+    } else {
+        Some(value)
+    }
+}
+
+fn porosity_to_fraction(value: f64, unit: Option<&str>) -> Option<f64> {
+    if !value.is_finite() || value < 0.0 {
+        return None;
+    }
+    let normalized = unit.unwrap_or_default().trim().to_ascii_lowercase();
+    let fraction = if normalized.contains('%')
+        || normalized.contains("pct")
+        || normalized.contains("percent")
+        || normalized.contains("pu")
+        || value > 1.0
+    {
+        value / 100.0
+    } else {
+        value
+    };
+    (0.0..=1.0).contains(&fraction).then_some(fraction)
+}
+
+fn lambda_rho_gpa(vp_m_per_s: f64, vs_m_per_s: f64, density_gcc: f64) -> Option<f64> {
+    if !vp_m_per_s.is_finite()
+        || !vs_m_per_s.is_finite()
+        || !density_gcc.is_finite()
+        || vp_m_per_s <= 0.0
+        || vs_m_per_s <= 0.0
+        || density_gcc <= 0.0
+    {
+        return None;
+    }
+    let vp_km_per_s = vp_m_per_s / 1000.0;
+    let vs_km_per_s = vs_m_per_s / 1000.0;
+    Some(density_gcc * (vp_km_per_s.powi(2) - (2.0 * vs_km_per_s.powi(2))))
+}
+
+fn mu_rho_gpa(vs_m_per_s: f64, density_gcc: f64) -> Option<f64> {
+    if !vs_m_per_s.is_finite()
+        || !density_gcc.is_finite()
+        || vs_m_per_s <= 0.0
+        || density_gcc <= 0.0
+    {
+        return None;
+    }
+    let vs_km_per_s = vs_m_per_s / 1000.0;
+    Some(density_gcc * vs_km_per_s.powi(2))
+}
+
+fn empty_semantic_parameters() -> BTreeMap<String, f64> {
+    BTreeMap::new()
+}
+
+fn impedance_reference_terms(
+    vp: &LogCurveData,
+    vs: &LogCurveData,
+    density: &LogCurveData,
+) -> Option<ImpedanceReferenceTerms> {
+    let mut count = 0usize;
+    let mut vp_sum = 0.0;
+    let mut vs_sum = 0.0;
+    let mut density_sum = 0.0;
+    let mut ratio_sum = 0.0;
+
+    for ((vp_value, vs_value), density_value) in vp.values.iter().zip(&vs.values).zip(&density.values)
+    {
+        let (Some(vp_value), Some(vs_value), Some(density_value)) = (vp_value, vs_value, density_value)
+        else {
+            continue;
+        };
+        let Some(density_gcc) = density_to_gcc(*density_value, density.unit.as_deref()) else {
+            continue;
+        };
+        if *vp_value <= 0.0 || *vs_value <= 0.0 {
+            continue;
+        }
+
+        vp_sum += *vp_value;
+        vs_sum += *vs_value;
+        density_sum += density_gcc;
+        ratio_sum += (*vs_value / *vp_value).powi(2);
+        count += 1;
+    }
+
+    (count > 0).then_some(ImpedanceReferenceTerms {
+        vp0_m_per_s: vp_sum / count as f64,
+        vs0_m_per_s: vs_sum / count as f64,
+        density0_gcc: density_sum / count as f64,
+        velocity_ratio_k: ratio_sum / count as f64,
+    })
+}
+
+fn impedance_semantic_parameters(
+    angle_parameter_name: &str,
+    angle_deg: f64,
+    terms: ImpedanceReferenceTerms,
+) -> BTreeMap<String, f64> {
+    BTreeMap::from([
+        (angle_parameter_name.to_string(), angle_deg),
+        (
+            "normalization_reference_vp_m_per_s".to_string(),
+            terms.vp0_m_per_s,
+        ),
+        (
+            "normalization_reference_vs_m_per_s".to_string(),
+            terms.vs0_m_per_s,
+        ),
+        (
+            "normalization_reference_density_g_cc".to_string(),
+            terms.density0_gcc,
+        ),
+        ("velocity_ratio_k".to_string(), terms.velocity_ratio_k),
+    ])
+}
+
+fn normalized_elastic_impedance_sample(
+    vp_m_per_s: f64,
+    vs_m_per_s: f64,
+    density_gcc: f64,
+    angle_deg: f64,
+    terms: ImpedanceReferenceTerms,
+) -> Option<f64> {
+    if !vp_m_per_s.is_finite()
+        || !vs_m_per_s.is_finite()
+        || !density_gcc.is_finite()
+        || vp_m_per_s <= 0.0
+        || vs_m_per_s <= 0.0
+        || density_gcc <= 0.0
+    {
+        return None;
+    }
+
+    let theta = angle_deg.to_radians();
+    let a = 1.0 + theta.tan().powi(2);
+    let b = -8.0 * terms.velocity_ratio_k * theta.sin().powi(2);
+    let c = 1.0 - 4.0 * terms.velocity_ratio_k * theta.sin().powi(2);
+
+    Some(
+        vp_m_per_s.powf(a)
+            * vs_m_per_s.powf(b)
+            * density_gcc.powf(c)
+            * terms.vp0_m_per_s.powf(1.0 - a)
+            * terms.vs0_m_per_s.powf(-b)
+            * terms.density0_gcc.powf(1.0 - c),
+    )
+}
+
+fn extended_elastic_impedance_sample(
+    vp_m_per_s: f64,
+    vs_m_per_s: f64,
+    density_gcc: f64,
+    chi_deg: f64,
+    terms: ImpedanceReferenceTerms,
+) -> Option<f64> {
+    if !vp_m_per_s.is_finite()
+        || !vs_m_per_s.is_finite()
+        || !density_gcc.is_finite()
+        || vp_m_per_s <= 0.0
+        || vs_m_per_s <= 0.0
+        || density_gcc <= 0.0
+    {
+        return None;
+    }
+
+    let chi = chi_deg.to_radians();
+    let p = chi.cos() + chi.sin();
+    let q = -8.0 * terms.velocity_ratio_k * chi.sin();
+    let r = chi.cos() - 4.0 * terms.velocity_ratio_k * chi.sin();
+
+    Some(
+        terms.vp0_m_per_s
+            * terms.density0_gcc
+            * (vp_m_per_s / terms.vp0_m_per_s).powf(p)
+            * (vs_m_per_s / terms.vs0_m_per_s).powf(q)
+            * (density_gcc / terms.density0_gcc).powf(r),
+    )
+}
+
+fn gassmann_parameters() -> Vec<ComputeParameterDefinition> {
+    vec![
+        number_param(
+            "matrix_bulk_modulus_gpa",
+            "Matrix Bulk Modulus",
+            "Mineral frame bulk modulus K0 in GPa.",
+            Some(37.0),
+            Some(1.0e-6),
+            None,
+            Some("GPa"),
+        ),
+        number_param(
+            "initial_fluid_bulk_modulus_gpa",
+            "Initial Fluid Bulk Modulus",
+            "Initial pore-fluid bulk modulus Kfl1 in GPa.",
+            Some(2.3),
+            Some(1.0e-6),
+            None,
+            Some("GPa"),
+        ),
+        number_param(
+            "substituted_fluid_bulk_modulus_gpa",
+            "Substituted Fluid Bulk Modulus",
+            "Substituted pore-fluid bulk modulus Kfl2 in GPa.",
+            Some(0.05),
+            Some(1.0e-6),
+            None,
+            Some("GPa"),
+        ),
+        number_param(
+            "initial_fluid_density_gcc",
+            "Initial Fluid Density",
+            "Initial pore-fluid density in g/cc.",
+            Some(1.0),
+            Some(1.0e-6),
+            None,
+            Some("g/cc"),
+        ),
+        number_param(
+            "substituted_fluid_density_gcc",
+            "Substituted Fluid Density",
+            "Substituted pore-fluid density in g/cc.",
+            Some(0.2),
+            Some(1.0e-6),
+            None,
+            Some("g/cc"),
+        ),
+    ]
+}
+
+fn resolve_gassmann_parameters(
+    parameters: &BTreeMap<String, ComputeParameterValue>,
+) -> Result<GassmannParameters> {
+    Ok(GassmannParameters {
+        matrix_bulk_modulus_gpa: numeric_param_value(
+            parameters,
+            "matrix_bulk_modulus_gpa",
+            Some(37.0),
+        )?,
+        initial_fluid_bulk_modulus_gpa: numeric_param_value(
+            parameters,
+            "initial_fluid_bulk_modulus_gpa",
+            Some(2.3),
+        )?,
+        substituted_fluid_bulk_modulus_gpa: numeric_param_value(
+            parameters,
+            "substituted_fluid_bulk_modulus_gpa",
+            Some(0.05),
+        )?,
+        initial_fluid_density_gcc: numeric_param_value(
+            parameters,
+            "initial_fluid_density_gcc",
+            Some(1.0),
+        )?,
+        substituted_fluid_density_gcc: numeric_param_value(
+            parameters,
+            "substituted_fluid_density_gcc",
+            Some(0.2),
+        )?,
+    })
+}
+
+fn gassmann_substitution_sample(
+    vp_m_per_s: f64,
+    vs_m_per_s: f64,
+    density_value: f64,
+    density_unit: Option<&str>,
+    porosity_value: f64,
+    porosity_unit: Option<&str>,
+    parameters: GassmannParameters,
+) -> Option<GassmannSubstitution> {
+    let density_gcc = density_to_gcc(density_value, density_unit)?;
+    let porosity_fraction = porosity_to_fraction(porosity_value, porosity_unit)?;
+    if vp_m_per_s <= 0.0 || vs_m_per_s <= 0.0 || porosity_fraction <= 0.0 {
+        return None;
+    }
+
+    let shear_modulus_gpa = density_gcc * vs_m_per_s.powi(2) * 1.0e-6;
+    let saturated_bulk_modulus_gpa =
+        (density_gcc * vp_m_per_s.powi(2) * 1.0e-6) - ((4.0 / 3.0) * shear_modulus_gpa);
+    if !shear_modulus_gpa.is_finite()
+        || !saturated_bulk_modulus_gpa.is_finite()
+        || shear_modulus_gpa <= 0.0
+        || saturated_bulk_modulus_gpa <= 0.0
+    {
+        return None;
+    }
+
+    let matrix_minus_sat = parameters.matrix_bulk_modulus_gpa - saturated_bulk_modulus_gpa;
+    let matrix_minus_initial =
+        parameters.matrix_bulk_modulus_gpa - parameters.initial_fluid_bulk_modulus_gpa;
+    let matrix_minus_substituted =
+        parameters.matrix_bulk_modulus_gpa - parameters.substituted_fluid_bulk_modulus_gpa;
+    if matrix_minus_sat.abs() <= f64::EPSILON
+        || matrix_minus_initial.abs() <= f64::EPSILON
+        || matrix_minus_substituted.abs() <= f64::EPSILON
+    {
+        return None;
+    }
+
+    let substituted_density_gcc = density_gcc
+        - (porosity_fraction * parameters.initial_fluid_density_gcc)
+        + (porosity_fraction * parameters.substituted_fluid_density_gcc);
+    if !substituted_density_gcc.is_finite() || substituted_density_gcc <= 0.0 {
+        return None;
+    }
+
+    let gassmann_term = (saturated_bulk_modulus_gpa / matrix_minus_sat)
+        - (parameters.initial_fluid_bulk_modulus_gpa / (porosity_fraction * matrix_minus_initial))
+        + (parameters.substituted_fluid_bulk_modulus_gpa
+            / (porosity_fraction * matrix_minus_substituted));
+    if !gassmann_term.is_finite() || (1.0 + gassmann_term).abs() <= f64::EPSILON {
+        return None;
+    }
+
+    let substituted_bulk_modulus_gpa =
+        (gassmann_term * parameters.matrix_bulk_modulus_gpa) / (1.0 + gassmann_term);
+    if !substituted_bulk_modulus_gpa.is_finite() || substituted_bulk_modulus_gpa <= 0.0 {
+        return None;
+    }
+
+    let substituted_vp_term = (substituted_bulk_modulus_gpa + ((4.0 / 3.0) * shear_modulus_gpa))
+        / substituted_density_gcc;
+    let substituted_vs_term = shear_modulus_gpa / substituted_density_gcc;
+    if !substituted_vp_term.is_finite()
+        || !substituted_vs_term.is_finite()
+        || substituted_vp_term <= 0.0
+        || substituted_vs_term <= 0.0
+    {
+        return None;
+    }
+
+    Some(GassmannSubstitution {
+        substituted_vp_m_per_s: substituted_vp_term.sqrt() * 1000.0,
+        substituted_vs_m_per_s: substituted_vs_term.sqrt() * 1000.0,
+    })
+}
+
 impl LogComputeFunction for MovingAverageFunction {
     fn metadata(&self) -> ComputeFunctionMetadata {
         ComputeFunctionMetadata {
@@ -897,6 +1456,7 @@ impl LogComputeFunction for MovingAverageFunction {
             unit: curve.unit.clone(),
             description: Some(format!("Moving average of {}", curve.curve_name)),
             semantic_type: CurveSemanticType::Computed,
+            semantic_parameters: empty_semantic_parameters(),
             values: moving_average_values(&curve.values, window),
         })
     }
@@ -969,6 +1529,7 @@ impl LogComputeFunction for ZScoreNormalizeFunction {
             unit: None,
             description: Some(format!("Z-score normalized {}", curve.curve_name)),
             semantic_type: CurveSemanticType::Computed,
+            semantic_parameters: empty_semantic_parameters(),
             values,
         })
     }
@@ -1066,6 +1627,7 @@ impl LogComputeFunction for MinMaxScaleFunction {
             unit: None,
             description: Some(format!("Min-max scaled {}", curve.curve_name)),
             semantic_type: CurveSemanticType::Computed,
+            semantic_parameters: empty_semantic_parameters(),
             values,
         })
     }
@@ -1111,6 +1673,7 @@ impl LogComputeFunction for GapFlagFunction {
             unit: None,
             description: Some(format!("Gap flags for {}", curve.curve_name)),
             semantic_type: CurveSemanticType::Computed,
+            semantic_parameters: empty_semantic_parameters(),
             values: curve
                 .values
                 .iter()
@@ -1194,6 +1757,7 @@ macro_rules! impl_vshale {
                     unit: Some("v/v".to_string()),
                     description: Some(format!("{} from {}", $display, curve.curve_name)),
                     semantic_type: CurveSemanticType::VShale,
+                    semantic_parameters: empty_semantic_parameters(),
                     values,
                 })
             }
@@ -1281,6 +1845,7 @@ macro_rules! impl_velocity_from_slowness {
                     unit: Some("m/s".to_string()),
                     description: Some(format!("{} from {}", $display, curve.curve_name)),
                     semantic_type: $semantic,
+                    semantic_parameters: empty_semantic_parameters(),
                     values: curve
                         .values
                         .iter()
@@ -1312,6 +1877,70 @@ impl_velocity_from_slowness!(
     CurveSemanticType::SVelocity,
     "Convert shear slowness to S-wave velocity."
 );
+
+impl LogComputeFunction for VpVsRatioFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "rock_physics:vp_vs_ratio".to_string(),
+            provider: "rock_physics".to_string(),
+            name: "Vp/Vs Ratio".to_string(),
+            category: "Rock Physics".to_string(),
+            description: "Compute Vp/Vs ratio from P-wave and S-wave velocity.".to_string(),
+            default_output_mnemonic: "VPVS".to_string(),
+            output_curve_type: CurveSemanticType::VpVsRatio,
+            tags: vec!["rock-physics".to_string(), "elastic".to_string()],
+        }
+    }
+
+    fn input_specs(&self) -> Vec<ComputeInputSpec> {
+        vec![ComputeInputSpec::CurvePair {
+            left_parameter_name: "vp_curve".to_string(),
+            left_allowed_types: vec![CurveSemanticType::PVelocity],
+            right_parameter_name: "vs_curve".to_string(),
+            right_allowed_types: vec![CurveSemanticType::SVelocity],
+        }]
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        Vec::new()
+    }
+
+    fn execute(
+        &self,
+        inputs: &BTreeMap<String, LogCurveData>,
+        _parameters: &BTreeMap<String, ComputeParameterValue>,
+        output_mnemonic: Option<&str>,
+    ) -> Result<ComputedCurve> {
+        let vp = inputs
+            .get("vp_curve")
+            .ok_or_else(|| LasError::Validation("vp curve is required".to_string()))?;
+        let vs = inputs
+            .get("vs_curve")
+            .ok_or_else(|| LasError::Validation("vs curve is required".to_string()))?;
+        Ok(ComputedCurve {
+            curve_name: output_mnemonic.unwrap_or("VPVS").to_string(),
+            original_mnemonic: output_mnemonic.unwrap_or("VPVS").to_string(),
+            unit: Some("ratio".to_string()),
+            description: Some(format!(
+                "Vp/Vs ratio from {} and {}",
+                vp.curve_name, vs.curve_name
+            )),
+            semantic_type: CurveSemanticType::VpVsRatio,
+            semantic_parameters: empty_semantic_parameters(),
+            values: vp
+                .values
+                .iter()
+                .zip(&vs.values)
+                .map(|(left, right)| match (left, right) {
+                    (Some(vp_value), Some(vs_value)) if *vp_value > 0.0 && *vs_value > 0.0 => {
+                        Some(vp_value / vs_value)
+                    }
+                    _ => None,
+                })
+                .collect(),
+        })
+    }
+}
 
 impl LogComputeFunction for AcousticImpedanceFunction {
     fn metadata(&self) -> ComputeFunctionMetadata {
@@ -1355,20 +1984,468 @@ impl LogComputeFunction for AcousticImpedanceFunction {
         Ok(ComputedCurve {
             curve_name: output_mnemonic.unwrap_or("AI").to_string(),
             original_mnemonic: output_mnemonic.unwrap_or("AI").to_string(),
-            unit: Some("(m/s)*(g/cm3)".to_string()),
+            unit: Some("(m/s)*(g/cc)".to_string()),
             description: Some(format!(
                 "Acoustic impedance from {} and {}",
                 vp.curve_name, density.curve_name
             )),
             semantic_type: CurveSemanticType::AcousticImpedance,
+            semantic_parameters: empty_semantic_parameters(),
             values: vp
                 .values
                 .iter()
                 .zip(&density.values)
                 .map(|(left, right)| match (left, right) {
-                    (Some(vp), Some(rho)) => Some(vp * rho),
+                    (Some(vp_value), Some(rho_value)) => {
+                        density_to_gcc(*rho_value, density.unit.as_deref())
+                            .map(|density_gcc| vp_value * density_gcc)
+                    }
                     _ => None,
                 })
+                .collect(),
+        })
+    }
+}
+
+impl LogComputeFunction for ElasticImpedanceFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "rock_physics:elastic_impedance".to_string(),
+            provider: "rock_physics".to_string(),
+            name: "Elastic Impedance".to_string(),
+            category: "Rock Physics".to_string(),
+            description: "Compute normalized elastic impedance from Vp, Vs, and bulk density."
+                .to_string(),
+            default_output_mnemonic: "EI".to_string(),
+            output_curve_type: CurveSemanticType::ElasticImpedance,
+            tags: vec![
+                "rock-physics".to_string(),
+                "impedance".to_string(),
+                "avo".to_string(),
+            ],
+        }
+    }
+
+    fn input_specs(&self) -> Vec<ComputeInputSpec> {
+        vec![
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "vp_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::PVelocity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "vs_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::SVelocity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "density_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::BulkDensity],
+            },
+        ]
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        vec![number_param(
+            "angle_deg",
+            "Incident Angle",
+            "Incident angle in degrees for normalized elastic impedance.",
+            Some(0.0),
+            Some(0.0),
+            Some(89.0),
+            Some("deg"),
+        )]
+    }
+
+    fn execute(
+        &self,
+        inputs: &BTreeMap<String, LogCurveData>,
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+        output_mnemonic: Option<&str>,
+    ) -> Result<ComputedCurve> {
+        let vp = inputs
+            .get("vp_curve")
+            .ok_or_else(|| LasError::Validation("vp curve is required".to_string()))?;
+        let vs = inputs
+            .get("vs_curve")
+            .ok_or_else(|| LasError::Validation("vs curve is required".to_string()))?;
+        let density = inputs
+            .get("density_curve")
+            .ok_or_else(|| LasError::Validation("density curve is required".to_string()))?;
+        let angle_deg = numeric_param_value(parameters, "angle_deg", Some(0.0))?;
+        if !angle_deg.is_finite() || !(0.0..90.0).contains(&angle_deg) {
+            return Err(LasError::Validation(
+                "parameter 'angle_deg' must be in [0, 90) degrees".to_string(),
+            ));
+        }
+        let terms = impedance_reference_terms(vp, vs, density).ok_or_else(|| {
+            LasError::Validation(
+                "elastic impedance requires at least one positive Vp, Vs, and density sample"
+                    .to_string(),
+            )
+        })?;
+
+        Ok(ComputedCurve {
+            curve_name: output_mnemonic.unwrap_or("EI").to_string(),
+            original_mnemonic: output_mnemonic.unwrap_or("EI").to_string(),
+            unit: Some("(m/s)*(g/cc)".to_string()),
+            description: Some(format!(
+                "Elastic impedance from {}, {}, and {} at {angle_deg} deg",
+                vp.curve_name, vs.curve_name, density.curve_name
+            )),
+            semantic_type: CurveSemanticType::ElasticImpedance,
+            semantic_parameters: impedance_semantic_parameters("incident_angle_deg", angle_deg, terms),
+            values: vp
+                .values
+                .iter()
+                .zip(&vs.values)
+                .zip(&density.values)
+                .map(|((vp_value, vs_value), density_value)| {
+                    match (vp_value, vs_value, density_value) {
+                        (Some(vp_value), Some(vs_value), Some(density_value)) => {
+                            density_to_gcc(*density_value, density.unit.as_deref()).and_then(
+                                |density_gcc| {
+                                    normalized_elastic_impedance_sample(
+                                        *vp_value,
+                                        *vs_value,
+                                        density_gcc,
+                                        angle_deg,
+                                        terms,
+                                    )
+                                },
+                            )
+                        }
+                        _ => None,
+                    }
+                })
+                .collect(),
+        })
+    }
+}
+
+impl LogComputeFunction for ExtendedElasticImpedanceFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "rock_physics:extended_elastic_impedance".to_string(),
+            provider: "rock_physics".to_string(),
+            name: "Extended Elastic Impedance".to_string(),
+            category: "Rock Physics".to_string(),
+            description: "Compute rotated extended elastic impedance from Vp, Vs, and bulk density."
+                .to_string(),
+            default_output_mnemonic: "EEI".to_string(),
+            output_curve_type: CurveSemanticType::ExtendedElasticImpedance,
+            tags: vec![
+                "rock-physics".to_string(),
+                "impedance".to_string(),
+                "avo".to_string(),
+            ],
+        }
+    }
+
+    fn input_specs(&self) -> Vec<ComputeInputSpec> {
+        vec![
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "vp_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::PVelocity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "vs_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::SVelocity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "density_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::BulkDensity],
+            },
+        ]
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        vec![number_param(
+            "chi_deg",
+            "Chi Rotation",
+            "Rotation angle chi in degrees for extended elastic impedance.",
+            Some(0.0),
+            Some(-90.0),
+            Some(90.0),
+            Some("deg"),
+        )]
+    }
+
+    fn execute(
+        &self,
+        inputs: &BTreeMap<String, LogCurveData>,
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+        output_mnemonic: Option<&str>,
+    ) -> Result<ComputedCurve> {
+        let vp = inputs
+            .get("vp_curve")
+            .ok_or_else(|| LasError::Validation("vp curve is required".to_string()))?;
+        let vs = inputs
+            .get("vs_curve")
+            .ok_or_else(|| LasError::Validation("vs curve is required".to_string()))?;
+        let density = inputs
+            .get("density_curve")
+            .ok_or_else(|| LasError::Validation("density curve is required".to_string()))?;
+        let chi_deg = numeric_param_value(parameters, "chi_deg", Some(0.0))?;
+        if !chi_deg.is_finite() || !(-90.0..=90.0).contains(&chi_deg) {
+            return Err(LasError::Validation(
+                "parameter 'chi_deg' must be in [-90, 90] degrees".to_string(),
+            ));
+        }
+        let terms = impedance_reference_terms(vp, vs, density).ok_or_else(|| {
+            LasError::Validation(
+                "extended elastic impedance requires at least one positive Vp, Vs, and density sample"
+                    .to_string(),
+            )
+        })?;
+
+        Ok(ComputedCurve {
+            curve_name: output_mnemonic.unwrap_or("EEI").to_string(),
+            original_mnemonic: output_mnemonic.unwrap_or("EEI").to_string(),
+            unit: Some("(m/s)*(g/cc)".to_string()),
+            description: Some(format!(
+                "Extended elastic impedance from {}, {}, and {} at chi {chi_deg} deg",
+                vp.curve_name, vs.curve_name, density.curve_name
+            )),
+            semantic_type: CurveSemanticType::ExtendedElasticImpedance,
+            semantic_parameters: impedance_semantic_parameters("chi_angle_deg", chi_deg, terms),
+            values: vp
+                .values
+                .iter()
+                .zip(&vs.values)
+                .zip(&density.values)
+                .map(|((vp_value, vs_value), density_value)| {
+                    match (vp_value, vs_value, density_value) {
+                        (Some(vp_value), Some(vs_value), Some(density_value)) => {
+                            density_to_gcc(*density_value, density.unit.as_deref()).and_then(
+                                |density_gcc| {
+                                    extended_elastic_impedance_sample(
+                                        *vp_value,
+                                        *vs_value,
+                                        density_gcc,
+                                        chi_deg,
+                                        terms,
+                                    )
+                                },
+                            )
+                        }
+                        _ => None,
+                    }
+                })
+                .collect(),
+        })
+    }
+}
+
+impl LogComputeFunction for ShearImpedanceFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "rock_physics:shear_impedance".to_string(),
+            provider: "rock_physics".to_string(),
+            name: "Shear Impedance".to_string(),
+            category: "Rock Physics".to_string(),
+            description: "Multiply S-wave velocity by bulk density.".to_string(),
+            default_output_mnemonic: "SI".to_string(),
+            output_curve_type: CurveSemanticType::ShearImpedance,
+            tags: vec!["rock-physics".to_string(), "impedance".to_string()],
+        }
+    }
+
+    fn input_specs(&self) -> Vec<ComputeInputSpec> {
+        vec![ComputeInputSpec::CurvePair {
+            left_parameter_name: "vs_curve".to_string(),
+            left_allowed_types: vec![CurveSemanticType::SVelocity],
+            right_parameter_name: "density_curve".to_string(),
+            right_allowed_types: vec![CurveSemanticType::BulkDensity],
+        }]
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        Vec::new()
+    }
+
+    fn execute(
+        &self,
+        inputs: &BTreeMap<String, LogCurveData>,
+        _parameters: &BTreeMap<String, ComputeParameterValue>,
+        output_mnemonic: Option<&str>,
+    ) -> Result<ComputedCurve> {
+        let vs = inputs
+            .get("vs_curve")
+            .ok_or_else(|| LasError::Validation("vs curve is required".to_string()))?;
+        let density = inputs
+            .get("density_curve")
+            .ok_or_else(|| LasError::Validation("density curve is required".to_string()))?;
+        Ok(ComputedCurve {
+            curve_name: output_mnemonic.unwrap_or("SI").to_string(),
+            original_mnemonic: output_mnemonic.unwrap_or("SI").to_string(),
+            unit: Some("(m/s)*(g/cc)".to_string()),
+            description: Some(format!(
+                "Shear impedance from {} and {}",
+                vs.curve_name, density.curve_name
+            )),
+            semantic_type: CurveSemanticType::ShearImpedance,
+            semantic_parameters: empty_semantic_parameters(),
+            values: vs
+                .values
+                .iter()
+                .zip(&density.values)
+                .map(|(left, right)| match (left, right) {
+                    (Some(vs_value), Some(rho_value)) => {
+                        density_to_gcc(*rho_value, density.unit.as_deref())
+                            .map(|density_gcc| vs_value * density_gcc)
+                    }
+                    _ => None,
+                })
+                .collect(),
+        })
+    }
+}
+
+impl LogComputeFunction for LambdaRhoFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "rock_physics:lambda_rho".to_string(),
+            provider: "rock_physics".to_string(),
+            name: "Lambda-Rho".to_string(),
+            category: "Rock Physics".to_string(),
+            description: "Compute lambda-rho from Vp, Vs, and bulk density.".to_string(),
+            default_output_mnemonic: "LRHO".to_string(),
+            output_curve_type: CurveSemanticType::LambdaRho,
+            tags: vec!["rock-physics".to_string(), "elastic".to_string()],
+        }
+    }
+
+    fn input_specs(&self) -> Vec<ComputeInputSpec> {
+        vec![
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "vp_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::PVelocity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "vs_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::SVelocity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "density_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::BulkDensity],
+            },
+        ]
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        Vec::new()
+    }
+
+    fn execute(
+        &self,
+        inputs: &BTreeMap<String, LogCurveData>,
+        _parameters: &BTreeMap<String, ComputeParameterValue>,
+        output_mnemonic: Option<&str>,
+    ) -> Result<ComputedCurve> {
+        let vp = inputs
+            .get("vp_curve")
+            .ok_or_else(|| LasError::Validation("vp curve is required".to_string()))?;
+        let vs = inputs
+            .get("vs_curve")
+            .ok_or_else(|| LasError::Validation("vs curve is required".to_string()))?;
+        let density = inputs
+            .get("density_curve")
+            .ok_or_else(|| LasError::Validation("density curve is required".to_string()))?;
+        Ok(ComputedCurve {
+            curve_name: output_mnemonic.unwrap_or("LRHO").to_string(),
+            original_mnemonic: output_mnemonic.unwrap_or("LRHO").to_string(),
+            unit: Some("GPa".to_string()),
+            description: Some(format!(
+                "Lambda-rho from {}, {}, and {}",
+                vp.curve_name, vs.curve_name, density.curve_name
+            )),
+            semantic_type: CurveSemanticType::LambdaRho,
+            semantic_parameters: empty_semantic_parameters(),
+            values: vp
+                .values
+                .iter()
+                .zip(&vs.values)
+                .zip(&density.values)
+                .map(|((vp_value, vs_value), density_value)| {
+                    match (vp_value, vs_value, density_value) {
+                        (Some(vp_value), Some(vs_value), Some(density_value)) => {
+                            density_to_gcc(*density_value, density.unit.as_deref()).and_then(
+                                |density_gcc| lambda_rho_gpa(*vp_value, *vs_value, density_gcc),
+                            )
+                        }
+                        _ => None,
+                    }
+                })
+                .collect(),
+        })
+    }
+}
+
+impl LogComputeFunction for MuRhoFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "rock_physics:mu_rho".to_string(),
+            provider: "rock_physics".to_string(),
+            name: "Mu-Rho".to_string(),
+            category: "Rock Physics".to_string(),
+            description: "Compute mu-rho from Vs and bulk density.".to_string(),
+            default_output_mnemonic: "MRHO".to_string(),
+            output_curve_type: CurveSemanticType::MuRho,
+            tags: vec!["rock-physics".to_string(), "elastic".to_string()],
+        }
+    }
+
+    fn input_specs(&self) -> Vec<ComputeInputSpec> {
+        vec![
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "vs_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::SVelocity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "density_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::BulkDensity],
+            },
+        ]
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        Vec::new()
+    }
+
+    fn execute(
+        &self,
+        inputs: &BTreeMap<String, LogCurveData>,
+        _parameters: &BTreeMap<String, ComputeParameterValue>,
+        output_mnemonic: Option<&str>,
+    ) -> Result<ComputedCurve> {
+        let vs = inputs
+            .get("vs_curve")
+            .ok_or_else(|| LasError::Validation("vs curve is required".to_string()))?;
+        let density = inputs
+            .get("density_curve")
+            .ok_or_else(|| LasError::Validation("density curve is required".to_string()))?;
+        Ok(ComputedCurve {
+            curve_name: output_mnemonic.unwrap_or("MRHO").to_string(),
+            original_mnemonic: output_mnemonic.unwrap_or("MRHO").to_string(),
+            unit: Some("GPa".to_string()),
+            description: Some(format!(
+                "Mu-rho from {} and {}",
+                vs.curve_name, density.curve_name
+            )),
+            semantic_type: CurveSemanticType::MuRho,
+            semantic_parameters: empty_semantic_parameters(),
+            values: vs
+                .values
+                .iter()
+                .zip(&density.values)
+                .map(
+                    |(vs_value, density_value)| match (vs_value, density_value) {
+                        (Some(vs_value), Some(density_value)) => {
+                            density_to_gcc(*density_value, density.unit.as_deref())
+                                .and_then(|density_gcc| mu_rho_gpa(*vs_value, density_gcc))
+                        }
+                        _ => None,
+                    },
+                )
                 .collect(),
         })
     }
@@ -1422,6 +2499,7 @@ impl LogComputeFunction for PoissonsRatioFunction {
                 vp.curve_name, vs.curve_name
             )),
             semantic_type: CurveSemanticType::PoissonsRatio,
+            semantic_parameters: empty_semantic_parameters(),
             values: vp
                 .values
                 .iter()
@@ -1433,6 +2511,298 @@ impl LogComputeFunction for PoissonsRatioFunction {
                         (denominator.abs() > f64::EPSILON).then_some((ratio_sq - 2.0) / denominator)
                     }
                     _ => None,
+                })
+                .collect(),
+        })
+    }
+}
+
+impl LogComputeFunction for GassmannSubstitutedDensityFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "rock_physics:gassmann_substituted_density".to_string(),
+            provider: "rock_physics".to_string(),
+            name: "Gassmann Substituted Density".to_string(),
+            category: "Rock Physics".to_string(),
+            description: "Compute substituted bulk density from porosity and fluid properties."
+                .to_string(),
+            default_output_mnemonic: "RHOB_GASS".to_string(),
+            output_curve_type: CurveSemanticType::BulkDensity,
+            tags: vec!["rock-physics".to_string(), "gassmann".to_string()],
+        }
+    }
+
+    fn input_specs(&self) -> Vec<ComputeInputSpec> {
+        vec![
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "density_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::BulkDensity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "porosity_curve".to_string(),
+                allowed_types: vec![
+                    CurveSemanticType::EffectivePorosity,
+                    CurveSemanticType::NeutronPorosity,
+                ],
+            },
+        ]
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        gassmann_parameters()
+    }
+
+    fn execute(
+        &self,
+        inputs: &BTreeMap<String, LogCurveData>,
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+        output_mnemonic: Option<&str>,
+    ) -> Result<ComputedCurve> {
+        let density = inputs
+            .get("density_curve")
+            .ok_or_else(|| LasError::Validation("density curve is required".to_string()))?;
+        let porosity = inputs
+            .get("porosity_curve")
+            .ok_or_else(|| LasError::Validation("porosity curve is required".to_string()))?;
+        let parameters = resolve_gassmann_parameters(parameters)?;
+        Ok(ComputedCurve {
+            curve_name: output_mnemonic.unwrap_or("RHOB_GASS").to_string(),
+            original_mnemonic: output_mnemonic.unwrap_or("RHOB_GASS").to_string(),
+            unit: Some("g/cc".to_string()),
+            description: Some(format!(
+                "Gassmann substituted density from {} and {}",
+                density.curve_name, porosity.curve_name
+            )),
+            semantic_type: CurveSemanticType::BulkDensity,
+            semantic_parameters: empty_semantic_parameters(),
+            values: density
+                .values
+                .iter()
+                .zip(&porosity.values)
+                .map(
+                    |(density_value, porosity_value)| match (density_value, porosity_value) {
+                        (Some(density_value), Some(porosity_value)) => {
+                            let density_gcc =
+                                density_to_gcc(*density_value, density.unit.as_deref())?;
+                            let porosity_fraction =
+                                porosity_to_fraction(*porosity_value, porosity.unit.as_deref())?;
+                            if porosity_fraction <= 0.0 {
+                                return None;
+                            }
+                            let substituted_density_gcc = density_gcc
+                                - (porosity_fraction * parameters.initial_fluid_density_gcc)
+                                + (porosity_fraction * parameters.substituted_fluid_density_gcc);
+                            (substituted_density_gcc > 0.0 && substituted_density_gcc.is_finite())
+                                .then_some(substituted_density_gcc)
+                        }
+                        _ => None,
+                    },
+                )
+                .collect(),
+        })
+    }
+}
+
+impl LogComputeFunction for GassmannSubstitutedVpFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "rock_physics:gassmann_substituted_vp".to_string(),
+            provider: "rock_physics".to_string(),
+            name: "Gassmann Substituted Vp".to_string(),
+            category: "Rock Physics".to_string(),
+            description: "Compute substituted P-wave velocity from Gassmann fluid substitution."
+                .to_string(),
+            default_output_mnemonic: "VP_GASS".to_string(),
+            output_curve_type: CurveSemanticType::PVelocity,
+            tags: vec!["rock-physics".to_string(), "gassmann".to_string()],
+        }
+    }
+
+    fn input_specs(&self) -> Vec<ComputeInputSpec> {
+        vec![
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "vp_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::PVelocity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "vs_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::SVelocity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "density_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::BulkDensity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "porosity_curve".to_string(),
+                allowed_types: vec![
+                    CurveSemanticType::EffectivePorosity,
+                    CurveSemanticType::NeutronPorosity,
+                ],
+            },
+        ]
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        gassmann_parameters()
+    }
+
+    fn execute(
+        &self,
+        inputs: &BTreeMap<String, LogCurveData>,
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+        output_mnemonic: Option<&str>,
+    ) -> Result<ComputedCurve> {
+        let vp = inputs
+            .get("vp_curve")
+            .ok_or_else(|| LasError::Validation("vp curve is required".to_string()))?;
+        let vs = inputs
+            .get("vs_curve")
+            .ok_or_else(|| LasError::Validation("vs curve is required".to_string()))?;
+        let density = inputs
+            .get("density_curve")
+            .ok_or_else(|| LasError::Validation("density curve is required".to_string()))?;
+        let porosity = inputs
+            .get("porosity_curve")
+            .ok_or_else(|| LasError::Validation("porosity curve is required".to_string()))?;
+        let parameters = resolve_gassmann_parameters(parameters)?;
+        Ok(ComputedCurve {
+            curve_name: output_mnemonic.unwrap_or("VP_GASS").to_string(),
+            original_mnemonic: output_mnemonic.unwrap_or("VP_GASS").to_string(),
+            unit: Some("m/s".to_string()),
+            description: Some(format!(
+                "Gassmann substituted Vp from {}, {}, {}, and {}",
+                vp.curve_name, vs.curve_name, density.curve_name, porosity.curve_name
+            )),
+            semantic_type: CurveSemanticType::PVelocity,
+            semantic_parameters: empty_semantic_parameters(),
+            values: vp
+                .values
+                .iter()
+                .zip(&vs.values)
+                .zip(&density.values)
+                .zip(&porosity.values)
+                .map(|(((vp_value, vs_value), density_value), porosity_value)| {
+                    match (vp_value, vs_value, density_value, porosity_value) {
+                        (
+                            Some(vp_value),
+                            Some(vs_value),
+                            Some(density_value),
+                            Some(porosity_value),
+                        ) => gassmann_substitution_sample(
+                            *vp_value,
+                            *vs_value,
+                            *density_value,
+                            density.unit.as_deref(),
+                            *porosity_value,
+                            porosity.unit.as_deref(),
+                            parameters,
+                        )
+                        .map(|result| result.substituted_vp_m_per_s),
+                        _ => None,
+                    }
+                })
+                .collect(),
+        })
+    }
+}
+
+impl LogComputeFunction for GassmannSubstitutedVsFunction {
+    fn metadata(&self) -> ComputeFunctionMetadata {
+        ComputeFunctionMetadata {
+            id: "rock_physics:gassmann_substituted_vs".to_string(),
+            provider: "rock_physics".to_string(),
+            name: "Gassmann Substituted Vs".to_string(),
+            category: "Rock Physics".to_string(),
+            description: "Compute substituted S-wave velocity from Gassmann fluid substitution."
+                .to_string(),
+            default_output_mnemonic: "VS_GASS".to_string(),
+            output_curve_type: CurveSemanticType::SVelocity,
+            tags: vec!["rock-physics".to_string(), "gassmann".to_string()],
+        }
+    }
+
+    fn input_specs(&self) -> Vec<ComputeInputSpec> {
+        vec![
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "vp_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::PVelocity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "vs_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::SVelocity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "density_curve".to_string(),
+                allowed_types: vec![CurveSemanticType::BulkDensity],
+            },
+            ComputeInputSpec::SingleCurve {
+                parameter_name: "porosity_curve".to_string(),
+                allowed_types: vec![
+                    CurveSemanticType::EffectivePorosity,
+                    CurveSemanticType::NeutronPorosity,
+                ],
+            },
+        ]
+    }
+
+    fn parameters(&self) -> Vec<ComputeParameterDefinition> {
+        gassmann_parameters()
+    }
+
+    fn execute(
+        &self,
+        inputs: &BTreeMap<String, LogCurveData>,
+        parameters: &BTreeMap<String, ComputeParameterValue>,
+        output_mnemonic: Option<&str>,
+    ) -> Result<ComputedCurve> {
+        let vp = inputs
+            .get("vp_curve")
+            .ok_or_else(|| LasError::Validation("vp curve is required".to_string()))?;
+        let vs = inputs
+            .get("vs_curve")
+            .ok_or_else(|| LasError::Validation("vs curve is required".to_string()))?;
+        let density = inputs
+            .get("density_curve")
+            .ok_or_else(|| LasError::Validation("density curve is required".to_string()))?;
+        let porosity = inputs
+            .get("porosity_curve")
+            .ok_or_else(|| LasError::Validation("porosity curve is required".to_string()))?;
+        let parameters = resolve_gassmann_parameters(parameters)?;
+        Ok(ComputedCurve {
+            curve_name: output_mnemonic.unwrap_or("VS_GASS").to_string(),
+            original_mnemonic: output_mnemonic.unwrap_or("VS_GASS").to_string(),
+            unit: Some("m/s".to_string()),
+            description: Some(format!(
+                "Gassmann substituted Vs from {}, {}, {}, and {}",
+                vp.curve_name, vs.curve_name, density.curve_name, porosity.curve_name
+            )),
+            semantic_type: CurveSemanticType::SVelocity,
+            semantic_parameters: empty_semantic_parameters(),
+            values: vp
+                .values
+                .iter()
+                .zip(&vs.values)
+                .zip(&density.values)
+                .zip(&porosity.values)
+                .map(|(((vp_value, vs_value), density_value), porosity_value)| {
+                    match (vp_value, vs_value, density_value, porosity_value) {
+                        (
+                            Some(vp_value),
+                            Some(vs_value),
+                            Some(density_value),
+                            Some(porosity_value),
+                        ) => gassmann_substitution_sample(
+                            *vp_value,
+                            *vs_value,
+                            *density_value,
+                            density.unit.as_deref(),
+                            *porosity_value,
+                            porosity.unit.as_deref(),
+                            parameters,
+                        )
+                        .map(|result| result.substituted_vs_m_per_s),
+                        _ => None,
+                    }
                 })
                 .collect(),
         })
@@ -1775,17 +3145,43 @@ mod tests {
             unit: Some("unit".to_string()),
             semantic_type: semantic,
             source: CurveSemanticSource::Derived,
+            semantic_parameters: empty_semantic_parameters(),
         }
     }
 
     fn curve(name: &str, semantic: CurveSemanticType, values: &[Option<f64>]) -> LogCurveData {
+        curve_with_unit(name, semantic, "unit", values)
+    }
+
+    fn curve_with_unit(
+        name: &str,
+        semantic: CurveSemanticType,
+        unit: &str,
+        values: &[Option<f64>],
+    ) -> LogCurveData {
         LogCurveData {
             curve_name: name.to_string(),
             original_mnemonic: name.to_string(),
-            unit: Some("unit".to_string()),
+            unit: Some(unit.to_string()),
             semantic_type: semantic,
             depths: vec![100.0, 100.5, 101.0, 101.5],
             values: values.to_vec(),
+        }
+    }
+
+    fn assert_values_close(actual: &[Option<f64>], expected: &[Option<f64>], tolerance: f64) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+            match (actual, expected) {
+                (Some(actual), Some(expected)) => {
+                    assert!(
+                        (actual - expected).abs() <= tolerance,
+                        "row {index}: expected {expected}, found {actual}"
+                    );
+                }
+                (None, None) => {}
+                _ => panic!("row {index}: expected {expected:?}, found {actual:?}"),
+            }
         }
     }
 
@@ -1849,6 +3245,297 @@ mod tests {
         assert_eq!(output.values[0], Some(0.0));
         assert_eq!(output.values[2], Some(1.0));
         assert_eq!(output.values[3], None);
+    }
+
+    #[test]
+    fn elastic_rock_physics_functions_match_reference_values() {
+        let registry = ComputeRegistry::new();
+        let vp = curve_with_unit(
+            "VP",
+            CurveSemanticType::PVelocity,
+            "m/s",
+            &[Some(2200.0), Some(2500.0), Some(2800.0), Some(3000.0)],
+        );
+        let vs = curve_with_unit(
+            "VS",
+            CurveSemanticType::SVelocity,
+            "m/s",
+            &[Some(1200.0), Some(1400.0), Some(1600.0), Some(1700.0)],
+        );
+        let rho = curve_with_unit(
+            "RHOB",
+            CurveSemanticType::BulkDensity,
+            "g/cc",
+            &[Some(2.15), Some(2.22), Some(2.28), Some(2.35)],
+        );
+
+        let mut vp_vs_bindings = BTreeMap::new();
+        vp_vs_bindings.insert("vp_curve".to_string(), "VP".to_string());
+        vp_vs_bindings.insert("vs_curve".to_string(), "VS".to_string());
+        let (_, vp_vs_output) = registry
+            .run_log_compute(
+                "rock_physics:vp_vs_ratio",
+                &[vp.clone(), vs.clone()],
+                &vp_vs_bindings,
+                &BTreeMap::new(),
+                None,
+            )
+            .unwrap();
+        assert_values_close(
+            &vp_vs_output.values,
+            &[
+                Some(1.8333333333),
+                Some(1.7857142857),
+                Some(1.75),
+                Some(1.7647058824),
+            ],
+            1.0e-9,
+        );
+
+        let mut shear_impedance_bindings = BTreeMap::new();
+        shear_impedance_bindings.insert("vs_curve".to_string(), "VS".to_string());
+        shear_impedance_bindings.insert("density_curve".to_string(), "RHOB".to_string());
+        let (_, shear_impedance_output) = registry
+            .run_log_compute(
+                "rock_physics:shear_impedance",
+                &[vs.clone(), rho.clone()],
+                &shear_impedance_bindings,
+                &BTreeMap::new(),
+                None,
+            )
+            .unwrap();
+        assert_values_close(
+            &shear_impedance_output.values,
+            &[Some(2580.0), Some(3108.0), Some(3648.0), Some(3995.0)],
+            1.0e-9,
+        );
+
+        let mut lambda_bindings = BTreeMap::new();
+        lambda_bindings.insert("vp_curve".to_string(), "VP".to_string());
+        lambda_bindings.insert("vs_curve".to_string(), "VS".to_string());
+        lambda_bindings.insert("density_curve".to_string(), "RHOB".to_string());
+        let (_, lambda_output) = registry
+            .run_log_compute(
+                "rock_physics:lambda_rho",
+                &[vp.clone(), vs.clone(), rho.clone()],
+                &lambda_bindings,
+                &BTreeMap::new(),
+                None,
+            )
+            .unwrap();
+        assert_values_close(
+            &lambda_output.values,
+            &[Some(4.214), Some(5.1726), Some(6.2016), Some(7.567)],
+            1.0e-9,
+        );
+
+        let mut mu_bindings = BTreeMap::new();
+        mu_bindings.insert("vs_curve".to_string(), "VS".to_string());
+        mu_bindings.insert("density_curve".to_string(), "RHOB".to_string());
+        let (_, mu_output) = registry
+            .run_log_compute(
+                "rock_physics:mu_rho",
+                &[vs.clone(), rho.clone()],
+                &mu_bindings,
+                &BTreeMap::new(),
+                None,
+            )
+            .unwrap();
+        assert_values_close(
+            &mu_output.values,
+            &[Some(3.096), Some(4.3512), Some(5.8368), Some(6.7915)],
+            1.0e-9,
+        );
+
+        let impedance_bindings = BTreeMap::from([
+            ("vp_curve".to_string(), "VP".to_string()),
+            ("vs_curve".to_string(), "VS".to_string()),
+            ("density_curve".to_string(), "RHOB".to_string()),
+        ]);
+
+        let elastic_parameters = BTreeMap::from([(
+            "angle_deg".to_string(),
+            ComputeParameterValue::Number(30.0),
+        )]);
+        let (_, elastic_output) = registry
+            .run_log_compute(
+                "rock_physics:elastic_impedance",
+                &[vp.clone(), vs.clone(), rho.clone()],
+                &impedance_bindings,
+                &elastic_parameters,
+                None,
+            )
+            .unwrap();
+        assert_eq!(elastic_output.semantic_type, CurveSemanticType::ElasticImpedance);
+        assert_eq!(
+            elastic_output.semantic_parameters.get("incident_angle_deg"),
+            Some(&30.0)
+        );
+        assert!(elastic_output
+            .semantic_parameters
+            .contains_key("normalization_reference_vp_m_per_s"));
+        assert_values_close(
+            &elastic_output.values,
+            &[
+                Some(5151.157993034937),
+                Some(5666.679780103422),
+                Some(6171.5013359980485),
+                Some(6649.22504260223),
+            ],
+            1.0e-9,
+        );
+
+        let extended_parameters = BTreeMap::from([(
+            "chi_deg".to_string(),
+            ComputeParameterValue::Number(20.0),
+        )]);
+        let (_, extended_output) = registry
+            .run_log_compute(
+                "rock_physics:extended_elastic_impedance",
+                &[vp, vs, rho],
+                &impedance_bindings,
+                &extended_parameters,
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            extended_output.semantic_type,
+            CurveSemanticType::ExtendedElasticImpedance
+        );
+        assert_eq!(
+            extended_output.semantic_parameters.get("chi_angle_deg"),
+            Some(&20.0)
+        );
+        assert!(extended_output
+            .semantic_parameters
+            .contains_key("velocity_ratio_k"));
+        assert_values_close(
+            &extended_output.values,
+            &[
+                Some(5496.695845152869),
+                Some(5763.67774803316),
+                Some(6022.080803912498),
+                Some(6341.140694559189),
+            ],
+            1.0e-9,
+        );
+    }
+
+    #[test]
+    fn gassmann_substitution_functions_match_briges_reference_case() {
+        let registry = ComputeRegistry::new();
+        let vp = curve_with_unit(
+            "VP",
+            CurveSemanticType::PVelocity,
+            "m/s",
+            &[Some(2600.0), Some(2600.0), Some(2600.0), None],
+        );
+        let vs = curve_with_unit(
+            "VS",
+            CurveSemanticType::SVelocity,
+            "m/s",
+            &[Some(1450.0), Some(1450.0), Some(1450.0), None],
+        );
+        let rho = curve_with_unit(
+            "RHOB",
+            CurveSemanticType::BulkDensity,
+            "kg/m3",
+            &[Some(2250.0), Some(2250.0), Some(2250.0), None],
+        );
+        let phi = curve_with_unit(
+            "PHIE",
+            CurveSemanticType::EffectivePorosity,
+            "%",
+            &[Some(24.0), Some(24.0), Some(24.0), None],
+        );
+        let parameters = BTreeMap::from([
+            (
+                "matrix_bulk_modulus_gpa".to_string(),
+                ComputeParameterValue::Number(37.0),
+            ),
+            (
+                "initial_fluid_bulk_modulus_gpa".to_string(),
+                ComputeParameterValue::Number(2.3),
+            ),
+            (
+                "substituted_fluid_bulk_modulus_gpa".to_string(),
+                ComputeParameterValue::Number(0.05),
+            ),
+            (
+                "initial_fluid_density_gcc".to_string(),
+                ComputeParameterValue::Number(1.0),
+            ),
+            (
+                "substituted_fluid_density_gcc".to_string(),
+                ComputeParameterValue::Number(0.2),
+            ),
+        ]);
+
+        let density_bindings = BTreeMap::from([
+            ("density_curve".to_string(), "RHOB".to_string()),
+            ("porosity_curve".to_string(), "PHIE".to_string()),
+        ]);
+        let (_, density_output) = registry
+            .run_log_compute(
+                "rock_physics:gassmann_substituted_density",
+                &[rho.clone(), phi.clone()],
+                &density_bindings,
+                &parameters,
+                None,
+            )
+            .unwrap();
+        assert_values_close(
+            &density_output.values,
+            &[Some(2.058), Some(2.058), Some(2.058), None],
+            1.0e-9,
+        );
+
+        let substitution_bindings = BTreeMap::from([
+            ("vp_curve".to_string(), "VP".to_string()),
+            ("vs_curve".to_string(), "VS".to_string()),
+            ("density_curve".to_string(), "RHOB".to_string()),
+            ("porosity_curve".to_string(), "PHIE".to_string()),
+        ]);
+        let curves = [vp, vs, rho, phi];
+        let (_, vp_output) = registry
+            .run_log_compute(
+                "rock_physics:gassmann_substituted_vp",
+                &curves,
+                &substitution_bindings,
+                &parameters,
+                None,
+            )
+            .unwrap();
+        assert_values_close(
+            &vp_output.values,
+            &[
+                Some(1964.8205678316335),
+                Some(1964.8205678316335),
+                Some(1964.8205678316335),
+                None,
+            ],
+            1.0e-9,
+        );
+
+        let (_, vs_output) = registry
+            .run_log_compute(
+                "rock_physics:gassmann_substituted_vs",
+                &curves,
+                &substitution_bindings,
+                &parameters,
+                None,
+            )
+            .unwrap();
+        assert_values_close(
+            &vs_output.values,
+            &[
+                Some(1516.130470473614),
+                Some(1516.130470473614),
+                Some(1516.130470473614),
+                None,
+            ],
+            1.0e-9,
+        );
     }
 
     #[test]

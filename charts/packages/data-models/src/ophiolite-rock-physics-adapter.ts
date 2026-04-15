@@ -600,6 +600,10 @@ function defaultContinuousLabel(semantic: RockPhysicsCurveSemantic): string {
       return "Vp/Vs";
     case "acoustic-impedance":
       return "Acoustic Impedance";
+    case "elastic-impedance":
+      return "Elastic Impedance";
+    case "extended-elastic-impedance":
+      return "Extended Elastic Impedance";
     case "resistivity":
       return "Resistivity";
     default:

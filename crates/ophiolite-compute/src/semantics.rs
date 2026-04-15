@@ -1,5 +1,6 @@
 use ophiolite_core::CanonicalAlias;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum CurveSemanticType {
@@ -17,6 +18,8 @@ pub enum CurveSemanticType {
     SVelocity,
     VpVsRatio,
     AcousticImpedance,
+    ElasticImpedance,
+    ExtendedElasticImpedance,
     ShearImpedance,
     LambdaRho,
     MuRho,
@@ -45,6 +48,8 @@ impl CurveSemanticType {
             Self::SVelocity => "S-wave Velocity",
             Self::VpVsRatio => "Vp/Vs Ratio",
             Self::AcousticImpedance => "Acoustic Impedance",
+            Self::ElasticImpedance => "Elastic Impedance",
+            Self::ExtendedElasticImpedance => "Extended Elastic Impedance",
             Self::ShearImpedance => "Shear Impedance",
             Self::LambdaRho => "Lambda-Rho",
             Self::MuRho => "Mu-Rho",
@@ -74,21 +79,25 @@ pub enum CurveSemanticSource {
     Computed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CurveSemanticDescriptor {
     pub curve_name: String,
     pub original_mnemonic: String,
     pub unit: Option<String>,
     pub semantic_type: CurveSemanticType,
     pub source: CurveSemanticSource,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub semantic_parameters: BTreeMap<String, f64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CurveBindingCandidate {
     pub curve_name: String,
     pub original_mnemonic: String,
     pub semantic_type: CurveSemanticType,
     pub unit: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub semantic_parameters: BTreeMap<String, f64>,
 }
 
 pub fn default_curve_semantics(
@@ -120,6 +129,10 @@ pub fn classify_curve_semantic(
         Some("depth") => return CurveSemanticType::Depth,
         Some("time") => return CurveSemanticType::Time,
         Some("vp_vs_ratio") => return CurveSemanticType::VpVsRatio,
+        Some("elastic_impedance") => return CurveSemanticType::ElasticImpedance,
+        Some("extended_elastic_impedance") => {
+            return CurveSemanticType::ExtendedElasticImpedance;
+        }
         Some("shear_impedance") => return CurveSemanticType::ShearImpedance,
         Some("lambda_rho") => return CurveSemanticType::LambdaRho,
         Some("mu_rho") => return CurveSemanticType::MuRho,
@@ -138,6 +151,10 @@ pub fn classify_curve_semantic(
         "VS" | "SVEL" | "S_VEL" => CurveSemanticType::SVelocity,
         "VPVS" | "VP_VS" | "VP/VS" => CurveSemanticType::VpVsRatio,
         "AI" | "AIMP" => CurveSemanticType::AcousticImpedance,
+        "EI" | "ELASTIC_IMPEDANCE" | "ELASTIC-IMPEDANCE" => CurveSemanticType::ElasticImpedance,
+        "EEI" | "EXTENDED_ELASTIC_IMPEDANCE" | "EXTENDED-ELASTIC-IMPEDANCE" => {
+            CurveSemanticType::ExtendedElasticImpedance
+        }
         "SI" | "SIMP" => CurveSemanticType::ShearImpedance,
         "LRHO" | "LAMBDA_RHO" | "LAMBDA-RHO" => CurveSemanticType::LambdaRho,
         "MRHO" | "MU_RHO" | "MU-RHO" => CurveSemanticType::MuRho,
@@ -177,6 +194,14 @@ mod tests {
         assert_eq!(
             classify_curve_semantic(&unknown, "VPVS", None, false),
             CurveSemanticType::VpVsRatio
+        );
+        assert_eq!(
+            classify_curve_semantic(&unknown, "EI", None, false),
+            CurveSemanticType::ElasticImpedance
+        );
+        assert_eq!(
+            classify_curve_semantic(&unknown, "EEI", None, false),
+            CurveSemanticType::ExtendedElasticImpedance
         );
         assert_eq!(
             classify_curve_semantic(&unknown, "PHIE", None, false),

@@ -8,12 +8,14 @@ import type {
   SectionViewport,
   SectionViewportChanged
 } from "@ophiolite/contracts";
-import type { CursorProbe, SectionPayload, SectionViewport as InternalViewport } from "@ophiolite/charts-data-models";
+import {
+  adaptOphioliteSectionViewToPayload,
+  type CursorProbe,
+  type SectionPayload,
+  type SectionViewport as InternalViewport
+} from "@ophiolite/charts-data-models";
 import type { SeismicChartDisplayTransform, SeismicChartPrimaryMode, SectionViewLike } from "./types";
 import {
-  decodeFloat32,
-  decodeFloat64,
-  decodeOptionalFloat64,
   fromContractColorMap,
   fromContractPolarity,
   fromContractRenderMode,
@@ -28,48 +30,7 @@ export function decodeSectionView(contract: SectionViewLike): SectionPayload {
     return cached;
   }
 
-  const payload: SectionPayload = {
-    axis: contract.axis,
-    coordinate: {
-      index: contract.coordinate.index,
-      value: contract.coordinate.value
-    },
-    horizontalAxis: decodeFloat64(contract.horizontal_axis_f64le),
-    inlineAxis: decodeOptionalFloat64(contract.inline_axis_f64le),
-    xlineAxis: decodeOptionalFloat64(contract.xline_axis_f64le),
-    sampleAxis: decodeFloat32(contract.sample_axis_f32le),
-    amplitudes: decodeFloat32(contract.amplitudes_f32le),
-    dimensions: {
-      traces: contract.traces,
-      samples: contract.samples
-    },
-    units: contract.units
-      ? {
-          horizontal: contract.units.horizontal ?? undefined,
-          sample: contract.units.sample ?? undefined,
-          amplitude: contract.units.amplitude ?? undefined
-        }
-      : undefined,
-    metadata: contract.metadata
-      ? {
-          storeId: contract.metadata.store_id ?? undefined,
-          derivedFrom: contract.metadata.derived_from ?? undefined,
-          notes: contract.metadata.notes
-        }
-      : undefined,
-    presentation: decodeSectionPresentation(contract),
-    displayDefaults: contract.display_defaults
-      ? {
-          gain: contract.display_defaults.gain,
-          clipMin: contract.display_defaults.clip_min ?? undefined,
-          clipMax: contract.display_defaults.clip_max ?? undefined,
-          renderMode: fromContractRenderMode(contract.display_defaults.render_mode),
-          colormap: fromContractColorMap(contract.display_defaults.colormap),
-          polarity: fromContractPolarity(contract.display_defaults.polarity)
-        }
-      : undefined
-  };
-
+  const payload: SectionPayload = adaptOphioliteSectionViewToPayload(contract);
   sectionPayloadCache.set(contract, payload);
   return payload;
 }
@@ -166,35 +127,4 @@ export function mergeDisplayTransform(
     colormap: override?.colormap ?? fromContractColorMap((defaults?.colormap ?? "grayscale") as SectionColorMap),
     polarity: override?.polarity ?? fromContractPolarity((defaults?.polarity ?? "normal") as SectionPolarity)
   };
-}
-
-function decodeSectionPresentation(contract: SectionViewLike): SectionPayload["presentation"] | undefined {
-  const sampleAxisLabel = sectionSampleAxisLabel(contract);
-  if (!sampleAxisLabel) {
-    return undefined;
-  }
-  return { sampleAxisLabel };
-}
-
-function sectionSampleAxisLabel(contract: SectionViewLike): string | undefined {
-  const notes = contract.metadata?.notes ?? [];
-  for (const note of notes) {
-    if (note === "sample_domain:depth") {
-      return "Depth";
-    }
-    if (note === "sample_domain:time") {
-      return "Time";
-    }
-  }
-  const unit = contract.units?.sample?.toLowerCase();
-  if (!unit) {
-    return undefined;
-  }
-  if (unit === "ms" || unit === "s") {
-    return "Time";
-  }
-  if (unit === "m" || unit === "ft") {
-    return "Depth";
-  }
-  return undefined;
 }

@@ -1,6 +1,5 @@
----
 name: operator
-description: Add or modify a shared seismic operator family across Ophiolite and TraceBoost, including scope taxonomy, contracts, runtime kernels, app plumbing, frontend exposure when applicable, and validation. Use for trace-local operators, prestack gather-native operators, or adjacent analysis APIs that must stay separate from materializing operators.
+description: Add or modify a shared seismic operator family across Ophiolite and the TraceBoost demo support stack, including scope taxonomy, contracts, runtime kernels, app plumbing, frontend exposure when applicable, and validation. Use for trace-local operators, prestack gather-native operators, or adjacent analysis APIs that must stay separate from materializing operators.
 ---
 
 # Operator
@@ -20,13 +19,13 @@ Implement operators in the shared stack, not in the UI.
 - Keep post-stack geometry-changing derivation families such as subvolume crop as dedicated contracts and runtime entry points; do not hide them inside `TraceLocalProcessingOperation`.
 - Put gather-native or section-matrix runtime paths in dedicated Ophiolite runtime modules instead of forcing them into the trace-local executor.
 - For prestack gather-native work, prefer dedicated store/runtime APIs such as `ingest_prestack_offset_segy`, `open_prestack_store`, `preview_gather_processing_view`, `materialize_gather_processing_store`, and analysis helpers like `velocity_scan` with optional autopick output instead of stretching the post-stack `tbvol` APIs.
-- Treat `C:\Users\crooijmanss\dev\TraceBoost\app\traceboost-app\src\lib.rs` and `C:\Users\crooijmanss\dev\TraceBoost\app\traceboost-frontend\src-tauri\src\lib.rs` as app-shell plumbing.
-- Treat TraceBoost contract crates as compatibility surfaces over the Ophiolite taxonomy:
+- Treat `C:\Users\crooijmanss\dev\ophiolite\traceboost\app\traceboost-app\src\lib.rs` and `C:\Users\crooijmanss\dev\ophiolite\apps\traceboost-demo\src-tauri\src\lib.rs` as demo app-shell plumbing.
+- Treat TraceBoost contract crates as demo compatibility surfaces over the Ophiolite taxonomy:
   - `seis-contracts-core::{domain, processing, models, operations, views}`
   - `seis-contracts-views::{section, gather}`
   - `seis-contracts-interop::{datasets, import_ops, processing_ops, workspace, resolve}`
-- Expose operators in the current TraceBoost frontend only for live post-stack families the app already owns, currently trace-local processing plus terminal subvolume crop, from `C:\Users\crooijmanss\dev\TraceBoost\app\traceboost-frontend\src\lib\processing-model.svelte.ts` and `C:\Users\crooijmanss\dev\TraceBoost\app\traceboost-frontend\src\lib\components\PipelineOperatorEditor.svelte`.
-- Keep packed binary transport shapes out of canonical operator contracts. The current section transport adapters live in `C:\Users\crooijmanss\dev\TraceBoost\app\traceboost-frontend\src\lib\transport\packed-sections.ts` and are re-exported by `bridge.ts` for compatibility.
+- Expose operators in the current TraceBoost demo only for live post-stack families the app already owns, currently trace-local processing plus terminal subvolume crop, from `C:\Users\crooijmanss\dev\ophiolite\apps\traceboost-demo\src\lib\processing-model.svelte.ts` and `C:\Users\crooijmanss\dev\ophiolite\apps\traceboost-demo\src\lib\components\PipelineOperatorEditor.svelte`.
+- Keep packed binary transport shapes out of canonical operator contracts. The current section transport adapters live in `C:\Users\crooijmanss\dev\ophiolite\apps\traceboost-demo\src\lib\transport\packed-sections.ts` and are re-exported by `bridge.ts` for compatibility.
 - If the feature is prestack gather-native and there is no owning app yet, stop at Ophiolite contracts/runtime/tests plus shared contracts export; do not invent TraceBoost UI for it.
 - Touch GeoViz only when the feature needs a reusable chart or reusable plot interaction primitive. Do not put operator math there.
 
@@ -55,7 +54,7 @@ Implement operators in the shared stack, not in the UI.
 - If the operator is inverse-wavelet or deconvolution-like, keep it in a separate inverse-wavelet family with its own assumptions and validation.
 - If the operator is trace-local, prefer `ProcessingLayoutCompatibility::AnyTraceMatrix` unless the math truly depends on a narrower layout.
 - For phase-one prestack gather-native materializing operators, prefer offset-gather semantics first and validate accordingly.
-- Keep product gating in TraceBoost UI, not in Ophiolite contracts.
+- Keep demo-level product gating in TraceBoost UI, not in Ophiolite contracts.
 
 ## Runtime Strategy
 
@@ -70,16 +69,16 @@ Implement operators in the shared stack, not in the UI.
 - Keep prestack analysis explicit too. Velocity scans, semblance panels, picked velocity functions, spectra, and similar outputs are analysis APIs over `tbgath`, not fake operators.
 - Preserve prestack layout and gather-axis metadata through gather-native materialization unless the operator family explicitly defines a domain change.
 
-## Cross-Repo Workflow
+## Workflow
 
 1. Add or update the operator family contracts in Ophiolite.
 2. Keep family boundaries explicit in ids, scope labels, compatibility, and request/response types.
 3. Add runtime validation in the executor module that owns that family.
 4. Implement the kernel in the owning runtime module.
 5. Add runtime tests for validation, scope/compatibility, preview/materialize parity, and numerical behavior.
-6. Regenerate shared TypeScript contracts with `cargo run -p contracts-export` from `C:\Users\crooijmanss\dev\TraceBoost`.
-7. Update TraceBoost app-shell slugging or exhaustive Rust matches only if the current shell exposes the feature.
-8. Update TraceBoost frontend catalogs/editors only for the live post-stack families the app already owns, and keep geometry-changing steps explicit and terminal when the family requires it.
+6. Regenerate shared TypeScript contracts with `cargo run -p contracts-export` from `C:\Users\crooijmanss\dev\ophiolite`.
+7. Update TraceBoost demo app-shell slugging or exhaustive Rust matches only if the current shell exposes the feature.
+8. Update TraceBoost demo catalogs/editors only for the live post-stack families the app already owns, and keep geometry-changing steps explicit and terminal when the family requires it.
 9. If no current UI owns the feature, stop at contracts/runtime/app-shell plumbing plus validation.
 
 ## Validation
@@ -88,11 +87,11 @@ Run the minimum pass:
 
 ```bash
 cd C:\Users\crooijmanss\dev\ophiolite && cargo check -p ophiolite-seismic
-cd C:\Users\crooijmanss\dev\TraceBoost && cargo run -p contracts-export
+cd C:\Users\crooijmanss\dev\ophiolite && cargo run -p contracts-export
 cd C:\Users\crooijmanss\dev\ophiolite && cargo test -p ophiolite-seismic-runtime
-cd C:\Users\crooijmanss\dev\TraceBoost && cargo test -p traceboost-app
-cd C:\Users\crooijmanss\dev\TraceBoost && cargo check -p traceboost-desktop
-cd C:\Users\crooijmanss\dev\TraceBoost\app\traceboost-frontend && bun run typecheck
+cd C:\Users\crooijmanss\dev\ophiolite && cargo test -p traceboost-app
+cd C:\Users\crooijmanss\dev\ophiolite && cargo check -p traceboost-desktop
+cd C:\Users\crooijmanss\dev\ophiolite\apps\traceboost-demo && bun run typecheck
 ```
 
 If the change is Ophiolite-only because the operator family has no current app owner, stop after the relevant Ophiolite tests and contracts export.

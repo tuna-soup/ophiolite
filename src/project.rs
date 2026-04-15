@@ -6245,7 +6245,8 @@ fn semantic_diff_fields(
                 .iter()
                 .find(|item| item.curve_name == descriptor.curve_name)?;
             (previous_descriptor.semantic_type != descriptor.semantic_type
-                || previous_descriptor.source != descriptor.source)
+                || previous_descriptor.source != descriptor.source
+                || previous_descriptor.semantic_parameters != descriptor.semantic_parameters)
                 .then(|| format!("curve_semantics.{}", descriptor.curve_name))
         })
         .collect()
@@ -6561,6 +6562,7 @@ fn classify_log_curves_from_file(file: &LasFile) -> Vec<CurveSemanticDescriptor>
                 curve.is_index,
             ),
             source: CurveSemanticSource::Derived,
+            semantic_parameters: BTreeMap::new(),
         })
         .collect()
 }
@@ -6605,6 +6607,7 @@ fn log_curve_data_for_compute(
                     curve.mnemonic == file.index.curve_id,
                 ),
                 source: CurveSemanticSource::Derived,
+                semantic_parameters: BTreeMap::new(),
             });
         let values = numeric
             .unwrap()
@@ -7250,6 +7253,7 @@ fn derived_log_asset_manifest(
                 true,
             ),
             source: CurveSemanticSource::Derived,
+            semantic_parameters: BTreeMap::new(),
         },
         CurveSemanticDescriptor {
             curve_name: computed_curve.curve_name.clone(),
@@ -7257,6 +7261,7 @@ fn derived_log_asset_manifest(
             unit: computed_curve.unit.clone(),
             semantic_type: computed_curve.semantic_type.clone(),
             source: CurveSemanticSource::Computed,
+            semantic_parameters: computed_curve.semantic_parameters.clone(),
         },
     ];
     manifest.compute_manifest = Some(execution.clone());
@@ -9311,6 +9316,8 @@ fn rock_physics_curve_semantic_slug(semantic: RockPhysicsCurveSemanticDto) -> &'
         RockPhysicsCurveSemanticDto::SVelocity => "s-velocity",
         RockPhysicsCurveSemanticDto::VpVsRatio => "vp-vs-ratio",
         RockPhysicsCurveSemanticDto::AcousticImpedance => "acoustic-impedance",
+        RockPhysicsCurveSemanticDto::ElasticImpedance => "elastic-impedance",
+        RockPhysicsCurveSemanticDto::ExtendedElasticImpedance => "extended-elastic-impedance",
         RockPhysicsCurveSemanticDto::ShearImpedance => "shear-impedance",
         RockPhysicsCurveSemanticDto::LambdaRho => "lambda-rho",
         RockPhysicsCurveSemanticDto::MuRho => "mu-rho",
@@ -9343,6 +9350,8 @@ fn default_rock_physics_axis_label(semantic: RockPhysicsCurveSemanticDto) -> &'s
         RockPhysicsCurveSemanticDto::SVelocity => "Vs",
         RockPhysicsCurveSemanticDto::VpVsRatio => "Vp/Vs",
         RockPhysicsCurveSemanticDto::AcousticImpedance => "AI",
+        RockPhysicsCurveSemanticDto::ElasticImpedance => "EI",
+        RockPhysicsCurveSemanticDto::ExtendedElasticImpedance => "EEI",
         RockPhysicsCurveSemanticDto::ShearImpedance => "SI",
         RockPhysicsCurveSemanticDto::LambdaRho => "Lambda-Rho",
         RockPhysicsCurveSemanticDto::MuRho => "Mu-Rho",
@@ -9368,10 +9377,10 @@ fn rock_physics_semantic_unit(semantic: RockPhysicsCurveSemanticDto) -> Option<&
             Some("ratio")
         }
         RockPhysicsCurveSemanticDto::AcousticImpedance
+        | RockPhysicsCurveSemanticDto::ElasticImpedance
+        | RockPhysicsCurveSemanticDto::ExtendedElasticImpedance
         | RockPhysicsCurveSemanticDto::ShearImpedance => Some("(m/s)*(g/cc)"),
-        RockPhysicsCurveSemanticDto::LambdaRho | RockPhysicsCurveSemanticDto::MuRho => {
-            Some("(GPa)*(g/cc)")
-        }
+        RockPhysicsCurveSemanticDto::LambdaRho | RockPhysicsCurveSemanticDto::MuRho => Some("GPa"),
         RockPhysicsCurveSemanticDto::BulkDensity => Some("g/cc"),
         RockPhysicsCurveSemanticDto::Resistivity => Some("ohm.m"),
         RockPhysicsCurveSemanticDto::Sonic | RockPhysicsCurveSemanticDto::ShearSonic => {
@@ -9485,6 +9494,12 @@ fn primary_rock_physics_source<'a>(
                 })
                 .or_else(|| direct_rock_physics_source(prepared, CurveSemanticType::BulkDensity))
         }
+        RockPhysicsCurveSemanticDto::ElasticImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ElasticImpedance)
+        }
+        RockPhysicsCurveSemanticDto::ExtendedElasticImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ExtendedElasticImpedance)
+        }
         RockPhysicsCurveSemanticDto::ShearImpedance => {
             direct_rock_physics_source(prepared, CurveSemanticType::ShearImpedance)
                 .or_else(|| {
@@ -9595,6 +9610,14 @@ fn rock_physics_has_direct_binding(
         RockPhysicsCurveSemanticDto::AcousticImpedance => {
             direct_rock_physics_source(prepared, CurveSemanticType::AcousticImpedance).is_some()
         }
+        RockPhysicsCurveSemanticDto::ElasticImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ElasticImpedance).is_some()
+        }
+        RockPhysicsCurveSemanticDto::ExtendedElasticImpedance => direct_rock_physics_source(
+            prepared,
+            CurveSemanticType::ExtendedElasticImpedance,
+        )
+        .is_some(),
         RockPhysicsCurveSemanticDto::ShearImpedance => {
             direct_rock_physics_source(prepared, CurveSemanticType::ShearImpedance).is_some()
         }
@@ -9672,6 +9695,14 @@ fn rock_physics_semantic_is_available(
                     RockPhysicsCurveSemanticDto::BulkDensity,
                 ))
         }
+        RockPhysicsCurveSemanticDto::ElasticImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ElasticImpedance).is_some()
+        }
+        RockPhysicsCurveSemanticDto::ExtendedElasticImpedance => direct_rock_physics_source(
+            prepared,
+            CurveSemanticType::ExtendedElasticImpedance,
+        )
+        .is_some(),
         RockPhysicsCurveSemanticDto::ShearImpedance => {
             direct_rock_physics_source(prepared, CurveSemanticType::ShearImpedance).is_some()
                 || (rock_physics_semantic_is_available(
@@ -9822,6 +9853,15 @@ fn rock_physics_value_at_depth(
                     Some(vp * density)
                 })
         }
+        RockPhysicsCurveSemanticDto::ElasticImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ElasticImpedance)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+        }
+        RockPhysicsCurveSemanticDto::ExtendedElasticImpedance => direct_rock_physics_source(
+            prepared,
+            CurveSemanticType::ExtendedElasticImpedance,
+        )
+        .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m)),
         RockPhysicsCurveSemanticDto::ShearImpedance => {
             direct_rock_physics_source(prepared, CurveSemanticType::ShearImpedance)
                 .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
@@ -9860,7 +9900,7 @@ fn rock_physics_value_at_depth(
                     )?;
                     let vp_km = vp / 1000.0;
                     let vs_km = vs / 1000.0;
-                    Some(density * (vp_km * vp_km - (2.0 * vs_km * vs_km)) * 7.0)
+                    Some(density * (vp_km * vp_km - (2.0 * vs_km * vs_km)))
                 })
         }
         RockPhysicsCurveSemanticDto::MuRho => {
@@ -9878,7 +9918,7 @@ fn rock_physics_value_at_depth(
                         depth_m,
                     )?;
                     let vs_km = vs / 1000.0;
-                    Some(density * vs_km * vs_km * 7.0)
+                    Some(density * vs_km * vs_km)
                 })
         }
         RockPhysicsCurveSemanticDto::BulkDensity => {

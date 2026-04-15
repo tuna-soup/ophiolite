@@ -14,6 +14,8 @@ export type RockPhysicsCurveSemantic =
   | "s-velocity"
   | "vp-vs-ratio"
   | "acoustic-impedance"
+  | "elastic-impedance"
+  | "extended-elastic-impedance"
   | "shear-impedance"
   | "lambda-rho"
   | "mu-rho"

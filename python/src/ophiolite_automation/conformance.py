@@ -45,6 +45,27 @@ def verify_surface_contracts() -> dict[str, Any]:
             elif rust_cli == "list-project-wellbores":
                 declared_python_methods.add("list_project_wellbores")
                 declared_python_cli_commands.add("list-project-wellbores")
+            elif rust_cli == "project-operator-lock":
+                declared_python_methods.add("project_operator_lock")
+                declared_python_cli_commands.add("project-operator-lock")
+            elif rust_cli == "install-operator-package":
+                declared_python_methods.add("install_operator_package")
+                declared_python_cli_commands.add("install-operator-package")
+            elif rust_cli == "list-project-compute-catalog":
+                declared_python_methods.add("list_project_compute_catalog")
+                declared_python_cli_commands.add("list-project-compute-catalog")
+            elif rust_cli == "run-project-compute":
+                declared_python_methods.add("run_project_compute")
+                declared_python_cli_commands.add("run-project-compute")
+            elif rust_cli == "run-avo-reflectivity":
+                declared_python_methods.add("run_avo_reflectivity")
+                declared_python_cli_commands.add("run-avo-reflectivity")
+            elif rust_cli == "run-rock-physics-attribute":
+                declared_python_methods.add("run_rock_physics_attribute")
+                declared_python_cli_commands.add("run-rock-physics-attribute")
+            elif rust_cli == "run-avo-intercept-gradient-attribute":
+                declared_python_methods.add("run_avo_intercept_gradient_attribute")
+                declared_python_cli_commands.add("run-avo-intercept-gradient-attribute")
             elif rust_cli == "import":
                 declared_python_methods.add("import_las_bundle")
                 declared_python_cli_commands.add("import")

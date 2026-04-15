@@ -1,0 +1,18 @@
+[package]
+name = "seis-contracts-operations"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "seis_contracts_operations"
+
+[dependencies]
+ophiolite-seismic = { path = "../../../crates/ophiolite-seismic" }
+ophiolite-project = { path = "../../../crates/ophiolite-project" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ts-rs.workspace = true
+seis_contracts_core = { package = "seis-contracts-core", path = "../seis-contracts-core" }
+seis_contracts_views = { package = "seis-contracts-views", path = "../seis-contracts-views" }

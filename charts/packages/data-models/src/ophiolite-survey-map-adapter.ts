@@ -48,7 +48,100 @@ export interface OphioliteResolvedSurveyMapSource {
   scalar_field?: OphioliteResolvedSurveyScalarFieldDto | null;
 }
 
+export interface SurveyMapValidationIssue {
+  code: string;
+  path: string;
+  message: string;
+}
+
+export class OphioliteSurveyMapValidationError extends Error {
+  readonly issues: SurveyMapValidationIssue[];
+
+  constructor(issues: SurveyMapValidationIssue[]) {
+    super([
+      "Survey-map source validation failed.",
+      ...issues.map((entry) => `- [${entry.code}] ${entry.path}: ${entry.message}`)
+    ].join("\n"));
+    this.name = "OphioliteSurveyMapValidationError";
+    this.issues = issues;
+  }
+}
+
+export function validateOphioliteSurveyMapSource(source: OphioliteResolvedSurveyMapSource): SurveyMapValidationIssue[] {
+  const issues: SurveyMapValidationIssue[] = [];
+  const surveyIds = new Set<string>();
+  const wellIds = new Set<string>();
+
+  source.surveys.forEach((survey, index) => {
+    if (surveyIds.has(survey.id)) {
+      issues.push(issue("duplicate-survey", `surveys[${index}].id`, `Duplicate survey id '${survey.id}'.`));
+    }
+    surveyIds.add(survey.id);
+    if (survey.outline.length < 3) {
+      issues.push(
+        issue("invalid-survey-outline", `surveys[${index}].outline`, `Survey '${survey.id}' requires at least three outline points.`)
+      );
+    }
+    survey.outline.forEach((point, pointIndex) => {
+      validatePoint(point, `surveys[${index}].outline[${pointIndex}]`, issues);
+    });
+  });
+
+  source.wells.forEach((well, index) => {
+    if (wellIds.has(well.well_id)) {
+      issues.push(issue("duplicate-well", `wells[${index}].well_id`, `Duplicate well id '${well.well_id}'.`));
+    }
+    wellIds.add(well.well_id);
+    const surface = well.surface_location ?? well.surface_position;
+    if (!surface) {
+      issues.push(
+        issue("missing-surface", `wells[${index}]`, `Well '${well.well_id}' is missing a resolved surface location.`)
+      );
+    } else {
+      validatePoint(surface, `wells[${index}].surface_location`, issues);
+    }
+    well.plan_trajectory?.forEach((point, pointIndex) => {
+      validatePoint(point, `wells[${index}].plan_trajectory[${pointIndex}]`, issues);
+    });
+  });
+
+  if (source.scalar_field) {
+    const field = source.scalar_field;
+    if (field.columns <= 0 || field.rows <= 0) {
+      issues.push(
+        issue("invalid-scalar-grid", "scalar_field", "Scalar field columns and rows must both be greater than zero.")
+      );
+    }
+    if (field.values.length !== field.columns * field.rows) {
+      issues.push(
+        issue(
+          "invalid-scalar-grid-shape",
+          "scalar_field.values",
+          `Scalar field value count ${field.values.length} does not match ${field.columns}x${field.rows}.`
+        )
+      );
+    }
+    validatePoint(field.origin, "scalar_field.origin", issues);
+    validatePoint(field.step, "scalar_field.step", issues);
+    for (let index = 0; index < field.values.length; index += 1) {
+      if (!Number.isFinite(field.values[index])) {
+        issues.push(
+          issue("invalid-scalar-value", `scalar_field.values[${index}]`, `Scalar field value ${index} must be finite.`)
+        );
+        break;
+      }
+    }
+  }
+
+  return issues;
+}
+
 export function adaptOphioliteSurveyMapToChart(source: OphioliteResolvedSurveyMapSource): SurveyMapModel {
+  const issues = validateOphioliteSurveyMapSource(source);
+  if (issues.length > 0) {
+    throw new OphioliteSurveyMapValidationError(issues);
+  }
+
   return {
     id: source.id,
     name: source.name,
@@ -112,4 +205,18 @@ function toNumberArray(values: ArrayLike<number>): number[] {
     next[index] = values[index] ?? 0;
   }
   return next;
+}
+
+function validatePoint(
+  point: OphioliteResolvedSurveyMapPointDto,
+  path: string,
+  issues: SurveyMapValidationIssue[]
+): void {
+  if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) {
+    issues.push(issue("invalid-point", path, `Point '${path}' must have finite x and y coordinates.`));
+  }
+}
+
+function issue(code: string, path: string, message: string): SurveyMapValidationIssue {
+  return { code, path, message };
 }

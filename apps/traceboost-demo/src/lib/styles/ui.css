@@ -1,0 +1,88 @@
+:root {
+  --app-bg: #eff3f6;
+  --panel-bg: #f8fafc;
+  --surface-bg: #f3f7fb;
+  --surface-subtle: #e7edf3;
+  --app-border: #d7e1ea;
+  --app-border-strong: #c0ccd8;
+  --text-primary: #17212b;
+  --text-muted: #536475;
+  --text-dim: #718294;
+  --accent-bg: #d8ebfa;
+  --accent-border: #a9ccea;
+  --accent-text: #143a56;
+  --warn-bg: #fff8dd;
+  --warn-border: #dfd39d;
+  --warn-text: #705c1c;
+  --danger-bg: #f9ecec;
+  --danger-border: #e0b7b7;
+  --danger-text: #a74646;
+  --info-bg: #edf6fc;
+  --info-border: #c9dcec;
+  --info-text: #315b75;
+  --ui-radius-sm: 4px;
+  --ui-radius-md: 6px;
+  --ui-radius-lg: 8px;
+  --ui-space-1: 4px;
+  --ui-space-2: 6px;
+  --ui-space-3: 8px;
+  --ui-space-4: 10px;
+  --ui-space-5: 12px;
+  --ui-space-6: 14px;
+  --ui-space-7: 16px;
+  --ui-panel-padding: 10px;
+  --ui-panel-gap: 8px;
+  --ui-input-height: 32px;
+  --ui-button-height: 28px;
+  --ui-button-padding-x: 10px;
+  --ui-icon-button-size: 28px;
+  --ui-list-row-padding-y: 7px;
+  --ui-list-row-padding-x: 9px;
+  --ui-list-row-min-height: 42px;
+  --ui-field-gap: 4px;
+  --ui-shadow-soft: 0 10px 24px rgba(42, 64, 84, 0.12);
+  --ui-shadow-popover: 0 14px 36px rgba(42, 64, 84, 0.16);
+  --ui-shadow-dialog: 0 24px 60px rgba(42, 64, 84, 0.18);
+  --sidebar-width: 212px;
+  --sidebar-header-padding: 8px;
+  --sidebar-shell-padding: 6px;
+  --sidebar-section-gap: 4px;
+  --sidebar-section-header-height: 28px;
+  --sidebar-item-min-height: 34px;
+  --sidebar-item-indent: 14px;
+  --sidebar-section-empty-min-height: 34px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100vh;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--app-bg);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.35;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  appearance: none;
+  -webkit-appearance: none;
+}

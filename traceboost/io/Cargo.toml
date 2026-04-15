@@ -1,0 +1,20 @@
+[package]
+name = "seis-io"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "seis_io"
+
+[dependencies]
+ibm1047 = "1.0"
+memmap2 = "0.9"
+ophiolite-seismic-io = { path = "../../crates/ophiolite-seismic-io" }
+rayon = "1.11"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "ingest"
+harness = false

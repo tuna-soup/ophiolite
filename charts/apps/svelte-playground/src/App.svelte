@@ -14,6 +14,7 @@
     type AvoHistogramProbe,
     type AvoResponseModel,
     type AvoResponseProbe,
+    createMockVolumeInterpretationModel,
     createMockRockPhysicsCrossplotModel,
     createMockGatherView,
     createMockSurveyMap,
@@ -39,6 +40,12 @@
     type SurveyMapModel,
     type SurveyMapProbe,
     type SurveyMapViewport,
+    type VolumeInterpretationColorMap,
+    type VolumeInterpretationInterpretationRequest,
+    type VolumeInterpretationModel,
+    type VolumeInterpretationProbe,
+    type VolumeInterpretationSelection,
+    type VolumeInterpretationView,
     type WellPanelModel,
     type WellCorrelationProbe,
     type WellCorrelationViewport
@@ -52,11 +59,13 @@
     ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES,
     SEISMIC_CHART_INTERACTION_CAPABILITIES,
     SURVEY_MAP_CHART_INTERACTION_CAPABILITIES,
+    VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES,
     WELL_CORRELATION_CHART_INTERACTION_CAPABILITIES,
     RockPhysicsCrossplotChart,
     SeismicGatherChart,
     SeismicSectionChart,
     SurveyMapChart,
+    VolumeInterpretationChart,
     WellCorrelationPanelChart,
     type AvoChartAction,
     type AvoChartInteractionConfig,
@@ -74,6 +83,11 @@
     type SurveyMapChartInteractionConfig,
     type SurveyMapChartInteractionState,
     type SurveyMapChartTool,
+    type VolumeInterpretationChartAction,
+    type VolumeInterpretationChartInteractionConfig,
+    type VolumeInterpretationChartInteractionState,
+    type VolumeInterpretationChartRenderer,
+    type VolumeInterpretationChartTool,
     type WellCorrelationChartAction,
     type WellCorrelationChartInteractionConfig,
     type WellCorrelationChartInteractionState,
@@ -119,19 +133,29 @@
     panBy?: (deltaX: number, deltaY: number) => void;
   }
 
+  interface VolumeInterpretationChartHandle {
+    fitToData?: () => void;
+    resetView?: () => void;
+    centerSelection?: () => void;
+    zoomBy?: (factor: number) => void;
+    orbitBy?: (deltaYawDeg: number, deltaPitchDeg: number) => void;
+    panBy?: (deltaX: number, deltaY: number) => void;
+  }
+
   interface AvoChartHandle {
     fitToData?: () => void;
     zoomBy?: (factor: number) => void;
     panBy?: (deltaX: number, deltaY: number) => void;
   }
 
-  type DemoRoute = "seismic" | "gather" | "survey-map" | "rock-physics" | "avo" | "well-panel";
+  type DemoRoute = "seismic" | "gather" | "survey-map" | "rock-physics" | "volume" | "avo" | "well-panel";
 
   let seismicChart = $state.raw<SeismicChartHandle | null>(null);
   let gatherChart = $state.raw<GatherChartHandle | null>(null);
   let surveyMapChart = $state.raw<SurveyMapChartHandle | null>(null);
   let correlationChart = $state.raw<CorrelationChartHandle | null>(null);
   let rockPhysicsChart = $state.raw<RockPhysicsChartHandle | null>(null);
+  let volumeChart = $state.raw<VolumeInterpretationChartHandle | null>(null);
   let avoResponseChart = $state.raw<AvoChartHandle | null>(null);
   let avoCrossplotChart = $state.raw<AvoChartHandle | null>(null);
   let avoHistogramChart = $state.raw<AvoChartHandle | null>(null);
@@ -235,6 +259,28 @@
   let lastRockPhysicsProbe = $state.raw<RockPhysicsCrossplotProbe | null>(null);
   let rockPhysicsTemplateSpec = $derived(getRockPhysicsTemplateSpec(rockPhysicsTemplateId));
   let rockPhysicsColorModes = $derived(getRockPhysicsMockColorModes(rockPhysicsTemplateId));
+
+  let volumeColormap = $state<VolumeInterpretationColorMap>("red-white-blue");
+  let volumeSliceOpacity = $state(0.94);
+  let volumeContours = $state(true);
+  let volumeRenderer = $state<VolumeInterpretationChartRenderer>("vtk");
+  let volumeModel = $state.raw<VolumeInterpretationModel | null>(createVolumeSceneModel());
+  let volumeResetToken = $state(0);
+  let volumeInteractions = $state.raw<VolumeInterpretationChartInteractionConfig>({
+    tool: "pointer"
+  });
+  let lastVolumeInteractionState = $state.raw<VolumeInterpretationChartInteractionState>({
+    capabilities: {
+      tools: [...VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES.tools],
+      actions: [...VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES.actions]
+    },
+    tool: "pointer"
+  });
+  let lastVolumeEvent = $state("none");
+  let lastVolumeProbe = $state.raw<VolumeInterpretationProbe | null>(null);
+  let lastVolumeSelection = $state.raw<VolumeInterpretationSelection | null>(null);
+  let lastVolumeView = $state.raw<VolumeInterpretationView | null>(null);
+  let lastVolumeInterpretationMessage = $state("No interpretation request yet.");
 
   let avoDense = $state(false);
   let avoChiAngleDeg = $state(35);
@@ -343,6 +389,32 @@
       label: action === "fitToData" ? "Fit To Data" : action,
       icon: "fitToData",
       disabled: !rockPhysicsModel
+    }))
+  );
+  let volumeToolbarTools = $derived.by<ChartToolbarToolItem<VolumeInterpretationChartTool>[]>(() =>
+    VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES.tools.map((tool) => ({
+      id: tool,
+      label: volumeToolLabel(tool),
+      icon:
+        tool === "interpret-seed"
+          ? "crosshair"
+          : tool === "orbit"
+            ? "orbit"
+            : tool === "slice-drag" || tool === "crop"
+            ? "pan"
+            : tool === "select"
+              ? "pointer"
+              : tool,
+      active: lastVolumeInteractionState.tool === tool,
+      disabled: !volumeModel
+    }))
+  );
+  let volumeToolbarActions = $derived.by<ChartToolbarActionItem<VolumeInterpretationChartAction>[]>(() =>
+    VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES.actions.map((action) => ({
+      id: action,
+      label: action === "fitToData" ? "Fit" : action === "resetView" ? "Reset" : "Center",
+      icon: "fitToData",
+      disabled: !volumeModel
     }))
   );
   let avoToolbarTools = $derived.by<ChartToolbarToolItem<AvoChartTool>[]>(() =>
@@ -662,6 +734,161 @@
     return value.toFixed(3).replace(/\.000$/, "");
   }
 
+  function createVolumeSceneModel() {
+    const base = createMockVolumeInterpretationModel();
+    return {
+      ...base,
+      slicePlanes: base.slicePlanes.map((plane) => ({
+        ...plane,
+        style: {
+          ...plane.style,
+          colormap: volumeColormap,
+          opacity: volumeSliceOpacity
+        }
+      })),
+      horizons: base.horizons.map((horizon) => ({
+        ...horizon,
+        style: {
+          ...horizon.style,
+          showContours: volumeContours
+        }
+      }))
+    };
+  }
+
+  function refreshVolumeScene() {
+    volumeModel = createVolumeSceneModel();
+    volumeResetToken += 1;
+    lastVolumeInterpretationMessage = "Scene refreshed.";
+  }
+
+  function clearVolumeScene() {
+    volumeModel = null;
+    lastVolumeProbe = null;
+    lastVolumeSelection = null;
+    lastVolumeView = null;
+    lastVolumeInterpretationMessage = "Scene cleared.";
+  }
+
+  function applyVolumeStyles() {
+    if (!volumeModel) {
+      return;
+    }
+    volumeModel = {
+      ...volumeModel,
+      slicePlanes: volumeModel.slicePlanes.map((plane) => ({
+        ...plane,
+        style: {
+          ...plane.style,
+          colormap: volumeColormap,
+          opacity: volumeSliceOpacity
+        }
+      })),
+      horizons: volumeModel.horizons.map((horizon) => ({
+        ...horizon,
+        style: {
+          ...horizon.style,
+          showContours: volumeContours
+        }
+      }))
+    };
+  }
+
+  function toggleVolumeRenderer() {
+    volumeRenderer = volumeRenderer === "vtk" ? "placeholder" : "vtk";
+  }
+
+  function toggleVolumeColormap() {
+    volumeColormap = volumeColormap === "red-white-blue" ? "grayscale" : "red-white-blue";
+    applyVolumeStyles();
+  }
+
+  function toggleVolumeContours() {
+    volumeContours = !volumeContours;
+    applyVolumeStyles();
+  }
+
+  function setVolumeTool(tool: string) {
+    volumeInteractions = {
+      ...volumeInteractions,
+      tool: tool as VolumeInterpretationChartTool
+    };
+  }
+
+  function runVolumeAction(action: string) {
+    if (action === "fitToData") {
+      fitVolumeToData();
+    } else if (action === "resetView") {
+      resetVolumeView();
+    } else if (action === "centerSelection") {
+      centerVolumeSelection();
+    }
+  }
+
+  function handleVolumeInteractionStateChange(event: VolumeInterpretationChartInteractionState) {
+    lastVolumeInteractionState = event;
+    volumeInteractions = {
+      ...volumeInteractions,
+      tool: event.tool
+    };
+  }
+
+  function fitVolumeToData() {
+    volumeChart?.fitToData?.();
+  }
+
+  function resetVolumeView() {
+    volumeChart?.resetView?.();
+  }
+
+  function centerVolumeSelection() {
+    volumeChart?.centerSelection?.();
+  }
+
+  function zoomVolume(factor: number) {
+    volumeChart?.zoomBy?.(factor);
+  }
+
+  function orbitVolume(deltaYawDeg: number, deltaPitchDeg: number) {
+    volumeChart?.orbitBy?.(deltaYawDeg, deltaPitchDeg);
+  }
+
+  function panVolume(deltaX: number, deltaY: number) {
+    volumeChart?.panBy?.(deltaX, deltaY);
+  }
+
+  function handleVolumeInterpretationRequest(request: VolumeInterpretationInterpretationRequest) {
+    if (!volumeModel) {
+      return;
+    }
+
+    lastVolumeInterpretationMessage = `Request ${request.kind} @ ${formatVolumeCoordinate(request.worldX)}, ${formatVolumeCoordinate(request.worldY)}, ${formatVolumeCoordinate(request.worldZ)}`;
+    const targetHorizonId = request.targetHorizonId ?? volumeModel.horizons[0]?.id;
+    if (!targetHorizonId) {
+      return;
+    }
+
+    volumeModel = {
+      ...volumeModel,
+      horizons: volumeModel.horizons.map((horizon) =>
+        horizon.id === targetHorizonId
+          ? {
+              ...horizon,
+              points: Float32Array.from(horizon.points, (value, index) =>
+                index % 3 === 2
+                  ? value + Math.sin(request.worldX * 0.002 + request.worldY * 0.001 + index * 0.03) * 18
+                  : value
+              )
+            }
+          : horizon
+      )
+    };
+  }
+
+  function formatVolumeCoordinate(value: number): string {
+    return value.toFixed(0);
+  }
+
   function createAvoResponseModel() {
     return createMockAvoResponseModel({
       sampleCountPerInterface: avoDense ? 4_500 : 620,
@@ -799,6 +1026,25 @@
     return tool === "pointer" ? "Pointer" : tool === "crosshair" ? "Crosshair" : "Pan";
   }
 
+  function volumeToolLabel(tool: VolumeInterpretationChartTool): string {
+    switch (tool) {
+      case "pointer":
+        return "Pointer";
+      case "orbit":
+        return "Orbit";
+      case "pan":
+        return "Pan";
+      case "slice-drag":
+        return "Slice";
+      case "crop":
+        return "Crop";
+      case "select":
+        return "Select";
+      default:
+        return "Seed";
+    }
+  }
+
   function setDemoRoute(next: DemoRoute) {
     activeDemo = next;
     if (typeof window !== "undefined") {
@@ -811,6 +1057,8 @@
               ? "#/survey-map"
               : next === "rock-physics"
                 ? "#/rock-physics"
+                : next === "volume"
+                  ? "#/volume"
                 : next === "avo"
                   ? "#/avo"
               : "#/well-panel";
@@ -830,6 +1078,9 @@
     }
     if (window.location.hash === "#/rock-physics") {
       return "rock-physics";
+    }
+    if (window.location.hash === "#/volume") {
+      return "volume";
     }
     if (window.location.hash === "#/avo") {
       return "avo";
@@ -862,22 +1113,25 @@
 
     <section class="group">
       <h2>Demo</h2>
-      <button class:active-demo={activeDemo === "seismic"} onclick={() => setDemoRoute("seismic")}>
+      <button class={["demo-button", activeDemo === "seismic" && "active-demo"]} onclick={() => setDemoRoute("seismic")}>
         Seismic Section
       </button>
-      <button class:active-demo={activeDemo === "gather"} onclick={() => setDemoRoute("gather")}>
+      <button class={["demo-button", activeDemo === "gather" && "active-demo"]} onclick={() => setDemoRoute("gather")}>
         Prestack Gather
       </button>
-      <button class:active-demo={activeDemo === "survey-map"} onclick={() => setDemoRoute("survey-map")}>
+      <button class={["demo-button", activeDemo === "survey-map" && "active-demo"]} onclick={() => setDemoRoute("survey-map")}>
         Survey Map
       </button>
-      <button class:active-demo={activeDemo === "rock-physics"} onclick={() => setDemoRoute("rock-physics")}>
+      <button class={["demo-button", activeDemo === "rock-physics" && "active-demo"]} onclick={() => setDemoRoute("rock-physics")}>
         Rock Physics
       </button>
-      <button class:active-demo={activeDemo === "avo"} onclick={() => setDemoRoute("avo")}>
+      <button class={["demo-button", activeDemo === "volume" && "active-demo"]} onclick={() => setDemoRoute("volume")}>
+        Volume Interpretation
+      </button>
+      <button class={["demo-button", activeDemo === "avo" && "active-demo"]} onclick={() => setDemoRoute("avo")}>
         AVO
       </button>
-      <button class:active-demo={activeDemo === "well-panel"} onclick={() => setDemoRoute("well-panel")}>
+      <button class={["demo-button", activeDemo === "well-panel" && "active-demo"]} onclick={() => setDemoRoute("well-panel")}>
         Well Panel
       </button>
     </section>
@@ -1108,6 +1362,85 @@
             x {formatRockPhysicsNumber(lastRockPhysicsViewport.xMin)}..{formatRockPhysicsNumber(lastRockPhysicsViewport.xMax)}
             y {formatRockPhysicsNumber(lastRockPhysicsViewport.yMin)}..{formatRockPhysicsNumber(lastRockPhysicsViewport.yMax)}
           {/if}
+        </div>
+      </section>
+    {:else if activeDemo === "volume"}
+      <section class="group">
+        <h2>Volume Controls</h2>
+        <button onclick={refreshVolumeScene}>Refresh Scene</button>
+        <button onclick={clearVolumeScene}>Clear Scene</button>
+        <button onclick={fitVolumeToData} disabled={!volumeModel}>Fit To Data</button>
+        <button onclick={resetVolumeView} disabled={!volumeModel}>Reset View</button>
+        <button onclick={centerVolumeSelection} disabled={!volumeModel}>Center Selection</button>
+        <button onclick={() => zoomVolume(1.12)} disabled={!volumeModel}>Zoom In</button>
+        <button onclick={() => zoomVolume(0.9)} disabled={!volumeModel}>Zoom Out</button>
+        <button onclick={() => orbitVolume(-12, 0)} disabled={!volumeModel}>Orbit Left</button>
+        <button onclick={() => orbitVolume(12, 0)} disabled={!volumeModel}>Orbit Right</button>
+        <button onclick={() => panVolume(-40, 0)} disabled={!volumeModel}>Pan Left</button>
+        <button onclick={() => panVolume(40, 0)} disabled={!volumeModel}>Pan Right</button>
+        <button onclick={toggleVolumeRenderer}>
+          Renderer: {volumeRenderer === "vtk" ? "VTK" : "Placeholder"}
+        </button>
+        <button onclick={toggleVolumeColormap} disabled={!volumeModel}>
+          Colormap: {volumeColormap === "red-white-blue" ? "R/W/B" : "Grayscale"}
+        </button>
+        <button onclick={toggleVolumeContours} disabled={!volumeModel}>
+          Contours: {volumeContours ? "On" : "Off"}
+        </button>
+        <label class="range-control">
+          <span>Slice Opacity {Math.round(volumeSliceOpacity * 100)}%</span>
+          <input
+            type="range"
+            min="0.2"
+            max="1"
+            step="0.05"
+            bind:value={volumeSliceOpacity}
+            disabled={!volumeModel}
+            oninput={applyVolumeStyles}
+          />
+        </label>
+      </section>
+
+      <section class="group">
+        <h2>Volume Status</h2>
+        <div class="readout">
+          chart bound: {volumeChart ? "yes" : "no"}
+          scene loaded: {volumeModel ? "yes" : "no"}
+          renderer: {volumeRenderer}
+          tool: {lastVolumeInteractionState.tool}
+          last event: {lastVolumeEvent}
+          colormap: {volumeColormap}
+          contours: {volumeContours ? "on" : "off"}
+          slice opacity: {Math.round(volumeSliceOpacity * 100)}%
+          {#if volumeModel}
+            volumes: {volumeModel.volumes.length}
+            slice planes: {volumeModel.slicePlanes.length}
+            horizons: {volumeModel.horizons.length}
+            wells: {volumeModel.wells.length}
+            markers: {volumeModel.markers.length}
+          {/if}
+        </div>
+      </section>
+
+      <section class="group">
+        <h2>Volume Readout</h2>
+        <div class="readout">
+          {#if lastVolumeProbe}
+            target {lastVolumeProbe.target.itemName ?? lastVolumeProbe.target.itemId ?? lastVolumeProbe.target.kind}
+            world {formatVolumeCoordinate(lastVolumeProbe.worldX)}, {formatVolumeCoordinate(lastVolumeProbe.worldY)}, {formatVolumeCoordinate(lastVolumeProbe.worldZ)}
+          {:else}
+            Probe callbacks will appear after you move over the volume scene.
+          {/if}
+
+          {#if lastVolumeSelection}
+            selection {lastVolumeSelection.kind} {lastVolumeSelection.itemName ?? lastVolumeSelection.itemId}
+          {/if}
+
+          {#if lastVolumeView}
+            yaw {lastVolumeView.yawDeg.toFixed(1)} pitch {lastVolumeView.pitchDeg.toFixed(1)} zoom {lastVolumeView.zoom.toFixed(2)}
+          {/if}
+
+          {lastVolumeInterpretationMessage}
         </div>
       </section>
     {:else if activeDemo === "avo"}
@@ -1394,6 +1727,51 @@
           />
         </div>
       </section>
+    {:else if activeDemo === "volume"}
+      <section class="card">
+        <header>
+          <div>
+            <h2>Volume Interpretation Wrapper</h2>
+            <p>
+              This exposes the public <code>VolumeInterpretationChart</code> wrapper over the resolved
+              scene DTO, with VTK and placeholder renderer options, orthogonal seismic slices, horizons,
+              wells, semantic interaction modes, and a stub interpretation request loop.
+            </p>
+          </div>
+        </header>
+        <div class="viewer viewer-volume">
+          <div
+            class="viewer-toolbar viewer-toolbar-seismic"
+            style:top={seismicToolbarTop}
+            style:--plot-left={seismicToolbarLeft}
+            style:--plot-right={seismicToolbarRight}
+          >
+            <ChartInteractionToolbar
+              label="Volume interaction toolbar"
+              tools={volumeToolbarTools}
+              actions={volumeToolbarActions}
+              onToolSelect={setVolumeTool}
+              onActionSelect={runVolumeAction}
+              variant="overlay"
+              iconOnly={true}
+            />
+          </div>
+          <VolumeInterpretationChart
+            bind:this={volumeChart}
+            chartId="svelte-playground-volume"
+            model={volumeModel}
+            renderer={volumeRenderer}
+            interactions={volumeInteractions}
+            resetToken={volumeResetToken}
+            onInteractionEvent={(payload) => (lastVolumeEvent = payload.event.type)}
+            onInteractionStateChange={handleVolumeInteractionStateChange}
+            onProbeChange={(event) => (lastVolumeProbe = event.probe)}
+            onSelectionChange={(event) => (lastVolumeSelection = event.selection)}
+            onViewStateChange={(event) => (lastVolumeView = event.view)}
+            onInterpretationRequest={(event) => handleVolumeInterpretationRequest(event.request)}
+          />
+        </div>
+      </section>
     {:else if activeDemo === "avo"}
       {#snippet avoToolbarOverlay()}
         <ChartInteractionToolbar
@@ -1673,6 +2051,10 @@
 
   .viewer-rock-physics {
     background: rgba(6, 20, 28, 0.9);
+  }
+
+  .viewer-volume {
+    background: rgba(8, 16, 24, 0.96);
   }
 
   .viewer-avo-response {

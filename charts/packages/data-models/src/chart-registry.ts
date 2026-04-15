@@ -1,4 +1,4 @@
-export type ChartFamilyId = "seismic" | "well-panel" | "survey-map" | "rock-physics" | "avo";
+export type ChartFamilyId = "seismic" | "well-panel" | "survey-map" | "rock-physics" | "avo" | "volume-interpretation";
 
 export type ChartDefinitionId =
   | "seismic-section"
@@ -6,6 +6,7 @@ export type ChartDefinitionId =
   | "well-correlation-panel"
   | "survey-map"
   | "rock-physics-crossplot"
+  | "volume-interpretation"
   | "avo-response-plot"
   | "avo-intercept-gradient-crossplot"
   | "avo-chi-projection-histogram";
@@ -15,6 +16,7 @@ export type ChartRendererKernelId =
   | "well-panel"
   | "survey-map"
   | "point-cloud"
+  | "volume-interpretation"
   | "cartesian-line"
   | "histogram";
 
@@ -24,6 +26,7 @@ export type ChartPublicSurfaceId =
   | "WellCorrelationPanelChart"
   | "SurveyMapChart"
   | "RockPhysicsCrossplotChart"
+  | "VolumeInterpretationChart"
   | "AvoResponseChart"
   | "AvoInterceptGradientCrossplotChart"
   | "AvoChiProjectionHistogramChart";
@@ -34,6 +37,7 @@ export type ChartCanonicalBoundaryId =
   | "ophiolite-well-panel-source"
   | "ophiolite-survey-map-source"
   | "ophiolite-rock-physics-crossplot-source"
+  | "ophiolite-volume-interpretation-source"
   | "ophiolite-avo-response-source"
   | "ophiolite-avo-crossplot-source"
   | "ophiolite-avo-chi-projection-source";
@@ -59,6 +63,11 @@ export type ChartAssetFamilyId =
   | "rock-physics-template-lines"
   | "rock-physics-categorical-color-binding"
   | "rock-physics-continuous-color-binding"
+  | "seismic-volume"
+  | "volume-slice-plane"
+  | "horizon-surface"
+  | "well-trajectory-3d"
+  | "well-marker-3d"
   | "avo-response-series"
   | "avo-interface-model"
   | "avo-crossplot-point"
@@ -66,8 +75,16 @@ export type ChartAssetFamilyId =
   | "avo-crossplot-background-region"
   | "avo-chi-projection-series";
 
-export type ChartInteractionToolId = "pointer" | "crosshair" | "pan";
-export type ChartInteractionActionId = "fitToData";
+export type ChartInteractionToolId =
+  | "pointer"
+  | "crosshair"
+  | "pan"
+  | "orbit"
+  | "slice-drag"
+  | "crop"
+  | "select"
+  | "interpret-seed";
+export type ChartInteractionActionId = "fitToData" | "resetView" | "centerSelection";
 
 export interface ChartInteractionProfile {
   tools: readonly ChartInteractionToolId[];
@@ -121,6 +138,11 @@ const ROCK_PHYSICS_INTERACTION_PROFILE = {
 const AVO_INTERACTION_PROFILE = {
   tools: ["pointer", "crosshair", "pan"],
   actions: ["fitToData"]
+} as const satisfies ChartInteractionProfile;
+
+const VOLUME_INTERPRETATION_INTERACTION_PROFILE = {
+  tools: ["pointer", "orbit", "pan", "slice-drag", "crop", "select", "interpret-seed"],
+  actions: ["fitToData", "resetView", "centerSelection"]
 } as const satisfies ChartInteractionProfile;
 
 export const CHART_DEFINITIONS = [
@@ -235,6 +257,30 @@ export const CHART_DEFINITIONS = [
     ]
   },
   {
+    id: "volume-interpretation",
+    familyId: "volume-interpretation",
+    label: "Volume Interpretation",
+    summary: "3D interpretation workspace for seismic slice planes, horizon surfaces, well trajectories, and interpretation seeds.",
+    publicSurface: "VolumeInterpretationChart",
+    rendererKernel: "volume-interpretation",
+    canonicalBoundaries: ["ophiolite-volume-interpretation-source"],
+    allowedAssetFamilies: [
+      "seismic-volume",
+      "volume-slice-plane",
+      "horizon-surface",
+      "well-trajectory-3d",
+      "well-marker-3d"
+    ],
+    interactionProfile: VOLUME_INTERPRETATION_INTERACTION_PROFILE,
+    adapterEntryPoints: [],
+    validationEntryPoints: [],
+    constraints: [
+      "Accepts only resolved volume-interpretation scene sources rather than raw canonical assets.",
+      "Treats orthogonal slice planes as the precision interaction surface, with optional volumetric context remaining secondary.",
+      "Keeps runtime styling, selection, and interpretation requests chart-native while backend layers own interpretation math and display-space resolution."
+    ]
+  },
+  {
     id: "avo-response-plot",
     familyId: "avo",
     label: "AVO Response Plot",
@@ -327,6 +373,14 @@ export const CHART_FAMILIES = [
     chartIds: ["rock-physics-crossplot"],
     rendererKernels: ["point-cloud"],
     canonicalBoundaries: ["ophiolite-rock-physics-crossplot-source"]
+  },
+  {
+    id: "volume-interpretation",
+    label: "Volume Interpretation",
+    summary: "3D interpretation charts for slice planes, horizons, trajectories, and interpretation seeds.",
+    chartIds: ["volume-interpretation"],
+    rendererKernels: ["volume-interpretation"],
+    canonicalBoundaries: ["ophiolite-volume-interpretation-source"]
   },
   {
     id: "avo",

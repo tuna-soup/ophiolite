@@ -1,7 +1,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use ts_rs::TS;
 
+use super::default_pipeline_schema_version;
 use super::domain::{DatasetId, SampleDataFidelity, SectionAxis, VolumeDescriptor};
 use super::models::{TimeDepthDomain, WellTieObservationSet1D};
 use super::processing::{
@@ -148,6 +150,129 @@ pub struct WellTieAnalysis1D {
     pub wavelet: WellTieWavelet,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum AvoReflectivityMethod {
+    ShueyTwoTerm,
+    ShueyThreeTerm,
+    AkiRichards,
+    AkiRichardsAlt,
+    Fatti,
+    Bortfeld,
+    Hilterman,
+    ApproxZoeppritzPp,
+    ZoeppritzPp,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AvoReflectivityRequest {
+    #[serde(default = "default_pipeline_schema_version")]
+    pub schema_version: u32,
+    pub method: AvoReflectivityMethod,
+    pub sample_shape: Vec<usize>,
+    pub angles_deg: Vec<f32>,
+    pub upper_vp_m_per_s: Vec<f32>,
+    pub upper_vs_m_per_s: Vec<f32>,
+    pub upper_density_g_cc: Vec<f32>,
+    pub lower_vp_m_per_s: Vec<f32>,
+    pub lower_vs_m_per_s: Vec<f32>,
+    pub lower_density_g_cc: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AvoReflectivityResponse {
+    pub schema_version: u32,
+    pub method: AvoReflectivityMethod,
+    pub sample_shape: Vec<usize>,
+    pub angles_deg: Vec<f32>,
+    pub pp_real_f32le: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pp_imag_f32le: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intercept_f32le: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient_f32le: Option<Vec<u8>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum RockPhysicsAttributeMethod {
+    AcousticImpedance,
+    ShearImpedance,
+    LambdaRho,
+    MuRho,
+    VpVsRatio,
+    PoissonsRatio,
+    ElasticImpedance,
+    ExtendedElasticImpedance,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsAttributeRequest {
+    #[serde(default = "default_pipeline_schema_version")]
+    pub schema_version: u32,
+    pub method: RockPhysicsAttributeMethod,
+    pub sample_shape: Vec<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vp_m_per_s: Option<Vec<f32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vs_m_per_s: Option<Vec<f32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub density_g_cc: Option<Vec<f32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incident_angle_deg: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chi_angle_deg: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsAttributeResponse {
+    pub schema_version: u32,
+    pub method: RockPhysicsAttributeMethod,
+    pub sample_shape: Vec<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    pub values_f32le: Vec<u8>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub semantic_parameters: BTreeMap<String, f64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum AvoInterceptGradientAttributeMethod {
+    ChiProjection,
+    FluidFactor,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AvoInterceptGradientAttributeRequest {
+    #[serde(default = "default_pipeline_schema_version")]
+    pub schema_version: u32,
+    pub method: AvoInterceptGradientAttributeMethod,
+    pub sample_shape: Vec<usize>,
+    pub intercept: Vec<f32>,
+    pub gradient: Vec<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chi_angle_deg: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intercept_scalar: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AvoInterceptGradientAttributeResponse {
+    pub schema_version: u32,
+    pub method: AvoInterceptGradientAttributeMethod,
+    pub sample_shape: Vec<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    pub values_f32le: Vec<u8>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub semantic_parameters: BTreeMap<String, f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]

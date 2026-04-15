@@ -1,0 +1,6 @@
+TraceBoost only imports the approved Ophiolite consumer packages.
+Loading svelte-check in workspace: c:\Users\crooijmanss\dev\ophiolite\apps\traceboost-demo
+Getting Svelte diagnostics...
+
+[32msvelte-check found 0 errors and 0 warnings
+[39mStarting traceboost-demo on http://localhost:1420

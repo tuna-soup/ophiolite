@@ -1,3 +1,4 @@
+mod avo_analysis;
 mod compute;
 mod error;
 mod gather_processing;
@@ -9,6 +10,7 @@ mod preflight;
 mod prestack_analysis;
 mod prestack_store;
 mod render;
+mod rock_physics;
 mod segy_export;
 mod storage;
 mod store;
@@ -16,6 +18,7 @@ mod survey_time_depth;
 mod time_depth;
 mod zarr_export;
 
+pub use avo_analysis::avo_reflectivity;
 pub use compute::{
     MaterializeOptions, PreviewSectionPrefixCache, PreviewSectionPrefixReuse,
     PreviewSectionSession, amplitude_spectrum_from_plane, amplitude_spectrum_from_reader,
@@ -52,17 +55,20 @@ pub use metadata::{
 };
 pub use openvds::{ingest_openvds_store, looks_like_openvds_path};
 pub use ophiolite_seismic::{
-    AmplitudeSpectrumCurve, AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, AxisSummaryF32,
-    AxisSummaryI32, CancelProcessingJobRequest, CancelProcessingJobResponse,
-    CoordinateReferenceBinding, CoordinateReferenceDescriptor, CoordinateReferenceSource,
-    DatasetId, DeletePipelinePresetRequest, DeletePipelinePresetResponse, FrequencyPhaseMode,
-    FrequencyWindowShape, GatherAxisKind, GatherInterpolationMode, GatherPreviewView, GatherProbe,
-    GatherProbeChanged, GatherProcessingOperation, GatherProcessingPipeline, GatherRequest,
-    GatherSampleDomain, GatherSelector, GatherView, GatherViewport, GatherViewportChanged,
-    GeometryDescriptor, GeometryProvenanceSummary, GeometrySummary, GetProcessingJobRequest,
-    GetProcessingJobResponse, ImportHorizonXyzRequest, ImportHorizonXyzResponse,
-    ImportedHorizonDescriptor, InterpretationPoint, ListPipelinePresetsResponse,
-    LoadSectionHorizonsRequest, LoadSectionHorizonsResponse, PreviewGatherProcessingRequest,
+    AmplitudeSpectrumCurve, AmplitudeSpectrumRequest, AmplitudeSpectrumResponse,
+    AvoInterceptGradientAttributeMethod, AvoInterceptGradientAttributeRequest,
+    AvoInterceptGradientAttributeResponse, AvoReflectivityMethod, AvoReflectivityRequest,
+    AvoReflectivityResponse, AxisSummaryF32, AxisSummaryI32, CancelProcessingJobRequest,
+    CancelProcessingJobResponse, CoordinateReferenceBinding, CoordinateReferenceDescriptor,
+    CoordinateReferenceSource, DatasetId, DeletePipelinePresetRequest,
+    DeletePipelinePresetResponse, FrequencyPhaseMode, FrequencyWindowShape, GatherAxisKind,
+    GatherInterpolationMode, GatherPreviewView, GatherProbe, GatherProbeChanged,
+    GatherProcessingOperation, GatherProcessingPipeline, GatherRequest, GatherSampleDomain,
+    GatherSelector, GatherView, GatherViewport, GatherViewportChanged, GeometryDescriptor,
+    GeometryProvenanceSummary, GeometrySummary, GetProcessingJobRequest, GetProcessingJobResponse,
+    ImportHorizonXyzRequest, ImportHorizonXyzResponse, ImportedHorizonDescriptor,
+    InterpretationPoint, ListPipelinePresetsResponse, LoadSectionHorizonsRequest,
+    LoadSectionHorizonsResponse, PreviewGatherProcessingRequest,
     PreviewGatherProcessingResponse, PreviewProcessingRequest, PreviewProcessingResponse,
     PreviewResponse, PreviewSubvolumeProcessingRequest, PreviewSubvolumeProcessingResponse,
     PreviewTraceLocalProcessingRequest, PreviewTraceLocalProcessingResponse, PreviewView,
@@ -70,7 +76,8 @@ pub use ophiolite_seismic::{
     ProcessingLayoutCompatibility, ProcessingOperation, ProcessingOperatorDependencyProfile,
     ProcessingOperatorScope, ProcessingPipeline, ProcessingPipelineFamily, ProcessingPipelineSpec,
     ProcessingPreset, ProcessingSampleDependency, ProcessingSpatialDependency, ProjectedPoint2,
-    ProjectedPolygon2, ProjectedVector2, RunGatherProcessingRequest, RunGatherProcessingResponse,
+    ProjectedPolygon2, ProjectedVector2, RockPhysicsAttributeMethod, RockPhysicsAttributeRequest,
+    RockPhysicsAttributeResponse, RunGatherProcessingRequest, RunGatherProcessingResponse,
     RunProcessingRequest, RunProcessingResponse, RunSubvolumeProcessingRequest,
     RunSubvolumeProcessingResponse, RunTraceLocalProcessingRequest,
     RunTraceLocalProcessingResponse, SavePipelinePresetRequest, SavePipelinePresetResponse,
@@ -85,6 +92,7 @@ pub use ophiolite_seismic::{
     VelocityFunctionSource, VelocityPickStrategy, VelocityQuantityKind, VelocityScanRequest,
     VelocityScanResponse, VolumeDescriptor,
 };
+pub use rock_physics::{avo_intercept_gradient_attribute, rock_physics_attribute};
 pub use preflight::{PreflightAction, PreflightGeometry, SurveyPreflight, preflight_segy};
 pub use prestack_analysis::velocity_scan;
 pub use prestack_store::{

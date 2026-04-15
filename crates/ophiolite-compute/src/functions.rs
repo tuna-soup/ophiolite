@@ -1,3 +1,4 @@
+use crate::operators::OperatorRuntimeKind;
 use crate::semantics::CurveSemanticType;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -43,6 +44,12 @@ pub struct ComputeExecutionManifest {
     pub provider: String,
     pub function_name: String,
     pub function_version: String,
+    #[serde(default)]
+    pub operator_package: Option<String>,
+    #[serde(default)]
+    pub operator_package_version: Option<String>,
+    #[serde(default)]
+    pub operator_runtime: Option<OperatorRuntimeKind>,
     pub deterministic: bool,
     pub source_asset_id: String,
     pub source_logical_asset_id: String,
@@ -53,7 +60,7 @@ pub struct ComputeExecutionManifest {
     pub executed_at_unix_seconds: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LogCurveData {
     pub curve_name: String,
     pub original_mnemonic: String,
@@ -101,12 +108,14 @@ pub struct DrillingObservationDataRow {
     pub comment: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ComputedCurve {
     pub curve_name: String,
     pub original_mnemonic: String,
     pub unit: Option<String>,
     pub description: Option<String>,
     pub semantic_type: CurveSemanticType,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub semantic_parameters: BTreeMap<String, f64>,
     pub values: Vec<Option<f64>>,
 }

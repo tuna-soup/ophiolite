@@ -22,3 +22,5 @@ export * from "./avo-mock";
 export * from "./rock-physics-crossplot";
 export * from "./rock-physics-template-catalog";
 export * from "./rock-physics-crossplot-mock";
+export * from "./volume-interpretation";
+export * from "./volume-interpretation-mock";

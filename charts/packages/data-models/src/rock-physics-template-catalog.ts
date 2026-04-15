@@ -209,8 +209,8 @@ export const ROCK_PHYSICS_TEMPLATE_SPECS: Record<RockPhysicsTemplateId, RockPhys
     ySemantics: ["mu-rho"],
     xLabel: "Lambda-Rho",
     yLabel: "Mu-Rho",
-    xUnit: "(GPa)*(g/cc)",
-    yUnit: "(GPa)*(g/cc)",
+    xUnit: "GPa",
+    yUnit: "GPa",
     allowedContinuousColorSemantics: ["water-saturation", "v-shale", "gamma-ray", "bulk-density"],
     allowedCategoricalColorSemantics: ["well", "wellbore", "facies"],
     templateLines: [

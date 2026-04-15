@@ -12,10 +12,23 @@ members = [
     "crates/ophiolite-seismic-io",
     "crates/ophiolite-seismic-runtime",
     "crates/ophiolite-cli",
+    "traceboost/contracts/seis-contracts-core",
+    "traceboost/contracts/seis-contracts-views",
+    "traceboost/contracts/seis-contracts-operations",
+    "traceboost/contracts/seis-contracts-interop",
+    "traceboost/io",
+    "traceboost/runtime",
+    "traceboost/app/traceboost-app",
+    "apps/traceboost-demo/src-tauri",
     "scripts/contracts-export",
 ]
 exclude = ["apps/ophiolite-harness/src-tauri"]
 resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+version = "0.1.0"
 
 [workspace.dependencies]
 arrow-array = "58.0.0"

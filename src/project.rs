@@ -9,9 +9,15 @@ use crate::project_assets::{
 use crate::project_contracts::{
     CoordinateReferenceBindingDto, CoordinateReferenceDto, CoordinateReferenceSourceDto,
     ProjectSurveyMapRequestDto, ProjectedPoint2Dto, ProjectedPolygon2Dto, ProjectedVector2Dto,
-    ResolveSectionWellOverlaysResponse, ResolvedSectionWellOverlayDto, ResolvedSurveyMapHorizonDto,
-    ResolvedSurveyMapSourceDto, ResolvedSurveyMapSurveyDto, ResolvedSurveyMapWellDto,
-    ResolvedWellPanelSourceDto, ResolvedWellPanelWellDto, SECTION_WELL_OVERLAY_CONTRACT_VERSION,
+    ROCK_PHYSICS_CROSSPLOT_CONTRACT_VERSION, ResolveSectionWellOverlaysResponse,
+    ResolvedRockPhysicsCrossplotSourceDto, ResolvedSectionWellOverlayDto,
+    ResolvedSurveyMapHorizonDto, ResolvedSurveyMapSourceDto, ResolvedSurveyMapSurveyDto,
+    ResolvedSurveyMapWellDto, ResolvedWellPanelSourceDto, ResolvedWellPanelWellDto,
+    RockPhysicsAxisDto, RockPhysicsCategoricalColorBindingDto, RockPhysicsCategoricalSemanticDto,
+    RockPhysicsCategoryDto, RockPhysicsColorRequestDto, RockPhysicsContinuousColorBindingDto,
+    RockPhysicsCrossplotRequestDto, RockPhysicsCurveSemanticDto,
+    RockPhysicsInteractionThresholdsDto, RockPhysicsSampleDto, RockPhysicsSourceBindingDto,
+    RockPhysicsTemplateIdDto, RockPhysicsWellDto, SECTION_WELL_OVERLAY_CONTRACT_VERSION,
     SURVEY_MAP_CONTRACT_VERSION, SectionWellOverlayDomainDto, SectionWellOverlayRequestDto,
     SectionWellOverlaySampleDto, SectionWellOverlaySegmentDto, SurveyIndexAxisDto,
     SurveyIndexGridDto, SurveyMapGridTransformDto, SurveyMapScalarFieldDto,
@@ -29,10 +35,14 @@ use crate::{
     write_package_overwrite,
 };
 use ophiolite_compute::{
-    ComputeCatalog, ComputeExecutionManifest, ComputeParameterValue, ComputeRegistry,
+    AssetSemanticFamily, BUILTIN_OPERATOR_PACKAGE_NAME, ComputeCatalog, ComputeCatalogEntry,
+    ComputeExecutionManifest, ComputeInputBinding, ComputeParameterValue, ComputeRegistry,
     CurveSemanticDescriptor, CurveSemanticSource, CurveSemanticType, DrillingObservationDataRow,
-    LogCurveData, PressureObservationDataRow, TopDataRow, TrajectoryDataRow,
-    classify_curve_semantic,
+    ExternalOperatorRequest, ExternalOperatorRequestPayload, ExternalOperatorResponse,
+    ExternalOperatorResponsePayload, LogCurveData, OperatorManifest, OperatorPackageManifest,
+    OperatorRuntimeKind, PressureObservationDataRow, TopDataRow, TrajectoryDataRow,
+    catalog_entry_for_operator_manifest, classify_curve_semantic, load_operator_package_manifest,
+    resolve_log_input_bindings, validate_compute_parameters,
 };
 use ophiolite_core::{CurveItem, LasValue, SectionItems, derive_canonical_alias};
 use ophiolite_package::open_package;
@@ -52,10 +62,14 @@ use proj::{Proj, ProjBuilder};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
+use std::ffi::OsString;
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -65,9 +79,13 @@ const PROJECT_CATALOG_FILENAME: &str = "catalog.sqlite";
 const ASSET_MANIFEST_FILENAME: &str = "asset_manifest.json";
 const PROJECT_REVISION_STORE_DIRNAME: &str = ".ophiolite";
 const PROJECT_ASSET_REVISION_STORE_DIRNAME: &str = "asset-revisions";
+const PROJECT_OPERATOR_PACKAGE_STORE_DIRNAME: &str = "operator-packages";
+const PROJECT_OPERATOR_PACKAGE_PYTHON_ENV_DIRNAME: &str = ".venv";
 const PROJECT_STAGING_DIRNAME: &str = "staging";
 const PROJECT_MAP_TRANSFORM_CACHE_DIRNAME: &str = "map-transform-cache";
 const SURVEY_MAP_TRANSFORM_CACHE_SCHEMA_VERSION: u32 = 1;
+const PROJECT_OPERATOR_LOCK_SCHEMA_VERSION: u32 = 1;
+const PROJECT_OPERATOR_PACKAGE_MANIFEST_FILENAME: &str = "operator-package.json";
 const PROJ_RESOURCE_PATH_ENV: &str = "OPHIOLITE_PROJ_RESOURCE_PATH";
 const CHECKSHOT_VSP_OBSERVATION_SET_FILENAME: &str = "checkshot_vsp_observation_set.json";
 const MANUAL_TIME_DEPTH_PICK_SET_FILENAME: &str = "manual_time_depth_pick_set.json";
@@ -81,6 +99,42 @@ static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 pub struct OphioliteProjectManifest {
     pub schema_version: String,
     pub created_at_unix_seconds: u64,
+    #[serde(default)]
+    pub operator_lock: ProjectOperatorLock,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OperatorPackageSourceKind {
+    BuiltIn,
+    Path,
+    PythonDistribution,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OperatorPackageLockEntry {
+    pub package_name: String,
+    pub package_version: String,
+    pub provider: String,
+    pub runtime: OperatorRuntimeKind,
+    pub source_kind: OperatorPackageSourceKind,
+    pub source_reference: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectOperatorLock {
+    pub schema_version: u32,
+    #[serde(default)]
+    pub packages: Vec<OperatorPackageLockEntry>,
+}
+
+impl Default for ProjectOperatorLock {
+    fn default() -> Self {
+        Self {
+            schema_version: PROJECT_OPERATOR_LOCK_SCHEMA_VERSION,
+            packages: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -537,6 +591,16 @@ pub struct ProjectComputeRunResult {
     pub execution: ComputeExecutionManifest,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectOperatorPackageInstallResult {
+    pub package_name: String,
+    pub package_version: String,
+    pub installed_manifest_path: String,
+    pub python_environment_path: Option<String>,
+    pub operator_count: usize,
+    pub operator_lock: ProjectOperatorLock,
+}
+
 pub struct OphioliteProject {
     root: PathBuf,
     catalog_path: PathBuf,
@@ -589,6 +653,7 @@ impl OphioliteProject {
         let manifest = OphioliteProjectManifest {
             schema_version: PROJECT_SCHEMA_VERSION.to_string(),
             created_at_unix_seconds: now_unix_seconds(),
+            operator_lock: ProjectOperatorLock::default(),
         };
         fs::write(
             root.join(PROJECT_MANIFEST_FILENAME),
@@ -629,12 +694,230 @@ impl OphioliteProject {
         })
     }
 
+    pub fn project_manifest(&self) -> Result<OphioliteProjectManifest> {
+        read_project_manifest(&self.root)
+    }
+
+    pub fn operator_lock(&self) -> Result<ProjectOperatorLock> {
+        Ok(self.project_manifest()?.operator_lock)
+    }
+
+    pub fn install_operator_package(
+        &self,
+        manifest_path: impl AsRef<Path>,
+    ) -> Result<ProjectOperatorPackageInstallResult> {
+        let manifest_path = manifest_path.as_ref();
+        let package = load_operator_package_manifest(manifest_path)?;
+        let install_relative_path = PathBuf::from(PROJECT_REVISION_STORE_DIRNAME)
+            .join(PROJECT_OPERATOR_PACKAGE_STORE_DIRNAME)
+            .join(&package.package_name)
+            .join(&package.package_version)
+            .join(PROJECT_OPERATOR_PACKAGE_MANIFEST_FILENAME);
+        let install_path = self.root.join(&install_relative_path);
+        let mut installed_package = package.clone();
+        let mut python_environment_path = None;
+
+        if let Some(parent) = install_path.parent() {
+            fs::create_dir_all(parent)?;
+            if matches!(package.runtime, OperatorRuntimeKind::Python)
+                && let Some(entrypoint) = &package.entrypoint
+            {
+                installed_package.entrypoint = Some(copy_operator_package_entrypoint(
+                    manifest_path.parent().unwrap_or_else(|| Path::new(".")),
+                    parent,
+                    entrypoint,
+                )?);
+                copy_operator_package_support_files(
+                    manifest_path.parent().unwrap_or_else(|| Path::new(".")),
+                    parent,
+                )?;
+                python_environment_path = Some(
+                    ensure_python_operator_environment(parent)?
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+        fs::write(
+            &install_path,
+            serde_json::to_vec_pretty(&installed_package)?,
+        )?;
+
+        let mut project_manifest = self.project_manifest()?;
+        if project_manifest.operator_lock.packages.is_empty() {
+            project_manifest
+                .operator_lock
+                .packages
+                .push(builtin_operator_lock_entry());
+        }
+
+        let lock_entry = OperatorPackageLockEntry {
+            package_name: installed_package.package_name.clone(),
+            package_version: installed_package.package_version.clone(),
+            provider: installed_package.provider.clone(),
+            runtime: installed_package.runtime.clone(),
+            source_kind: OperatorPackageSourceKind::Path,
+            source_reference: Some(normalize_relative_path(&install_relative_path)),
+        };
+
+        match project_manifest
+            .operator_lock
+            .packages
+            .iter_mut()
+            .find(|entry| entry.package_name == lock_entry.package_name)
+        {
+            Some(existing) => *existing = lock_entry,
+            None => project_manifest.operator_lock.packages.push(lock_entry),
+        }
+
+        write_project_manifest(&self.root, &project_manifest)?;
+
+        Ok(ProjectOperatorPackageInstallResult {
+            package_name: installed_package.package_name,
+            package_version: installed_package.package_version,
+            installed_manifest_path: install_path.to_string_lossy().into_owned(),
+            python_environment_path,
+            operator_count: installed_package.operators.len(),
+            operator_lock: project_manifest.operator_lock,
+        })
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }
 
     pub fn catalog_path(&self) -> &Path {
         &self.catalog_path
+    }
+
+    fn effective_operator_lock(&self) -> Result<ProjectOperatorLock> {
+        let mut lock = self.operator_lock()?;
+        if lock.packages.is_empty() {
+            lock.packages.push(builtin_operator_lock_entry());
+        }
+        Ok(lock)
+    }
+
+    fn resolve_operator_package_source_path(
+        &self,
+        entry: &OperatorPackageLockEntry,
+    ) -> Result<Option<PathBuf>> {
+        match entry.source_kind {
+            OperatorPackageSourceKind::BuiltIn => Ok(None),
+            OperatorPackageSourceKind::Path | OperatorPackageSourceKind::PythonDistribution => {
+                let source_reference = entry.source_reference.as_ref().ok_or_else(|| {
+                    LasError::Validation(format!(
+                        "operator package '{}@{}' is missing a source reference",
+                        entry.package_name, entry.package_version
+                    ))
+                })?;
+                let source_path = PathBuf::from(source_reference);
+                Ok(Some(if source_path.is_absolute() {
+                    source_path
+                } else {
+                    self.root.join(source_path)
+                }))
+            }
+        }
+    }
+
+    fn resolve_operator_package_manifest(
+        &self,
+        entry: &OperatorPackageLockEntry,
+    ) -> Result<OperatorPackageManifest> {
+        let manifest = match entry.source_kind {
+            OperatorPackageSourceKind::BuiltIn => {
+                ComputeRegistry::new().built_in_operator_package_manifest()
+            }
+            OperatorPackageSourceKind::Path | OperatorPackageSourceKind::PythonDistribution => {
+                let source_path = self
+                    .resolve_operator_package_source_path(entry)?
+                    .ok_or_else(|| {
+                        LasError::Validation(format!(
+                            "operator package '{}@{}' is missing a source path",
+                            entry.package_name, entry.package_version
+                        ))
+                    })?;
+                load_operator_package_manifest(source_path)?
+            }
+        };
+
+        if manifest.package_name != entry.package_name {
+            return Err(LasError::Validation(format!(
+                "operator lock entry '{}' resolved package '{}' instead",
+                entry.package_name, manifest.package_name
+            )));
+        }
+        if manifest.package_version != entry.package_version {
+            return Err(LasError::Validation(format!(
+                "operator package '{}@{}' does not match locked version '{}'",
+                manifest.package_name, manifest.package_version, entry.package_version
+            )));
+        }
+        if manifest.provider != entry.provider {
+            return Err(LasError::Validation(format!(
+                "operator package '{}@{}' resolved provider '{}' instead of '{}'",
+                manifest.package_name, manifest.package_version, manifest.provider, entry.provider
+            )));
+        }
+        if manifest.runtime != entry.runtime {
+            return Err(LasError::Validation(format!(
+                "operator package '{}@{}' resolved runtime '{:?}' instead of '{:?}'",
+                manifest.package_name, manifest.package_version, manifest.runtime, entry.runtime
+            )));
+        }
+
+        Ok(manifest)
+    }
+
+    fn resolved_operator_packages(&self) -> Result<Vec<OperatorPackageManifest>> {
+        let lock = self.effective_operator_lock()?;
+        let mut manifests = Vec::with_capacity(lock.packages.len());
+        let mut seen_operator_ids = BTreeMap::new();
+
+        for entry in &lock.packages {
+            let manifest = self.resolve_operator_package_manifest(entry)?;
+            for operator in &manifest.operators {
+                if let Some(existing) = seen_operator_ids.insert(
+                    operator.id.clone(),
+                    format!("{}@{}", manifest.package_name, manifest.package_version),
+                ) {
+                    return Err(LasError::Validation(format!(
+                        "operator id '{}' is provided by both '{}' and '{}@{}'",
+                        operator.id, existing, manifest.package_name, manifest.package_version
+                    )));
+                }
+            }
+            manifests.push(manifest);
+        }
+
+        Ok(manifests)
+    }
+
+    fn resolved_operator_entry(
+        &self,
+        function_id: &str,
+    ) -> Result<(
+        OperatorPackageLockEntry,
+        OperatorPackageManifest,
+        OperatorManifest,
+    )> {
+        let lock = self.effective_operator_lock()?;
+        for entry in lock.packages {
+            let package = self.resolve_operator_package_manifest(&entry)?;
+            if let Some(operator) = package
+                .operators
+                .iter()
+                .find(|operator| operator.id == function_id)
+                .cloned()
+            {
+                return Ok((entry, package, operator));
+            }
+        }
+
+        Err(LasError::Validation(format!(
+            "operator '{function_id}' is not available in this project's operator lock"
+        )))
     }
 
     pub fn summary(&self) -> Result<ProjectSummary> {
@@ -2270,6 +2553,192 @@ impl OphioliteProject {
         log_curve_data_for_compute(package.file(), &semantics)
     }
 
+    pub fn resolve_rock_physics_crossplot_source(
+        &self,
+        request: &RockPhysicsCrossplotRequestDto,
+    ) -> Result<ResolvedRockPhysicsCrossplotSourceDto> {
+        validate_rock_physics_request(request)?;
+
+        let wells = request
+            .wellbore_ids
+            .iter()
+            .map(|wellbore_id| self.prepare_rock_physics_well(&WellboreId(wellbore_id.clone())))
+            .collect::<Result<Vec<_>>>()?;
+
+        if wells.is_empty() {
+            return Err(LasError::Validation(
+                "rock-physics crossplot request requires at least one wellbore id".to_string(),
+            ));
+        }
+
+        let mut samples = Vec::new();
+        let mut source_bindings = Vec::new();
+
+        for prepared in &wells {
+            let x_binding = resolve_rock_physics_semantic_binding(
+                prepared,
+                request.x_semantic,
+                prepared.well.name.as_str(),
+            )?;
+            let y_binding = resolve_rock_physics_semantic_binding(
+                prepared,
+                request.y_semantic,
+                prepared.well.name.as_str(),
+            )?;
+            let color_binding = match &request.color_binding {
+                RockPhysicsColorRequestDto::Continuous(binding) => {
+                    Some(resolve_rock_physics_semantic_binding(
+                        prepared,
+                        binding.semantic,
+                        prepared.well.name.as_str(),
+                    )?)
+                }
+                RockPhysicsColorRequestDto::Categorical(binding) => {
+                    if binding.semantic == RockPhysicsCategoricalSemanticDto::Facies {
+                        return Err(LasError::Validation(
+                            "facies categorical coloring is not materializable from canonical well-log semantics yet".to_string(),
+                        ));
+                    }
+                    None
+                }
+            };
+
+            let anchor = primary_rock_physics_anchor(
+                prepared,
+                request.x_semantic,
+                request.y_semantic,
+                match &request.color_binding {
+                    RockPhysicsColorRequestDto::Continuous(binding) => Some(binding.semantic),
+                    RockPhysicsColorRequestDto::Categorical(_) => None,
+                },
+            )
+            .ok_or_else(|| {
+                LasError::Validation(format!(
+                    "well '{}' does not provide a usable anchor curve for rock-physics sampling",
+                    prepared.well.name
+                ))
+            })?;
+
+            let source_binding_id = format!("rock-physics:{}:binding", prepared.well.wellbore_id);
+            let derived_channels = collect_derived_channels([
+                Some(&x_binding),
+                Some(&y_binding),
+                color_binding.as_ref(),
+            ]);
+            source_bindings.push(RockPhysicsSourceBindingDto {
+                id: source_binding_id.clone(),
+                well_id: prepared.well.well_id.clone(),
+                wellbore_id: prepared.well.wellbore_id.clone(),
+                x_curve_id: x_binding.curve_id.clone(),
+                y_curve_id: y_binding.curve_id.clone(),
+                color_curve_id: color_binding
+                    .as_ref()
+                    .map(|binding| binding.curve_id.clone()),
+                derived_channels: (!derived_channels.is_empty()).then_some(derived_channels),
+            });
+
+            for depth_m in &anchor.prepared.depths_m {
+                if !depth_in_range(*depth_m, request.depth_min, request.depth_max) {
+                    continue;
+                }
+
+                let x_value = rock_physics_value_at_depth(prepared, request.x_semantic, *depth_m);
+                let y_value = rock_physics_value_at_depth(prepared, request.y_semantic, *depth_m);
+                let color_value = match &request.color_binding {
+                    RockPhysicsColorRequestDto::Continuous(binding) => {
+                        rock_physics_value_at_depth(prepared, binding.semantic, *depth_m)
+                    }
+                    RockPhysicsColorRequestDto::Categorical(_) => None,
+                };
+                let (color_category_id, symbol_category_id) = match &request.color_binding {
+                    RockPhysicsColorRequestDto::Categorical(binding) => match binding.semantic {
+                        RockPhysicsCategoricalSemanticDto::Well => (Some(0), None),
+                        RockPhysicsCategoricalSemanticDto::Wellbore => (Some(0), None),
+                        RockPhysicsCategoricalSemanticDto::Facies => (None, None),
+                    },
+                    RockPhysicsColorRequestDto::Continuous(_) => (None, None),
+                };
+
+                let (Some(x_value), Some(y_value)) = (x_value, y_value) else {
+                    continue;
+                };
+                if matches!(
+                    &request.color_binding,
+                    RockPhysicsColorRequestDto::Continuous(_)
+                ) && color_value.is_none()
+                {
+                    continue;
+                }
+
+                samples.push(RockPhysicsSampleDto {
+                    well_id: prepared.well.well_id.clone(),
+                    wellbore_id: Some(prepared.well.wellbore_id.clone()),
+                    sample_depth_m: *depth_m,
+                    x_value,
+                    y_value,
+                    color_value,
+                    color_category_id,
+                    symbol_category_id,
+                    source_binding_id: Some(source_binding_id.clone()),
+                });
+            }
+        }
+
+        if samples.is_empty() {
+            return Err(LasError::Validation(
+                "rock-physics crossplot request did not materialize any samples from the selected wells".to_string(),
+            ));
+        }
+
+        let (x_min_value, x_max_value) =
+            derive_rock_physics_range(samples.iter().map(|sample| sample.x_value));
+        let (y_min_value, y_max_value) =
+            derive_rock_physics_range(samples.iter().map(|sample| sample.y_value));
+
+        Ok(ResolvedRockPhysicsCrossplotSourceDto {
+            schema_version: ROCK_PHYSICS_CROSSPLOT_CONTRACT_VERSION,
+            id: format!(
+                "rock-physics:{}:{}",
+                rock_physics_template_slug(request.template_id),
+                request.wellbore_ids.join(",")
+            ),
+            name: format!(
+                "Resolved Rock Physics {}",
+                rock_physics_template_title(request.template_id)
+            ),
+            template_id: request.template_id,
+            title: request
+                .title
+                .clone()
+                .or_else(|| Some(rock_physics_template_title(request.template_id).to_string())),
+            subtitle: request.subtitle.clone(),
+            x_axis: RockPhysicsAxisDto {
+                label: Some(default_rock_physics_axis_label(request.x_semantic).to_string()),
+                unit: rock_physics_semantic_unit(request.x_semantic).map(str::to_string),
+                semantic: request.x_semantic,
+                min_value: x_min_value,
+                max_value: x_max_value,
+            },
+            y_axis: RockPhysicsAxisDto {
+                label: Some(default_rock_physics_axis_label(request.y_semantic).to_string()),
+                unit: rock_physics_semantic_unit(request.y_semantic).map(str::to_string),
+                semantic: request.y_semantic,
+                min_value: y_min_value,
+                max_value: y_max_value,
+            },
+            color_binding: resolve_rock_physics_color_binding(request, &samples),
+            wells: wells.iter().map(|entry| entry.well.clone()).collect(),
+            samples,
+            source_bindings,
+            template_lines: None,
+            template_overlays: None,
+            interaction_thresholds: Some(RockPhysicsInteractionThresholdsDto {
+                exact_point_limit: 100_000,
+                progressive_point_limit: 1_000_000,
+            }),
+        })
+    }
+
     pub fn resolve_well_panel_source(
         &self,
         request: &WellPanelRequestDto,
@@ -2639,6 +3108,11 @@ impl OphioliteProject {
     pub fn list_compute_catalog(&self, asset_id: &AssetId) -> Result<ComputeCatalog> {
         let asset = self.asset_by_id(asset_id)?;
         let registry = ComputeRegistry::new();
+        let resolved_packages = self.resolved_operator_packages()?;
+        let asset_family = asset_semantic_family(&asset.asset_kind)?;
+        let built_in_enabled = resolved_packages
+            .iter()
+            .any(|package| package.package_name == BUILTIN_OPERATOR_PACKAGE_NAME);
         match asset.asset_kind {
             AssetKind::Log => {
                 let semantics = if asset.manifest.curve_semantics.is_empty() {
@@ -2653,12 +3127,85 @@ impl OphioliteProject {
                     .iter()
                     .filter_map(|curve| curve.numeric_data().map(|_| curve.mnemonic.clone()))
                     .collect::<Vec<_>>();
-                Ok(registry.catalog_for_log_asset(&semantics, &numeric_curve_names))
+                let mut catalog = if built_in_enabled {
+                    registry.catalog_for_log_asset(&semantics, &numeric_curve_names)
+                } else {
+                    ComputeCatalog {
+                        asset_family: asset_family.clone(),
+                        functions: Vec::new(),
+                    }
+                };
+                catalog.functions.extend(external_operator_catalog_entries(
+                    &resolved_packages,
+                    &asset_family,
+                    Some((&semantics, &numeric_curve_names)),
+                ));
+                Ok(catalog)
             }
-            AssetKind::Trajectory => Ok(registry.catalog_for_trajectory_asset()),
-            AssetKind::TopSet => Ok(registry.catalog_for_top_set_asset()),
-            AssetKind::PressureObservation => Ok(registry.catalog_for_pressure_asset()),
-            AssetKind::DrillingObservation => Ok(registry.catalog_for_drilling_asset()),
+            AssetKind::Trajectory => {
+                let mut catalog = if built_in_enabled {
+                    registry.catalog_for_trajectory_asset()
+                } else {
+                    ComputeCatalog {
+                        asset_family: asset_family.clone(),
+                        functions: Vec::new(),
+                    }
+                };
+                catalog.functions.extend(external_operator_catalog_entries(
+                    &resolved_packages,
+                    &asset_family,
+                    None,
+                ));
+                Ok(catalog)
+            }
+            AssetKind::TopSet => {
+                let mut catalog = if built_in_enabled {
+                    registry.catalog_for_top_set_asset()
+                } else {
+                    ComputeCatalog {
+                        asset_family: asset_family.clone(),
+                        functions: Vec::new(),
+                    }
+                };
+                catalog.functions.extend(external_operator_catalog_entries(
+                    &resolved_packages,
+                    &asset_family,
+                    None,
+                ));
+                Ok(catalog)
+            }
+            AssetKind::PressureObservation => {
+                let mut catalog = if built_in_enabled {
+                    registry.catalog_for_pressure_asset()
+                } else {
+                    ComputeCatalog {
+                        asset_family: asset_family.clone(),
+                        functions: Vec::new(),
+                    }
+                };
+                catalog.functions.extend(external_operator_catalog_entries(
+                    &resolved_packages,
+                    &asset_family,
+                    None,
+                ));
+                Ok(catalog)
+            }
+            AssetKind::DrillingObservation => {
+                let mut catalog = if built_in_enabled {
+                    registry.catalog_for_drilling_asset()
+                } else {
+                    ComputeCatalog {
+                        asset_family: asset_family.clone(),
+                        functions: Vec::new(),
+                    }
+                };
+                catalog.functions.extend(external_operator_catalog_entries(
+                    &resolved_packages,
+                    &asset_family,
+                    None,
+                ));
+                Ok(catalog)
+            }
             AssetKind::CheckshotVspObservationSet
             | AssetKind::ManualTimeDepthPickSet
             | AssetKind::WellTieObservationSet
@@ -2681,6 +3228,18 @@ impl OphioliteProject {
     ) -> Result<ProjectComputeRunResult> {
         let source_asset = self.asset_by_id(&request.source_asset_id)?;
         let source_collection = self.collection_by_id(&source_asset.collection_id)?;
+        let (resolved_entry, resolved_package, resolved_operator) =
+            self.resolved_operator_entry(&request.function_id)?;
+        if resolved_package.package_name != BUILTIN_OPERATOR_PACKAGE_NAME {
+            return self.run_external_compute(
+                &resolved_entry,
+                &resolved_package,
+                &resolved_operator,
+                &source_asset,
+                &source_collection,
+                request,
+            );
+        }
         let registry = ComputeRegistry::new();
 
         let (collection, asset, execution) = match source_asset.asset_kind {
@@ -2693,80 +3252,21 @@ impl OphioliteProject {
                     source_asset.manifest.curve_semantics.clone()
                 };
                 let log_curves = log_curve_data_for_compute(source_file, &semantics)?;
-                let (mut execution, computed_curve) = registry.run_log_compute(
+                let (execution, computed_curve) = registry.run_log_compute(
                     &request.function_id,
                     &log_curves,
                     &request.curve_bindings,
                     &request.parameters,
                     request.output_mnemonic.as_deref(),
                 )?;
-                execution.source_asset_id = source_asset.id.0.clone();
-                execution.source_logical_asset_id = source_asset.logical_asset_id.0.clone();
-                execution.executed_at_unix_seconds = now_unix_seconds();
-
-                let collection_name = request.output_collection_name.clone().unwrap_or_else(|| {
-                    format!(
-                        "{} / Derived / {}",
-                        source_collection.name, execution.function_name
-                    )
-                });
-                let collection = self.resolve_or_create_collection(
-                    &source_asset.wellbore_id,
-                    AssetKind::Log,
-                    &collection_name,
-                )?;
-                let storage_asset_id = AssetId(unique_id("asset"));
-                let package_rel_path = PathBuf::from("assets")
-                    .join(AssetKind::Log.asset_dir_name())
-                    .join(format!("{}.laspkg", storage_asset_id.0));
-                let package_root = self.root.join(&package_rel_path);
-                let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
-                let derived_file = build_derived_log_file(
+                self.persist_log_compute_result(
+                    &source_asset,
+                    &source_collection,
+                    request,
                     source_file,
-                    &source_asset,
-                    &collection,
-                    &storage_asset_id,
+                    execution,
                     &computed_curve,
-                    &execution,
-                );
-                write_package_overwrite(&derived_file, &staged.root)?;
-
-                let supersedes = self
-                    .latest_active_asset_for_collection(&collection.id)?
-                    .map(|asset| asset.id);
-                let manifest = derived_log_asset_manifest(
-                    &derived_file,
-                    &source_asset,
-                    &collection,
-                    &storage_asset_id,
-                    supersedes.clone(),
-                    &computed_curve,
-                    &execution,
-                );
-                write_asset_manifest(&staged.root, &manifest)?;
-                if let Some(asset_id) = &supersedes {
-                    self.mark_asset_superseded(asset_id)?;
-                }
-                let asset = AssetRecord {
-                    id: storage_asset_id,
-                    logical_asset_id: collection.logical_asset_id.clone(),
-                    collection_id: collection.id.clone(),
-                    well_id: source_asset.well_id.clone(),
-                    wellbore_id: source_asset.wellbore_id.clone(),
-                    asset_kind: AssetKind::Log,
-                    status: AssetStatus::Bound,
-                    package_path: package_root.to_string_lossy().into_owned(),
-                    manifest,
-                };
-                let revision = self.build_asset_revision_from_snapshot(
-                    &asset,
-                    None,
-                    AssetDiffSummary::Log(Default::default()),
-                    &staged,
-                )?;
-                self.commit_asset_revision(&asset, &revision)?;
-                self.insert_asset(&asset, &package_rel_path)?;
-                (collection, asset, execution)
+                )?
             }
             AssetKind::Trajectory => {
                 let rows = self.read_trajectory_rows(&source_asset.id, None)?;
@@ -2863,6 +3363,433 @@ impl OphioliteProject {
             asset,
             execution,
         })
+    }
+
+    fn run_external_compute(
+        &mut self,
+        entry: &OperatorPackageLockEntry,
+        package: &OperatorPackageManifest,
+        operator: &OperatorManifest,
+        source_asset: &AssetRecord,
+        source_collection: &AssetCollectionRecord,
+        request: &ProjectComputeRunRequest,
+    ) -> Result<ProjectComputeRunResult> {
+        let (collection, asset, execution) = match source_asset.asset_kind {
+            AssetKind::Log => {
+                let source_package = open_package(&source_asset.package_path)?;
+                let source_file = source_package.file();
+                let semantics = if source_asset.manifest.curve_semantics.is_empty() {
+                    classify_log_curves_from_package(&source_asset.package_path)?
+                } else {
+                    source_asset.manifest.curve_semantics.clone()
+                };
+                let log_curves = log_curve_data_for_compute(source_file, &semantics)?;
+                let (resolved_inputs, manifest_inputs) = resolve_log_input_bindings(
+                    &request.function_id,
+                    &operator.input_specs,
+                    &log_curves,
+                    &request.curve_bindings,
+                )?;
+                validate_compute_parameters(&operator.parameters, &request.parameters)?;
+                let response = self.invoke_external_python_operator(
+                    entry,
+                    package,
+                    ExternalOperatorRequest {
+                        operator_id: operator.id.clone(),
+                        package_name: package.package_name.clone(),
+                        package_version: package.package_version.clone(),
+                        parameters: request.parameters.clone(),
+                        payload: ExternalOperatorRequestPayload::Log {
+                            inputs: resolved_inputs,
+                            output_mnemonic: request.output_mnemonic.clone(),
+                        },
+                    },
+                )?;
+                let ExternalOperatorResponsePayload::Log { computed_curve } = response.payload
+                else {
+                    return Err(LasError::Validation(format!(
+                        "external operator '{}' returned a non-log payload for a log asset",
+                        operator.id
+                    )));
+                };
+                let execution = external_execution_manifest(
+                    package,
+                    operator,
+                    manifest_inputs,
+                    &request.parameters,
+                    computed_curve.curve_name.clone(),
+                    computed_curve.semantic_type.clone(),
+                );
+                self.persist_log_compute_result(
+                    source_asset,
+                    source_collection,
+                    request,
+                    source_file,
+                    execution,
+                    &computed_curve,
+                )?
+            }
+            AssetKind::Trajectory => {
+                let rows = self.read_trajectory_rows(&source_asset.id, None)?;
+                let compute_rows = trajectory_rows_for_compute(&rows);
+                validate_compute_parameters(&operator.parameters, &request.parameters)?;
+                let response = self.invoke_external_python_operator(
+                    entry,
+                    package,
+                    ExternalOperatorRequest {
+                        operator_id: operator.id.clone(),
+                        package_name: package.package_name.clone(),
+                        package_version: package.package_version.clone(),
+                        parameters: request.parameters.clone(),
+                        payload: ExternalOperatorRequestPayload::Trajectory { rows: compute_rows },
+                    },
+                )?;
+                let ExternalOperatorResponsePayload::Trajectory { rows: derived_rows } =
+                    response.payload
+                else {
+                    return Err(LasError::Validation(format!(
+                        "external operator '{}' returned a non-trajectory payload for a trajectory asset",
+                        operator.id
+                    )));
+                };
+                self.persist_structured_compute_result(
+                    source_asset,
+                    source_collection,
+                    request,
+                    external_execution_manifest(
+                        package,
+                        operator,
+                        vec![structured_compute_input_binding(
+                            "trajectory_rows",
+                            "trajectory",
+                        )],
+                        &request.parameters,
+                        "trajectory",
+                        operator.output_curve_type.clone(),
+                    ),
+                    trajectory_rows_from_compute(&derived_rows),
+                    AssetKind::Trajectory,
+                )?
+            }
+            AssetKind::TopSet => {
+                let rows = self.read_tops(&source_asset.id)?;
+                let compute_rows = top_rows_for_compute(&rows);
+                validate_compute_parameters(&operator.parameters, &request.parameters)?;
+                let response = self.invoke_external_python_operator(
+                    entry,
+                    package,
+                    ExternalOperatorRequest {
+                        operator_id: operator.id.clone(),
+                        package_name: package.package_name.clone(),
+                        package_version: package.package_version.clone(),
+                        parameters: request.parameters.clone(),
+                        payload: ExternalOperatorRequestPayload::TopSet { rows: compute_rows },
+                    },
+                )?;
+                let ExternalOperatorResponsePayload::TopSet { rows: derived_rows } =
+                    response.payload
+                else {
+                    return Err(LasError::Validation(format!(
+                        "external operator '{}' returned a non-top-set payload for a tops asset",
+                        operator.id
+                    )));
+                };
+                self.persist_structured_compute_result(
+                    source_asset,
+                    source_collection,
+                    request,
+                    external_execution_manifest(
+                        package,
+                        operator,
+                        vec![structured_compute_input_binding("tops_rows", "tops")],
+                        &request.parameters,
+                        "tops",
+                        operator.output_curve_type.clone(),
+                    ),
+                    top_rows_from_compute(&derived_rows),
+                    AssetKind::TopSet,
+                )?
+            }
+            AssetKind::PressureObservation => {
+                let rows = self.read_pressure_observations(&source_asset.id, None)?;
+                let compute_rows = pressure_rows_for_compute(&rows);
+                validate_compute_parameters(&operator.parameters, &request.parameters)?;
+                let response = self.invoke_external_python_operator(
+                    entry,
+                    package,
+                    ExternalOperatorRequest {
+                        operator_id: operator.id.clone(),
+                        package_name: package.package_name.clone(),
+                        package_version: package.package_version.clone(),
+                        parameters: request.parameters.clone(),
+                        payload: ExternalOperatorRequestPayload::PressureObservation {
+                            rows: compute_rows,
+                        },
+                    },
+                )?;
+                let ExternalOperatorResponsePayload::PressureObservation { rows: derived_rows } =
+                    response.payload
+                else {
+                    return Err(LasError::Validation(format!(
+                        "external operator '{}' returned a non-pressure payload for a pressure asset",
+                        operator.id
+                    )));
+                };
+                self.persist_structured_compute_result(
+                    source_asset,
+                    source_collection,
+                    request,
+                    external_execution_manifest(
+                        package,
+                        operator,
+                        vec![structured_compute_input_binding(
+                            "pressure_rows",
+                            "pressure",
+                        )],
+                        &request.parameters,
+                        "pressure",
+                        operator.output_curve_type.clone(),
+                    ),
+                    pressure_rows_from_compute(&derived_rows),
+                    AssetKind::PressureObservation,
+                )?
+            }
+            AssetKind::DrillingObservation => {
+                let rows = self.read_drilling_observations(&source_asset.id, None)?;
+                let compute_rows = drilling_rows_for_compute(&rows);
+                validate_compute_parameters(&operator.parameters, &request.parameters)?;
+                let response = self.invoke_external_python_operator(
+                    entry,
+                    package,
+                    ExternalOperatorRequest {
+                        operator_id: operator.id.clone(),
+                        package_name: package.package_name.clone(),
+                        package_version: package.package_version.clone(),
+                        parameters: request.parameters.clone(),
+                        payload: ExternalOperatorRequestPayload::DrillingObservation {
+                            rows: compute_rows,
+                        },
+                    },
+                )?;
+                let ExternalOperatorResponsePayload::DrillingObservation { rows: derived_rows } =
+                    response.payload
+                else {
+                    return Err(LasError::Validation(format!(
+                        "external operator '{}' returned a non-drilling payload for a drilling asset",
+                        operator.id
+                    )));
+                };
+                self.persist_structured_compute_result(
+                    source_asset,
+                    source_collection,
+                    request,
+                    external_execution_manifest(
+                        package,
+                        operator,
+                        vec![structured_compute_input_binding(
+                            "drilling_rows",
+                            "drilling",
+                        )],
+                        &request.parameters,
+                        "drilling",
+                        operator.output_curve_type.clone(),
+                    ),
+                    drilling_rows_from_compute(&derived_rows),
+                    AssetKind::DrillingObservation,
+                )?
+            }
+            AssetKind::CheckshotVspObservationSet
+            | AssetKind::ManualTimeDepthPickSet
+            | AssetKind::WellTieObservationSet
+            | AssetKind::WellTimeDepthAuthoredModel => {
+                return Err(LasError::Validation(
+                    "compute execution is not implemented for well time-depth observation/model assets"
+                        .to_string(),
+                ));
+            }
+            AssetKind::WellTimeDepthModel => {
+                return Err(LasError::Validation(
+                    "compute execution is not implemented for well time-depth model assets"
+                        .to_string(),
+                ));
+            }
+            AssetKind::SeismicTraceData => {
+                return Err(LasError::Validation(
+                    "compute execution is not implemented for seismic assets yet".to_string(),
+                ));
+            }
+        };
+
+        Ok(ProjectComputeRunResult {
+            collection,
+            asset,
+            execution,
+        })
+    }
+
+    fn invoke_external_python_operator(
+        &self,
+        entry: &OperatorPackageLockEntry,
+        package: &OperatorPackageManifest,
+        request: ExternalOperatorRequest,
+    ) -> Result<ExternalOperatorResponse> {
+        if package.runtime != OperatorRuntimeKind::Python {
+            return Err(LasError::Validation(format!(
+                "operator package '{}@{}' uses runtime '{:?}', which is not supported for external dispatch",
+                package.package_name, package.package_version, package.runtime
+            )));
+        }
+
+        let entrypoint = package.entrypoint.as_ref().ok_or_else(|| {
+            LasError::Validation(format!(
+                "operator package '{}@{}' is missing a python entrypoint",
+                package.package_name, package.package_version
+            ))
+        })?;
+        let manifest_path = self
+            .resolve_operator_package_source_path(entry)?
+            .ok_or_else(|| {
+                LasError::Validation(format!(
+                    "operator package '{}@{}' is missing a manifest path",
+                    package.package_name, package.package_version
+                ))
+            })?;
+        let manifest_dir = manifest_path.parent().ok_or_else(|| {
+            LasError::Validation(format!(
+                "operator package manifest '{}' has no parent directory",
+                manifest_path.display()
+            ))
+        })?;
+
+        let mut command = Command::new(python_runtime_for_operator_manifest_dir(manifest_dir));
+        command
+            .arg("-m")
+            .arg("ophiolite_sdk.external_runner")
+            .arg("--entrypoint")
+            .arg(entrypoint)
+            .arg("--manifest-dir")
+            .arg(manifest_dir)
+            .current_dir(manifest_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env("PYTHONPATH", external_pythonpath()?);
+
+        let mut child = command.spawn().map_err(|error| {
+            LasError::Storage(format!(
+                "failed to start python operator runtime for '{}@{}': {error}",
+                package.package_name, package.package_version
+            ))
+        })?;
+        if let Some(stdin) = child.stdin.as_mut() {
+            stdin.write_all(&serde_json::to_vec(&request)?)?;
+        } else {
+            return Err(LasError::Storage(
+                "failed to open stdin for python operator runtime".to_string(),
+            ));
+        }
+
+        let output = child.wait_with_output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if !output.status.success() {
+            let detail = if stderr.is_empty() {
+                stdout
+            } else if stdout.is_empty() {
+                stderr
+            } else {
+                format!("{stderr}\n{stdout}")
+            };
+            return Err(LasError::Validation(format!(
+                "python operator '{}' failed: {detail}",
+                request.operator_id
+            )));
+        }
+
+        serde_json::from_str(&stdout).map_err(|error| {
+            LasError::Validation(format!(
+                "python operator '{}' returned invalid json: {error}",
+                request.operator_id
+            ))
+        })
+    }
+
+    fn persist_log_compute_result(
+        &mut self,
+        source_asset: &AssetRecord,
+        source_collection: &AssetCollectionRecord,
+        request: &ProjectComputeRunRequest,
+        source_file: &LasFile,
+        mut execution: ComputeExecutionManifest,
+        computed_curve: &ophiolite_compute::ComputedCurve,
+    ) -> Result<(AssetCollectionRecord, AssetRecord, ComputeExecutionManifest)> {
+        execution.source_asset_id = source_asset.id.0.clone();
+        execution.source_logical_asset_id = source_asset.logical_asset_id.0.clone();
+        execution.executed_at_unix_seconds = now_unix_seconds();
+
+        let collection_name = request.output_collection_name.clone().unwrap_or_else(|| {
+            format!(
+                "{} / Derived / {}",
+                source_collection.name, execution.function_name
+            )
+        });
+        let collection = self.resolve_or_create_collection(
+            &source_asset.wellbore_id,
+            AssetKind::Log,
+            &collection_name,
+        )?;
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(AssetKind::Log.asset_dir_name())
+            .join(format!("{}.laspkg", storage_asset_id.0));
+        let package_root = self.root.join(&package_rel_path);
+        let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
+        let derived_file = build_derived_log_file(
+            source_file,
+            source_asset,
+            &collection,
+            &storage_asset_id,
+            computed_curve,
+            &execution,
+        );
+        write_package_overwrite(&derived_file, &staged.root)?;
+
+        let supersedes = self
+            .latest_active_asset_for_collection(&collection.id)?
+            .map(|asset| asset.id);
+        let manifest = derived_log_asset_manifest(
+            &derived_file,
+            source_asset,
+            &collection,
+            &storage_asset_id,
+            supersedes.clone(),
+            computed_curve,
+            &execution,
+        );
+        write_asset_manifest(&staged.root, &manifest)?;
+        if let Some(asset_id) = &supersedes {
+            self.mark_asset_superseded(asset_id)?;
+        }
+        let asset = AssetRecord {
+            id: storage_asset_id,
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: source_asset.well_id.clone(),
+            wellbore_id: source_asset.wellbore_id.clone(),
+            asset_kind: AssetKind::Log,
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest,
+        };
+        let revision = self.build_asset_revision_from_snapshot(
+            &asset,
+            None,
+            AssetDiffSummary::Log(Default::default()),
+            &staged,
+        )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.insert_asset(&asset, &package_rel_path)?;
+        Ok((collection, asset, execution))
     }
 
     fn persist_structured_compute_result(
@@ -3119,6 +4046,61 @@ impl OphioliteProject {
             top_sets,
             pressure_observations,
             drilling_observations,
+        })
+    }
+
+    fn prepare_rock_physics_well(
+        &self,
+        wellbore_id: &WellboreId,
+    ) -> Result<RockPhysicsPreparedWell> {
+        let wellbore = self.wellbore_by_id(wellbore_id)?;
+        let current_assets = self
+            .asset_summaries(wellbore_id, None)?
+            .into_iter()
+            .filter(|summary| summary.is_current)
+            .collect::<Vec<_>>();
+
+        let mut curves_by_semantic =
+            HashMap::<CurveSemanticType, Vec<RockPhysicsCurveSource>>::new();
+        for summary in current_assets {
+            let asset = summary.asset;
+            if asset.asset_kind != AssetKind::Log {
+                continue;
+            }
+            for curve in self.read_log_curve_data(&asset.id)? {
+                let prepared = match prepare_interpolated_log_curve(&curve) {
+                    Ok(prepared) => prepared,
+                    Err(_) => continue,
+                };
+                curves_by_semantic
+                    .entry(curve.semantic_type.clone())
+                    .or_default()
+                    .push(RockPhysicsCurveSource {
+                        curve_id: format!("{}:{}", asset.id.0, curve.curve_name),
+                        curve,
+                        prepared,
+                    });
+            }
+        }
+
+        for curves in curves_by_semantic.values_mut() {
+            curves.sort_by(|left, right| {
+                right
+                    .prepared
+                    .point_count
+                    .cmp(&left.prepared.point_count)
+                    .then_with(|| left.curve.curve_name.cmp(&right.curve.curve_name))
+            });
+        }
+
+        Ok(RockPhysicsPreparedWell {
+            well: RockPhysicsWellDto {
+                well_id: wellbore.well_id.0.clone(),
+                wellbore_id: wellbore.id.0.clone(),
+                name: wellbore.name,
+                color: None,
+            },
+            curves_by_semantic,
         })
     }
 
@@ -6407,6 +7389,384 @@ fn write_asset_manifest(root: &Path, manifest: &AssetManifest) -> Result<()> {
     Ok(())
 }
 
+fn read_project_manifest(root: &Path) -> Result<OphioliteProjectManifest> {
+    let manifest_path = root.join(PROJECT_MANIFEST_FILENAME);
+    serde_json::from_str(&fs::read_to_string(manifest_path)?).map_err(Into::into)
+}
+
+fn write_project_manifest(root: &Path, manifest: &OphioliteProjectManifest) -> Result<()> {
+    fs::write(
+        root.join(PROJECT_MANIFEST_FILENAME),
+        serde_json::to_vec_pretty(manifest)?,
+    )?;
+    Ok(())
+}
+
+fn builtin_operator_lock_entry() -> OperatorPackageLockEntry {
+    OperatorPackageLockEntry {
+        package_name: BUILTIN_OPERATOR_PACKAGE_NAME.to_string(),
+        package_version: env!("CARGO_PKG_VERSION").to_string(),
+        provider: "ophiolite".to_string(),
+        runtime: OperatorRuntimeKind::Rust,
+        source_kind: OperatorPackageSourceKind::BuiltIn,
+        source_reference: None,
+    }
+}
+
+fn normalize_relative_path(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn copy_operator_package_entrypoint(
+    source_root: &Path,
+    install_root: &Path,
+    entrypoint: &str,
+) -> Result<String> {
+    let Some((source_path, install_relative_path, preserve_entrypoint)) =
+        resolve_operator_package_entrypoint_copy(source_root, entrypoint)?
+    else {
+        return Ok(entrypoint.to_string());
+    };
+    let install_path = install_root.join(&install_relative_path);
+
+    if source_path.is_dir() {
+        copy_directory_recursive(&source_path, &install_path)?;
+    } else {
+        if let Some(parent) = install_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(&source_path, &install_path)?;
+    }
+
+    Ok(if preserve_entrypoint {
+        entrypoint.to_string()
+    } else {
+        normalize_relative_path(&install_relative_path)
+    })
+}
+
+fn copy_operator_package_support_files(source_root: &Path, install_root: &Path) -> Result<()> {
+    for name in [
+        "requirements.txt",
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "MANIFEST.in",
+    ] {
+        let source_path = source_root.join(name);
+        if source_path.exists() {
+            fs::copy(&source_path, install_root.join(name))?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_directory_recursive(&source_path, &destination_path)?;
+        } else {
+            if let Some(parent) = destination_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&source_path, &destination_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn resolve_operator_package_entrypoint_copy(
+    source_root: &Path,
+    entrypoint: &str,
+) -> Result<Option<(PathBuf, PathBuf, bool)>> {
+    let entrypoint_path = PathBuf::from(entrypoint);
+    let module_path = module_entrypoint_path(entrypoint);
+    let is_module_style = !entrypoint_path.is_absolute()
+        && !entrypoint.contains('/')
+        && !entrypoint.contains('\\')
+        && entrypoint_path.extension().is_none();
+
+    let candidates = if is_module_style {
+        vec![
+            (
+                source_root.join(module_path.with_extension("py")),
+                module_path.with_extension("py"),
+                true,
+            ),
+            (source_root.join(&module_path), module_path.clone(), true),
+        ]
+    } else {
+        let joined = if entrypoint_path.is_absolute() {
+            entrypoint_path.clone()
+        } else {
+            source_root.join(&entrypoint_path)
+        };
+        let relative = if entrypoint_path.is_absolute() {
+            PathBuf::from(
+                joined
+                    .file_name()
+                    .ok_or_else(|| {
+                        LasError::Validation(format!(
+                            "python operator entrypoint '{}' does not have a filename",
+                            joined.display()
+                        ))
+                    })?
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        } else {
+            entrypoint_path.clone()
+        };
+        vec![
+            (joined.clone(), relative.clone(), false),
+            (
+                joined.with_extension("py"),
+                relative.with_extension("py"),
+                false,
+            ),
+        ]
+    };
+
+    for (source_path, install_relative_path, preserve_entrypoint) in candidates {
+        if source_path.exists() {
+            return Ok(Some((
+                source_path,
+                install_relative_path,
+                preserve_entrypoint,
+            )));
+        }
+    }
+    Ok(None)
+}
+
+fn module_entrypoint_path(entrypoint: &str) -> PathBuf {
+    let mut path = PathBuf::new();
+    for segment in entrypoint.split('.') {
+        path.push(segment);
+    }
+    path
+}
+
+fn ensure_python_operator_environment(install_root: &Path) -> Result<PathBuf> {
+    let env_root = install_root.join(PROJECT_OPERATOR_PACKAGE_PYTHON_ENV_DIRNAME);
+    if env_root.exists() {
+        fs::remove_dir_all(&env_root)?;
+    }
+
+    let mut create_command = Command::new(external_python_bin());
+    create_command.arg("-m").arg("venv").arg(&env_root);
+    run_python_command(create_command, "create python operator environment")?;
+    let env_python = python_virtualenv_executable(&env_root);
+    if !env_python.exists() {
+        return Err(LasError::Validation(format!(
+            "python operator environment '{}' is missing its interpreter",
+            env_root.display()
+        )));
+    }
+
+    let requirements_path = install_root.join("requirements.txt");
+    if requirements_path.exists() {
+        let mut command = Command::new(&env_python);
+        command
+            .arg("-m")
+            .arg("pip")
+            .arg("install")
+            .arg("-r")
+            .arg(&requirements_path)
+            .current_dir(install_root);
+        run_python_command(command, "install python operator requirements")?;
+    } else if ["pyproject.toml", "setup.py", "setup.cfg"]
+        .iter()
+        .any(|name| install_root.join(name).exists())
+    {
+        let mut command = Command::new(&env_python);
+        command
+            .arg("-m")
+            .arg("pip")
+            .arg("install")
+            .arg(".")
+            .current_dir(install_root);
+        run_python_command(command, "install python operator package")?;
+    }
+
+    Ok(env_root)
+}
+
+fn run_python_command(mut command: Command, action: &str) -> Result<()> {
+    let output = command.output()?;
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let detail = if stderr.is_empty() {
+        stdout
+    } else if stdout.is_empty() {
+        stderr
+    } else {
+        format!("{stderr}\n{stdout}")
+    };
+    Err(LasError::Validation(format!(
+        "failed to {action}: {detail}"
+    )))
+}
+
+fn structured_compute_input_binding(parameter_name: &str, curve_name: &str) -> ComputeInputBinding {
+    ComputeInputBinding {
+        parameter_name: parameter_name.to_string(),
+        curve_name: curve_name.to_string(),
+        semantic_type: CurveSemanticType::Computed,
+    }
+}
+
+fn external_execution_manifest(
+    package: &OperatorPackageManifest,
+    operator: &OperatorManifest,
+    inputs: Vec<ComputeInputBinding>,
+    parameters: &BTreeMap<String, ComputeParameterValue>,
+    output_curve_name: impl Into<String>,
+    output_curve_type: CurveSemanticType,
+) -> ComputeExecutionManifest {
+    ComputeExecutionManifest {
+        function_id: operator.id.clone(),
+        provider: operator.provider.clone(),
+        function_name: operator.name.clone(),
+        function_version: package.package_version.clone(),
+        operator_package: Some(package.package_name.clone()),
+        operator_package_version: Some(package.package_version.clone()),
+        operator_runtime: Some(package.runtime.clone()),
+        deterministic: operator.deterministic,
+        source_asset_id: String::new(),
+        source_logical_asset_id: String::new(),
+        inputs,
+        parameters: parameters.clone(),
+        output_curve_name: output_curve_name.into(),
+        output_curve_type,
+        executed_at_unix_seconds: 0,
+    }
+}
+
+fn external_python_bin() -> String {
+    std::env::var("OPHIOLITE_PYTHON_BIN").unwrap_or_else(|_| "python".to_string())
+}
+
+fn python_runtime_for_operator_manifest_dir(manifest_dir: &Path) -> PathBuf {
+    let env_python = python_virtualenv_executable(
+        &manifest_dir.join(PROJECT_OPERATOR_PACKAGE_PYTHON_ENV_DIRNAME),
+    );
+    if env_python.exists() {
+        env_python
+    } else {
+        PathBuf::from(external_python_bin())
+    }
+}
+
+fn python_virtualenv_executable(env_root: &Path) -> PathBuf {
+    if cfg!(windows) {
+        env_root.join("Scripts").join("python.exe")
+    } else {
+        env_root.join("bin").join("python")
+    }
+}
+
+fn external_pythonpath() -> Result<OsString> {
+    let mut paths = vec![external_python_support_path()?];
+    if let Some(existing) = std::env::var_os("PYTHONPATH") {
+        paths.extend(std::env::split_paths(&existing));
+    }
+    std::env::join_paths(paths).map_err(|error| {
+        LasError::Validation(format!(
+            "failed to build PYTHONPATH for external operators: {error}"
+        ))
+    })
+}
+
+fn external_python_support_path() -> Result<PathBuf> {
+    let path = workspace_root_path()?.join("python").join("src");
+    if path.exists() {
+        Ok(path)
+    } else {
+        Err(LasError::Validation(format!(
+            "python sdk source directory '{}' was not found",
+            path.display()
+        )))
+    }
+}
+
+fn workspace_root_path() -> Result<PathBuf> {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let candidates = [
+        manifest_dir.clone(),
+        manifest_dir
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| manifest_dir.clone()),
+        manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| manifest_dir.clone()),
+    ];
+    for candidate in candidates {
+        if candidate.join("Cargo.toml").exists() && candidate.join("python").exists() {
+            return Ok(candidate);
+        }
+    }
+    Err(LasError::Validation(format!(
+        "failed to resolve workspace root from '{}'",
+        manifest_dir.display()
+    )))
+}
+
+fn asset_semantic_family(asset_kind: &AssetKind) -> Result<AssetSemanticFamily> {
+    match asset_kind {
+        AssetKind::Log => Ok(AssetSemanticFamily::Log),
+        AssetKind::Trajectory => Ok(AssetSemanticFamily::Trajectory),
+        AssetKind::TopSet => Ok(AssetSemanticFamily::TopSet),
+        AssetKind::PressureObservation => Ok(AssetSemanticFamily::PressureObservation),
+        AssetKind::DrillingObservation => Ok(AssetSemanticFamily::DrillingObservation),
+        AssetKind::CheckshotVspObservationSet
+        | AssetKind::ManualTimeDepthPickSet
+        | AssetKind::WellTieObservationSet
+        | AssetKind::WellTimeDepthAuthoredModel => Err(LasError::Validation(
+            "compute catalog is not implemented for well time-depth observation/model assets"
+                .to_string(),
+        )),
+        AssetKind::WellTimeDepthModel => Err(LasError::Validation(
+            "compute catalog is not implemented for well time-depth model assets".to_string(),
+        )),
+        AssetKind::SeismicTraceData => Err(LasError::Validation(
+            "compute catalog is not implemented for seismic assets yet".to_string(),
+        )),
+    }
+}
+
+fn external_operator_catalog_entries(
+    packages: &[OperatorPackageManifest],
+    asset_family: &AssetSemanticFamily,
+    log_context: Option<(&[CurveSemanticDescriptor], &[String])>,
+) -> Vec<ComputeCatalogEntry> {
+    packages
+        .iter()
+        .filter(|package| package.package_name != BUILTIN_OPERATOR_PACKAGE_NAME)
+        .flat_map(|package| {
+            package
+                .operators
+                .iter()
+                .filter(move |operator| &operator.asset_family == asset_family)
+                .map(move |operator| catalog_entry_for_operator_manifest(operator, log_context))
+        })
+        .collect()
+}
+
 fn identifiers_from_well_info(info: &WellInfo) -> WellIdentifierSet {
     WellIdentifierSet {
         primary_name: info.well.clone(),
@@ -7552,10 +8912,23 @@ struct SelectedWellTieLogSelection {
     velocity_source_kind: WellTieVelocitySourceKind,
 }
 
+#[derive(Clone)]
 struct PreparedInterpolatedLogCurve {
     depths_m: Vec<f64>,
     values: Vec<f64>,
     point_count: usize,
+}
+
+#[derive(Clone)]
+struct RockPhysicsCurveSource {
+    curve_id: String,
+    curve: LogCurveData,
+    prepared: PreparedInterpolatedLogCurve,
+}
+
+struct RockPhysicsPreparedWell {
+    well: RockPhysicsWellDto,
+    curves_by_semantic: HashMap<CurveSemanticType, Vec<RockPhysicsCurveSource>>,
 }
 
 fn select_well_tie_log_selection(
@@ -7690,6 +9063,896 @@ fn interpolate_prepared_curve(curve: &PreparedInterpolatedLogCurve, depth_m: f64
                 Some(left_value + ((right_value - left_value) * weight))
             }
         }
+    }
+}
+
+struct ResolvedRockPhysicsSemanticBinding {
+    curve_id: String,
+    derived_channels: Vec<String>,
+}
+
+fn validate_rock_physics_request(request: &RockPhysicsCrossplotRequestDto) -> Result<()> {
+    if request.schema_version != ROCK_PHYSICS_CROSSPLOT_CONTRACT_VERSION {
+        return Err(LasError::Validation(format!(
+            "rock-physics crossplot requests require schema_version {}",
+            ROCK_PHYSICS_CROSSPLOT_CONTRACT_VERSION
+        )));
+    }
+    if request.wellbore_ids.is_empty() {
+        return Err(LasError::Validation(
+            "rock-physics crossplot request requires at least one wellbore id".to_string(),
+        ));
+    }
+    if let (Some(depth_min), Some(depth_max)) = (request.depth_min, request.depth_max) {
+        if depth_min > depth_max {
+            return Err(LasError::Validation(
+                "rock-physics crossplot request requires depth_min <= depth_max".to_string(),
+            ));
+        }
+    }
+    if !rock_physics_template_allows_x(request.template_id, request.x_semantic) {
+        return Err(LasError::Validation(format!(
+            "template '{}' does not allow x semantic '{}'",
+            rock_physics_template_slug(request.template_id),
+            rock_physics_curve_semantic_slug(request.x_semantic)
+        )));
+    }
+    if !rock_physics_template_allows_y(request.template_id, request.y_semantic) {
+        return Err(LasError::Validation(format!(
+            "template '{}' does not allow y semantic '{}'",
+            rock_physics_template_slug(request.template_id),
+            rock_physics_curve_semantic_slug(request.y_semantic)
+        )));
+    }
+    match &request.color_binding {
+        RockPhysicsColorRequestDto::Categorical(binding) => {
+            if !rock_physics_template_allows_categorical_color(
+                request.template_id,
+                binding.semantic,
+            ) {
+                return Err(LasError::Validation(format!(
+                    "template '{}' does not allow categorical color semantic '{}'",
+                    rock_physics_template_slug(request.template_id),
+                    rock_physics_categorical_semantic_slug(binding.semantic)
+                )));
+            }
+        }
+        RockPhysicsColorRequestDto::Continuous(binding) => {
+            if !rock_physics_template_allows_continuous_color(request.template_id, binding.semantic)
+            {
+                return Err(LasError::Validation(format!(
+                    "template '{}' does not allow continuous color semantic '{}'",
+                    rock_physics_template_slug(request.template_id),
+                    rock_physics_curve_semantic_slug(binding.semantic)
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn rock_physics_template_slug(template_id: RockPhysicsTemplateIdDto) -> &'static str {
+    match template_id {
+        RockPhysicsTemplateIdDto::VpVsVsAi => "vp-vs-vs-ai",
+        RockPhysicsTemplateIdDto::AiVsSi => "ai-vs-si",
+        RockPhysicsTemplateIdDto::VpVsVs => "vp-vs-vs",
+        RockPhysicsTemplateIdDto::PorosityVsVp => "porosity-vs-vp",
+        RockPhysicsTemplateIdDto::LambdaRhoVsMuRho => "lambda-rho-vs-mu-rho",
+        RockPhysicsTemplateIdDto::NeutronPorosityVsBulkDensity => {
+            "neutron-porosity-vs-bulk-density"
+        }
+        RockPhysicsTemplateIdDto::PhiVsAi => "phi-vs-ai",
+        RockPhysicsTemplateIdDto::PrVsAi => "pr-vs-ai",
+        RockPhysicsTemplateIdDto::VpVsDensity => "vp-vs-density",
+    }
+}
+
+fn rock_physics_template_title(template_id: RockPhysicsTemplateIdDto) -> &'static str {
+    match template_id {
+        RockPhysicsTemplateIdDto::VpVsVsAi => "Vp/Vs vs AI",
+        RockPhysicsTemplateIdDto::AiVsSi => "AI vs SI",
+        RockPhysicsTemplateIdDto::VpVsVs => "Vp vs Vs",
+        RockPhysicsTemplateIdDto::PorosityVsVp => "Porosity vs Vp",
+        RockPhysicsTemplateIdDto::LambdaRhoVsMuRho => "Lambda-Rho vs Mu-Rho",
+        RockPhysicsTemplateIdDto::NeutronPorosityVsBulkDensity => {
+            "Neutron Porosity vs Bulk Density"
+        }
+        RockPhysicsTemplateIdDto::PhiVsAi => "Phi vs AI",
+        RockPhysicsTemplateIdDto::PrVsAi => "PR vs AI",
+        RockPhysicsTemplateIdDto::VpVsDensity => "Vp vs Density",
+    }
+}
+
+fn rock_physics_template_allows_x(
+    template_id: RockPhysicsTemplateIdDto,
+    semantic: RockPhysicsCurveSemanticDto,
+) -> bool {
+    match template_id {
+        RockPhysicsTemplateIdDto::VpVsVsAi
+        | RockPhysicsTemplateIdDto::AiVsSi
+        | RockPhysicsTemplateIdDto::PhiVsAi
+        | RockPhysicsTemplateIdDto::PrVsAi => {
+            semantic == RockPhysicsCurveSemanticDto::AcousticImpedance
+        }
+        RockPhysicsTemplateIdDto::VpVsVs => semantic == RockPhysicsCurveSemanticDto::SVelocity,
+        RockPhysicsTemplateIdDto::PorosityVsVp => {
+            matches!(
+                semantic,
+                RockPhysicsCurveSemanticDto::NeutronPorosity
+                    | RockPhysicsCurveSemanticDto::EffectivePorosity
+            )
+        }
+        RockPhysicsTemplateIdDto::LambdaRhoVsMuRho => {
+            semantic == RockPhysicsCurveSemanticDto::LambdaRho
+        }
+        RockPhysicsTemplateIdDto::NeutronPorosityVsBulkDensity => {
+            semantic == RockPhysicsCurveSemanticDto::NeutronPorosity
+        }
+        RockPhysicsTemplateIdDto::VpVsDensity => {
+            semantic == RockPhysicsCurveSemanticDto::BulkDensity
+        }
+    }
+}
+
+fn rock_physics_template_allows_y(
+    template_id: RockPhysicsTemplateIdDto,
+    semantic: RockPhysicsCurveSemanticDto,
+) -> bool {
+    match template_id {
+        RockPhysicsTemplateIdDto::VpVsVsAi => semantic == RockPhysicsCurveSemanticDto::VpVsRatio,
+        RockPhysicsTemplateIdDto::AiVsSi => semantic == RockPhysicsCurveSemanticDto::ShearImpedance,
+        RockPhysicsTemplateIdDto::VpVsVs | RockPhysicsTemplateIdDto::PorosityVsVp => {
+            semantic == RockPhysicsCurveSemanticDto::PVelocity
+        }
+        RockPhysicsTemplateIdDto::LambdaRhoVsMuRho => {
+            semantic == RockPhysicsCurveSemanticDto::MuRho
+        }
+        RockPhysicsTemplateIdDto::NeutronPorosityVsBulkDensity
+        | RockPhysicsTemplateIdDto::VpVsDensity => {
+            semantic == RockPhysicsCurveSemanticDto::BulkDensity
+        }
+        RockPhysicsTemplateIdDto::PhiVsAi => matches!(
+            semantic,
+            RockPhysicsCurveSemanticDto::NeutronPorosity
+                | RockPhysicsCurveSemanticDto::EffectivePorosity
+        ),
+        RockPhysicsTemplateIdDto::PrVsAi => semantic == RockPhysicsCurveSemanticDto::PoissonsRatio,
+    }
+}
+
+fn rock_physics_template_allows_continuous_color(
+    template_id: RockPhysicsTemplateIdDto,
+    semantic: RockPhysicsCurveSemanticDto,
+) -> bool {
+    match template_id {
+        RockPhysicsTemplateIdDto::VpVsVsAi => matches!(
+            semantic,
+            RockPhysicsCurveSemanticDto::WaterSaturation
+                | RockPhysicsCurveSemanticDto::VShale
+                | RockPhysicsCurveSemanticDto::BulkDensity
+                | RockPhysicsCurveSemanticDto::NeutronPorosity
+                | RockPhysicsCurveSemanticDto::PoissonsRatio
+                | RockPhysicsCurveSemanticDto::GammaRay
+        ),
+        RockPhysicsTemplateIdDto::AiVsSi => matches!(
+            semantic,
+            RockPhysicsCurveSemanticDto::WaterSaturation
+                | RockPhysicsCurveSemanticDto::VShale
+                | RockPhysicsCurveSemanticDto::BulkDensity
+                | RockPhysicsCurveSemanticDto::GammaRay
+                | RockPhysicsCurveSemanticDto::NeutronPorosity
+        ),
+        RockPhysicsTemplateIdDto::VpVsVs => matches!(
+            semantic,
+            RockPhysicsCurveSemanticDto::WaterSaturation
+                | RockPhysicsCurveSemanticDto::VShale
+                | RockPhysicsCurveSemanticDto::GammaRay
+                | RockPhysicsCurveSemanticDto::BulkDensity
+                | RockPhysicsCurveSemanticDto::NeutronPorosity
+        ),
+        RockPhysicsTemplateIdDto::PorosityVsVp => matches!(
+            semantic,
+            RockPhysicsCurveSemanticDto::WaterSaturation
+                | RockPhysicsCurveSemanticDto::VShale
+                | RockPhysicsCurveSemanticDto::GammaRay
+        ),
+        RockPhysicsTemplateIdDto::LambdaRhoVsMuRho => matches!(
+            semantic,
+            RockPhysicsCurveSemanticDto::WaterSaturation
+                | RockPhysicsCurveSemanticDto::VShale
+                | RockPhysicsCurveSemanticDto::GammaRay
+                | RockPhysicsCurveSemanticDto::BulkDensity
+        ),
+        RockPhysicsTemplateIdDto::NeutronPorosityVsBulkDensity => matches!(
+            semantic,
+            RockPhysicsCurveSemanticDto::GammaRay
+                | RockPhysicsCurveSemanticDto::WaterSaturation
+                | RockPhysicsCurveSemanticDto::VShale
+        ),
+        RockPhysicsTemplateIdDto::PhiVsAi => matches!(
+            semantic,
+            RockPhysicsCurveSemanticDto::WaterSaturation
+                | RockPhysicsCurveSemanticDto::VShale
+                | RockPhysicsCurveSemanticDto::BulkDensity
+                | RockPhysicsCurveSemanticDto::GammaRay
+        ),
+        RockPhysicsTemplateIdDto::PrVsAi => matches!(
+            semantic,
+            RockPhysicsCurveSemanticDto::WaterSaturation
+                | RockPhysicsCurveSemanticDto::VShale
+                | RockPhysicsCurveSemanticDto::BulkDensity
+                | RockPhysicsCurveSemanticDto::NeutronPorosity
+        ),
+        RockPhysicsTemplateIdDto::VpVsDensity => matches!(
+            semantic,
+            RockPhysicsCurveSemanticDto::WaterSaturation
+                | RockPhysicsCurveSemanticDto::VShale
+                | RockPhysicsCurveSemanticDto::NeutronPorosity
+                | RockPhysicsCurveSemanticDto::GammaRay
+        ),
+    }
+}
+
+fn rock_physics_template_allows_categorical_color(
+    _template_id: RockPhysicsTemplateIdDto,
+    semantic: RockPhysicsCategoricalSemanticDto,
+) -> bool {
+    matches!(
+        semantic,
+        RockPhysicsCategoricalSemanticDto::Well
+            | RockPhysicsCategoricalSemanticDto::Wellbore
+            | RockPhysicsCategoricalSemanticDto::Facies
+    )
+}
+
+fn rock_physics_curve_semantic_slug(semantic: RockPhysicsCurveSemanticDto) -> &'static str {
+    match semantic {
+        RockPhysicsCurveSemanticDto::PVelocity => "p-velocity",
+        RockPhysicsCurveSemanticDto::SVelocity => "s-velocity",
+        RockPhysicsCurveSemanticDto::VpVsRatio => "vp-vs-ratio",
+        RockPhysicsCurveSemanticDto::AcousticImpedance => "acoustic-impedance",
+        RockPhysicsCurveSemanticDto::ShearImpedance => "shear-impedance",
+        RockPhysicsCurveSemanticDto::LambdaRho => "lambda-rho",
+        RockPhysicsCurveSemanticDto::MuRho => "mu-rho",
+        RockPhysicsCurveSemanticDto::BulkDensity => "bulk-density",
+        RockPhysicsCurveSemanticDto::Resistivity => "resistivity",
+        RockPhysicsCurveSemanticDto::Sonic => "sonic",
+        RockPhysicsCurveSemanticDto::ShearSonic => "shear-sonic",
+        RockPhysicsCurveSemanticDto::PoissonsRatio => "poissons-ratio",
+        RockPhysicsCurveSemanticDto::NeutronPorosity => "neutron-porosity",
+        RockPhysicsCurveSemanticDto::EffectivePorosity => "effective-porosity",
+        RockPhysicsCurveSemanticDto::WaterSaturation => "water-saturation",
+        RockPhysicsCurveSemanticDto::VShale => "v-shale",
+        RockPhysicsCurveSemanticDto::GammaRay => "gamma-ray",
+    }
+}
+
+fn rock_physics_categorical_semantic_slug(
+    semantic: RockPhysicsCategoricalSemanticDto,
+) -> &'static str {
+    match semantic {
+        RockPhysicsCategoricalSemanticDto::Well => "well",
+        RockPhysicsCategoricalSemanticDto::Wellbore => "wellbore",
+        RockPhysicsCategoricalSemanticDto::Facies => "facies",
+    }
+}
+
+fn default_rock_physics_axis_label(semantic: RockPhysicsCurveSemanticDto) -> &'static str {
+    match semantic {
+        RockPhysicsCurveSemanticDto::PVelocity => "Vp",
+        RockPhysicsCurveSemanticDto::SVelocity => "Vs",
+        RockPhysicsCurveSemanticDto::VpVsRatio => "Vp/Vs",
+        RockPhysicsCurveSemanticDto::AcousticImpedance => "AI",
+        RockPhysicsCurveSemanticDto::ShearImpedance => "SI",
+        RockPhysicsCurveSemanticDto::LambdaRho => "Lambda-Rho",
+        RockPhysicsCurveSemanticDto::MuRho => "Mu-Rho",
+        RockPhysicsCurveSemanticDto::BulkDensity => "Bulk Density",
+        RockPhysicsCurveSemanticDto::Resistivity => "Resistivity",
+        RockPhysicsCurveSemanticDto::Sonic => "Sonic",
+        RockPhysicsCurveSemanticDto::ShearSonic => "Shear Sonic",
+        RockPhysicsCurveSemanticDto::PoissonsRatio => "Poisson's Ratio",
+        RockPhysicsCurveSemanticDto::NeutronPorosity => "Neutron Porosity",
+        RockPhysicsCurveSemanticDto::EffectivePorosity => "Effective Porosity",
+        RockPhysicsCurveSemanticDto::WaterSaturation => "Water Saturation",
+        RockPhysicsCurveSemanticDto::VShale => "V-Shale",
+        RockPhysicsCurveSemanticDto::GammaRay => "Gamma Ray",
+    }
+}
+
+fn rock_physics_semantic_unit(semantic: RockPhysicsCurveSemanticDto) -> Option<&'static str> {
+    match semantic {
+        RockPhysicsCurveSemanticDto::PVelocity | RockPhysicsCurveSemanticDto::SVelocity => {
+            Some("m/s")
+        }
+        RockPhysicsCurveSemanticDto::VpVsRatio | RockPhysicsCurveSemanticDto::PoissonsRatio => {
+            Some("ratio")
+        }
+        RockPhysicsCurveSemanticDto::AcousticImpedance
+        | RockPhysicsCurveSemanticDto::ShearImpedance => Some("(m/s)*(g/cc)"),
+        RockPhysicsCurveSemanticDto::LambdaRho | RockPhysicsCurveSemanticDto::MuRho => {
+            Some("(GPa)*(g/cc)")
+        }
+        RockPhysicsCurveSemanticDto::BulkDensity => Some("g/cc"),
+        RockPhysicsCurveSemanticDto::Resistivity => Some("ohm.m"),
+        RockPhysicsCurveSemanticDto::Sonic | RockPhysicsCurveSemanticDto::ShearSonic => {
+            Some("us/m")
+        }
+        RockPhysicsCurveSemanticDto::NeutronPorosity
+        | RockPhysicsCurveSemanticDto::EffectivePorosity => Some("%"),
+        RockPhysicsCurveSemanticDto::WaterSaturation | RockPhysicsCurveSemanticDto::VShale => {
+            Some("fraction")
+        }
+        RockPhysicsCurveSemanticDto::GammaRay => Some("gAPI"),
+    }
+}
+
+fn resolve_rock_physics_color_binding(
+    request: &RockPhysicsCrossplotRequestDto,
+    samples: &[RockPhysicsSampleDto],
+) -> crate::project_contracts::RockPhysicsColorBindingDto {
+    match &request.color_binding {
+        RockPhysicsColorRequestDto::Categorical(binding) => {
+            crate::project_contracts::RockPhysicsColorBindingDto::Categorical(
+                RockPhysicsCategoricalColorBindingDto {
+                    label: binding.label.clone().or_else(|| {
+                        Some(
+                            match binding.semantic {
+                                RockPhysicsCategoricalSemanticDto::Well => "Well",
+                                RockPhysicsCategoricalSemanticDto::Wellbore => "Wellbore",
+                                RockPhysicsCategoricalSemanticDto::Facies => "Facies",
+                            }
+                            .to_string(),
+                        )
+                    }),
+                    semantic: binding.semantic,
+                    categories: match binding.semantic {
+                        RockPhysicsCategoricalSemanticDto::Well
+                        | RockPhysicsCategoricalSemanticDto::Wellbore => None,
+                        RockPhysicsCategoricalSemanticDto::Facies => {
+                            Some(Vec::<RockPhysicsCategoryDto>::new())
+                        }
+                    },
+                },
+            )
+        }
+        RockPhysicsColorRequestDto::Continuous(binding) => {
+            let (min_value, max_value) =
+                derive_rock_physics_range(samples.iter().filter_map(|sample| sample.color_value));
+            crate::project_contracts::RockPhysicsColorBindingDto::Continuous(
+                RockPhysicsContinuousColorBindingDto {
+                    label: binding.label.clone().or_else(|| {
+                        Some(default_rock_physics_axis_label(binding.semantic).to_string())
+                    }),
+                    semantic: binding.semantic,
+                    min_value,
+                    max_value,
+                    palette: None,
+                },
+            )
+        }
+    }
+}
+
+fn direct_rock_physics_source<'a>(
+    prepared: &'a RockPhysicsPreparedWell,
+    semantic_type: CurveSemanticType,
+) -> Option<&'a RockPhysicsCurveSource> {
+    prepared
+        .curves_by_semantic
+        .get(&semantic_type)
+        .and_then(|candidates| candidates.first())
+}
+
+fn primary_rock_physics_anchor<'a>(
+    prepared: &'a RockPhysicsPreparedWell,
+    x_semantic: RockPhysicsCurveSemanticDto,
+    y_semantic: RockPhysicsCurveSemanticDto,
+    color_semantic: Option<RockPhysicsCurveSemanticDto>,
+) -> Option<&'a RockPhysicsCurveSource> {
+    primary_rock_physics_source(prepared, x_semantic)
+        .or_else(|| primary_rock_physics_source(prepared, y_semantic))
+        .or_else(|| {
+            color_semantic.and_then(|semantic| primary_rock_physics_source(prepared, semantic))
+        })
+}
+
+fn primary_rock_physics_source<'a>(
+    prepared: &'a RockPhysicsPreparedWell,
+    semantic: RockPhysicsCurveSemanticDto,
+) -> Option<&'a RockPhysicsCurveSource> {
+    match semantic {
+        RockPhysicsCurveSemanticDto::PVelocity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::PVelocity)
+                .or_else(|| direct_rock_physics_source(prepared, CurveSemanticType::Sonic))
+        }
+        RockPhysicsCurveSemanticDto::SVelocity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::SVelocity)
+                .or_else(|| direct_rock_physics_source(prepared, CurveSemanticType::ShearSonic))
+        }
+        RockPhysicsCurveSemanticDto::VpVsRatio => {
+            direct_rock_physics_source(prepared, CurveSemanticType::VpVsRatio)
+                .or_else(|| {
+                    primary_rock_physics_source(prepared, RockPhysicsCurveSemanticDto::PVelocity)
+                })
+                .or_else(|| {
+                    primary_rock_physics_source(prepared, RockPhysicsCurveSemanticDto::SVelocity)
+                })
+        }
+        RockPhysicsCurveSemanticDto::AcousticImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::AcousticImpedance)
+                .or_else(|| {
+                    primary_rock_physics_source(prepared, RockPhysicsCurveSemanticDto::PVelocity)
+                })
+                .or_else(|| direct_rock_physics_source(prepared, CurveSemanticType::BulkDensity))
+        }
+        RockPhysicsCurveSemanticDto::ShearImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ShearImpedance)
+                .or_else(|| {
+                    primary_rock_physics_source(prepared, RockPhysicsCurveSemanticDto::SVelocity)
+                })
+                .or_else(|| direct_rock_physics_source(prepared, CurveSemanticType::BulkDensity))
+        }
+        RockPhysicsCurveSemanticDto::LambdaRho => {
+            direct_rock_physics_source(prepared, CurveSemanticType::LambdaRho)
+                .or_else(|| {
+                    primary_rock_physics_source(prepared, RockPhysicsCurveSemanticDto::PVelocity)
+                })
+                .or_else(|| {
+                    primary_rock_physics_source(prepared, RockPhysicsCurveSemanticDto::SVelocity)
+                })
+                .or_else(|| direct_rock_physics_source(prepared, CurveSemanticType::BulkDensity))
+        }
+        RockPhysicsCurveSemanticDto::MuRho => {
+            direct_rock_physics_source(prepared, CurveSemanticType::MuRho)
+                .or_else(|| {
+                    primary_rock_physics_source(prepared, RockPhysicsCurveSemanticDto::SVelocity)
+                })
+                .or_else(|| direct_rock_physics_source(prepared, CurveSemanticType::BulkDensity))
+        }
+        RockPhysicsCurveSemanticDto::BulkDensity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::BulkDensity)
+        }
+        RockPhysicsCurveSemanticDto::Resistivity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::DeepResistivity)
+                .or_else(|| {
+                    direct_rock_physics_source(prepared, CurveSemanticType::MediumResistivity)
+                })
+                .or_else(|| {
+                    direct_rock_physics_source(prepared, CurveSemanticType::ShallowResistivity)
+                })
+        }
+        RockPhysicsCurveSemanticDto::Sonic => {
+            direct_rock_physics_source(prepared, CurveSemanticType::Sonic)
+        }
+        RockPhysicsCurveSemanticDto::ShearSonic => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ShearSonic)
+        }
+        RockPhysicsCurveSemanticDto::PoissonsRatio => {
+            direct_rock_physics_source(prepared, CurveSemanticType::PoissonsRatio)
+                .or_else(|| {
+                    primary_rock_physics_source(prepared, RockPhysicsCurveSemanticDto::PVelocity)
+                })
+                .or_else(|| {
+                    primary_rock_physics_source(prepared, RockPhysicsCurveSemanticDto::SVelocity)
+                })
+        }
+        RockPhysicsCurveSemanticDto::NeutronPorosity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::NeutronPorosity)
+        }
+        RockPhysicsCurveSemanticDto::EffectivePorosity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::EffectivePorosity)
+        }
+        RockPhysicsCurveSemanticDto::WaterSaturation => {
+            direct_rock_physics_source(prepared, CurveSemanticType::WaterSaturation)
+        }
+        RockPhysicsCurveSemanticDto::VShale => {
+            direct_rock_physics_source(prepared, CurveSemanticType::VShale)
+        }
+        RockPhysicsCurveSemanticDto::GammaRay => {
+            direct_rock_physics_source(prepared, CurveSemanticType::GammaRay)
+        }
+    }
+}
+
+fn resolve_rock_physics_semantic_binding(
+    prepared: &RockPhysicsPreparedWell,
+    semantic: RockPhysicsCurveSemanticDto,
+    well_name: &str,
+) -> Result<ResolvedRockPhysicsSemanticBinding> {
+    let direct_curve_id =
+        primary_rock_physics_source(prepared, semantic).map(|source| source.curve_id.clone());
+    if !rock_physics_semantic_is_available(prepared, semantic) {
+        return Err(LasError::Validation(format!(
+            "well '{}' does not provide the required '{}' rock-physics semantic",
+            well_name,
+            rock_physics_curve_semantic_slug(semantic)
+        )));
+    }
+    let derived = !rock_physics_has_direct_binding(prepared, semantic);
+    Ok(ResolvedRockPhysicsSemanticBinding {
+        curve_id: direct_curve_id
+            .unwrap_or_else(|| format!("derived:{}", rock_physics_curve_semantic_slug(semantic))),
+        derived_channels: derived
+            .then_some(vec![rock_physics_curve_semantic_slug(semantic).to_string()])
+            .unwrap_or_default(),
+    })
+}
+
+fn rock_physics_has_direct_binding(
+    prepared: &RockPhysicsPreparedWell,
+    semantic: RockPhysicsCurveSemanticDto,
+) -> bool {
+    match semantic {
+        RockPhysicsCurveSemanticDto::PVelocity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::PVelocity).is_some()
+        }
+        RockPhysicsCurveSemanticDto::SVelocity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::SVelocity).is_some()
+        }
+        RockPhysicsCurveSemanticDto::VpVsRatio => {
+            direct_rock_physics_source(prepared, CurveSemanticType::VpVsRatio).is_some()
+        }
+        RockPhysicsCurveSemanticDto::AcousticImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::AcousticImpedance).is_some()
+        }
+        RockPhysicsCurveSemanticDto::ShearImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ShearImpedance).is_some()
+        }
+        RockPhysicsCurveSemanticDto::LambdaRho => {
+            direct_rock_physics_source(prepared, CurveSemanticType::LambdaRho).is_some()
+        }
+        RockPhysicsCurveSemanticDto::MuRho => {
+            direct_rock_physics_source(prepared, CurveSemanticType::MuRho).is_some()
+        }
+        RockPhysicsCurveSemanticDto::BulkDensity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::BulkDensity).is_some()
+        }
+        RockPhysicsCurveSemanticDto::Resistivity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::DeepResistivity).is_some()
+                || direct_rock_physics_source(prepared, CurveSemanticType::MediumResistivity)
+                    .is_some()
+                || direct_rock_physics_source(prepared, CurveSemanticType::ShallowResistivity)
+                    .is_some()
+        }
+        RockPhysicsCurveSemanticDto::Sonic => {
+            direct_rock_physics_source(prepared, CurveSemanticType::Sonic).is_some()
+        }
+        RockPhysicsCurveSemanticDto::ShearSonic => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ShearSonic).is_some()
+        }
+        RockPhysicsCurveSemanticDto::PoissonsRatio => {
+            direct_rock_physics_source(prepared, CurveSemanticType::PoissonsRatio).is_some()
+        }
+        RockPhysicsCurveSemanticDto::NeutronPorosity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::NeutronPorosity).is_some()
+        }
+        RockPhysicsCurveSemanticDto::EffectivePorosity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::EffectivePorosity).is_some()
+        }
+        RockPhysicsCurveSemanticDto::WaterSaturation => {
+            direct_rock_physics_source(prepared, CurveSemanticType::WaterSaturation).is_some()
+        }
+        RockPhysicsCurveSemanticDto::VShale => {
+            direct_rock_physics_source(prepared, CurveSemanticType::VShale).is_some()
+        }
+        RockPhysicsCurveSemanticDto::GammaRay => {
+            direct_rock_physics_source(prepared, CurveSemanticType::GammaRay).is_some()
+        }
+    }
+}
+
+fn rock_physics_semantic_is_available(
+    prepared: &RockPhysicsPreparedWell,
+    semantic: RockPhysicsCurveSemanticDto,
+) -> bool {
+    match semantic {
+        RockPhysicsCurveSemanticDto::PVelocity => {
+            primary_rock_physics_source(prepared, RockPhysicsCurveSemanticDto::PVelocity).is_some()
+        }
+        RockPhysicsCurveSemanticDto::SVelocity => {
+            primary_rock_physics_source(prepared, RockPhysicsCurveSemanticDto::SVelocity).is_some()
+        }
+        RockPhysicsCurveSemanticDto::VpVsRatio => {
+            direct_rock_physics_source(prepared, CurveSemanticType::VpVsRatio).is_some()
+                || (rock_physics_semantic_is_available(
+                    prepared,
+                    RockPhysicsCurveSemanticDto::PVelocity,
+                ) && rock_physics_semantic_is_available(
+                    prepared,
+                    RockPhysicsCurveSemanticDto::SVelocity,
+                ))
+        }
+        RockPhysicsCurveSemanticDto::AcousticImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::AcousticImpedance).is_some()
+                || (rock_physics_semantic_is_available(
+                    prepared,
+                    RockPhysicsCurveSemanticDto::PVelocity,
+                ) && rock_physics_semantic_is_available(
+                    prepared,
+                    RockPhysicsCurveSemanticDto::BulkDensity,
+                ))
+        }
+        RockPhysicsCurveSemanticDto::ShearImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ShearImpedance).is_some()
+                || (rock_physics_semantic_is_available(
+                    prepared,
+                    RockPhysicsCurveSemanticDto::SVelocity,
+                ) && rock_physics_semantic_is_available(
+                    prepared,
+                    RockPhysicsCurveSemanticDto::BulkDensity,
+                ))
+        }
+        RockPhysicsCurveSemanticDto::LambdaRho => {
+            direct_rock_physics_source(prepared, CurveSemanticType::LambdaRho).is_some()
+                || (rock_physics_semantic_is_available(
+                    prepared,
+                    RockPhysicsCurveSemanticDto::PVelocity,
+                ) && rock_physics_semantic_is_available(
+                    prepared,
+                    RockPhysicsCurveSemanticDto::SVelocity,
+                ) && rock_physics_semantic_is_available(
+                    prepared,
+                    RockPhysicsCurveSemanticDto::BulkDensity,
+                ))
+        }
+        RockPhysicsCurveSemanticDto::MuRho => {
+            direct_rock_physics_source(prepared, CurveSemanticType::MuRho).is_some()
+                || (rock_physics_semantic_is_available(
+                    prepared,
+                    RockPhysicsCurveSemanticDto::SVelocity,
+                ) && rock_physics_semantic_is_available(
+                    prepared,
+                    RockPhysicsCurveSemanticDto::BulkDensity,
+                ))
+        }
+        RockPhysicsCurveSemanticDto::PoissonsRatio => {
+            direct_rock_physics_source(prepared, CurveSemanticType::PoissonsRatio).is_some()
+                || rock_physics_semantic_is_available(
+                    prepared,
+                    RockPhysicsCurveSemanticDto::VpVsRatio,
+                )
+        }
+        _ => primary_rock_physics_source(prepared, semantic).is_some(),
+    }
+}
+
+fn collect_derived_channels<'a>(
+    bindings: [Option<&'a ResolvedRockPhysicsSemanticBinding>; 3],
+) -> Vec<String> {
+    let mut result = Vec::new();
+    for binding in bindings.into_iter().flatten() {
+        for channel in &binding.derived_channels {
+            if !result.contains(channel) {
+                result.push(channel.clone());
+            }
+        }
+    }
+    result
+}
+
+fn derive_rock_physics_range<I>(values: I) -> (Option<f64>, Option<f64>)
+where
+    I: IntoIterator<Item = f64>,
+{
+    let mut min_value = f64::INFINITY;
+    let mut max_value = f64::NEG_INFINITY;
+
+    for value in values {
+        if !value.is_finite() {
+            continue;
+        }
+        min_value = min_value.min(value);
+        max_value = max_value.max(value);
+    }
+
+    if min_value.is_infinite() || max_value.is_infinite() {
+        (None, None)
+    } else {
+        (Some(min_value), Some(max_value))
+    }
+}
+
+fn rock_physics_value_at_depth(
+    prepared: &RockPhysicsPreparedWell,
+    semantic: RockPhysicsCurveSemanticDto,
+    depth_m: f64,
+) -> Option<f64> {
+    match semantic {
+        RockPhysicsCurveSemanticDto::PVelocity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::PVelocity)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+                .or_else(|| {
+                    direct_rock_physics_source(prepared, CurveSemanticType::Sonic).and_then(
+                        |source| {
+                            interpolate_prepared_curve(&source.prepared, depth_m).and_then(
+                                |value| {
+                                    sonic_value_to_velocity_m_s(value, source.curve.unit.as_deref())
+                                },
+                            )
+                        },
+                    )
+                })
+        }
+        RockPhysicsCurveSemanticDto::SVelocity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::SVelocity)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+                .or_else(|| {
+                    direct_rock_physics_source(prepared, CurveSemanticType::ShearSonic).and_then(
+                        |source| {
+                            interpolate_prepared_curve(&source.prepared, depth_m).and_then(
+                                |value| {
+                                    sonic_value_to_velocity_m_s(value, source.curve.unit.as_deref())
+                                },
+                            )
+                        },
+                    )
+                })
+        }
+        RockPhysicsCurveSemanticDto::VpVsRatio => {
+            direct_rock_physics_source(prepared, CurveSemanticType::VpVsRatio)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+                .or_else(|| {
+                    let vp = rock_physics_value_at_depth(
+                        prepared,
+                        RockPhysicsCurveSemanticDto::PVelocity,
+                        depth_m,
+                    )?;
+                    let vs = rock_physics_value_at_depth(
+                        prepared,
+                        RockPhysicsCurveSemanticDto::SVelocity,
+                        depth_m,
+                    )?;
+                    (vs > 0.0).then_some(vp / vs)
+                })
+        }
+        RockPhysicsCurveSemanticDto::AcousticImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::AcousticImpedance)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+                .or_else(|| {
+                    let vp = rock_physics_value_at_depth(
+                        prepared,
+                        RockPhysicsCurveSemanticDto::PVelocity,
+                        depth_m,
+                    )?;
+                    let density = rock_physics_value_at_depth(
+                        prepared,
+                        RockPhysicsCurveSemanticDto::BulkDensity,
+                        depth_m,
+                    )?;
+                    Some(vp * density)
+                })
+        }
+        RockPhysicsCurveSemanticDto::ShearImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ShearImpedance)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+                .or_else(|| {
+                    let vs = rock_physics_value_at_depth(
+                        prepared,
+                        RockPhysicsCurveSemanticDto::SVelocity,
+                        depth_m,
+                    )?;
+                    let density = rock_physics_value_at_depth(
+                        prepared,
+                        RockPhysicsCurveSemanticDto::BulkDensity,
+                        depth_m,
+                    )?;
+                    Some(vs * density)
+                })
+        }
+        RockPhysicsCurveSemanticDto::LambdaRho => {
+            direct_rock_physics_source(prepared, CurveSemanticType::LambdaRho)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+                .or_else(|| {
+                    let vp = rock_physics_value_at_depth(
+                        prepared,
+                        RockPhysicsCurveSemanticDto::PVelocity,
+                        depth_m,
+                    )?;
+                    let vs = rock_physics_value_at_depth(
+                        prepared,
+                        RockPhysicsCurveSemanticDto::SVelocity,
+                        depth_m,
+                    )?;
+                    let density = rock_physics_value_at_depth(
+                        prepared,
+                        RockPhysicsCurveSemanticDto::BulkDensity,
+                        depth_m,
+                    )?;
+                    let vp_km = vp / 1000.0;
+                    let vs_km = vs / 1000.0;
+                    Some(density * (vp_km * vp_km - (2.0 * vs_km * vs_km)) * 7.0)
+                })
+        }
+        RockPhysicsCurveSemanticDto::MuRho => {
+            direct_rock_physics_source(prepared, CurveSemanticType::MuRho)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+                .or_else(|| {
+                    let vs = rock_physics_value_at_depth(
+                        prepared,
+                        RockPhysicsCurveSemanticDto::SVelocity,
+                        depth_m,
+                    )?;
+                    let density = rock_physics_value_at_depth(
+                        prepared,
+                        RockPhysicsCurveSemanticDto::BulkDensity,
+                        depth_m,
+                    )?;
+                    let vs_km = vs / 1000.0;
+                    Some(density * vs_km * vs_km * 7.0)
+                })
+        }
+        RockPhysicsCurveSemanticDto::BulkDensity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::BulkDensity)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+                .and_then(normalize_density_gcc)
+        }
+        RockPhysicsCurveSemanticDto::Resistivity => primary_rock_physics_source(prepared, semantic)
+            .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m)),
+        RockPhysicsCurveSemanticDto::Sonic => {
+            direct_rock_physics_source(prepared, CurveSemanticType::Sonic)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+        }
+        RockPhysicsCurveSemanticDto::ShearSonic => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ShearSonic)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+        }
+        RockPhysicsCurveSemanticDto::PoissonsRatio => {
+            direct_rock_physics_source(prepared, CurveSemanticType::PoissonsRatio)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+                .or_else(|| {
+                    let ratio = rock_physics_value_at_depth(
+                        prepared,
+                        RockPhysicsCurveSemanticDto::VpVsRatio,
+                        depth_m,
+                    )?;
+                    let squared = ratio * ratio;
+                    let denominator = 2.0 * (squared - 1.0);
+                    (denominator.abs() > 1e-6).then_some((squared - 2.0) / denominator)
+                })
+        }
+        RockPhysicsCurveSemanticDto::NeutronPorosity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::NeutronPorosity)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+        }
+        RockPhysicsCurveSemanticDto::EffectivePorosity => {
+            direct_rock_physics_source(prepared, CurveSemanticType::EffectivePorosity)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+        }
+        RockPhysicsCurveSemanticDto::WaterSaturation => {
+            direct_rock_physics_source(prepared, CurveSemanticType::WaterSaturation)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+        }
+        RockPhysicsCurveSemanticDto::VShale => {
+            direct_rock_physics_source(prepared, CurveSemanticType::VShale)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+        }
+        RockPhysicsCurveSemanticDto::GammaRay => {
+            direct_rock_physics_source(prepared, CurveSemanticType::GammaRay)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+        }
+    }
+}
+
+fn sonic_value_to_velocity_m_s(raw_value: f64, unit: Option<&str>) -> Option<f64> {
+    if !raw_value.is_finite() || raw_value <= 0.0 {
+        return None;
+    }
+    let normalized = unit.unwrap_or_default().trim().to_ascii_lowercase();
+    if normalized.contains("us/ft") {
+        Some(304_800.0 / raw_value)
+    } else {
+        Some(1_000_000.0 / raw_value)
+    }
+}
+
+fn normalize_density_gcc(value: f64) -> Option<f64> {
+    if !value.is_finite() || value <= 0.0 {
+        return None;
+    }
+    if value > 10.0 {
+        Some(value / 1000.0)
+    } else {
+        Some(value)
     }
 }
 
@@ -9411,6 +11674,157 @@ mod tests {
                 .iter()
                 .any(|note| note.contains("computed from density"))
         );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn run_compute_dispatches_to_python_operator_package() {
+        let root = temp_project_root("run_compute_dispatches_to_python_operator_package");
+        let package_root = root.join("python-operator");
+        fs::create_dir_all(&package_root).unwrap();
+
+        let manifest_path = package_root.join("operator-package.json");
+        let entrypoint_path = package_root.join("acme_ops.py");
+        fs::write(
+            &entrypoint_path,
+            r#"from ophiolite_sdk import OperatorRegistry, computed_curve
+import sys
+
+registry = OperatorRegistry()
+
+@registry.register("acme:double")
+def double_curve(request):
+    if sys.prefix == sys.base_prefix:
+        raise RuntimeError("python operator did not run inside a virtual environment")
+    curve = request.payload["inputs"]["input_curve"]
+    factor = float(request.parameters.get("factor", 2.0))
+    mnemonic = request.payload.get("output_mnemonic") or "DTX"
+    values = [None if value is None else value * factor for value in curve["values"]]
+    return computed_curve(
+        mnemonic,
+        values,
+        original_mnemonic=mnemonic,
+        unit=curve.get("unit"),
+        description="External double",
+    )
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "schema_version": 1,
+                "package_name": "acme-tools",
+                "package_version": "0.1.0",
+                "provider": "acme",
+                "runtime": "python",
+                "compatibility": { "ophiolite_api": env!("CARGO_PKG_VERSION") },
+                "entrypoint": "acme_ops.py",
+                "operators": [
+                    {
+                        "id": "acme:double",
+                        "provider": "acme",
+                        "name": "Double Curve",
+                        "asset_family": "Log",
+                        "category": "Demo",
+                        "description": "Doubles a selected curve.",
+                        "default_output_mnemonic": "DTX",
+                        "output_curve_type": "Computed",
+                        "input_specs": [
+                            {
+                                "SingleCurve": {
+                                    "parameter_name": "input_curve",
+                                    "allowed_types": []
+                                }
+                            }
+                        ],
+                        "parameters": [
+                            {
+                                "Number": {
+                                    "name": "factor",
+                                    "label": "Factor",
+                                    "description": "Scale factor",
+                                    "default": 2.0,
+                                    "min": 0.0,
+                                    "max": 10.0,
+                                    "unit": null
+                                }
+                            }
+                        ],
+                        "output_lifecycle": "derived_asset",
+                        "deterministic": true,
+                        "stability": "preview",
+                        "tags": ["demo"]
+                    }
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let las_path = workspace_root_path()
+            .unwrap()
+            .join("examples")
+            .join("sample.las");
+
+        let mut project = OphioliteProject::create(&root).unwrap();
+        let import = project.import_las(&las_path, Some("logs")).unwrap();
+        let install = project.install_operator_package(&manifest_path).unwrap();
+        let installed_manifest =
+            load_operator_package_manifest(&install.installed_manifest_path).unwrap();
+        assert_eq!(
+            installed_manifest.entrypoint.as_deref(),
+            Some("acme_ops.py")
+        );
+        assert!(install.python_environment_path.is_some());
+        assert!(PathBuf::from(install.python_environment_path.clone().unwrap()).exists());
+        assert!(
+            PathBuf::from(&install.installed_manifest_path)
+                .with_file_name("acme_ops.py")
+                .exists()
+        );
+
+        let catalog = project.list_compute_catalog(&import.asset.id).unwrap();
+        let operator = catalog
+            .functions
+            .iter()
+            .find(|entry| entry.metadata.id == "acme:double")
+            .unwrap();
+        assert!(matches!(
+            operator.availability,
+            ophiolite_compute::ComputeAvailability::Available
+        ));
+
+        let result = project
+            .run_compute(&ProjectComputeRunRequest {
+                source_asset_id: import.asset.id.clone(),
+                function_id: "acme:double".to_string(),
+                curve_bindings: BTreeMap::from([("input_curve".to_string(), "DT".to_string())]),
+                parameters: BTreeMap::from([(
+                    "factor".to_string(),
+                    ComputeParameterValue::Number(2.0),
+                )]),
+                output_collection_name: Some("Derived External".to_string()),
+                output_mnemonic: Some("DTX".to_string()),
+            })
+            .unwrap();
+
+        assert_eq!(result.execution.function_id, "acme:double");
+        assert_eq!(
+            result.execution.operator_package.as_deref(),
+            Some("acme-tools")
+        );
+        assert_eq!(
+            result.execution.operator_runtime,
+            Some(OperatorRuntimeKind::Python)
+        );
+        assert_eq!(result.execution.output_curve_name, "DTX");
+
+        let derived_package = open_package(&result.asset.package_path).unwrap();
+        let derived_curve = derived_package.file().curve("DTX").unwrap();
+        let derived_values = derived_curve.numeric_data().unwrap();
+        assert_eq!(derived_values.first().copied(), Some(246.9));
 
         let _ = fs::remove_dir_all(&root);
     }

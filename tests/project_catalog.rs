@@ -4,7 +4,9 @@ use ophiolite::{
     CoordinateReferenceBinding, CoordinateReferenceDescriptor, CoordinateReferenceSource,
     CurveSemanticType, DatasetKind, DepthRangeQuery, GeometryProvenance, HeaderFieldSpec,
     OphioliteProject, ProjectComputeRunRequest, ProjectSurveyMapRequestDto, ProjectedPoint2,
-    ProjectedPolygon2, ProjectedVector2, SourceIdentity, SurveyGridTransform,
+    ProjectedPolygon2, ProjectedVector2, RockPhysicsColorRequestDto,
+    RockPhysicsContinuousColorRequestDto, RockPhysicsCrossplotRequestDto,
+    RockPhysicsCurveSemanticDto, RockPhysicsTemplateIdDto, SourceIdentity, SurveyGridTransform,
     SurveyMapSpatialAvailabilityDto, SurveyMapTransformStatusDto, SurveySpatialAvailability,
     SurveySpatialDescriptor, TbvolManifest, VolumeAxes, VolumeMetadata, WellAzimuthReferenceKind,
     WellPanelRequestDto, WellboreAnchorKind, WellboreAnchorReference, WellboreGeometry,
@@ -425,6 +427,91 @@ fn project_resolves_well_panel_source_dto_for_frontend_workflows() {
     assert_eq!(well.top_sets[0].rows.len(), 2);
     assert_eq!(well.pressure_observations[0].rows.len(), 2);
     assert_eq!(well.drilling_observations[0].rows.len(), 2);
+}
+
+#[test]
+fn project_resolves_rock_physics_crossplot_source_for_semantic_templates() {
+    let root =
+        temp_project_root("project_resolves_rock_physics_crossplot_source_for_semantic_templates");
+    fs::create_dir_all(&root).unwrap();
+    let las_path = root.join("rock_physics.las");
+    fs::write(
+        &las_path,
+        r#"~Version Information
+ VERS.                  2.0 : CWLS LOG ASCII STANDARD - VERSION 2.0
+ WRAP.                   NO : ONE LINE PER DEPTH STEP
+~Well Information
+ STRT.M              1000.0 :
+ STOP.M              1040.0 :
+ STEP.M                10.0 :
+ NULL.             -999.2500 :
+ WELL.               Rock-1 :
+ UWI.           ROCK-UWI-01 :
+~Curve Information
+ DEPT.M                     : Depth
+ VP  .M/S                   : P-wave Velocity
+ VS  .M/S                   : S-wave Velocity
+ RHOB.G/C3                  : Bulk Density
+ GR  .GAPI                  : Gamma Ray
+ NPHI.PCT                   : Neutron Porosity
+~A
+1000.0 3200.0 1800.0 2.24 42.0 28.0
+1010.0 3300.0 1880.0 2.26 48.0 26.5
+1020.0 3450.0 1975.0 2.29 61.0 24.0
+1030.0 3600.0 2080.0 2.33 77.0 21.0
+1040.0 3740.0 2190.0 2.37 92.0 18.5
+"#,
+    )
+    .unwrap();
+
+    let mut project = OphioliteProject::create(&root).unwrap();
+    let imported = project.import_las(&las_path, Some("rock-logs")).unwrap();
+
+    let resolved = project
+        .resolve_rock_physics_crossplot_source(&RockPhysicsCrossplotRequestDto {
+            schema_version: 1,
+            wellbore_ids: vec![imported.resolution.wellbore_id.0.clone()],
+            template_id: RockPhysicsTemplateIdDto::VpVsVsAi,
+            x_semantic: RockPhysicsCurveSemanticDto::AcousticImpedance,
+            y_semantic: RockPhysicsCurveSemanticDto::VpVsRatio,
+            color_binding: RockPhysicsColorRequestDto::Continuous(
+                RockPhysicsContinuousColorRequestDto {
+                    label: None,
+                    semantic: RockPhysicsCurveSemanticDto::GammaRay,
+                },
+            ),
+            depth_min: None,
+            depth_max: None,
+            title: None,
+            subtitle: None,
+        })
+        .unwrap();
+
+    assert_eq!(resolved.schema_version, 1);
+    assert_eq!(resolved.wells.len(), 1);
+    assert_eq!(resolved.source_bindings.len(), 1);
+    assert!(!resolved.samples.is_empty());
+    assert_eq!(resolved.template_id, RockPhysicsTemplateIdDto::VpVsVsAi);
+    assert_eq!(
+        resolved.x_axis.semantic,
+        RockPhysicsCurveSemanticDto::AcousticImpedance
+    );
+    assert_eq!(
+        resolved.y_axis.semantic,
+        RockPhysicsCurveSemanticDto::VpVsRatio
+    );
+    assert!(
+        resolved
+            .samples
+            .iter()
+            .all(|sample| sample.color_value.is_some() && sample.source_binding_id.is_some())
+    );
+    assert!(
+        resolved.source_bindings[0]
+            .derived_channels
+            .as_ref()
+            .is_some_and(|channels| channels.iter().any(|entry| entry == "acoustic-impedance"))
+    );
 }
 
 #[test]

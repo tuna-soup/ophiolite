@@ -6,7 +6,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@ophiolite/charts-data-models": "file:../data-models"
+    "@ophiolite/charts-data-models": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit"

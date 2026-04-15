@@ -1,4 +1,5 @@
 {
+  "rockPhysicsCrossplotContractVersion": 1,
   "sectionWellOverlayContractVersion": 1,
   "surveyMapContractVersion": 2,
   "wellPanelContractVersion": 1,
@@ -4130,6 +4131,2122 @@
                 "null"
               ],
               "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "RockPhysicsTemplateIdDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsTemplateIdDto",
+      "type": "string",
+      "enum": [
+        "vp-vs-vs-ai",
+        "ai-vs-si",
+        "vp-vs-vs",
+        "porosity-vs-vp",
+        "lambda-rho-vs-mu-rho",
+        "neutron-porosity-vs-bulk-density",
+        "phi-vs-ai",
+        "pr-vs-ai",
+        "vp-vs-density"
+      ]
+    },
+    "RockPhysicsCurveSemanticDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsCurveSemanticDto",
+      "type": "string",
+      "enum": [
+        "p-velocity",
+        "s-velocity",
+        "vp-vs-ratio",
+        "acoustic-impedance",
+        "shear-impedance",
+        "lambda-rho",
+        "mu-rho",
+        "bulk-density",
+        "resistivity",
+        "sonic",
+        "shear-sonic",
+        "poissons-ratio",
+        "neutron-porosity",
+        "effective-porosity",
+        "water-saturation",
+        "v-shale",
+        "gamma-ray"
+      ]
+    },
+    "RockPhysicsCategoricalSemanticDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsCategoricalSemanticDto",
+      "type": "string",
+      "enum": [
+        "well",
+        "wellbore",
+        "facies"
+      ]
+    },
+    "RockPhysicsPointSymbolDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsPointSymbolDto",
+      "type": "string",
+      "enum": [
+        "circle",
+        "square",
+        "diamond",
+        "triangle"
+      ]
+    },
+    "RockPhysicsAxisDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsAxisDto",
+      "type": "object",
+      "required": [
+        "semantic"
+      ],
+      "properties": {
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "min_value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "semantic": {
+          "$ref": "#/definitions/RockPhysicsCurveSemanticDto"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "definitions": {
+        "RockPhysicsCurveSemanticDto": {
+          "type": "string",
+          "enum": [
+            "p-velocity",
+            "s-velocity",
+            "vp-vs-ratio",
+            "acoustic-impedance",
+            "shear-impedance",
+            "lambda-rho",
+            "mu-rho",
+            "bulk-density",
+            "resistivity",
+            "sonic",
+            "shear-sonic",
+            "poissons-ratio",
+            "neutron-porosity",
+            "effective-porosity",
+            "water-saturation",
+            "v-shale",
+            "gamma-ray"
+          ]
+        }
+      }
+    },
+    "RockPhysicsCategoryDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsCategoryDto",
+      "type": "object",
+      "required": [
+        "color",
+        "id",
+        "label"
+      ],
+      "properties": {
+        "color": {
+          "type": "string"
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "label": {
+          "type": "string"
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RockPhysicsPointSymbolDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "definitions": {
+        "RockPhysicsPointSymbolDto": {
+          "type": "string",
+          "enum": [
+            "circle",
+            "square",
+            "diamond",
+            "triangle"
+          ]
+        }
+      }
+    },
+    "RockPhysicsCategoricalColorBindingDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsCategoricalColorBindingDto",
+      "type": "object",
+      "required": [
+        "semantic"
+      ],
+      "properties": {
+        "categories": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/RockPhysicsCategoryDto"
+          }
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "semantic": {
+          "$ref": "#/definitions/RockPhysicsCategoricalSemanticDto"
+        }
+      },
+      "definitions": {
+        "RockPhysicsCategoricalSemanticDto": {
+          "type": "string",
+          "enum": [
+            "well",
+            "wellbore",
+            "facies"
+          ]
+        },
+        "RockPhysicsCategoryDto": {
+          "type": "object",
+          "required": [
+            "color",
+            "id",
+            "label"
+          ],
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "label": {
+              "type": "string"
+            },
+            "symbol": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RockPhysicsPointSymbolDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "RockPhysicsPointSymbolDto": {
+          "type": "string",
+          "enum": [
+            "circle",
+            "square",
+            "diamond",
+            "triangle"
+          ]
+        }
+      }
+    },
+    "RockPhysicsCategoricalColorRequestDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsCategoricalColorRequestDto",
+      "type": "object",
+      "required": [
+        "semantic"
+      ],
+      "properties": {
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "semantic": {
+          "$ref": "#/definitions/RockPhysicsCategoricalSemanticDto"
+        }
+      },
+      "definitions": {
+        "RockPhysicsCategoricalSemanticDto": {
+          "type": "string",
+          "enum": [
+            "well",
+            "wellbore",
+            "facies"
+          ]
+        }
+      }
+    },
+    "RockPhysicsContinuousColorBindingDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsContinuousColorBindingDto",
+      "type": "object",
+      "required": [
+        "semantic"
+      ],
+      "properties": {
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "min_value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "palette": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "semantic": {
+          "$ref": "#/definitions/RockPhysicsCurveSemanticDto"
+        }
+      },
+      "definitions": {
+        "RockPhysicsCurveSemanticDto": {
+          "type": "string",
+          "enum": [
+            "p-velocity",
+            "s-velocity",
+            "vp-vs-ratio",
+            "acoustic-impedance",
+            "shear-impedance",
+            "lambda-rho",
+            "mu-rho",
+            "bulk-density",
+            "resistivity",
+            "sonic",
+            "shear-sonic",
+            "poissons-ratio",
+            "neutron-porosity",
+            "effective-porosity",
+            "water-saturation",
+            "v-shale",
+            "gamma-ray"
+          ]
+        }
+      }
+    },
+    "RockPhysicsContinuousColorRequestDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsContinuousColorRequestDto",
+      "type": "object",
+      "required": [
+        "semantic"
+      ],
+      "properties": {
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "semantic": {
+          "$ref": "#/definitions/RockPhysicsCurveSemanticDto"
+        }
+      },
+      "definitions": {
+        "RockPhysicsCurveSemanticDto": {
+          "type": "string",
+          "enum": [
+            "p-velocity",
+            "s-velocity",
+            "vp-vs-ratio",
+            "acoustic-impedance",
+            "shear-impedance",
+            "lambda-rho",
+            "mu-rho",
+            "bulk-density",
+            "resistivity",
+            "sonic",
+            "shear-sonic",
+            "poissons-ratio",
+            "neutron-porosity",
+            "effective-porosity",
+            "water-saturation",
+            "v-shale",
+            "gamma-ray"
+          ]
+        }
+      }
+    },
+    "RockPhysicsColorBindingDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsColorBindingDto",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "semantic"
+          ],
+          "properties": {
+            "categories": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/definitions/RockPhysicsCategoryDto"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "categorical"
+              ]
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "semantic": {
+              "$ref": "#/definitions/RockPhysicsCategoricalSemanticDto"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "semantic"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "continuous"
+              ]
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "max_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "min_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "palette": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "semantic": {
+              "$ref": "#/definitions/RockPhysicsCurveSemanticDto"
+            }
+          }
+        }
+      ],
+      "definitions": {
+        "RockPhysicsCategoricalSemanticDto": {
+          "type": "string",
+          "enum": [
+            "well",
+            "wellbore",
+            "facies"
+          ]
+        },
+        "RockPhysicsCategoryDto": {
+          "type": "object",
+          "required": [
+            "color",
+            "id",
+            "label"
+          ],
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "label": {
+              "type": "string"
+            },
+            "symbol": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RockPhysicsPointSymbolDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "RockPhysicsCurveSemanticDto": {
+          "type": "string",
+          "enum": [
+            "p-velocity",
+            "s-velocity",
+            "vp-vs-ratio",
+            "acoustic-impedance",
+            "shear-impedance",
+            "lambda-rho",
+            "mu-rho",
+            "bulk-density",
+            "resistivity",
+            "sonic",
+            "shear-sonic",
+            "poissons-ratio",
+            "neutron-porosity",
+            "effective-porosity",
+            "water-saturation",
+            "v-shale",
+            "gamma-ray"
+          ]
+        },
+        "RockPhysicsPointSymbolDto": {
+          "type": "string",
+          "enum": [
+            "circle",
+            "square",
+            "diamond",
+            "triangle"
+          ]
+        }
+      }
+    },
+    "RockPhysicsColorRequestDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsColorRequestDto",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "semantic"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "categorical"
+              ]
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "semantic": {
+              "$ref": "#/definitions/RockPhysicsCategoricalSemanticDto"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "semantic"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "continuous"
+              ]
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "semantic": {
+              "$ref": "#/definitions/RockPhysicsCurveSemanticDto"
+            }
+          }
+        }
+      ],
+      "definitions": {
+        "RockPhysicsCategoricalSemanticDto": {
+          "type": "string",
+          "enum": [
+            "well",
+            "wellbore",
+            "facies"
+          ]
+        },
+        "RockPhysicsCurveSemanticDto": {
+          "type": "string",
+          "enum": [
+            "p-velocity",
+            "s-velocity",
+            "vp-vs-ratio",
+            "acoustic-impedance",
+            "shear-impedance",
+            "lambda-rho",
+            "mu-rho",
+            "bulk-density",
+            "resistivity",
+            "sonic",
+            "shear-sonic",
+            "poissons-ratio",
+            "neutron-porosity",
+            "effective-porosity",
+            "water-saturation",
+            "v-shale",
+            "gamma-ray"
+          ]
+        }
+      }
+    },
+    "RockPhysicsWellDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsWellDto",
+      "type": "object",
+      "required": [
+        "name",
+        "well_id",
+        "wellbore_id"
+      ],
+      "properties": {
+        "color": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "well_id": {
+          "type": "string"
+        },
+        "wellbore_id": {
+          "type": "string"
+        }
+      }
+    },
+    "RockPhysicsSourceBindingDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsSourceBindingDto",
+      "type": "object",
+      "required": [
+        "id",
+        "well_id",
+        "wellbore_id",
+        "x_curve_id",
+        "y_curve_id"
+      ],
+      "properties": {
+        "color_curve_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "derived_channels": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "well_id": {
+          "type": "string"
+        },
+        "wellbore_id": {
+          "type": "string"
+        },
+        "x_curve_id": {
+          "type": "string"
+        },
+        "y_curve_id": {
+          "type": "string"
+        }
+      }
+    },
+    "RockPhysicsSampleDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsSampleDto",
+      "type": "object",
+      "required": [
+        "sample_depth_m",
+        "well_id",
+        "x_value",
+        "y_value"
+      ],
+      "properties": {
+        "color_category_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "color_value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "sample_depth_m": {
+          "type": "number",
+          "format": "double"
+        },
+        "source_binding_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "symbol_category_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "well_id": {
+          "type": "string"
+        },
+        "wellbore_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "x_value": {
+          "type": "number",
+          "format": "double"
+        },
+        "y_value": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "RockPhysicsInteractionThresholdsDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsInteractionThresholdsDto",
+      "type": "object",
+      "required": [
+        "exact_point_limit",
+        "progressive_point_limit"
+      ],
+      "properties": {
+        "exact_point_limit": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "progressive_point_limit": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "RockPhysicsTemplatePointDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsTemplatePointDto",
+      "type": "object",
+      "required": [
+        "x",
+        "y"
+      ],
+      "properties": {
+        "x": {
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "RockPhysicsTemplateLineDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsTemplateLineDto",
+      "type": "object",
+      "required": [
+        "color",
+        "id",
+        "label",
+        "points"
+      ],
+      "properties": {
+        "color": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RockPhysicsTemplatePointDto"
+          }
+        }
+      },
+      "definitions": {
+        "RockPhysicsTemplatePointDto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "RockPhysicsTextAlignDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsTextAlignDto",
+      "type": "string",
+      "enum": [
+        "left",
+        "center",
+        "right"
+      ]
+    },
+    "RockPhysicsTextBaselineDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsTextBaselineDto",
+      "type": "string",
+      "enum": [
+        "top",
+        "middle",
+        "bottom"
+      ]
+    },
+    "RockPhysicsTemplatePolylineOverlayDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsTemplatePolylineOverlayDto",
+      "type": "object",
+      "required": [
+        "color",
+        "id",
+        "points"
+      ],
+      "properties": {
+        "color": {
+          "type": "string"
+        },
+        "dashed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RockPhysicsTemplatePointDto"
+          }
+        },
+        "width": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        }
+      },
+      "definitions": {
+        "RockPhysicsTemplatePointDto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "RockPhysicsTemplatePolygonOverlayDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsTemplatePolygonOverlayDto",
+      "type": "object",
+      "required": [
+        "fill_color",
+        "id",
+        "points"
+      ],
+      "properties": {
+        "fill_color": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label_position": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RockPhysicsTemplatePointDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RockPhysicsTemplatePointDto"
+          }
+        },
+        "stroke_color": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "definitions": {
+        "RockPhysicsTemplatePointDto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "RockPhysicsTemplateTextOverlayDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsTemplateTextOverlayDto",
+      "type": "object",
+      "required": [
+        "color",
+        "id",
+        "text",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "align": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RockPhysicsTextAlignDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baseline": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RockPhysicsTextBaselineDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "color": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "rotation_deg": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "text": {
+          "type": "string"
+        },
+        "x": {
+          "type": "number",
+          "format": "double"
+        },
+        "y": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "definitions": {
+        "RockPhysicsTextAlignDto": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ]
+        },
+        "RockPhysicsTextBaselineDto": {
+          "type": "string",
+          "enum": [
+            "top",
+            "middle",
+            "bottom"
+          ]
+        }
+      }
+    },
+    "RockPhysicsTemplateOverlayDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsTemplateOverlayDto",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "color",
+            "id",
+            "kind",
+            "points"
+          ],
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "dashed": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "polyline"
+              ]
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/RockPhysicsTemplatePointDto"
+              }
+            },
+            "width": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "fill_color",
+            "id",
+            "kind",
+            "points"
+          ],
+          "properties": {
+            "fill_color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "polygon"
+              ]
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "label_position": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RockPhysicsTemplatePointDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/RockPhysicsTemplatePointDto"
+              }
+            },
+            "stroke_color": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "color",
+            "id",
+            "kind",
+            "text",
+            "x",
+            "y"
+          ],
+          "properties": {
+            "align": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RockPhysicsTextAlignDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "baseline": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RockPhysicsTextBaselineDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "text"
+              ]
+            },
+            "rotation_deg": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "text": {
+              "type": "string"
+            },
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      ],
+      "definitions": {
+        "RockPhysicsTemplatePointDto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "RockPhysicsTextAlignDto": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ]
+        },
+        "RockPhysicsTextBaselineDto": {
+          "type": "string",
+          "enum": [
+            "top",
+            "middle",
+            "bottom"
+          ]
+        }
+      }
+    },
+    "RockPhysicsCrossplotRequestDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "RockPhysicsCrossplotRequestDto",
+      "type": "object",
+      "required": [
+        "color_binding",
+        "schema_version",
+        "template_id",
+        "wellbore_ids",
+        "x_semantic",
+        "y_semantic"
+      ],
+      "properties": {
+        "color_binding": {
+          "$ref": "#/definitions/RockPhysicsColorRequestDto"
+        },
+        "depth_max": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "depth_min": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "subtitle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "template_id": {
+          "$ref": "#/definitions/RockPhysicsTemplateIdDto"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "wellbore_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "x_semantic": {
+          "$ref": "#/definitions/RockPhysicsCurveSemanticDto"
+        },
+        "y_semantic": {
+          "$ref": "#/definitions/RockPhysicsCurveSemanticDto"
+        }
+      },
+      "definitions": {
+        "RockPhysicsCategoricalSemanticDto": {
+          "type": "string",
+          "enum": [
+            "well",
+            "wellbore",
+            "facies"
+          ]
+        },
+        "RockPhysicsColorRequestDto": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "semantic"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "categorical"
+                  ]
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "semantic": {
+                  "$ref": "#/definitions/RockPhysicsCategoricalSemanticDto"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "semantic"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "continuous"
+                  ]
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "semantic": {
+                  "$ref": "#/definitions/RockPhysicsCurveSemanticDto"
+                }
+              }
+            }
+          ]
+        },
+        "RockPhysicsCurveSemanticDto": {
+          "type": "string",
+          "enum": [
+            "p-velocity",
+            "s-velocity",
+            "vp-vs-ratio",
+            "acoustic-impedance",
+            "shear-impedance",
+            "lambda-rho",
+            "mu-rho",
+            "bulk-density",
+            "resistivity",
+            "sonic",
+            "shear-sonic",
+            "poissons-ratio",
+            "neutron-porosity",
+            "effective-porosity",
+            "water-saturation",
+            "v-shale",
+            "gamma-ray"
+          ]
+        },
+        "RockPhysicsTemplateIdDto": {
+          "type": "string",
+          "enum": [
+            "vp-vs-vs-ai",
+            "ai-vs-si",
+            "vp-vs-vs",
+            "porosity-vs-vp",
+            "lambda-rho-vs-mu-rho",
+            "neutron-porosity-vs-bulk-density",
+            "phi-vs-ai",
+            "pr-vs-ai",
+            "vp-vs-density"
+          ]
+        }
+      }
+    },
+    "ResolvedRockPhysicsCrossplotSourceDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolvedRockPhysicsCrossplotSourceDto",
+      "type": "object",
+      "required": [
+        "color_binding",
+        "id",
+        "name",
+        "samples",
+        "schema_version",
+        "source_bindings",
+        "template_id",
+        "wells",
+        "x_axis",
+        "y_axis"
+      ],
+      "properties": {
+        "color_binding": {
+          "$ref": "#/definitions/RockPhysicsColorBindingDto"
+        },
+        "id": {
+          "type": "string"
+        },
+        "interaction_thresholds": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RockPhysicsInteractionThresholdsDto"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RockPhysicsSampleDto"
+          }
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "source_bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RockPhysicsSourceBindingDto"
+          }
+        },
+        "subtitle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "template_id": {
+          "$ref": "#/definitions/RockPhysicsTemplateIdDto"
+        },
+        "template_lines": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/RockPhysicsTemplateLineDto"
+          }
+        },
+        "template_overlays": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/RockPhysicsTemplateOverlayDto"
+          }
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "wells": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/RockPhysicsWellDto"
+          }
+        },
+        "x_axis": {
+          "$ref": "#/definitions/RockPhysicsAxisDto"
+        },
+        "y_axis": {
+          "$ref": "#/definitions/RockPhysicsAxisDto"
+        }
+      },
+      "definitions": {
+        "RockPhysicsAxisDto": {
+          "type": "object",
+          "required": [
+            "semantic"
+          ],
+          "properties": {
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "max_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "min_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "semantic": {
+              "$ref": "#/definitions/RockPhysicsCurveSemanticDto"
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "RockPhysicsCategoricalSemanticDto": {
+          "type": "string",
+          "enum": [
+            "well",
+            "wellbore",
+            "facies"
+          ]
+        },
+        "RockPhysicsCategoryDto": {
+          "type": "object",
+          "required": [
+            "color",
+            "id",
+            "label"
+          ],
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "label": {
+              "type": "string"
+            },
+            "symbol": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/RockPhysicsPointSymbolDto"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "RockPhysicsColorBindingDto": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "semantic"
+              ],
+              "properties": {
+                "categories": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "$ref": "#/definitions/RockPhysicsCategoryDto"
+                  }
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "categorical"
+                  ]
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "semantic": {
+                  "$ref": "#/definitions/RockPhysicsCategoricalSemanticDto"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "kind",
+                "semantic"
+              ],
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "continuous"
+                  ]
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "max_value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "format": "double"
+                },
+                "min_value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "format": "double"
+                },
+                "palette": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "semantic": {
+                  "$ref": "#/definitions/RockPhysicsCurveSemanticDto"
+                }
+              }
+            }
+          ]
+        },
+        "RockPhysicsCurveSemanticDto": {
+          "type": "string",
+          "enum": [
+            "p-velocity",
+            "s-velocity",
+            "vp-vs-ratio",
+            "acoustic-impedance",
+            "shear-impedance",
+            "lambda-rho",
+            "mu-rho",
+            "bulk-density",
+            "resistivity",
+            "sonic",
+            "shear-sonic",
+            "poissons-ratio",
+            "neutron-porosity",
+            "effective-porosity",
+            "water-saturation",
+            "v-shale",
+            "gamma-ray"
+          ]
+        },
+        "RockPhysicsInteractionThresholdsDto": {
+          "type": "object",
+          "required": [
+            "exact_point_limit",
+            "progressive_point_limit"
+          ],
+          "properties": {
+            "exact_point_limit": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "progressive_point_limit": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0.0
+            }
+          }
+        },
+        "RockPhysicsPointSymbolDto": {
+          "type": "string",
+          "enum": [
+            "circle",
+            "square",
+            "diamond",
+            "triangle"
+          ]
+        },
+        "RockPhysicsSampleDto": {
+          "type": "object",
+          "required": [
+            "sample_depth_m",
+            "well_id",
+            "x_value",
+            "y_value"
+          ],
+          "properties": {
+            "color_category_id": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "color_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "sample_depth_m": {
+              "type": "number",
+              "format": "double"
+            },
+            "source_binding_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "symbol_category_id": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "well_id": {
+              "type": "string"
+            },
+            "wellbore_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "x_value": {
+              "type": "number",
+              "format": "double"
+            },
+            "y_value": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "RockPhysicsSourceBindingDto": {
+          "type": "object",
+          "required": [
+            "id",
+            "well_id",
+            "wellbore_id",
+            "x_curve_id",
+            "y_curve_id"
+          ],
+          "properties": {
+            "color_curve_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "derived_channels": {
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "id": {
+              "type": "string"
+            },
+            "well_id": {
+              "type": "string"
+            },
+            "wellbore_id": {
+              "type": "string"
+            },
+            "x_curve_id": {
+              "type": "string"
+            },
+            "y_curve_id": {
+              "type": "string"
+            }
+          }
+        },
+        "RockPhysicsTemplateIdDto": {
+          "type": "string",
+          "enum": [
+            "vp-vs-vs-ai",
+            "ai-vs-si",
+            "vp-vs-vs",
+            "porosity-vs-vp",
+            "lambda-rho-vs-mu-rho",
+            "neutron-porosity-vs-bulk-density",
+            "phi-vs-ai",
+            "pr-vs-ai",
+            "vp-vs-density"
+          ]
+        },
+        "RockPhysicsTemplateLineDto": {
+          "type": "object",
+          "required": [
+            "color",
+            "id",
+            "label",
+            "points"
+          ],
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/RockPhysicsTemplatePointDto"
+              }
+            }
+          }
+        },
+        "RockPhysicsTemplateOverlayDto": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "color",
+                "id",
+                "kind",
+                "points"
+              ],
+              "properties": {
+                "color": {
+                  "type": "string"
+                },
+                "dashed": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "polyline"
+                  ]
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "points": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/RockPhysicsTemplatePointDto"
+                  }
+                },
+                "width": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "format": "double"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "fill_color",
+                "id",
+                "kind",
+                "points"
+              ],
+              "properties": {
+                "fill_color": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "polygon"
+                  ]
+                },
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "label_position": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/RockPhysicsTemplatePointDto"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "points": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/RockPhysicsTemplatePointDto"
+                  }
+                },
+                "stroke_color": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            {
+              "type": "object",
+              "required": [
+                "color",
+                "id",
+                "kind",
+                "text",
+                "x",
+                "y"
+              ],
+              "properties": {
+                "align": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/RockPhysicsTextAlignDto"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "baseline": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/definitions/RockPhysicsTextBaselineDto"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "color": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "text"
+                  ]
+                },
+                "rotation_deg": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "format": "double"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "x": {
+                  "type": "number",
+                  "format": "double"
+                },
+                "y": {
+                  "type": "number",
+                  "format": "double"
+                }
+              }
+            }
+          ]
+        },
+        "RockPhysicsTemplatePointDto": {
+          "type": "object",
+          "required": [
+            "x",
+            "y"
+          ],
+          "properties": {
+            "x": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "RockPhysicsTextAlignDto": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ]
+        },
+        "RockPhysicsTextBaselineDto": {
+          "type": "string",
+          "enum": [
+            "top",
+            "middle",
+            "bottom"
+          ]
+        },
+        "RockPhysicsWellDto": {
+          "type": "object",
+          "required": [
+            "name",
+            "well_id",
+            "wellbore_id"
+          ],
+          "properties": {
+            "color": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "well_id": {
+              "type": "string"
+            },
+            "wellbore_id": {
+              "type": "string"
             }
           }
         }

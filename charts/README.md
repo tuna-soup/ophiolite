@@ -12,6 +12,7 @@ Current chart families:
 - prestack gathers
 - survey maps
 - well correlation panels
+- rock physics crossplots
 
 ## Package Layout
 
@@ -29,6 +30,12 @@ Current chart families:
 - `@ophiolite/charts-demo`
 - `@ophiolite/charts-playground`
 - `@ophiolite/charts-benchmark`
+
+### First-Party Consumer
+
+The flagship first-party workflow demo lives outside the chart workspace at `../apps/traceboost-demo`.
+
+That app must consume the public chart packages the same way an external customer would.
 
 ## Boundary Rule
 
@@ -58,6 +65,8 @@ bun run dev:benchmark
 
 ## Embedding
 
-`@ophiolite/charts` exports the main Svelte wrapper surface, including `SeismicSectionChart`, `SeismicGatherChart`, `SurveyMapChart`, and `WellCorrelationPanelChart`.
+`@ophiolite/charts` exports the main Svelte wrapper surface, including `SeismicSectionChart`, `SeismicGatherChart`, `SurveyMapChart`, `WellCorrelationPanelChart`, and `RockPhysicsCrossplotChart`.
 
 Use `@ophiolite/charts/contracts` when you want the wrapper-layer adapters that translate canonical Ophiolite DTOs into chart payloads without pulling app-specific transport code into the SDK.
+
+The public surface also re-exports `CHART_FAMILIES`, `CHART_DEFINITIONS`, and lookup helpers from `@ophiolite/charts-data-models`. That registry records the canonical source boundary, renderer kernel, allowed asset families, and validation entry points for each chart family so embedders can keep the same constraints the SDK enforces internally.

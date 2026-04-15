@@ -6,6 +6,7 @@ use ts_rs::TS;
 pub const WELL_PANEL_CONTRACT_VERSION: u32 = 1;
 pub const SURVEY_MAP_CONTRACT_VERSION: u32 = 2;
 pub const SECTION_WELL_OVERLAY_CONTRACT_VERSION: u32 = 1;
+pub const ROCK_PHYSICS_CROSSPLOT_CONTRACT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct WellPanelRequestDto {
@@ -126,6 +127,307 @@ pub struct ResolvedWellPanelSourceDto {
     pub id: String,
     pub name: String,
     pub wells: Vec<ResolvedWellPanelWellDto>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(rename_all = "kebab-case")]
+pub enum RockPhysicsTemplateIdDto {
+    VpVsVsAi,
+    AiVsSi,
+    VpVsVs,
+    PorosityVsVp,
+    LambdaRhoVsMuRho,
+    NeutronPorosityVsBulkDensity,
+    PhiVsAi,
+    PrVsAi,
+    VpVsDensity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(rename_all = "kebab-case")]
+pub enum RockPhysicsCurveSemanticDto {
+    PVelocity,
+    SVelocity,
+    VpVsRatio,
+    AcousticImpedance,
+    ShearImpedance,
+    LambdaRho,
+    MuRho,
+    BulkDensity,
+    Resistivity,
+    Sonic,
+    ShearSonic,
+    PoissonsRatio,
+    NeutronPorosity,
+    EffectivePorosity,
+    WaterSaturation,
+    VShale,
+    GammaRay,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum RockPhysicsCategoricalSemanticDto {
+    Well,
+    Wellbore,
+    Facies,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum RockPhysicsPointSymbolDto {
+    Circle,
+    Square,
+    Diamond,
+    Triangle,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsAxisDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    pub semantic: RockPhysicsCurveSemanticDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_value: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsCategoryDto {
+    pub id: u32,
+    pub label: String,
+    pub color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol: Option<RockPhysicsPointSymbolDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsCategoricalColorBindingDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub semantic: RockPhysicsCategoricalSemanticDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub categories: Option<Vec<RockPhysicsCategoryDto>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsContinuousColorBindingDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub semantic: RockPhysicsCurveSemanticDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub palette: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(tag = "kind", rename_all = "snake_case")]
+pub enum RockPhysicsColorBindingDto {
+    Categorical(RockPhysicsCategoricalColorBindingDto),
+    Continuous(RockPhysicsContinuousColorBindingDto),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsWellDto {
+    pub well_id: String,
+    pub wellbore_id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsSourceBindingDto {
+    pub id: String,
+    pub well_id: String,
+    pub wellbore_id: String,
+    pub x_curve_id: String,
+    pub y_curve_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_curve_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_channels: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsSampleDto {
+    pub well_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wellbore_id: Option<String>,
+    pub sample_depth_m: f64,
+    pub x_value: f64,
+    pub y_value: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color_category_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub symbol_category_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_binding_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsInteractionThresholdsDto {
+    pub exact_point_limit: u32,
+    pub progressive_point_limit: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsTemplatePointDto {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsTemplateLineDto {
+    pub id: String,
+    pub label: String,
+    pub color: String,
+    pub points: Vec<RockPhysicsTemplatePointDto>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum RockPhysicsTextAlignDto {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum RockPhysicsTextBaselineDto {
+    Top,
+    Middle,
+    Bottom,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsTemplatePolylineOverlayDto {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dashed: Option<bool>,
+    pub points: Vec<RockPhysicsTemplatePointDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsTemplatePolygonOverlayDto {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stroke_color: Option<String>,
+    pub fill_color: String,
+    pub points: Vec<RockPhysicsTemplatePointDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label_position: Option<RockPhysicsTemplatePointDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsTemplateTextOverlayDto {
+    pub id: String,
+    pub text: String,
+    pub color: String,
+    pub x: f64,
+    pub y: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotation_deg: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<RockPhysicsTextAlignDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baseline: Option<RockPhysicsTextBaselineDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(tag = "kind", rename_all = "snake_case")]
+pub enum RockPhysicsTemplateOverlayDto {
+    Polyline(RockPhysicsTemplatePolylineOverlayDto),
+    Polygon(RockPhysicsTemplatePolygonOverlayDto),
+    Text(RockPhysicsTemplateTextOverlayDto),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ResolvedRockPhysicsCrossplotSourceDto {
+    pub schema_version: u32,
+    pub id: String,
+    pub name: String,
+    pub template_id: RockPhysicsTemplateIdDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    pub x_axis: RockPhysicsAxisDto,
+    pub y_axis: RockPhysicsAxisDto,
+    pub color_binding: RockPhysicsColorBindingDto,
+    pub wells: Vec<RockPhysicsWellDto>,
+    pub samples: Vec<RockPhysicsSampleDto>,
+    pub source_bindings: Vec<RockPhysicsSourceBindingDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template_lines: Option<Vec<RockPhysicsTemplateLineDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub template_overlays: Option<Vec<RockPhysicsTemplateOverlayDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interaction_thresholds: Option<RockPhysicsInteractionThresholdsDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsCategoricalColorRequestDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub semantic: RockPhysicsCategoricalSemanticDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsContinuousColorRequestDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub semantic: RockPhysicsCurveSemanticDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(tag = "kind", rename_all = "snake_case")]
+pub enum RockPhysicsColorRequestDto {
+    Categorical(RockPhysicsCategoricalColorRequestDto),
+    Continuous(RockPhysicsContinuousColorRequestDto),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RockPhysicsCrossplotRequestDto {
+    pub schema_version: u32,
+    pub wellbore_ids: Vec<String>,
+    pub template_id: RockPhysicsTemplateIdDto,
+    pub x_semantic: RockPhysicsCurveSemanticDto,
+    pub y_semantic: RockPhysicsCurveSemanticDto,
+    pub color_binding: RockPhysicsColorRequestDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth_min: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth_max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]

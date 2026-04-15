@@ -6,9 +6,9 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@ophiolite/charts-core": "file:../chart-core",
-    "@ophiolite/charts-data-models": "file:../data-models",
-    "@ophiolite/charts-renderer": "file:../renderer"
+    "@ophiolite/charts-core": "workspace:*",
+    "@ophiolite/charts-data-models": "workspace:*",
+    "@ophiolite/charts-renderer": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --noEmit"

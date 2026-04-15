@@ -15,8 +15,14 @@ pub enum CurveSemanticType {
     Time,
     PVelocity,
     SVelocity,
+    VpVsRatio,
     AcousticImpedance,
+    ShearImpedance,
+    LambdaRho,
+    MuRho,
     PoissonsRatio,
+    EffectivePorosity,
+    WaterSaturation,
     VShale,
     Computed,
     Unknown,
@@ -37,8 +43,14 @@ impl CurveSemanticType {
             Self::Time => "Time",
             Self::PVelocity => "P-wave Velocity",
             Self::SVelocity => "S-wave Velocity",
+            Self::VpVsRatio => "Vp/Vs Ratio",
             Self::AcousticImpedance => "Acoustic Impedance",
+            Self::ShearImpedance => "Shear Impedance",
+            Self::LambdaRho => "Lambda-Rho",
+            Self::MuRho => "Mu-Rho",
             Self::PoissonsRatio => "Poisson's Ratio",
+            Self::EffectivePorosity => "Effective Porosity",
+            Self::WaterSaturation => "Water Saturation",
             Self::VShale => "VShale",
             Self::Computed => "Computed",
             Self::Unknown => "Unknown",
@@ -107,6 +119,12 @@ pub fn classify_curve_semantic(
         Some("shallow_resistivity") => return CurveSemanticType::ShallowResistivity,
         Some("depth") => return CurveSemanticType::Depth,
         Some("time") => return CurveSemanticType::Time,
+        Some("vp_vs_ratio") => return CurveSemanticType::VpVsRatio,
+        Some("shear_impedance") => return CurveSemanticType::ShearImpedance,
+        Some("lambda_rho") => return CurveSemanticType::LambdaRho,
+        Some("mu_rho") => return CurveSemanticType::MuRho,
+        Some("effective_porosity") => return CurveSemanticType::EffectivePorosity,
+        Some("water_saturation") => return CurveSemanticType::WaterSaturation,
         _ => {}
     }
 
@@ -118,8 +136,14 @@ pub fn classify_curve_semantic(
         "DTS" | "DTSM" => CurveSemanticType::ShearSonic,
         "VP" | "PVEL" | "P_VEL" => CurveSemanticType::PVelocity,
         "VS" | "SVEL" | "S_VEL" => CurveSemanticType::SVelocity,
+        "VPVS" | "VP_VS" | "VP/VS" => CurveSemanticType::VpVsRatio,
         "AI" | "AIMP" => CurveSemanticType::AcousticImpedance,
+        "SI" | "SIMP" => CurveSemanticType::ShearImpedance,
+        "LRHO" | "LAMBDA_RHO" | "LAMBDA-RHO" => CurveSemanticType::LambdaRho,
+        "MRHO" | "MU_RHO" | "MU-RHO" => CurveSemanticType::MuRho,
         "PR" | "NU" | "POISSON" => CurveSemanticType::PoissonsRatio,
+        "PHIE" | "EFFECTIVE_POROSITY" => CurveSemanticType::EffectivePorosity,
+        "SW" | "SWT" | "WATER_SATURATION" => CurveSemanticType::WaterSaturation,
         _ if normalized_unit.contains("us/ft") || normalized_unit.contains("us/m") => {
             CurveSemanticType::Sonic
         }
@@ -149,6 +173,18 @@ mod tests {
         assert_eq!(
             classify_curve_semantic(&unknown, "DT", Some("us/ft"), false),
             CurveSemanticType::Sonic
+        );
+        assert_eq!(
+            classify_curve_semantic(&unknown, "VPVS", None, false),
+            CurveSemanticType::VpVsRatio
+        );
+        assert_eq!(
+            classify_curve_semantic(&unknown, "PHIE", None, false),
+            CurveSemanticType::EffectivePorosity
+        );
+        assert_eq!(
+            classify_curve_semantic(&unknown, "SW", None, false),
+            CurveSemanticType::WaterSaturation
         );
     }
 }

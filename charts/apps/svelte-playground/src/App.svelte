@@ -3,6 +3,8 @@
 <script lang="ts">
   import {
     MOCK_SECTION_VELOCITY_MODEL_LABEL,
+    STANDARD_ROCK_PHYSICS_TEMPLATE_IDS,
+    createMockRockPhysicsCrossplotModel,
     createMockGatherView,
     createMockSurveyMap,
     createMockWellPanel,
@@ -10,8 +12,16 @@
     createMockSectionHorizons,
     createMockSectionScalarOverlays,
     createMockSectionWellOverlays,
+    getDefaultRockPhysicsMockColorMode,
+    getRockPhysicsMockColorModes,
+    getRockPhysicsTemplateSpec,
     type MockSectionDomain,
     type MockSectionKind,
+    type RockPhysicsCrossplotModel,
+    type RockPhysicsCrossplotProbe,
+    type RockPhysicsCrossplotViewport,
+    type RockPhysicsMockColorMode,
+    type RockPhysicsMockOptions,
     type SectionHorizonOverlay,
     type SectionScalarOverlay,
     type SectionScalarOverlayColorMap,
@@ -25,13 +35,19 @@
   } from "@ophiolite/charts-data-models";
   import { PLOT_MARGIN } from "@ophiolite/charts-renderer";
   import {
+    ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES,
     SEISMIC_CHART_INTERACTION_CAPABILITIES,
     SURVEY_MAP_CHART_INTERACTION_CAPABILITIES,
     WELL_CORRELATION_CHART_INTERACTION_CAPABILITIES,
+    RockPhysicsCrossplotChart,
     SeismicGatherChart,
     SeismicSectionChart,
     SurveyMapChart,
     WellCorrelationPanelChart,
+    type RockPhysicsCrossplotChartAction,
+    type RockPhysicsCrossplotChartInteractionConfig,
+    type RockPhysicsCrossplotChartInteractionState,
+    type RockPhysicsCrossplotChartTool,
     type SeismicChartAction,
     type SeismicChartInteractionConfig,
     type SeismicChartInteractionState,
@@ -79,12 +95,19 @@
     zoomBy?: (factor: number) => void;
   }
 
-  type DemoRoute = "seismic" | "gather" | "survey-map" | "well-panel";
+  interface RockPhysicsChartHandle {
+    fitToData?: () => void;
+    zoomBy?: (factor: number) => void;
+    panBy?: (deltaX: number, deltaY: number) => void;
+  }
+
+  type DemoRoute = "seismic" | "gather" | "survey-map" | "rock-physics" | "well-panel";
 
   let seismicChart = $state.raw<SeismicChartHandle | null>(null);
   let gatherChart = $state.raw<GatherChartHandle | null>(null);
   let surveyMapChart = $state.raw<SurveyMapChartHandle | null>(null);
   let correlationChart = $state.raw<CorrelationChartHandle | null>(null);
+  let rockPhysicsChart = $state.raw<RockPhysicsChartHandle | null>(null);
   let activeDemo = $state<DemoRoute>(getDemoRoute());
 
   let sectionKind = $state<MockSectionKind>("inline");
@@ -165,6 +188,27 @@
   let lastCorrelationViewport = $state.raw<WellCorrelationViewport | null>(null);
   let lastCorrelationProbe = $state.raw<WellCorrelationProbe | null>(null);
 
+  let rockPhysicsTemplateId = $state<(typeof STANDARD_ROCK_PHYSICS_TEMPLATE_IDS)[number]>("vp-vs-vs-ai");
+  let rockPhysicsColorMode = $state<RockPhysicsMockColorMode>(getDefaultRockPhysicsMockColorMode("vp-vs-vs-ai"));
+  let rockPhysicsDense = $state(false);
+  let rockPhysicsModel = $state.raw<RockPhysicsCrossplotModel | null>(createRockPhysicsModel());
+  let rockPhysicsResetToken = $state(0);
+  let rockPhysicsInteractions = $state.raw<RockPhysicsCrossplotChartInteractionConfig>({
+    tool: "crosshair"
+  });
+  let lastRockPhysicsInteractionState = $state.raw<RockPhysicsCrossplotChartInteractionState>({
+    capabilities: {
+      tools: [...ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES.tools],
+      actions: [...ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES.actions]
+    },
+    tool: "crosshair"
+  });
+  let lastRockPhysicsEvent = $state("none");
+  let lastRockPhysicsViewport = $state.raw<RockPhysicsCrossplotViewport | null>(null);
+  let lastRockPhysicsProbe = $state.raw<RockPhysicsCrossplotProbe | null>(null);
+  let rockPhysicsTemplateSpec = $derived(getRockPhysicsTemplateSpec(rockPhysicsTemplateId));
+  let rockPhysicsColorModes = $derived(getRockPhysicsMockColorModes(rockPhysicsTemplateId));
+
   let seismicToolbarTools = $derived.by<ChartToolbarToolItem<SeismicChartTool>[]>(() =>
     SEISMIC_CHART_INTERACTION_CAPABILITIES.tools.map((tool) => ({
       id: tool,
@@ -231,6 +275,23 @@
       label: action === "fitToData" ? "Fit To Data" : action,
       icon: "fitToData",
       disabled: !correlationPanel
+    }))
+  );
+  let rockPhysicsToolbarTools = $derived.by<ChartToolbarToolItem<RockPhysicsCrossplotChartTool>[]>(() =>
+    ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES.tools.map((tool) => ({
+      id: tool,
+      label: toolLabel(tool),
+      icon: tool,
+      active: lastRockPhysicsInteractionState.tool === tool,
+      disabled: !rockPhysicsModel
+    }))
+  );
+  let rockPhysicsToolbarActions = $derived.by<ChartToolbarActionItem<RockPhysicsCrossplotChartAction>[]>(() =>
+    ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES.actions.map((action) => ({
+      id: action,
+      label: action === "fitToData" ? "Fit To Data" : action,
+      icon: "fitToData",
+      disabled: !rockPhysicsModel
     }))
   );
 
@@ -447,6 +508,92 @@
     correlationChart?.panBy?.(deltaDepth);
   }
 
+  function createRockPhysicsModel() {
+    return createMockRockPhysicsCrossplotModel({
+      templateId: rockPhysicsTemplateId,
+      pointCount: rockPhysicsDense ? 120_000 : 8_000,
+      wellCount: rockPhysicsDense ? 10 : 6,
+      colorMode: rockPhysicsColorMode
+    });
+  }
+
+  function refreshRockPhysics() {
+    rockPhysicsModel = createRockPhysicsModel();
+    rockPhysicsResetToken += 1;
+  }
+
+  function clearRockPhysics() {
+    rockPhysicsModel = null;
+    lastRockPhysicsViewport = null;
+    lastRockPhysicsProbe = null;
+  }
+
+  function toggleRockPhysicsColorMode() {
+    const modes = rockPhysicsColorModes;
+    const currentIndex = Math.max(0, modes.indexOf(rockPhysicsColorMode));
+    rockPhysicsColorMode = modes[(currentIndex + 1) % modes.length]!;
+    refreshRockPhysics();
+  }
+
+  function cycleRockPhysicsTemplate() {
+    const currentIndex = STANDARD_ROCK_PHYSICS_TEMPLATE_IDS.indexOf(rockPhysicsTemplateId);
+    const nextIndex = (currentIndex + 1) % STANDARD_ROCK_PHYSICS_TEMPLATE_IDS.length;
+    rockPhysicsTemplateId = STANDARD_ROCK_PHYSICS_TEMPLATE_IDS[nextIndex]!;
+    rockPhysicsColorMode = getDefaultRockPhysicsMockColorMode(rockPhysicsTemplateId);
+    refreshRockPhysics();
+  }
+
+  function toggleRockPhysicsDensity() {
+    rockPhysicsDense = !rockPhysicsDense;
+    refreshRockPhysics();
+  }
+
+  function setRockPhysicsTool(tool: string) {
+    rockPhysicsInteractions = {
+      ...rockPhysicsInteractions,
+      tool: tool as RockPhysicsCrossplotChartTool
+    };
+  }
+
+  function runRockPhysicsAction(action: string) {
+    if (action === "fitToData") {
+      fitRockPhysicsToData();
+    }
+  }
+
+  function handleRockPhysicsInteractionStateChange(event: RockPhysicsCrossplotChartInteractionState) {
+    lastRockPhysicsInteractionState = event;
+    rockPhysicsInteractions = {
+      ...rockPhysicsInteractions,
+      tool: event.tool
+    };
+  }
+
+  function fitRockPhysicsToData() {
+    rockPhysicsChart?.fitToData?.();
+  }
+
+  function zoomRockPhysics(factor: number) {
+    rockPhysicsChart?.zoomBy?.(factor);
+  }
+
+  function panRockPhysics(deltaX: number, deltaY: number) {
+    rockPhysicsChart?.panBy?.(deltaX, deltaY);
+  }
+
+  function formatRockPhysicsNumber(value: number): string {
+    if (Math.abs(value) >= 1_000) {
+      return Math.round(value).toString();
+    }
+    if (Math.abs(value) >= 100) {
+      return value.toFixed(1).replace(/\.0$/, "");
+    }
+    if (Math.abs(value) >= 10) {
+      return value.toFixed(2).replace(/\.00$/, "");
+    }
+    return value.toFixed(3).replace(/\.000$/, "");
+  }
+
   function toContractSectionView(): OphioliteSectionView {
     const source = createMockSection(sectionKind, sectionDomain);
     const displayDefaults = source.displayDefaults;
@@ -517,6 +664,8 @@
             ? "#/gather"
             : next === "survey-map"
               ? "#/survey-map"
+              : next === "rock-physics"
+                ? "#/rock-physics"
               : "#/well-panel";
     }
   }
@@ -531,6 +680,9 @@
     }
     if (window.location.hash === "#/survey-map") {
       return "survey-map";
+    }
+    if (window.location.hash === "#/rock-physics") {
+      return "rock-physics";
     }
     if (window.location.hash === "#/well-panel") {
       return "well-panel";
@@ -568,6 +720,9 @@
       </button>
       <button class:active-demo={activeDemo === "survey-map"} onclick={() => setDemoRoute("survey-map")}>
         Survey Map
+      </button>
+      <button class:active-demo={activeDemo === "rock-physics"} onclick={() => setDemoRoute("rock-physics")}>
+        Rock Physics
       </button>
       <button class:active-demo={activeDemo === "well-panel"} onclick={() => setDemoRoute("well-panel")}>
         Well Panel
@@ -737,6 +892,68 @@
           {#if lastSurveyMapViewport}
             x {lastSurveyMapViewport.xMin.toFixed(0)}..{lastSurveyMapViewport.xMax.toFixed(0)}
             y {lastSurveyMapViewport.yMin.toFixed(0)}..{lastSurveyMapViewport.yMax.toFixed(0)}
+          {/if}
+        </div>
+      </section>
+    {:else if activeDemo === "rock-physics"}
+      <section class="group">
+        <h2>Rock Physics Controls</h2>
+        <button onclick={refreshRockPhysics}>Refresh Crossplot</button>
+        <button onclick={clearRockPhysics}>Clear Crossplot</button>
+        <button onclick={fitRockPhysicsToData} disabled={!rockPhysicsModel}>Fit To Data</button>
+        <button onclick={() => zoomRockPhysics(1.25)} disabled={!rockPhysicsModel}>Zoom In</button>
+        <button onclick={() => zoomRockPhysics(0.82)} disabled={!rockPhysicsModel}>Zoom Out</button>
+        <button onclick={() => panRockPhysics(-120, 0)} disabled={!rockPhysicsModel}>Pan Left</button>
+        <button onclick={() => panRockPhysics(120, 0)} disabled={!rockPhysicsModel}>Pan Right</button>
+        <button onclick={cycleRockPhysicsTemplate} disabled={!rockPhysicsModel}>
+          Next Template: {rockPhysicsTemplateSpec.title}
+        </button>
+        <button onclick={toggleRockPhysicsColorMode} disabled={!rockPhysicsModel}>
+          Next Color: {rockPhysicsModel?.colorBinding.label ?? rockPhysicsColorMode}
+        </button>
+        <button onclick={toggleRockPhysicsDensity}>
+          {rockPhysicsDense ? "Load Standard Point Set" : "Load Dense Point Set"}
+        </button>
+      </section>
+
+      <section class="group">
+        <h2>Rock Physics Status</h2>
+        <div class="readout">
+          chart bound: {rockPhysicsChart ? "yes" : "no"}
+          model loaded: {rockPhysicsModel ? "yes" : "no"}
+          tool: {lastRockPhysicsInteractionState.tool}
+          last event: {lastRockPhysicsEvent}
+          template label: {rockPhysicsTemplateSpec.title}
+          color mode: {rockPhysicsColorMode}
+          density mode: {rockPhysicsDense ? "dense" : "standard"}
+          {#if rockPhysicsModel}
+            template: {rockPhysicsModel.templateId}
+            points: {rockPhysicsModel.pointCount}
+            wells: {rockPhysicsModel.wells.length}
+            color binding: {rockPhysicsModel.colorBinding.label}
+            guides: {rockPhysicsModel.templateOverlays?.length ?? rockPhysicsModel.templateLines?.length ?? 0}
+          {/if}
+        </div>
+      </section>
+
+      <section class="group">
+        <h2>Rock Physics Readout</h2>
+        <div class="readout">
+          {#if lastRockPhysicsProbe}
+            well {lastRockPhysicsProbe.wellName}
+            x {formatRockPhysicsNumber(lastRockPhysicsProbe.xValue)}
+            y {formatRockPhysicsNumber(lastRockPhysicsProbe.yValue)}
+            depth {lastRockPhysicsProbe.sampleDepthM.toFixed(1)} m
+            color {lastRockPhysicsProbe.colorValue !== undefined
+              ? formatRockPhysicsNumber(lastRockPhysicsProbe.colorValue)
+              : lastRockPhysicsProbe.colorCategoryLabel ?? "n/a"}
+          {:else}
+            Probe callbacks will appear after you move over the crossplot.
+          {/if}
+
+          {#if lastRockPhysicsViewport}
+            x {formatRockPhysicsNumber(lastRockPhysicsViewport.xMin)}..{formatRockPhysicsNumber(lastRockPhysicsViewport.xMax)}
+            y {formatRockPhysicsNumber(lastRockPhysicsViewport.yMin)}..{formatRockPhysicsNumber(lastRockPhysicsViewport.yMax)}
           {/if}
         </div>
       </section>
@@ -931,6 +1148,48 @@
           />
         </div>
       </section>
+    {:else if activeDemo === "rock-physics"}
+      <section class="card">
+        <header>
+          <div>
+            <h2>Rock Physics Crossplot Wrapper</h2>
+            <p>
+              This uses one dedicated <code>RockPhysicsCrossplotChart</code> wrapper over the
+              canonical rock-physics model, with strict standardized templates for Vp/Vs vs AI,
+              AI vs SI, Vp vs Vs, porosity vs Vp, lambda-rho vs mu-rho, and neutron porosity vs bulk density.
+            </p>
+          </div>
+        </header>
+        <div class="viewer viewer-rock-physics">
+          <div
+            class="viewer-toolbar viewer-toolbar-seismic"
+            style:top={seismicToolbarTop}
+            style:--plot-left={seismicToolbarLeft}
+            style:--plot-right={seismicToolbarRight}
+          >
+            <ChartInteractionToolbar
+              label="Rock physics interaction toolbar"
+              tools={rockPhysicsToolbarTools}
+              actions={rockPhysicsToolbarActions}
+              onToolSelect={setRockPhysicsTool}
+              onActionSelect={runRockPhysicsAction}
+              variant="overlay"
+              iconOnly={true}
+            />
+          </div>
+          <RockPhysicsCrossplotChart
+            bind:this={rockPhysicsChart}
+            chartId="svelte-playground-rock-physics"
+            model={rockPhysicsModel}
+            interactions={rockPhysicsInteractions}
+            resetToken={rockPhysicsResetToken}
+            onInteractionEvent={(payload) => (lastRockPhysicsEvent = payload.event.type)}
+            onInteractionStateChange={handleRockPhysicsInteractionStateChange}
+            onProbeChange={(event) => (lastRockPhysicsProbe = event.probe)}
+            onViewportChange={(event) => (lastRockPhysicsViewport = event.viewport)}
+          />
+        </div>
+      </section>
     {:else}
       <section class="card">
         <header>
@@ -1116,6 +1375,10 @@
 
   .viewer-map {
     background: rgba(241, 236, 228, 0.88);
+  }
+
+  .viewer-rock-physics {
+    background: rgba(6, 20, 28, 0.9);
   }
 
   .viewer-toolbar {

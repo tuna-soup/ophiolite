@@ -25,6 +25,7 @@ export interface InteractionTarget {
     | "curve-sample"
     | "curve-fill-region"
     | "curve-vertex"
+    | "point-cloud-sample"
     | "point-observation"
     | "top-marker"
     | "top-line"
@@ -62,6 +63,7 @@ export interface LassoSelectionEntity {
   kind:
     | "curve-sample"
     | "curve-vertex"
+    | "point-cloud-sample"
     | "point-observation"
     | "top-marker"
     | "horizon-anchor"
@@ -80,6 +82,7 @@ export interface LassoSelectionResult {
   targetKind:
     | "curve-sample"
     | "curve-vertex"
+    | "point-cloud-sample"
     | "point-observation"
     | "top-marker"
     | "horizon-anchor"

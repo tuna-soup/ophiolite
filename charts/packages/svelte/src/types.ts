@@ -17,7 +17,12 @@ import type {
   SectionViewportChanged
 } from "@ophiolite/contracts";
 import type {
+  ChartInteractionActionId,
+  ChartInteractionToolId,
   InteractionEvent,
+  RockPhysicsCrossplotModel,
+  RockPhysicsCrossplotProbe,
+  RockPhysicsCrossplotViewport,
   SectionHorizonOverlay,
   SectionWellOverlay,
   SectionScalarOverlay,
@@ -29,6 +34,7 @@ import type {
   WellCorrelationViewport,
   WellPanelModel
 } from "@ophiolite/charts-data-models";
+import { getChartDefinition } from "@ophiolite/charts-data-models";
 
 export type SeismicChartPrimaryMode = "cursor" | "panZoom";
 export type SeismicChartColorMap = "grayscale" | "red-white-blue";
@@ -79,10 +85,8 @@ export interface SeismicChartInteractionCapabilities {
   actions: SeismicChartAction[];
 }
 
-export const SEISMIC_CHART_INTERACTION_CAPABILITIES: SeismicChartInteractionCapabilities = {
-  tools: ["pointer", "crosshair", "pan"],
-  actions: ["fitToData"]
-};
+export const SEISMIC_CHART_INTERACTION_CAPABILITIES: SeismicChartInteractionCapabilities =
+  chartInteractionCapabilities<SeismicChartTool, SeismicChartAction>("seismic-section");
 
 export interface SeismicChartInteractionState {
   capabilities: SeismicChartInteractionCapabilities;
@@ -176,10 +180,8 @@ export interface WellCorrelationChartInteractionCapabilities {
   actions: WellCorrelationChartAction[];
 }
 
-export const WELL_CORRELATION_CHART_INTERACTION_CAPABILITIES: WellCorrelationChartInteractionCapabilities = {
-  tools: ["pointer", "crosshair", "pan"],
-  actions: ["fitToData"]
-};
+export const WELL_CORRELATION_CHART_INTERACTION_CAPABILITIES: WellCorrelationChartInteractionCapabilities =
+  chartInteractionCapabilities<WellCorrelationChartTool, WellCorrelationChartAction>("well-correlation-panel");
 
 export interface WellCorrelationChartInteractionState {
   capabilities: WellCorrelationChartInteractionCapabilities;
@@ -242,10 +244,8 @@ export interface SurveyMapChartInteractionCapabilities {
   actions: SurveyMapChartAction[];
 }
 
-export const SURVEY_MAP_CHART_INTERACTION_CAPABILITIES: SurveyMapChartInteractionCapabilities = {
-  tools: ["pointer", "pan"],
-  actions: ["fitToData"]
-};
+export const SURVEY_MAP_CHART_INTERACTION_CAPABILITIES: SurveyMapChartInteractionCapabilities =
+  chartInteractionCapabilities<SurveyMapChartTool, SurveyMapChartAction>("survey-map");
 
 export interface SurveyMapChartInteractionState {
   capabilities: SurveyMapChartInteractionCapabilities;
@@ -302,3 +302,77 @@ export type SurveyMapProbeChangeHandler = (payload: SurveyMapProbeChangePayload)
 export type SurveyMapSelectionChangeHandler = (payload: SurveyMapSelectionChangePayload) => void;
 export type SurveyMapInteractionStateChangeHandler = (payload: SurveyMapChartInteractionState) => void;
 export type SurveyMapInteractionEventHandler = (payload: SurveyMapInteractionEventPayload) => void;
+
+export type RockPhysicsCrossplotChartTool = "pointer" | "crosshair" | "pan";
+export type RockPhysicsCrossplotChartAction = "fitToData";
+
+export interface RockPhysicsCrossplotChartInteractionConfig {
+  tool?: RockPhysicsCrossplotChartTool;
+}
+
+export interface RockPhysicsCrossplotChartInteractionCapabilities {
+  tools: RockPhysicsCrossplotChartTool[];
+  actions: RockPhysicsCrossplotChartAction[];
+}
+
+export const ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES: RockPhysicsCrossplotChartInteractionCapabilities =
+  chartInteractionCapabilities<RockPhysicsCrossplotChartTool, RockPhysicsCrossplotChartAction>("rock-physics-crossplot");
+
+export interface RockPhysicsCrossplotChartInteractionState {
+  capabilities: RockPhysicsCrossplotChartInteractionCapabilities;
+  tool: RockPhysicsCrossplotChartTool;
+}
+
+export interface RockPhysicsCrossplotViewportChangePayload {
+  chartId: string;
+  viewport: RockPhysicsCrossplotViewport | null;
+}
+
+export interface RockPhysicsCrossplotProbeChangePayload {
+  chartId: string;
+  probe: RockPhysicsCrossplotProbe | null;
+}
+
+export interface RockPhysicsCrossplotInteractionEventPayload {
+  chartId: string;
+  event: InteractionEvent;
+}
+
+export interface RockPhysicsCrossplotChartOverlayProps {
+  stageTopLeft?: Snippet;
+  plotTopCenter?: Snippet;
+  plotTopRight?: Snippet;
+  plotBottomRight?: Snippet;
+  plotBottomLeft?: Snippet;
+  stageScale?: number;
+}
+
+export interface RockPhysicsCrossplotChartProps extends RockPhysicsCrossplotChartOverlayProps {
+  chartId: string;
+  model: RockPhysicsCrossplotModel | null;
+  viewport?: RockPhysicsCrossplotViewport | null;
+  interactions?: RockPhysicsCrossplotChartInteractionConfig;
+  loading?: boolean;
+  emptyMessage?: string;
+  errorMessage?: string | null;
+  resetToken?: string | number | null;
+  onViewportChange?: RockPhysicsCrossplotViewportChangeHandler;
+  onProbeChange?: RockPhysicsCrossplotProbeChangeHandler;
+  onInteractionStateChange?: RockPhysicsCrossplotInteractionStateChangeHandler;
+  onInteractionEvent?: RockPhysicsCrossplotInteractionEventHandler;
+}
+
+export type RockPhysicsCrossplotViewportChangeHandler = (payload: RockPhysicsCrossplotViewportChangePayload) => void;
+export type RockPhysicsCrossplotProbeChangeHandler = (payload: RockPhysicsCrossplotProbeChangePayload) => void;
+export type RockPhysicsCrossplotInteractionStateChangeHandler = (payload: RockPhysicsCrossplotChartInteractionState) => void;
+export type RockPhysicsCrossplotInteractionEventHandler = (payload: RockPhysicsCrossplotInteractionEventPayload) => void;
+
+function chartInteractionCapabilities<TTool extends ChartInteractionToolId, TAction extends ChartInteractionActionId>(
+  chartId: "seismic-section" | "well-correlation-panel" | "survey-map" | "rock-physics-crossplot"
+): { tools: TTool[]; actions: TAction[] } {
+  const { interactionProfile } = getChartDefinition(chartId);
+  return {
+    tools: [...interactionProfile.tools] as TTool[],
+    actions: [...interactionProfile.actions] as TAction[]
+  };
+}

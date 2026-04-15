@@ -1,6 +1,24 @@
-import { createMockSection, createMockWellPanel } from "@ophiolite/charts-data-models";
-import { SeismicViewerController, WellCorrelationController } from "@ophiolite/charts-domain";
-import { MockCanvasRenderer, WellCorrelationCanvasRenderer } from "@ophiolite/charts-renderer";
+import {
+  STANDARD_ROCK_PHYSICS_TEMPLATE_IDS,
+  createMockRockPhysicsCrossplotModel,
+  createMockSection,
+  createMockWellPanel,
+  getDefaultRockPhysicsMockColorMode,
+  getRockPhysicsMockColorModes,
+  getRockPhysicsTemplateSpec,
+  type RockPhysicsMockColorMode,
+  type RockPhysicsMockOptions
+} from "@ophiolite/charts-data-models";
+import {
+  RockPhysicsCrossplotController,
+  SeismicViewerController,
+  WellCorrelationController
+} from "@ophiolite/charts-domain";
+import {
+  MockCanvasRenderer,
+  PointCloudSpikeRenderer,
+  WellCorrelationCanvasRenderer
+} from "@ophiolite/charts-renderer";
 import "./styles.css";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -36,6 +54,13 @@ app.innerHTML = `
         <button id="corr-arm-marker">Arm Marker Pick</button>
       </section>
       <div class="readout" id="corr-readout">Move over the well panel.</div>
+      <section class="group">
+        <h2>Rock Physics</h2>
+        <button id="rock-template">Next Template</button>
+        <button id="rock-color">Switch To Well Colors</button>
+        <button id="rock-density">Load Dense Spike</button>
+      </section>
+      <div class="readout" id="rock-readout">Rock-physics template gallery ready.</div>
     </aside>
     <main class="content">
       <section class="card">
@@ -52,25 +77,40 @@ app.innerHTML = `
         </header>
         <div id="correlation-viewer" class="viewer"></div>
       </section>
+      <section class="card">
+        <header>
+          <h2>Rock Physics Template Gallery</h2>
+          <p>Point-cloud crossplots over one strict chart family with shared interactions and standardized rock-physics templates.</p>
+        </header>
+        <div id="rock-physics-viewer" class="viewer"></div>
+      </section>
     </main>
   </div>
 `;
 
 const seismicElement = document.querySelector<HTMLElement>("#seismic-viewer");
 const correlationElement = document.querySelector<HTMLElement>("#correlation-viewer");
-if (!seismicElement || !correlationElement) {
+const rockPhysicsElement = document.querySelector<HTMLElement>("#rock-physics-viewer");
+if (!seismicElement || !correlationElement || !rockPhysicsElement) {
   throw new Error("Viewer roots not found.");
 }
 
 const seismicController = new SeismicViewerController(new MockCanvasRenderer());
 const correlationController = new WellCorrelationController(new WellCorrelationCanvasRenderer());
+const rockPhysicsController = new RockPhysicsCrossplotController(new PointCloudSpikeRenderer());
 const seismicSection = createMockSection();
 const correlationPanel = createMockWellPanel();
+let rockPhysicsTemplateId: (typeof STANDARD_ROCK_PHYSICS_TEMPLATE_IDS)[number] = "vp-vs-vs-ai";
+let rockPhysicsColorMode: RockPhysicsMockColorMode = getDefaultRockPhysicsMockColorMode("vp-vs-vs-ai");
+let rockPhysicsDense = false;
+let rockPhysicsModel = buildRockPhysicsModel();
 
 seismicController.mount(seismicElement);
 seismicController.setSection(seismicSection);
 correlationController.mount(correlationElement);
 correlationController.setPanel(correlationPanel);
+rockPhysicsController.mount(rockPhysicsElement);
+rockPhysicsController.setModel(rockPhysicsModel);
 
 let seismicWiggle = false;
 let seismicColor = false;
@@ -107,6 +147,42 @@ document.querySelector<HTMLButtonElement>("#corr-arm-marker")?.addEventListener(
   if (event.currentTarget instanceof HTMLButtonElement) {
     event.currentTarget.textContent = `Marker Armed: ${name}`;
   }
+});
+document.querySelector<HTMLButtonElement>("#rock-template")?.addEventListener("click", (event) => {
+  const currentIndex = STANDARD_ROCK_PHYSICS_TEMPLATE_IDS.indexOf(rockPhysicsTemplateId);
+  const nextIndex = (currentIndex + 1) % STANDARD_ROCK_PHYSICS_TEMPLATE_IDS.length;
+  rockPhysicsTemplateId = STANDARD_ROCK_PHYSICS_TEMPLATE_IDS[nextIndex]!;
+  rockPhysicsColorMode = getDefaultRockPhysicsMockColorMode(rockPhysicsTemplateId);
+  rockPhysicsModel = buildRockPhysicsModel();
+  rockPhysicsController.setModel(rockPhysicsModel);
+  if (event.currentTarget instanceof HTMLButtonElement) {
+    event.currentTarget.textContent = `Next Template: ${getRockPhysicsTemplateSpec(rockPhysicsTemplateId).title}`;
+  }
+  const colorButton = document.querySelector<HTMLButtonElement>("#rock-color");
+  if (colorButton) {
+    colorButton.textContent = `Next Color: ${rockPhysicsModel.colorBinding.label}`;
+  }
+  syncReadouts();
+});
+document.querySelector<HTMLButtonElement>("#rock-color")?.addEventListener("click", (event) => {
+  const modes = getRockPhysicsMockColorModes(rockPhysicsTemplateId);
+  const currentIndex = Math.max(0, modes.indexOf(rockPhysicsColorMode));
+  rockPhysicsColorMode = modes[(currentIndex + 1) % modes.length]!;
+  rockPhysicsModel = buildRockPhysicsModel();
+  rockPhysicsController.setModel(rockPhysicsModel);
+  if (event.currentTarget instanceof HTMLButtonElement) {
+    event.currentTarget.textContent = `Next Color: ${rockPhysicsModel.colorBinding.label}`;
+  }
+  syncReadouts();
+});
+document.querySelector<HTMLButtonElement>("#rock-density")?.addEventListener("click", (event) => {
+  rockPhysicsDense = !rockPhysicsDense;
+  rockPhysicsModel = buildRockPhysicsModel();
+  rockPhysicsController.setModel(rockPhysicsModel);
+  if (event.currentTarget instanceof HTMLButtonElement) {
+    event.currentTarget.textContent = rockPhysicsDense ? "Load Standard Spike" : "Load Dense Spike";
+  }
+  syncReadouts();
 });
 
 seismicElement.addEventListener("pointermove", (event) => {
@@ -169,6 +245,33 @@ correlationElement.addEventListener("ophiolite-charts:correlation-viewport-reque
   correlationController.setViewport(detail);
   syncReadouts();
 });
+rockPhysicsElement.addEventListener("pointermove", (event) => {
+  const point = toLocalPoint(rockPhysicsElement, event);
+  rockPhysicsController.updatePointer(point.x, point.y, rockPhysicsElement.clientWidth, rockPhysicsElement.clientHeight);
+  syncReadouts();
+});
+rockPhysicsElement.addEventListener("pointerleave", () => {
+  rockPhysicsController.clearPointer();
+  syncReadouts();
+});
+rockPhysicsElement.addEventListener(
+  "wheel",
+  (event) => {
+    const state = rockPhysicsController.getState();
+    if (!state.viewport) {
+      return;
+    }
+    const point = toLocalPoint(rockPhysicsElement, event);
+    const xRatio = point.x / Math.max(1, rockPhysicsElement.clientWidth);
+    const yRatio = 1 - point.y / Math.max(1, rockPhysicsElement.clientHeight);
+    const focusX = state.viewport.xMin + xRatio * (state.viewport.xMax - state.viewport.xMin);
+    const focusY = state.viewport.yMin + yRatio * (state.viewport.yMax - state.viewport.yMin);
+    rockPhysicsController.zoomAround(focusX, focusY, event.deltaY < 0 ? 1.12 : 0.89);
+    syncReadouts();
+    event.preventDefault();
+  },
+  { passive: false }
+);
 
 syncReadouts();
 
@@ -199,9 +302,29 @@ function syncReadouts(): void {
         ].join("\n")
       : `Move over the well panel.\nCorrelation lines ${corrState.correlationLines.length}`;
   }
+
+  const rockReadout = document.querySelector<HTMLElement>("#rock-readout");
+  const rockState = rockPhysicsController.getState();
+  if (rockReadout) {
+    rockReadout.textContent = rockState.probe
+      ? [
+          `${rockState.probe.wellName}`,
+          `x ${formatRockPhysicsNumber(rockState.probe.xValue)} y ${formatRockPhysicsNumber(rockState.probe.yValue)}`,
+          `depth ${rockState.probe.sampleDepthM.toFixed(1)} m`,
+          rockState.probe.colorValue !== undefined
+            ? `color ${formatRockPhysicsNumber(rockState.probe.colorValue)}`
+            : `color ${rockState.probe.colorCategoryLabel ?? "n/a"}`
+        ].join("\n")
+      : [
+          `${rockPhysicsModel.title} - ${rockPhysicsModel.pointCount.toLocaleString()} samples`,
+          `wells ${rockPhysicsModel.wells.length}`,
+          `color ${rockPhysicsModel.colorBinding.label}`,
+          `guides ${rockPhysicsModel.templateOverlays?.length ?? rockPhysicsModel.templateLines?.length ?? 0}`
+        ].join("\n");
+  }
 }
 
-function toLocalPoint(element: HTMLElement, event: PointerEvent): { x: number; y: number } {
+function toLocalPoint(element: HTMLElement, event: PointerEvent | WheelEvent): { x: number; y: number } {
   const rect = element.getBoundingClientRect();
   return {
     x: event.clientX - rect.left,
@@ -223,4 +346,26 @@ function toCorrelationLocalPoint(
 
 function getCorrelationScrollHost(element: HTMLElement): HTMLElement {
   return element.querySelector<HTMLElement>(".ophiolite-charts-correlation-scroll-host") ?? element;
+}
+
+function buildRockPhysicsModel() {
+  return createMockRockPhysicsCrossplotModel({
+    templateId: rockPhysicsTemplateId,
+    pointCount: rockPhysicsDense ? 120_000 : 8_000,
+    wellCount: rockPhysicsDense ? 10 : 6,
+    colorMode: rockPhysicsColorMode
+  });
+}
+
+function formatRockPhysicsNumber(value: number): string {
+  if (Math.abs(value) >= 1_000) {
+    return Math.round(value).toString();
+  }
+  if (Math.abs(value) >= 100) {
+    return value.toFixed(1).replace(/\.0$/, "");
+  }
+  if (Math.abs(value) >= 10) {
+    return value.toFixed(2).replace(/\.00$/, "");
+  }
+  return value.toFixed(3).replace(/\.000$/, "");
 }

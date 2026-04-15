@@ -20,9 +20,9 @@
   },
   "dependencies": {
     "@ophiolite/contracts": "file:../../../contracts/ts/ophiolite-contracts",
-    "@ophiolite/charts-data-models": "file:../data-models",
-    "@ophiolite/charts-domain": "file:../domain-geoscience",
-    "@ophiolite/charts-renderer": "file:../renderer"
+    "@ophiolite/charts-data-models": "workspace:*",
+    "@ophiolite/charts-domain": "workspace:*",
+    "@ophiolite/charts-renderer": "workspace:*"
   },
   "scripts": {
     "typecheck": "svelte-check --tsconfig tsconfig.json"

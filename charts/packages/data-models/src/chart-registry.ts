@@ -1,27 +1,42 @@
-export type ChartFamilyId = "seismic" | "well-panel" | "survey-map" | "rock-physics";
+export type ChartFamilyId = "seismic" | "well-panel" | "survey-map" | "rock-physics" | "avo";
 
 export type ChartDefinitionId =
   | "seismic-section"
   | "seismic-gather"
   | "well-correlation-panel"
   | "survey-map"
-  | "rock-physics-crossplot";
+  | "rock-physics-crossplot"
+  | "avo-response-plot"
+  | "avo-intercept-gradient-crossplot"
+  | "avo-chi-projection-histogram";
 
-export type ChartRendererKernelId = "raster-trace" | "well-panel" | "survey-map" | "point-cloud";
+export type ChartRendererKernelId =
+  | "raster-trace"
+  | "well-panel"
+  | "survey-map"
+  | "point-cloud"
+  | "cartesian-line"
+  | "histogram";
 
 export type ChartPublicSurfaceId =
   | "SeismicSectionChart"
   | "SeismicGatherChart"
   | "WellCorrelationPanelChart"
   | "SurveyMapChart"
-  | "RockPhysicsCrossplotChart";
+  | "RockPhysicsCrossplotChart"
+  | "AvoResponseChart"
+  | "AvoInterceptGradientCrossplotChart"
+  | "AvoChiProjectionHistogramChart";
 
 export type ChartCanonicalBoundaryId =
   | "ophiolite-section-view"
   | "ophiolite-gather-view"
   | "ophiolite-well-panel-source"
   | "ophiolite-survey-map-source"
-  | "ophiolite-rock-physics-crossplot-source";
+  | "ophiolite-rock-physics-crossplot-source"
+  | "ophiolite-avo-response-source"
+  | "ophiolite-avo-crossplot-source"
+  | "ophiolite-avo-chi-projection-source";
 
 export type ChartAssetFamilyId =
   | "seismic-section-amplitudes"
@@ -43,7 +58,13 @@ export type ChartAssetFamilyId =
   | "rock-physics-log-samples"
   | "rock-physics-template-lines"
   | "rock-physics-categorical-color-binding"
-  | "rock-physics-continuous-color-binding";
+  | "rock-physics-continuous-color-binding"
+  | "avo-response-series"
+  | "avo-interface-model"
+  | "avo-crossplot-point"
+  | "avo-crossplot-reference-line"
+  | "avo-crossplot-background-region"
+  | "avo-chi-projection-series";
 
 export type ChartInteractionToolId = "pointer" | "crosshair" | "pan";
 export type ChartInteractionActionId = "fitToData";
@@ -93,6 +114,11 @@ const SURVEY_MAP_INTERACTION_PROFILE = {
 } as const satisfies ChartInteractionProfile;
 
 const ROCK_PHYSICS_INTERACTION_PROFILE = {
+  tools: ["pointer", "crosshair", "pan"],
+  actions: ["fitToData"]
+} as const satisfies ChartInteractionProfile;
+
+const AVO_INTERACTION_PROFILE = {
   tools: ["pointer", "crosshair", "pan"],
   actions: ["fitToData"]
 } as const satisfies ChartInteractionProfile;
@@ -207,6 +233,65 @@ export const CHART_DEFINITIONS = [
       "Color bindings are restricted to the template-approved continuous and categorical semantics.",
       "Rejects seismic contracts, survey-map sources, pressure tables, and generic non-log sample payloads."
     ]
+  },
+  {
+    id: "avo-response-plot",
+    familyId: "avo",
+    label: "AVO Response Plot",
+    summary: "Angle-versus-response line chart for modeled isotropic or anisotropic interface reflectivity.",
+    publicSurface: "AvoResponseChart",
+    rendererKernel: "cartesian-line",
+    canonicalBoundaries: ["ophiolite-avo-response-source"],
+    allowedAssetFamilies: ["avo-response-series", "avo-interface-model"],
+    interactionProfile: AVO_INTERACTION_PROFILE,
+    adapterEntryPoints: ["adaptOphioliteAvoResponseToChart"],
+    validationEntryPoints: ["validateOphioliteAvoResponseSource"],
+    constraints: [
+      "Accepts only analysis DTOs for modeled AVO interface responses.",
+      "Series stay tied to explicit interface ids plus reflectivity-model and anisotropy semantics.",
+      "Rejects generic line payloads, rock-physics sample clouds, and persisted seismic section contracts."
+    ]
+  },
+  {
+    id: "avo-intercept-gradient-crossplot",
+    familyId: "avo",
+    label: "AVO Intercept-Gradient Crossplot",
+    summary: "Point-cloud crossplot for intercept-gradient analysis with optional chi projection, background regions, and trend lines.",
+    publicSurface: "AvoInterceptGradientCrossplotChart",
+    rendererKernel: "point-cloud",
+    canonicalBoundaries: ["ophiolite-avo-crossplot-source"],
+    allowedAssetFamilies: [
+      "avo-interface-model",
+      "avo-crossplot-point",
+      "avo-crossplot-reference-line",
+      "avo-crossplot-background-region"
+    ],
+    interactionProfile: AVO_INTERACTION_PROFILE,
+    adapterEntryPoints: ["adaptOphioliteAvoCrossplotToChart"],
+    validationEntryPoints: ["validateOphioliteAvoCrossplotSource"],
+    constraints: [
+      "Accepts only analysis DTOs for AVO intercept-gradient point clouds.",
+      "Points stay bound to explicit interface ids and optional chi projections or Monte Carlo simulation ids.",
+      "Rejects unconstrained generic scatter data and non-AVO sample semantics."
+    ]
+  },
+  {
+    id: "avo-chi-projection-histogram",
+    familyId: "avo",
+    label: "AVO Chi Projection Histogram",
+    summary: "Histogram-oriented analysis chart for chi-angle projections used to compare interface separability.",
+    publicSurface: "AvoChiProjectionHistogramChart",
+    rendererKernel: "histogram",
+    canonicalBoundaries: ["ophiolite-avo-chi-projection-source"],
+    allowedAssetFamilies: ["avo-interface-model", "avo-chi-projection-series"],
+    interactionProfile: AVO_INTERACTION_PROFILE,
+    adapterEntryPoints: ["adaptOphioliteAvoChiProjectionToChart"],
+    validationEntryPoints: ["validateOphioliteAvoChiProjectionSource"],
+    constraints: [
+      "Accepts only analysis DTOs for chi-angle projections or weighted-stack feasibility studies.",
+      "Series stay tied to explicit interface ids and preserve raw projected samples for histogramming.",
+      "Rejects generic bar charts, seismic volumes, and unconstrained categorical counts."
+    ]
   }
 ] as const satisfies readonly ChartDefinition[];
 
@@ -242,6 +327,18 @@ export const CHART_FAMILIES = [
     chartIds: ["rock-physics-crossplot"],
     rendererKernels: ["point-cloud"],
     canonicalBoundaries: ["ophiolite-rock-physics-crossplot-source"]
+  },
+  {
+    id: "avo",
+    label: "AVO",
+    summary: "Analysis charts for modeled AVO responses, intercept-gradient crossplots, and chi-angle projections.",
+    chartIds: ["avo-response-plot", "avo-intercept-gradient-crossplot", "avo-chi-projection-histogram"],
+    rendererKernels: ["cartesian-line", "point-cloud", "histogram"],
+    canonicalBoundaries: [
+      "ophiolite-avo-response-source",
+      "ophiolite-avo-crossplot-source",
+      "ophiolite-avo-chi-projection-source"
+    ]
   }
 ] as const satisfies readonly ChartFamilyDefinition[];
 

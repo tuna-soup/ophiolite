@@ -7,6 +7,7 @@ pub const WELL_PANEL_CONTRACT_VERSION: u32 = 1;
 pub const SURVEY_MAP_CONTRACT_VERSION: u32 = 2;
 pub const SECTION_WELL_OVERLAY_CONTRACT_VERSION: u32 = 1;
 pub const ROCK_PHYSICS_CROSSPLOT_CONTRACT_VERSION: u32 = 1;
+pub const AVO_ANALYSIS_CONTRACT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct WellPanelRequestDto {
@@ -152,6 +153,8 @@ pub enum RockPhysicsCurveSemanticDto {
     SVelocity,
     VpVsRatio,
     AcousticImpedance,
+    ElasticImpedance,
+    ExtendedElasticImpedance,
     ShearImpedance,
     LambdaRho,
     MuRho,
@@ -428,6 +431,173 @@ pub struct RockPhysicsCrossplotRequestDto {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subtitle: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum AvoReflectivityModelDto {
+    ShueyTwoTerm,
+    ShueyThreeTerm,
+    AkiRichards,
+    AkiRichardsAlt,
+    Fatti,
+    Bortfeld,
+    Hilterman,
+    ApproxZoeppritzPp,
+    Zoeppritz,
+    Ruger,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum AvoAnisotropyModeDto {
+    Isotropic,
+    Vti,
+    Hti,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum AvoCurveStyleDto {
+    Solid,
+    Dashed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AvoAxisDto {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_value: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AvoInterfaceDto {
+    pub id: String,
+    pub label: String,
+    pub color: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reservoir_label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AvoResponseSeriesDto {
+    pub id: String,
+    pub interface_id: String,
+    pub label: String,
+    pub color: String,
+    pub style: AvoCurveStyleDto,
+    pub reflectivity_model: AvoReflectivityModelDto,
+    pub anisotropy_mode: AvoAnisotropyModeDto,
+    pub incidence_angles_deg: Vec<f64>,
+    pub values: Vec<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ResolvedAvoResponseSourceDto {
+    pub schema_version: u32,
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    pub x_axis: AvoAxisDto,
+    pub y_axis: AvoAxisDto,
+    pub interfaces: Vec<AvoInterfaceDto>,
+    pub series: Vec<AvoResponseSeriesDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AvoCrossplotPointDto {
+    pub interface_id: String,
+    pub intercept: f64,
+    pub gradient: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chi_projection: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub simulation_id: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AvoReferenceLineDto {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub color: String,
+    pub style: AvoCurveStyleDto,
+    pub x1: f64,
+    pub y1: f64,
+    pub x2: f64,
+    pub y2: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AvoBackgroundRegionDto {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub fill_color: String,
+    pub x_min: f64,
+    pub x_max: f64,
+    pub y_min: f64,
+    pub y_max: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ResolvedAvoCrossplotSourceDto {
+    pub schema_version: u32,
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    pub x_axis: AvoAxisDto,
+    pub y_axis: AvoAxisDto,
+    pub interfaces: Vec<AvoInterfaceDto>,
+    pub points: Vec<AvoCrossplotPointDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference_lines: Option<Vec<AvoReferenceLineDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background_regions: Option<Vec<AvoBackgroundRegionDto>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct AvoChiProjectionSeriesDto {
+    pub id: String,
+    pub interface_id: String,
+    pub label: String,
+    pub color: String,
+    pub projected_values: Vec<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mean_value: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ResolvedAvoChiProjectionSourceDto {
+    pub schema_version: u32,
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<String>,
+    pub chi_angle_deg: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection_label: Option<String>,
+    pub x_axis: AvoAxisDto,
+    pub interfaces: Vec<AvoInterfaceDto>,
+    pub series: Vec<AvoChiProjectionSeriesDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_bin_count: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]

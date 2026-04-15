@@ -17,6 +17,13 @@ import type {
   SectionViewportChanged
 } from "@ophiolite/contracts";
 import type {
+  AvoCartesianViewport,
+  AvoChiProjectionModel,
+  AvoCrossplotModel,
+  AvoCrossplotProbe,
+  AvoHistogramProbe,
+  AvoResponseModel,
+  AvoResponseProbe,
   ChartInteractionActionId,
   ChartInteractionToolId,
   InteractionEvent,
@@ -367,8 +374,121 @@ export type RockPhysicsCrossplotProbeChangeHandler = (payload: RockPhysicsCrossp
 export type RockPhysicsCrossplotInteractionStateChangeHandler = (payload: RockPhysicsCrossplotChartInteractionState) => void;
 export type RockPhysicsCrossplotInteractionEventHandler = (payload: RockPhysicsCrossplotInteractionEventPayload) => void;
 
+export type AvoChartTool = "pointer" | "crosshair" | "pan";
+export type AvoChartAction = "fitToData";
+
+export interface AvoChartInteractionConfig {
+  tool?: AvoChartTool;
+}
+
+export interface AvoChartInteractionCapabilities {
+  tools: AvoChartTool[];
+  actions: AvoChartAction[];
+}
+
+export const AVO_CHART_INTERACTION_CAPABILITIES: AvoChartInteractionCapabilities =
+  chartInteractionCapabilities<AvoChartTool, AvoChartAction>("avo-intercept-gradient-crossplot");
+
+export interface AvoChartInteractionState {
+  capabilities: AvoChartInteractionCapabilities;
+  tool: AvoChartTool;
+}
+
+export interface AvoViewportChangePayload {
+  chartId: string;
+  viewport: AvoCartesianViewport | null;
+}
+
+export interface AvoCrossplotProbeChangePayload {
+  chartId: string;
+  probe: AvoCrossplotProbe | null;
+}
+
+export interface AvoResponseProbeChangePayload {
+  chartId: string;
+  probe: AvoResponseProbe | null;
+}
+
+export interface AvoHistogramProbeChangePayload {
+  chartId: string;
+  probe: AvoHistogramProbe | null;
+}
+
+export interface AvoInteractionEventPayload {
+  chartId: string;
+  event: InteractionEvent;
+}
+
+export interface AvoChartOverlayProps {
+  stageTopLeft?: Snippet;
+  plotTopCenter?: Snippet;
+  plotTopRight?: Snippet;
+  plotBottomRight?: Snippet;
+  plotBottomLeft?: Snippet;
+  stageScale?: number;
+}
+
+export interface AvoInterceptGradientCrossplotChartProps extends AvoChartOverlayProps {
+  chartId: string;
+  model: AvoCrossplotModel | null;
+  viewport?: AvoCartesianViewport | null;
+  interactions?: AvoChartInteractionConfig;
+  loading?: boolean;
+  emptyMessage?: string;
+  errorMessage?: string | null;
+  resetToken?: string | number | null;
+  onViewportChange?: AvoViewportChangeHandler;
+  onProbeChange?: AvoCrossplotProbeChangeHandler;
+  onInteractionStateChange?: AvoInteractionStateChangeHandler;
+  onInteractionEvent?: AvoInteractionEventHandler;
+}
+
+export interface AvoResponseChartProps extends AvoChartOverlayProps {
+  chartId: string;
+  model: AvoResponseModel | null;
+  viewport?: AvoCartesianViewport | null;
+  interactions?: AvoChartInteractionConfig;
+  loading?: boolean;
+  emptyMessage?: string;
+  errorMessage?: string | null;
+  resetToken?: string | number | null;
+  onViewportChange?: AvoViewportChangeHandler;
+  onProbeChange?: AvoResponseProbeChangeHandler;
+  onInteractionStateChange?: AvoInteractionStateChangeHandler;
+  onInteractionEvent?: AvoInteractionEventHandler;
+}
+
+export interface AvoChiProjectionHistogramChartProps extends AvoChartOverlayProps {
+  chartId: string;
+  model: AvoChiProjectionModel | null;
+  viewport?: AvoCartesianViewport | null;
+  interactions?: AvoChartInteractionConfig;
+  loading?: boolean;
+  emptyMessage?: string;
+  errorMessage?: string | null;
+  resetToken?: string | number | null;
+  onViewportChange?: AvoViewportChangeHandler;
+  onProbeChange?: AvoHistogramProbeChangeHandler;
+  onInteractionStateChange?: AvoInteractionStateChangeHandler;
+  onInteractionEvent?: AvoInteractionEventHandler;
+}
+
+export type AvoViewportChangeHandler = (payload: AvoViewportChangePayload) => void;
+export type AvoCrossplotProbeChangeHandler = (payload: AvoCrossplotProbeChangePayload) => void;
+export type AvoResponseProbeChangeHandler = (payload: AvoResponseProbeChangePayload) => void;
+export type AvoHistogramProbeChangeHandler = (payload: AvoHistogramProbeChangePayload) => void;
+export type AvoInteractionStateChangeHandler = (payload: AvoChartInteractionState) => void;
+export type AvoInteractionEventHandler = (payload: AvoInteractionEventPayload) => void;
+
 function chartInteractionCapabilities<TTool extends ChartInteractionToolId, TAction extends ChartInteractionActionId>(
-  chartId: "seismic-section" | "well-correlation-panel" | "survey-map" | "rock-physics-crossplot"
+  chartId:
+    | "seismic-section"
+    | "well-correlation-panel"
+    | "survey-map"
+    | "rock-physics-crossplot"
+    | "avo-response-plot"
+    | "avo-intercept-gradient-crossplot"
+    | "avo-chi-projection-histogram"
 ): { tools: TTool[]; actions: TAction[] } {
   const { interactionProfile } = getChartDefinition(chartId);
   return {

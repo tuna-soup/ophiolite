@@ -1,4 +1,5 @@
 {
+  "avoAnalysisContractVersion": 1,
   "rockPhysicsCrossplotContractVersion": 1,
   "sectionWellOverlayContractVersion": 1,
   "surveyMapContractVersion": 2,
@@ -2735,6 +2736,990 @@
         }
       }
     },
+    "AvoReflectivityModelDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "AvoReflectivityModelDto",
+      "type": "string",
+      "enum": [
+        "shuey_two_term",
+        "shuey_three_term",
+        "aki_richards",
+        "aki_richards_alt",
+        "fatti",
+        "bortfeld",
+        "hilterman",
+        "approx_zoeppritz_pp",
+        "zoeppritz",
+        "ruger"
+      ]
+    },
+    "AvoAnisotropyModeDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "AvoAnisotropyModeDto",
+      "type": "string",
+      "enum": [
+        "isotropic",
+        "vti",
+        "hti"
+      ]
+    },
+    "AvoCurveStyleDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "AvoCurveStyleDto",
+      "type": "string",
+      "enum": [
+        "solid",
+        "dashed"
+      ]
+    },
+    "AvoAxisDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "AvoAxisDto",
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "min_value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "AvoInterfaceDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "AvoInterfaceDto",
+      "type": "object",
+      "required": [
+        "color",
+        "id",
+        "label"
+      ],
+      "properties": {
+        "color": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "reservoir_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "AvoResponseSeriesDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "AvoResponseSeriesDto",
+      "type": "object",
+      "required": [
+        "anisotropy_mode",
+        "color",
+        "id",
+        "incidence_angles_deg",
+        "interface_id",
+        "label",
+        "reflectivity_model",
+        "style",
+        "values"
+      ],
+      "properties": {
+        "anisotropy_mode": {
+          "$ref": "#/definitions/AvoAnisotropyModeDto"
+        },
+        "color": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "incidence_angles_deg": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "interface_id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "reflectivity_model": {
+          "$ref": "#/definitions/AvoReflectivityModelDto"
+        },
+        "style": {
+          "$ref": "#/definitions/AvoCurveStyleDto"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "definitions": {
+        "AvoAnisotropyModeDto": {
+          "type": "string",
+          "enum": [
+            "isotropic",
+            "vti",
+            "hti"
+          ]
+        },
+        "AvoCurveStyleDto": {
+          "type": "string",
+          "enum": [
+            "solid",
+            "dashed"
+          ]
+        },
+        "AvoReflectivityModelDto": {
+          "type": "string",
+          "enum": [
+            "shuey_two_term",
+            "shuey_three_term",
+            "aki_richards",
+            "aki_richards_alt",
+            "fatti",
+            "bortfeld",
+            "hilterman",
+            "approx_zoeppritz_pp",
+            "zoeppritz",
+            "ruger"
+          ]
+        }
+      }
+    },
+    "ResolvedAvoResponseSourceDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolvedAvoResponseSourceDto",
+      "type": "object",
+      "required": [
+        "id",
+        "interfaces",
+        "name",
+        "schema_version",
+        "series",
+        "x_axis",
+        "y_axis"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "interfaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AvoInterfaceDto"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "series": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AvoResponseSeriesDto"
+          }
+        },
+        "subtitle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "x_axis": {
+          "$ref": "#/definitions/AvoAxisDto"
+        },
+        "y_axis": {
+          "$ref": "#/definitions/AvoAxisDto"
+        }
+      },
+      "definitions": {
+        "AvoAnisotropyModeDto": {
+          "type": "string",
+          "enum": [
+            "isotropic",
+            "vti",
+            "hti"
+          ]
+        },
+        "AvoAxisDto": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "max_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "min_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "AvoCurveStyleDto": {
+          "type": "string",
+          "enum": [
+            "solid",
+            "dashed"
+          ]
+        },
+        "AvoInterfaceDto": {
+          "type": "object",
+          "required": [
+            "color",
+            "id",
+            "label"
+          ],
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "reservoir_label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "AvoReflectivityModelDto": {
+          "type": "string",
+          "enum": [
+            "shuey_two_term",
+            "shuey_three_term",
+            "aki_richards",
+            "aki_richards_alt",
+            "fatti",
+            "bortfeld",
+            "hilterman",
+            "approx_zoeppritz_pp",
+            "zoeppritz",
+            "ruger"
+          ]
+        },
+        "AvoResponseSeriesDto": {
+          "type": "object",
+          "required": [
+            "anisotropy_mode",
+            "color",
+            "id",
+            "incidence_angles_deg",
+            "interface_id",
+            "label",
+            "reflectivity_model",
+            "style",
+            "values"
+          ],
+          "properties": {
+            "anisotropy_mode": {
+              "$ref": "#/definitions/AvoAnisotropyModeDto"
+            },
+            "color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "incidence_angles_deg": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "interface_id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "reflectivity_model": {
+              "$ref": "#/definitions/AvoReflectivityModelDto"
+            },
+            "style": {
+              "$ref": "#/definitions/AvoCurveStyleDto"
+            },
+            "values": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            }
+          }
+        }
+      }
+    },
+    "AvoCrossplotPointDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "AvoCrossplotPointDto",
+      "type": "object",
+      "required": [
+        "gradient",
+        "intercept",
+        "interface_id"
+      ],
+      "properties": {
+        "chi_projection": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "gradient": {
+          "type": "number",
+          "format": "double"
+        },
+        "intercept": {
+          "type": "number",
+          "format": "double"
+        },
+        "interface_id": {
+          "type": "string"
+        },
+        "simulation_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        }
+      }
+    },
+    "AvoReferenceLineDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "AvoReferenceLineDto",
+      "type": "object",
+      "required": [
+        "color",
+        "id",
+        "style",
+        "x1",
+        "x2",
+        "y1",
+        "y2"
+      ],
+      "properties": {
+        "color": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "style": {
+          "$ref": "#/definitions/AvoCurveStyleDto"
+        },
+        "x1": {
+          "type": "number",
+          "format": "double"
+        },
+        "x2": {
+          "type": "number",
+          "format": "double"
+        },
+        "y1": {
+          "type": "number",
+          "format": "double"
+        },
+        "y2": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "definitions": {
+        "AvoCurveStyleDto": {
+          "type": "string",
+          "enum": [
+            "solid",
+            "dashed"
+          ]
+        }
+      }
+    },
+    "AvoBackgroundRegionDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "AvoBackgroundRegionDto",
+      "type": "object",
+      "required": [
+        "fill_color",
+        "id",
+        "x_max",
+        "x_min",
+        "y_max",
+        "y_min"
+      ],
+      "properties": {
+        "fill_color": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "x_max": {
+          "type": "number",
+          "format": "double"
+        },
+        "x_min": {
+          "type": "number",
+          "format": "double"
+        },
+        "y_max": {
+          "type": "number",
+          "format": "double"
+        },
+        "y_min": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "ResolvedAvoCrossplotSourceDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolvedAvoCrossplotSourceDto",
+      "type": "object",
+      "required": [
+        "id",
+        "interfaces",
+        "name",
+        "points",
+        "schema_version",
+        "x_axis",
+        "y_axis"
+      ],
+      "properties": {
+        "background_regions": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/AvoBackgroundRegionDto"
+          }
+        },
+        "id": {
+          "type": "string"
+        },
+        "interfaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AvoInterfaceDto"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AvoCrossplotPointDto"
+          }
+        },
+        "reference_lines": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/definitions/AvoReferenceLineDto"
+          }
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "subtitle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "x_axis": {
+          "$ref": "#/definitions/AvoAxisDto"
+        },
+        "y_axis": {
+          "$ref": "#/definitions/AvoAxisDto"
+        }
+      },
+      "definitions": {
+        "AvoAxisDto": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "max_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "min_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "AvoBackgroundRegionDto": {
+          "type": "object",
+          "required": [
+            "fill_color",
+            "id",
+            "x_max",
+            "x_min",
+            "y_max",
+            "y_min"
+          ],
+          "properties": {
+            "fill_color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "x_max": {
+              "type": "number",
+              "format": "double"
+            },
+            "x_min": {
+              "type": "number",
+              "format": "double"
+            },
+            "y_max": {
+              "type": "number",
+              "format": "double"
+            },
+            "y_min": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        "AvoCrossplotPointDto": {
+          "type": "object",
+          "required": [
+            "gradient",
+            "intercept",
+            "interface_id"
+          ],
+          "properties": {
+            "chi_projection": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "gradient": {
+              "type": "number",
+              "format": "double"
+            },
+            "intercept": {
+              "type": "number",
+              "format": "double"
+            },
+            "interface_id": {
+              "type": "string"
+            },
+            "simulation_id": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0.0
+            }
+          }
+        },
+        "AvoCurveStyleDto": {
+          "type": "string",
+          "enum": [
+            "solid",
+            "dashed"
+          ]
+        },
+        "AvoInterfaceDto": {
+          "type": "object",
+          "required": [
+            "color",
+            "id",
+            "label"
+          ],
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "reservoir_label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "AvoReferenceLineDto": {
+          "type": "object",
+          "required": [
+            "color",
+            "id",
+            "style",
+            "x1",
+            "x2",
+            "y1",
+            "y2"
+          ],
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "style": {
+              "$ref": "#/definitions/AvoCurveStyleDto"
+            },
+            "x1": {
+              "type": "number",
+              "format": "double"
+            },
+            "x2": {
+              "type": "number",
+              "format": "double"
+            },
+            "y1": {
+              "type": "number",
+              "format": "double"
+            },
+            "y2": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        }
+      }
+    },
+    "AvoChiProjectionSeriesDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "AvoChiProjectionSeriesDto",
+      "type": "object",
+      "required": [
+        "color",
+        "id",
+        "interface_id",
+        "label",
+        "projected_values"
+      ],
+      "properties": {
+        "color": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "interface_id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "mean_value": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "projected_values": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      }
+    },
+    "ResolvedAvoChiProjectionSourceDto": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "ResolvedAvoChiProjectionSourceDto",
+      "type": "object",
+      "required": [
+        "chi_angle_deg",
+        "id",
+        "interfaces",
+        "name",
+        "schema_version",
+        "series",
+        "x_axis"
+      ],
+      "properties": {
+        "chi_angle_deg": {
+          "type": "number",
+          "format": "double"
+        },
+        "id": {
+          "type": "string"
+        },
+        "interfaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AvoInterfaceDto"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "preferred_bin_count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "projection_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "series": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AvoChiProjectionSeriesDto"
+          }
+        },
+        "subtitle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "x_axis": {
+          "$ref": "#/definitions/AvoAxisDto"
+        }
+      },
+      "definitions": {
+        "AvoAxisDto": {
+          "type": "object",
+          "properties": {
+            "label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "max_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "min_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "unit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "AvoChiProjectionSeriesDto": {
+          "type": "object",
+          "required": [
+            "color",
+            "id",
+            "interface_id",
+            "label",
+            "projected_values"
+          ],
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "interface_id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "mean_value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "projected_values": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            }
+          }
+        },
+        "AvoInterfaceDto": {
+          "type": "object",
+          "required": [
+            "color",
+            "id",
+            "label"
+          ],
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "reservoir_label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    },
     "WellPanelDepthSampleDto": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "WellPanelDepthSampleDto",
@@ -4161,6 +5146,8 @@
         "s-velocity",
         "vp-vs-ratio",
         "acoustic-impedance",
+        "elastic-impedance",
+        "extended-elastic-impedance",
         "shear-impedance",
         "lambda-rho",
         "mu-rho",
@@ -4243,6 +5230,8 @@
             "s-velocity",
             "vp-vs-ratio",
             "acoustic-impedance",
+            "elastic-impedance",
+            "extended-elastic-impedance",
             "shear-impedance",
             "lambda-rho",
             "mu-rho",
@@ -4460,6 +5449,8 @@
             "s-velocity",
             "vp-vs-ratio",
             "acoustic-impedance",
+            "elastic-impedance",
+            "extended-elastic-impedance",
             "shear-impedance",
             "lambda-rho",
             "mu-rho",
@@ -4503,6 +5494,8 @@
             "s-velocity",
             "vp-vs-ratio",
             "acoustic-impedance",
+            "elastic-impedance",
+            "extended-elastic-impedance",
             "shear-impedance",
             "lambda-rho",
             "mu-rho",
@@ -4652,6 +5645,8 @@
             "s-velocity",
             "vp-vs-ratio",
             "acoustic-impedance",
+            "elastic-impedance",
+            "extended-elastic-impedance",
             "shear-impedance",
             "lambda-rho",
             "mu-rho",
@@ -4747,6 +5742,8 @@
             "s-velocity",
             "vp-vs-ratio",
             "acoustic-impedance",
+            "elastic-impedance",
+            "extended-elastic-impedance",
             "shear-impedance",
             "lambda-rho",
             "mu-rho",
@@ -5542,6 +6539,8 @@
             "s-velocity",
             "vp-vs-ratio",
             "acoustic-impedance",
+            "elastic-impedance",
+            "extended-elastic-impedance",
             "shear-impedance",
             "lambda-rho",
             "mu-rho",
@@ -5840,6 +6839,8 @@
             "s-velocity",
             "vp-vs-ratio",
             "acoustic-impedance",
+            "elastic-impedance",
+            "extended-elastic-impedance",
             "shear-impedance",
             "lambda-rho",
             "mu-rho",

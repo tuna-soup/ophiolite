@@ -13,6 +13,7 @@ Current chart families:
 - survey maps
 - well correlation panels
 - rock physics crossplots
+- AVO response, intercept-gradient, and chi-projection charts
 
 ## Package Layout
 
@@ -65,7 +66,7 @@ bun run dev:benchmark
 
 ## Embedding
 
-`@ophiolite/charts` exports the main Svelte wrapper surface, including `SeismicSectionChart`, `SeismicGatherChart`, `SurveyMapChart`, `WellCorrelationPanelChart`, and `RockPhysicsCrossplotChart`.
+`@ophiolite/charts` exports the main Svelte wrapper surface, including `SeismicSectionChart`, `SeismicGatherChart`, `SurveyMapChart`, `WellCorrelationPanelChart`, `RockPhysicsCrossplotChart`, `AvoResponseChart`, `AvoInterceptGradientCrossplotChart`, and `AvoChiProjectionHistogramChart`.
 
 Use `@ophiolite/charts/contracts` when you want the wrapper-layer adapters that translate canonical Ophiolite DTOs into chart payloads without pulling app-specific transport code into the SDK.
 

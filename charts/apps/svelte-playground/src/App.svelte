@@ -2,8 +2,18 @@
 
 <script lang="ts">
   import {
+    createMockAvoChiProjectionModel,
+    createMockAvoCrossplotModel,
+    createMockAvoResponseModel,
     MOCK_SECTION_VELOCITY_MODEL_LABEL,
     STANDARD_ROCK_PHYSICS_TEMPLATE_IDS,
+    type AvoCartesianViewport,
+    type AvoChiProjectionModel,
+    type AvoCrossplotModel,
+    type AvoCrossplotProbe,
+    type AvoHistogramProbe,
+    type AvoResponseModel,
+    type AvoResponseProbe,
     createMockRockPhysicsCrossplotModel,
     createMockGatherView,
     createMockSurveyMap,
@@ -35,6 +45,10 @@
   } from "@ophiolite/charts-data-models";
   import { PLOT_MARGIN } from "@ophiolite/charts-renderer";
   import {
+    AVO_CHART_INTERACTION_CAPABILITIES,
+    AvoChiProjectionHistogramChart,
+    AvoInterceptGradientCrossplotChart,
+    AvoResponseChart,
     ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES,
     SEISMIC_CHART_INTERACTION_CAPABILITIES,
     SURVEY_MAP_CHART_INTERACTION_CAPABILITIES,
@@ -44,6 +58,10 @@
     SeismicSectionChart,
     SurveyMapChart,
     WellCorrelationPanelChart,
+    type AvoChartAction,
+    type AvoChartInteractionConfig,
+    type AvoChartInteractionState,
+    type AvoChartTool,
     type RockPhysicsCrossplotChartAction,
     type RockPhysicsCrossplotChartInteractionConfig,
     type RockPhysicsCrossplotChartInteractionState,
@@ -101,13 +119,22 @@
     panBy?: (deltaX: number, deltaY: number) => void;
   }
 
-  type DemoRoute = "seismic" | "gather" | "survey-map" | "rock-physics" | "well-panel";
+  interface AvoChartHandle {
+    fitToData?: () => void;
+    zoomBy?: (factor: number) => void;
+    panBy?: (deltaX: number, deltaY: number) => void;
+  }
+
+  type DemoRoute = "seismic" | "gather" | "survey-map" | "rock-physics" | "avo" | "well-panel";
 
   let seismicChart = $state.raw<SeismicChartHandle | null>(null);
   let gatherChart = $state.raw<GatherChartHandle | null>(null);
   let surveyMapChart = $state.raw<SurveyMapChartHandle | null>(null);
   let correlationChart = $state.raw<CorrelationChartHandle | null>(null);
   let rockPhysicsChart = $state.raw<RockPhysicsChartHandle | null>(null);
+  let avoResponseChart = $state.raw<AvoChartHandle | null>(null);
+  let avoCrossplotChart = $state.raw<AvoChartHandle | null>(null);
+  let avoHistogramChart = $state.raw<AvoChartHandle | null>(null);
   let activeDemo = $state<DemoRoute>(getDemoRoute());
 
   let sectionKind = $state<MockSectionKind>("inline");
@@ -209,6 +236,30 @@
   let rockPhysicsTemplateSpec = $derived(getRockPhysicsTemplateSpec(rockPhysicsTemplateId));
   let rockPhysicsColorModes = $derived(getRockPhysicsMockColorModes(rockPhysicsTemplateId));
 
+  let avoDense = $state(false);
+  let avoChiAngleDeg = $state(35);
+  let avoResponseModel = $state.raw<AvoResponseModel | null>(createAvoResponseModel());
+  let avoCrossplotModel = $state.raw<AvoCrossplotModel | null>(createAvoCrossplotModel());
+  let avoChiModel = $state.raw<AvoChiProjectionModel | null>(createAvoChiModel());
+  let avoResetToken = $state(0);
+  let avoInteractions = $state.raw<AvoChartInteractionConfig>({
+    tool: "crosshair"
+  });
+  let lastAvoInteractionState = $state.raw<AvoChartInteractionState>({
+    capabilities: {
+      tools: [...AVO_CHART_INTERACTION_CAPABILITIES.tools],
+      actions: [...AVO_CHART_INTERACTION_CAPABILITIES.actions]
+    },
+    tool: "crosshair"
+  });
+  let lastAvoEvent = $state("none");
+  let lastAvoResponseViewport = $state.raw<AvoCartesianViewport | null>(null);
+  let lastAvoCrossplotViewport = $state.raw<AvoCartesianViewport | null>(null);
+  let lastAvoChiViewport = $state.raw<AvoCartesianViewport | null>(null);
+  let lastAvoResponseProbe = $state.raw<AvoResponseProbe | null>(null);
+  let lastAvoCrossplotProbe = $state.raw<AvoCrossplotProbe | null>(null);
+  let lastAvoChiProbe = $state.raw<AvoHistogramProbe | null>(null);
+
   let seismicToolbarTools = $derived.by<ChartToolbarToolItem<SeismicChartTool>[]>(() =>
     SEISMIC_CHART_INTERACTION_CAPABILITIES.tools.map((tool) => ({
       id: tool,
@@ -292,6 +343,23 @@
       label: action === "fitToData" ? "Fit To Data" : action,
       icon: "fitToData",
       disabled: !rockPhysicsModel
+    }))
+  );
+  let avoToolbarTools = $derived.by<ChartToolbarToolItem<AvoChartTool>[]>(() =>
+    AVO_CHART_INTERACTION_CAPABILITIES.tools.map((tool) => ({
+      id: tool,
+      label: toolLabel(tool),
+      icon: tool,
+      active: lastAvoInteractionState.tool === tool,
+      disabled: !avoResponseModel && !avoCrossplotModel && !avoChiModel
+    }))
+  );
+  let avoToolbarActions = $derived.by<ChartToolbarActionItem<AvoChartAction>[]>(() =>
+    AVO_CHART_INTERACTION_CAPABILITIES.actions.map((action) => ({
+      id: action,
+      label: action === "fitToData" ? "Fit To Data" : action,
+      icon: "fitToData",
+      disabled: !avoResponseModel && !avoCrossplotModel && !avoChiModel
     }))
   );
 
@@ -594,6 +662,83 @@
     return value.toFixed(3).replace(/\.000$/, "");
   }
 
+  function createAvoResponseModel() {
+    return createMockAvoResponseModel({
+      sampleCountPerInterface: avoDense ? 4_500 : 620,
+      chiAngleDeg: avoChiAngleDeg
+    });
+  }
+
+  function createAvoCrossplotModel() {
+    return createMockAvoCrossplotModel({
+      sampleCountPerInterface: avoDense ? 4_500 : 620,
+      chiAngleDeg: avoChiAngleDeg
+    });
+  }
+
+  function createAvoChiModel() {
+    return createMockAvoChiProjectionModel({
+      sampleCountPerInterface: avoDense ? 4_500 : 620,
+      chiAngleDeg: avoChiAngleDeg
+    });
+  }
+
+  function refreshAvo() {
+    avoResponseModel = createAvoResponseModel();
+    avoCrossplotModel = createAvoCrossplotModel();
+    avoChiModel = createAvoChiModel();
+    avoResetToken += 1;
+  }
+
+  function clearAvo() {
+    avoResponseModel = null;
+    avoCrossplotModel = null;
+    avoChiModel = null;
+    lastAvoResponseViewport = null;
+    lastAvoCrossplotViewport = null;
+    lastAvoChiViewport = null;
+    lastAvoResponseProbe = null;
+    lastAvoCrossplotProbe = null;
+    lastAvoChiProbe = null;
+  }
+
+  function toggleAvoDensity() {
+    avoDense = !avoDense;
+    refreshAvo();
+  }
+
+  function cycleAvoChiAngle() {
+    avoChiAngleDeg = avoChiAngleDeg === 35 ? 25 : avoChiAngleDeg === 25 ? 45 : 35;
+    refreshAvo();
+  }
+
+  function setAvoTool(tool: string) {
+    avoInteractions = {
+      ...avoInteractions,
+      tool: tool as AvoChartTool
+    };
+  }
+
+  function runAvoAction(action: string) {
+    if (action === "fitToData") {
+      fitAvoToData();
+    }
+  }
+
+  function handleAvoInteractionStateChange(event: AvoChartInteractionState) {
+    lastAvoInteractionState = event;
+    avoInteractions = {
+      ...avoInteractions,
+      tool: event.tool
+    };
+  }
+
+  function fitAvoToData() {
+    avoResponseChart?.fitToData?.();
+    avoCrossplotChart?.fitToData?.();
+    avoHistogramChart?.fitToData?.();
+  }
+
   function toContractSectionView(): OphioliteSectionView {
     const source = createMockSection(sectionKind, sectionDomain);
     const displayDefaults = source.displayDefaults;
@@ -666,6 +811,8 @@
               ? "#/survey-map"
               : next === "rock-physics"
                 ? "#/rock-physics"
+                : next === "avo"
+                  ? "#/avo"
               : "#/well-panel";
     }
   }
@@ -683,6 +830,9 @@
     }
     if (window.location.hash === "#/rock-physics") {
       return "rock-physics";
+    }
+    if (window.location.hash === "#/avo") {
+      return "avo";
     }
     if (window.location.hash === "#/well-panel") {
       return "well-panel";
@@ -723,6 +873,9 @@
       </button>
       <button class:active-demo={activeDemo === "rock-physics"} onclick={() => setDemoRoute("rock-physics")}>
         Rock Physics
+      </button>
+      <button class:active-demo={activeDemo === "avo"} onclick={() => setDemoRoute("avo")}>
+        AVO
       </button>
       <button class:active-demo={activeDemo === "well-panel"} onclick={() => setDemoRoute("well-panel")}>
         Well Panel
@@ -954,6 +1107,57 @@
           {#if lastRockPhysicsViewport}
             x {formatRockPhysicsNumber(lastRockPhysicsViewport.xMin)}..{formatRockPhysicsNumber(lastRockPhysicsViewport.xMax)}
             y {formatRockPhysicsNumber(lastRockPhysicsViewport.yMin)}..{formatRockPhysicsNumber(lastRockPhysicsViewport.yMax)}
+          {/if}
+        </div>
+      </section>
+    {:else if activeDemo === "avo"}
+      <section class="group">
+        <h2>AVO Controls</h2>
+        <button onclick={refreshAvo}>Refresh AVO Models</button>
+        <button onclick={clearAvo}>Clear AVO Models</button>
+        <button onclick={fitAvoToData} disabled={!avoResponseModel && !avoCrossplotModel && !avoChiModel}>Fit All Charts</button>
+        <button onclick={cycleAvoChiAngle} disabled={!avoResponseModel && !avoCrossplotModel && !avoChiModel}>
+          Cycle Chi Angle ({avoChiAngleDeg} deg)
+        </button>
+        <button onclick={toggleAvoDensity}>
+          {avoDense ? "Load Standard Populations" : "Load Dense Populations"}
+        </button>
+      </section>
+
+      <section class="group">
+        <h2>AVO Status</h2>
+        <div class="readout">
+          response loaded: {avoResponseModel ? "yes" : "no"}
+          crossplot loaded: {avoCrossplotModel ? "yes" : "no"}
+          chi projection loaded: {avoChiModel ? "yes" : "no"}
+          tool: {lastAvoInteractionState.tool}
+          last event: {lastAvoEvent}
+          chi angle: {avoChiAngleDeg} deg
+          density mode: {avoDense ? "dense" : "standard"}
+        </div>
+      </section>
+
+      <section class="group">
+        <h2>AVO Readout</h2>
+        <div class="readout">
+          {#if lastAvoResponseProbe}
+            response angle {lastAvoResponseProbe.angleDeg.toFixed(1)} deg
+          {:else}
+            Response probe: n/a
+          {/if}
+
+          {#if lastAvoCrossplotProbe}
+            crossplot {lastAvoCrossplotProbe.interfaceLabel}
+            intercept {lastAvoCrossplotProbe.intercept.toFixed(3)}
+            gradient {lastAvoCrossplotProbe.gradient.toFixed(3)}
+          {:else}
+            Crossplot probe: n/a
+          {/if}
+
+          {#if lastAvoChiProbe}
+            weighted stack {lastAvoChiProbe.binStart.toFixed(3)}..{lastAvoChiProbe.binEnd.toFixed(3)}
+          {:else}
+            Chi probe: n/a
           {/if}
         </div>
       </section>
@@ -1190,6 +1394,96 @@
           />
         </div>
       </section>
+    {:else if activeDemo === "avo"}
+      {#snippet avoToolbarOverlay()}
+        <ChartInteractionToolbar
+          label="AVO interaction toolbar"
+          tools={avoToolbarTools}
+          actions={avoToolbarActions}
+          onToolSelect={setAvoTool}
+          onActionSelect={runAvoAction}
+          variant="overlay"
+          iconOnly={true}
+        />
+      {/snippet}
+
+      <section class="card">
+        <header>
+          <div>
+            <h2>AVO Response Wrapper</h2>
+            <p>
+              This line chart keeps modeled interface response semantics separate from raw compute transport,
+              while sharing the same toolbar and viewport conventions as the other chart families.
+            </p>
+          </div>
+        </header>
+        <div class="viewer viewer-avo-response">
+          <AvoResponseChart
+            bind:this={avoResponseChart}
+            chartId="svelte-playground-avo-response"
+            model={avoResponseModel}
+            interactions={avoInteractions}
+            resetToken={avoResetToken}
+            stageTopLeft={avoToolbarOverlay}
+            onInteractionEvent={(payload) => (lastAvoEvent = payload.event.type)}
+            onInteractionStateChange={handleAvoInteractionStateChange}
+            onProbeChange={(event) => (lastAvoResponseProbe = event.probe)}
+            onViewportChange={(event) => (lastAvoResponseViewport = event.viewport)}
+          />
+        </div>
+      </section>
+
+      <section class="card">
+        <header>
+          <div>
+            <h2>AVO Intercept-Gradient Crossplot</h2>
+            <p>
+              This is the first production AVO renderer path because it aligns directly with the existing
+              point-cloud direction and the current backend maturity for intercept and gradient outputs.
+            </p>
+          </div>
+        </header>
+        <div class="viewer viewer-avo-crossplot">
+          <AvoInterceptGradientCrossplotChart
+            bind:this={avoCrossplotChart}
+            chartId="svelte-playground-avo-crossplot"
+            model={avoCrossplotModel}
+            interactions={avoInteractions}
+            resetToken={avoResetToken}
+            stageTopLeft={avoToolbarOverlay}
+            onInteractionEvent={(payload) => (lastAvoEvent = payload.event.type)}
+            onInteractionStateChange={handleAvoInteractionStateChange}
+            onProbeChange={(event) => (lastAvoCrossplotProbe = event.probe)}
+            onViewportChange={(event) => (lastAvoCrossplotViewport = event.viewport)}
+          />
+        </div>
+      </section>
+
+      <section class="card">
+        <header>
+          <div>
+            <h2>AVO Weighted-Stack / Chi Projection</h2>
+            <p>
+              The weighted-stack view is treated as a chi-projection histogram so the public model stays explicit
+              about what is being binned and compared.
+            </p>
+          </div>
+        </header>
+        <div class="viewer viewer-avo-histogram">
+          <AvoChiProjectionHistogramChart
+            bind:this={avoHistogramChart}
+            chartId="svelte-playground-avo-chi"
+            model={avoChiModel}
+            interactions={avoInteractions}
+            resetToken={avoResetToken}
+            stageTopLeft={avoToolbarOverlay}
+            onInteractionEvent={(payload) => (lastAvoEvent = payload.event.type)}
+            onInteractionStateChange={handleAvoInteractionStateChange}
+            onProbeChange={(event) => (lastAvoChiProbe = event.probe)}
+            onViewportChange={(event) => (lastAvoChiViewport = event.viewport)}
+          />
+        </div>
+      </section>
     {:else}
       <section class="card">
         <header>
@@ -1379,6 +1673,18 @@
 
   .viewer-rock-physics {
     background: rgba(6, 20, 28, 0.9);
+  }
+
+  .viewer-avo-response {
+    background: rgba(235, 239, 245, 0.96);
+  }
+
+  .viewer-avo-crossplot {
+    background: rgba(235, 241, 229, 0.96);
+  }
+
+  .viewer-avo-histogram {
+    background: rgba(243, 239, 228, 0.96);
   }
 
   .viewer-toolbar {

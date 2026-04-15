@@ -52,9 +52,13 @@ pub use project_assets::{
     DrillingObservationRow, PressureObservationRow, TopRow, TrajectoryRow,
 };
 pub use project_contracts::{
+    AVO_ANALYSIS_CONTRACT_VERSION, AvoAnisotropyModeDto, AvoAxisDto, AvoBackgroundRegionDto,
+    AvoChiProjectionSeriesDto, AvoCrossplotPointDto, AvoCurveStyleDto, AvoInterfaceDto,
+    AvoReferenceLineDto, AvoReflectivityModelDto, AvoResponseSeriesDto,
     CoordinateReferenceBindingDto, CoordinateReferenceDto, CoordinateReferenceSourceDto,
     ProjectSurveyMapRequestDto, ProjectedPoint2Dto, ProjectedPolygon2Dto, ProjectedVector2Dto,
     ROCK_PHYSICS_CROSSPLOT_CONTRACT_VERSION, ResolveSectionWellOverlaysResponse,
+    ResolvedAvoChiProjectionSourceDto, ResolvedAvoCrossplotSourceDto, ResolvedAvoResponseSourceDto,
     ResolvedRockPhysicsCrossplotSourceDto, ResolvedSectionWellOverlayDto,
     ResolvedSurveyMapHorizonDto, ResolvedSurveyMapSourceDto, ResolvedSurveyMapSurveyDto,
     ResolvedSurveyMapWellDto, ResolvedWellPanelSourceDto, ResolvedWellPanelWellDto,

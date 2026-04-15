@@ -1,3 +1,6 @@
+export { default as AvoChiProjectionHistogramChart } from "./AvoChiProjectionHistogramChart.svelte";
+export { default as AvoInterceptGradientCrossplotChart } from "./AvoInterceptGradientCrossplotChart.svelte";
+export { default as AvoResponseChart } from "./AvoResponseChart.svelte";
 export { default as SeismicGatherChart } from "./SeismicGatherChart.svelte";
 export { default as SeismicSectionChart } from "./SeismicSectionChart.svelte";
 export { default as RockPhysicsCrossplotChart } from "./RockPhysicsCrossplotChart.svelte";
@@ -29,6 +32,7 @@ export type {
   ChartRendererKernelId
 } from "@ophiolite/charts-data-models";
 export {
+  AVO_CHART_INTERACTION_CAPABILITIES,
   ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES,
   SEISMIC_CHART_INTERACTION_CAPABILITIES,
   SURVEY_MAP_CHART_INTERACTION_CAPABILITIES,

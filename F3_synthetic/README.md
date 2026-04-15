@@ -22,6 +22,8 @@ F3 synthetic assets for the regularized F3 survey.
 - `depth_velocity_cube/`
   - Depth-domain synthetic interval-velocity cube derived from `f3-paired-horizon-survey-transform`.
   - Regular depth axis: `start=0 m`, `step=50 m`, `count=51`, `extent=2451.98 m`.
+  - `manifest.json` stays versioned.
+  - `*.bin` payloads are generated local artifacts and are intentionally ignored by git.
 
 Current canonical transform status:
 

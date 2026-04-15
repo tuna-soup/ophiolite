@@ -1,0 +1,16 @@
+{
+  "name": "@ophiolite/charts-playground",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "svelte-check --tsconfig tsconfig.json"
+  },
+  "dependencies": {
+    "@ophiolite/charts-data-models": "workspace:*",
+    "@ophiolite/charts": "workspace:*",
+    "@ophiolite/charts-toolbar": "workspace:*"
+  }
+}

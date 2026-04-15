@@ -1,0 +1,30 @@
+{
+  "name": "@ophiolite/charts",
+  "version": "0.1.0",
+  "type": "module",
+  "svelte": "./src/index.ts",
+  "exports": {
+    ".": {
+      "svelte": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./contracts": {
+      "default": "./src/contracts.ts"
+    },
+    "./types": {
+      "default": "./src/types.ts"
+    }
+  },
+  "peerDependencies": {
+    "svelte": "^5.0.0"
+  },
+  "dependencies": {
+    "@ophiolite/contracts": "file:../../../contracts/ts/ophiolite-contracts",
+    "@ophiolite/charts-data-models": "file:../data-models",
+    "@ophiolite/charts-domain": "file:../domain-geoscience",
+    "@ophiolite/charts-renderer": "file:../renderer"
+  },
+  "scripts": {
+    "typecheck": "svelte-check --tsconfig tsconfig.json"
+  }
+}

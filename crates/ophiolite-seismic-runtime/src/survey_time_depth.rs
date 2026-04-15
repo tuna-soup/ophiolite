@@ -697,6 +697,194 @@ pub fn build_survey_time_depth_transform(
     store_survey_time_depth_transform(store_root, descriptor, &depths_m, &validity)
 }
 
+pub fn build_survey_time_depth_transform_from_horizon_pairs(
+    root: impl AsRef<Path>,
+    time_horizon_ids: &[String],
+    depth_horizon_ids: &[String],
+    output_id: Option<String>,
+    output_name: Option<String>,
+    notes: &[String],
+) -> Result<SurveyTimeDepthTransform3D, SeismicStoreError> {
+    if time_horizon_ids.is_empty() || depth_horizon_ids.is_empty() {
+        return Err(SeismicStoreError::Message(
+            "paired-horizon transform builder requires at least one time horizon and one depth horizon"
+                .to_string(),
+        ));
+    }
+    if time_horizon_ids.len() != depth_horizon_ids.len() {
+        return Err(SeismicStoreError::Message(format!(
+            "paired-horizon transform builder requires matching time and depth horizon counts; found {} time horizons and {} depth horizons",
+            time_horizon_ids.len(),
+            depth_horizon_ids.len()
+        )));
+    }
+
+    let root = root.as_ref();
+    let handle = open_store(root)?;
+    let shape = handle.manifest.volume.shape;
+    let inline_count = shape[0];
+    let xline_count = shape[1];
+    let sample_count = shape[2];
+    let sample_axis_ms = &handle.manifest.volume.axes.sample_axis_ms;
+    let last_sample_time_ms = sample_axis_ms.last().copied().ok_or_else(|| {
+        SeismicStoreError::Message(
+            "paired-horizon transform builder requires a survey with a non-empty sample axis"
+                .to_string(),
+        )
+    })?;
+    let all_horizons = load_horizon_grids(root)?;
+    let horizons_by_id = all_horizons
+        .iter()
+        .map(|grid| (grid.descriptor.id.as_str(), grid))
+        .collect::<HashMap<_, _>>();
+
+    let mut paired_horizons = Vec::with_capacity(time_horizon_ids.len());
+    for (time_horizon_id, depth_horizon_id) in time_horizon_ids.iter().zip(depth_horizon_ids.iter())
+    {
+        let time_horizon = lookup_horizon_grid(&horizons_by_id, time_horizon_id)?;
+        if time_horizon.descriptor.vertical_domain != TimeDepthDomain::Time
+            || time_horizon.descriptor.vertical_unit != "ms"
+        {
+            return Err(SeismicStoreError::Message(format!(
+                "time horizon '{}' must be stored in canonical time domain ms",
+                time_horizon_id
+            )));
+        }
+
+        let depth_horizon = lookup_horizon_grid(&horizons_by_id, depth_horizon_id)?;
+        if depth_horizon.descriptor.vertical_domain != TimeDepthDomain::Depth
+            || depth_horizon.descriptor.vertical_unit != "m"
+        {
+            return Err(SeismicStoreError::Message(format!(
+                "depth horizon '{}' must be stored in canonical depth domain m",
+                depth_horizon_id
+            )));
+        }
+
+        if time_horizon.inline_count != inline_count
+            || time_horizon.xline_count != xline_count
+            || depth_horizon.inline_count != inline_count
+            || depth_horizon.xline_count != xline_count
+        {
+            return Err(SeismicStoreError::Message(format!(
+                "paired horizons '{}' and '{}' do not align with the survey grid {}x{}",
+                time_horizon_id, depth_horizon_id, inline_count, xline_count
+            )));
+        }
+        if time_horizon.values.len() != inline_count * xline_count
+            || depth_horizon.values.len() != inline_count * xline_count
+            || time_horizon.validity.len() != inline_count * xline_count
+            || depth_horizon.validity.len() != inline_count * xline_count
+        {
+            return Err(SeismicStoreError::Message(format!(
+                "paired horizons '{}' and '{}' contain unexpected payload sizes",
+                time_horizon_id, depth_horizon_id
+            )));
+        }
+
+        paired_horizons.push((time_horizon, depth_horizon));
+    }
+
+    let mut depths_m = Vec::with_capacity(inline_count * xline_count * sample_count);
+    let mut validity = Vec::with_capacity(inline_count * xline_count * sample_count);
+    let mut invalid_trace_count = 0_usize;
+
+    for trace_index in 0..(inline_count * xline_count) {
+        match paired_boundary_pairs_for_trace(trace_index, &paired_horizons, last_sample_time_ms)
+            .and_then(|boundary_pairs| {
+                compile_trace_depths_from_boundary_pairs(sample_axis_ms, &boundary_pairs)
+            }) {
+            Ok(trace_depths_m) => {
+                depths_m.extend(trace_depths_m);
+                validity.extend(std::iter::repeat_n(1_u8, sample_count));
+            }
+            Err(_) => {
+                invalid_trace_count += 1;
+                depths_m.extend(std::iter::repeat_n(0.0_f32, sample_count));
+                validity.extend(std::iter::repeat_n(0_u8, sample_count));
+            }
+        }
+    }
+
+    let survey_coordinate_reference = handle
+        .manifest
+        .volume
+        .coordinate_reference_binding
+        .as_ref()
+        .and_then(|binding| binding.effective.clone());
+    let survey_grid_transform = handle
+        .manifest
+        .volume
+        .spatial
+        .as_ref()
+        .and_then(|spatial| spatial.grid_transform.clone());
+
+    let descriptor = SurveyTimeDepthTransform3D {
+        id: output_id.unwrap_or_else(|| "paired-horizon-survey-transform".to_string()),
+        name: output_name.unwrap_or_else(|| "Paired Horizon Survey Transform".to_string()),
+        derived_from: time_horizon_ids
+            .iter()
+            .chain(depth_horizon_ids.iter())
+            .cloned()
+            .collect(),
+        source_kind: TimeDepthTransformSourceKind::HorizonLayerModel,
+        coordinate_reference: survey_coordinate_reference.clone(),
+        grid_transform: survey_grid_transform.clone(),
+        time_axis: VerticalAxisDescriptor {
+            domain: TimeDepthDomain::Time,
+            unit: "ms".to_string(),
+            start: sample_axis_ms.first().copied().unwrap_or(0.0),
+            step: if sample_axis_ms.len() >= 2 {
+                sample_axis_ms[1] - sample_axis_ms[0]
+            } else {
+                0.0
+            },
+            count: sample_count,
+        },
+        depth_unit: "m".to_string(),
+        inline_count,
+        xline_count,
+        sample_count,
+        coverage: SpatialCoverageSummary {
+            relationship: if invalid_trace_count == 0 {
+                SpatialCoverageRelationship::Exact
+            } else if invalid_trace_count == inline_count * xline_count {
+                SpatialCoverageRelationship::Unknown
+            } else {
+                SpatialCoverageRelationship::PartialOverlap
+            },
+            source_coordinate_reference: survey_coordinate_reference.clone(),
+            target_coordinate_reference: survey_coordinate_reference,
+            notes: {
+                let mut coverage_notes = vec![format!(
+                    "Built from {} paired canonical TWT/depth horizons.",
+                    paired_horizons.len()
+                )];
+                if invalid_trace_count > 0 {
+                    coverage_notes.push(format!(
+                        "{invalid_trace_count} traces were marked invalid because the paired horizon boundaries were non-monotonic or incomplete."
+                    ));
+                }
+                coverage_notes
+            },
+        },
+        notes: {
+            let mut descriptor_notes = notes.to_vec();
+            descriptor_notes.push(
+                "Per-trace time-depth mapping is piecewise linear between paired TWT/depth horizons."
+                    .to_string(),
+            );
+            descriptor_notes.push(
+                "The transform is anchored at survey top time 0 ms / depth 0 m and extrapolated to survey base from the deepest paired interval."
+                    .to_string(),
+            );
+            descriptor_notes
+        },
+    };
+
+    store_survey_time_depth_transform(root, descriptor, &depths_m, &validity)
+}
+
 fn compile_velocity_field_payload(
     store_path: &str,
     model: &ophiolite_seismic::LayeredVelocityModel,
@@ -1869,7 +2057,8 @@ fn integrate_velocity_curve_to_depth(
     for (index, velocity_m_per_s) in curve_m_per_s.iter().copied().enumerate() {
         validate_velocity_value(velocity_m_per_s, "compiled interval velocity")?;
         if index == 0 {
-            depths_m.push(0.0);
+            let first_time_ms = sample_axis_ms[0].max(0.0);
+            depths_m.push(first_time_ms * MILLIS_TO_SECONDS * velocity_m_per_s * time_factor);
             continue;
         }
         let previous_velocity_m_per_s = curve_m_per_s[index - 1];
@@ -1890,6 +2079,146 @@ fn travel_time_scale(reference: TravelTimeReference) -> f32 {
         TravelTimeReference::OneWay => 1.0,
         TravelTimeReference::TwoWay => 0.5,
     }
+}
+
+fn lookup_horizon_grid<'a>(
+    horizons_by_id: &'a HashMap<&str, &'a ImportedHorizonGrid>,
+    horizon_id: &str,
+) -> Result<&'a ImportedHorizonGrid, SeismicStoreError> {
+    horizons_by_id.get(horizon_id).copied().ok_or_else(|| {
+        SeismicStoreError::Message(format!(
+            "horizon asset '{}' was not found in the store",
+            horizon_id
+        ))
+    })
+}
+
+fn paired_boundary_pairs_for_trace(
+    trace_index: usize,
+    paired_horizons: &[(&ImportedHorizonGrid, &ImportedHorizonGrid)],
+    last_sample_time_ms: f32,
+) -> Result<Vec<(f32, f32)>, SeismicStoreError> {
+    let mut pairs = Vec::with_capacity(paired_horizons.len() + 1);
+    pairs.push((0.0, 0.0));
+    for (time_horizon, depth_horizon) in paired_horizons {
+        let time_valid = time_horizon.validity.get(trace_index).copied().unwrap_or(0) != 0;
+        let depth_valid = depth_horizon
+            .validity
+            .get(trace_index)
+            .copied()
+            .unwrap_or(0)
+            != 0;
+        if !time_valid || !depth_valid {
+            return Err(SeismicStoreError::Message(
+                "paired-horizon trace is missing one or more boundary values".to_string(),
+            ));
+        }
+
+        let time_ms = time_horizon
+            .values
+            .get(trace_index)
+            .copied()
+            .ok_or_else(|| {
+                SeismicStoreError::Message(
+                    "time horizon payload did not contain the requested trace".to_string(),
+                )
+            })?;
+        let depth_m = depth_horizon
+            .values
+            .get(trace_index)
+            .copied()
+            .ok_or_else(|| {
+                SeismicStoreError::Message(
+                    "depth horizon payload did not contain the requested trace".to_string(),
+                )
+            })?;
+        if !time_ms.is_finite() || !depth_m.is_finite() {
+            return Err(SeismicStoreError::Message(
+                "paired-horizon trace contains non-finite values".to_string(),
+            ));
+        }
+        if time_ms > last_sample_time_ms + AXIS_TOLERANCE {
+            return Err(SeismicStoreError::Message(format!(
+                "paired-horizon time boundary {time_ms} ms exceeds the survey sample axis maximum {last_sample_time_ms} ms"
+            )));
+        }
+
+        let (previous_time_ms, previous_depth_m) = *pairs.last().expect("paired boundary origin");
+        if time_ms <= previous_time_ms + AXIS_TOLERANCE {
+            return Err(SeismicStoreError::Message(
+                "paired-horizon time boundaries must increase strictly for every trace".to_string(),
+            ));
+        }
+        if depth_m <= previous_depth_m + AXIS_TOLERANCE {
+            return Err(SeismicStoreError::Message(
+                "paired-horizon depth boundaries must increase strictly for every trace"
+                    .to_string(),
+            ));
+        }
+        pairs.push((time_ms, depth_m));
+    }
+    Ok(pairs)
+}
+
+fn compile_trace_depths_from_boundary_pairs(
+    sample_axis_ms: &[f32],
+    boundary_pairs: &[(f32, f32)],
+) -> Result<Vec<f32>, SeismicStoreError> {
+    if sample_axis_ms.is_empty() {
+        return Err(SeismicStoreError::Message(
+            "paired-horizon transform builder requires a non-empty sample axis".to_string(),
+        ));
+    }
+    if boundary_pairs.len() < 2 {
+        return Err(SeismicStoreError::Message(
+            "paired-horizon transform builder requires at least one paired boundary".to_string(),
+        ));
+    }
+
+    let mut depths_m = Vec::with_capacity(sample_axis_ms.len());
+    let mut segment_index = 0_usize;
+    for sample_time_ms in sample_axis_ms.iter().copied() {
+        while segment_index + 1 < boundary_pairs.len()
+            && sample_time_ms > boundary_pairs[segment_index + 1].0
+        {
+            segment_index += 1;
+        }
+        let depth_m = if sample_time_ms <= boundary_pairs.last().expect("boundary").0 {
+            let lower = boundary_pairs[segment_index];
+            let upper = boundary_pairs
+                .get(segment_index + 1)
+                .copied()
+                .ok_or_else(|| {
+                    SeismicStoreError::Message(
+                        "paired-horizon transform builder ran out of boundary segments".to_string(),
+                    )
+                })?;
+            interpolate_depth_on_time_segment(sample_time_ms, lower, upper)?
+        } else {
+            let lower = boundary_pairs[boundary_pairs.len() - 2];
+            let upper = boundary_pairs[boundary_pairs.len() - 1];
+            interpolate_depth_on_time_segment(sample_time_ms, lower, upper)?
+        };
+        depths_m.push(depth_m);
+    }
+    Ok(depths_m)
+}
+
+fn interpolate_depth_on_time_segment(
+    sample_time_ms: f32,
+    lower: (f32, f32),
+    upper: (f32, f32),
+) -> Result<f32, SeismicStoreError> {
+    let delta_time_ms = upper.0 - lower.0;
+    let delta_depth_m = upper.1 - lower.1;
+    if delta_time_ms <= AXIS_TOLERANCE || delta_depth_m <= AXIS_TOLERANCE {
+        return Err(SeismicStoreError::Message(
+            "paired-horizon transform segments must be strictly increasing in time and depth"
+                .to_string(),
+        ));
+    }
+    let slope_m_per_ms = delta_depth_m / delta_time_ms;
+    Ok(lower.1 + (sample_time_ms - lower.0) * slope_m_per_ms)
 }
 
 fn validate_velocity_value(value: f32, label: &str) -> Result<(), SeismicStoreError> {
@@ -2358,7 +2687,7 @@ mod tests {
     use ndarray::Array3;
     use tempfile::tempdir;
 
-    use crate::horizons::import_horizon_xyzs;
+    use crate::horizons::{import_horizon_xyzs, import_horizon_xyzs_with_vertical_domain};
     use crate::metadata::{
         DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, VolumeAxes,
         VolumeMetadata,
@@ -2378,6 +2707,16 @@ mod tests {
     };
 
     use super::*;
+
+    fn assert_f32_slice_close(actual: &[f32], expected: &[f32], tolerance: f32) {
+        assert_eq!(actual.len(), expected.len());
+        for (left, right) in actual.iter().zip(expected.iter()) {
+            assert!(
+                (*left - *right).abs() <= tolerance,
+                "expected {right}, got {left}"
+            );
+        }
+    }
 
     #[test]
     fn stores_and_slices_survey_time_depth_transform() {
@@ -2509,6 +2848,17 @@ mod tests {
         assert_eq!(slice.trace_depths_m[0], vec![0.0, 12.0, 24.0, 36.0]);
         assert_eq!(slice.trace_depths_m[1], vec![0.0, 18.0, 36.0, 54.0]);
         assert_eq!(slice.trace_validity, vec![true, true]);
+    }
+
+    #[test]
+    fn integrates_velocity_curve_from_nonzero_sample_origin() {
+        let depths_m = integrate_velocity_curve_to_depth(
+            &[1500.0, 1500.0, 1500.0],
+            &[4.0, 8.0, 12.0],
+            TravelTimeReference::TwoWay,
+        )
+        .expect("integrate constant interval velocity");
+        assert_f32_slice_close(&depths_m, &[3.0, 6.0, 9.0], 1e-4);
     }
 
     #[test]
@@ -2665,8 +3015,8 @@ mod tests {
             0,
         )
         .expect("slice inline 0");
-        assert_eq!(inline0.trace_depths_m[0], vec![0.0, 5.0, 10.0, 15.0]);
-        assert_eq!(inline0.trace_depths_m[1], vec![0.0, 10.0, 20.0, 30.0]);
+        assert_f32_slice_close(&inline0.trace_depths_m[0], &[0.0, 5.0, 10.0, 15.0], 1e-4);
+        assert_f32_slice_close(&inline0.trace_depths_m[1], &[0.0, 10.0, 20.0, 30.0], 1e-4);
 
         let inline1 = section_time_depth_transform_slice(
             &store_root,
@@ -2675,8 +3025,8 @@ mod tests {
             1,
         )
         .expect("slice inline 1");
-        assert_eq!(inline1.trace_depths_m[0], vec![0.0, 7.5, 15.0, 22.5]);
-        assert_eq!(inline1.trace_depths_m[1], vec![0.0, 12.5, 25.0, 37.5]);
+        assert_f32_slice_close(&inline1.trace_depths_m[0], &[0.0, 7.5, 15.0, 22.5], 1e-4);
+        assert_f32_slice_close(&inline1.trace_depths_m[1], &[0.0, 12.5, 25.0, 37.5], 1e-4);
     }
 
     #[test]
@@ -2792,24 +3142,43 @@ mod tests {
                 vertical_domain: TimeDepthDomain::Time,
                 travel_time_reference: Some(TravelTimeReference::TwoWay),
                 depth_reference: Some(DepthReferenceKind::TrueVerticalDepth),
-                intervals: vec![LayeredVelocityInterval {
-                    id: String::from("main"),
-                    name: String::from("Main"),
-                    top_boundary: StratigraphicBoundaryReference::HorizonAsset {
-                        horizon_id: imported[0].id.clone(),
+                intervals: vec![
+                    LayeredVelocityInterval {
+                        id: String::from("shallow"),
+                        name: String::from("Shallow"),
+                        top_boundary: StratigraphicBoundaryReference::SurveyTop,
+                        base_boundary: StratigraphicBoundaryReference::HorizonAsset {
+                            horizon_id: imported[0].id.clone(),
+                        },
+                        trend: VelocityIntervalTrend::Constant {
+                            velocity_m_per_s: 1000.0,
+                        },
+                        control_profile_set_id: None,
+                        control_profile_velocity_kind: None,
+                        lateral_interpolation: Some(LateralInterpolationMethod::Nearest),
+                        vertical_interpolation: Some(VerticalInterpolationMethod::Linear),
+                        control_blend_weight: None,
+                        notes: Vec::new(),
                     },
-                    base_boundary: StratigraphicBoundaryReference::SurveyBase,
-                    trend: VelocityIntervalTrend::LinearWithTime {
-                        velocity_at_top_m_per_s: 1000.0,
-                        gradient_m_per_s_per_ms: 100.0,
+                    LayeredVelocityInterval {
+                        id: String::from("deep"),
+                        name: String::from("Deep"),
+                        top_boundary: StratigraphicBoundaryReference::HorizonAsset {
+                            horizon_id: imported[0].id.clone(),
+                        },
+                        base_boundary: StratigraphicBoundaryReference::SurveyBase,
+                        trend: VelocityIntervalTrend::LinearWithTime {
+                            velocity_at_top_m_per_s: 2000.0,
+                            gradient_m_per_s_per_ms: 100.0,
+                        },
+                        control_profile_set_id: None,
+                        control_profile_velocity_kind: None,
+                        lateral_interpolation: Some(LateralInterpolationMethod::Nearest),
+                        vertical_interpolation: Some(VerticalInterpolationMethod::Linear),
+                        control_blend_weight: None,
+                        notes: Vec::new(),
                     },
-                    control_profile_set_id: None,
-                    control_profile_velocity_kind: None,
-                    lateral_interpolation: Some(LateralInterpolationMethod::Nearest),
-                    vertical_interpolation: Some(VerticalInterpolationMethod::Linear),
-                    control_blend_weight: None,
-                    notes: Vec::new(),
-                }],
+                ],
                 notes: Vec::new(),
             },
             control_profile_sets: Vec::new(),
@@ -2830,9 +3199,161 @@ mod tests {
             0,
         )
         .expect("slice inline 0");
-        assert_eq!(inline0.trace_depths_m[0], vec![0.0, 5.0, 12.5, 25.0]);
-        assert_eq!(inline0.trace_depths_m[1], vec![0.0, 5.0, 10.0, 17.5]);
+        assert_f32_slice_close(&inline0.trace_depths_m[0], &[0.0, 7.5, 20.0, 37.5], 1e-4);
         assert_eq!(inline0.trace_validity, vec![true, true]);
+    }
+
+    #[test]
+    fn builds_survey_time_depth_transform_from_paired_horizons() {
+        let temp = tempdir().expect("tempdir");
+        let store_root = temp.path().join("demo-paired.tbvol");
+        let manifest = TbvolManifest::new(
+            VolumeMetadata {
+                kind: DatasetKind::Source,
+                store_id: String::from("store-demo"),
+                source: SourceIdentity {
+                    source_path: std::path::PathBuf::from("demo.segy"),
+                    file_size: 0,
+                    trace_count: 1,
+                    samples_per_trace: 4,
+                    sample_interval_us: 4_000,
+                    sample_format_code: 1,
+                    sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(1),
+                    endianness: String::from("big"),
+                    revision_raw: 0,
+                    fixed_length_trace_flag_raw: 1,
+                    extended_textual_headers: 0,
+                    geometry: GeometryProvenance {
+                        inline_field: HeaderFieldSpec {
+                            name: String::from("INLINE_3D"),
+                            start_byte: 189,
+                            value_type: String::from("I32"),
+                        },
+                        crossline_field: HeaderFieldSpec {
+                            name: String::from("CROSSLINE_3D"),
+                            start_byte: 193,
+                            value_type: String::from("I32"),
+                        },
+                        third_axis_field: None,
+                    },
+                    regularization: None,
+                },
+                shape: [1, 1, 4],
+                axes: VolumeAxes {
+                    ilines: vec![100.0],
+                    xlines: vec![200.0],
+                    sample_axis_ms: vec![4.0, 8.0, 12.0, 16.0],
+                },
+                segy_export: None,
+                coordinate_reference_binding: Some(CoordinateReferenceBinding {
+                    detected: Some(CoordinateReferenceDescriptor {
+                        id: Some(String::from("LOCAL:PAIR")),
+                        name: Some(String::from("Local Pair Test")),
+                        geodetic_datum: None,
+                        unit: Some(String::from("metre")),
+                    }),
+                    effective: Some(CoordinateReferenceDescriptor {
+                        id: Some(String::from("LOCAL:PAIR")),
+                        name: Some(String::from("Local Pair Test")),
+                        geodetic_datum: None,
+                        unit: Some(String::from("metre")),
+                    }),
+                    source: CoordinateReferenceSource::UserOverride,
+                    notes: Vec::new(),
+                }),
+                spatial: Some(SurveySpatialDescriptor {
+                    coordinate_reference: Some(CoordinateReferenceDescriptor {
+                        id: Some(String::from("LOCAL:PAIR")),
+                        name: Some(String::from("Local Pair Test")),
+                        geodetic_datum: None,
+                        unit: Some(String::from("metre")),
+                    }),
+                    grid_transform: Some(SurveyGridTransform {
+                        origin: ProjectedPoint2 {
+                            x: 1_000.0,
+                            y: 2_000.0,
+                        },
+                        inline_basis: ProjectedVector2 { x: 25.0, y: 0.0 },
+                        xline_basis: ProjectedVector2 { x: 0.0, y: 25.0 },
+                    }),
+                    footprint: None,
+                    availability: SurveySpatialAvailability::Available,
+                    notes: Vec::new(),
+                }),
+                created_by: String::from("test"),
+                processing_lineage: None,
+            },
+            [1, 1, 4],
+            false,
+        );
+        let data = Array3::<f32>::zeros((1, 1, 4));
+        create_tbvol_store(&store_root, manifest, &data, None).expect("create store");
+
+        let twt_one_path = temp.path().join("pair_twt_01.xyz");
+        let twt_two_path = temp.path().join("pair_twt_02.xyz");
+        let depth_one_path = temp.path().join("pair_depth_01.xyz");
+        let depth_two_path = temp.path().join("pair_depth_02.xyz");
+        fs::write(&twt_one_path, "1000 2000 8\n").expect("write twt one");
+        fs::write(&twt_two_path, "1000 2000 12\n").expect("write twt two");
+        fs::write(&depth_one_path, "1000 2000 8\n").expect("write depth one");
+        fs::write(&depth_two_path, "1000 2000 18\n").expect("write depth two");
+
+        let imported_time = import_horizon_xyzs_with_vertical_domain(
+            &store_root,
+            &[&twt_one_path, &twt_two_path],
+            TimeDepthDomain::Time,
+            Some("ms"),
+            None,
+            None,
+            true,
+        )
+        .expect("import time horizons");
+        let imported_depth = import_horizon_xyzs_with_vertical_domain(
+            &store_root,
+            &[&depth_one_path, &depth_two_path],
+            TimeDepthDomain::Depth,
+            Some("m"),
+            None,
+            None,
+            true,
+        )
+        .expect("import depth horizons");
+
+        let descriptor = build_survey_time_depth_transform_from_horizon_pairs(
+            &store_root,
+            &imported_time
+                .iter()
+                .map(|item| item.id.clone())
+                .collect::<Vec<_>>(),
+            &imported_depth
+                .iter()
+                .map(|item| item.id.clone())
+                .collect::<Vec<_>>(),
+            Some(String::from("paired-transform")),
+            Some(String::from("Paired Transform")),
+            &Vec::new(),
+        )
+        .expect("build paired transform");
+
+        assert_eq!(descriptor.id, "paired-transform");
+        assert_eq!(
+            descriptor.source_kind,
+            TimeDepthTransformSourceKind::HorizonLayerModel
+        );
+        assert_eq!(
+            descriptor.coverage.relationship,
+            SpatialCoverageRelationship::Exact
+        );
+
+        let slice = section_time_depth_transform_slice(
+            &store_root,
+            "paired-transform",
+            SectionAxis::Inline,
+            0,
+        )
+        .expect("slice paired transform");
+        assert_f32_slice_close(&slice.trace_depths_m[0], &[4.0, 8.0, 18.0, 28.0], 1e-4);
+        assert_eq!(slice.trace_validity, vec![true]);
     }
 
     #[test]
@@ -3004,8 +3525,8 @@ mod tests {
             0,
         )
         .expect("slice inline 0");
-        assert_eq!(inline0.trace_depths_m[0], vec![0.0, 5.0, 15.0, 30.0]);
-        assert_eq!(inline0.trace_depths_m[1], vec![0.0, 5.0, 15.0, 30.0]);
+        assert_f32_slice_close(&inline0.trace_depths_m[0], &[0.0, 5.0, 15.0, 30.0], 1e-4);
+        assert_f32_slice_close(&inline0.trace_depths_m[1], &[0.0, 5.0, 15.0, 30.0], 1e-4);
         assert_eq!(inline0.trace_validity, vec![true, true]);
     }
 

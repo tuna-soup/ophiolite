@@ -1,25 +1,9 @@
 ---
 title: Log Packages
-description: The single-asset package format for log data.
+description: Legacy route for the broader asset-packages guide.
 draft: false
 ---
 
-Ophiolite log packages are optimized local storage units for one log asset.
+This page has moved to [Asset Packages](/packages-and-projects/asset-packages/).
 
-## Layout
-
-```text
-log_asset.laspkg/
-  metadata.json
-  curves.parquet
-```
-
-## Why Parquet
-
-Curve data is stored column-wise to support:
-
-- projected reads
-- depth-window access
-- efficient package persistence
-
-Ophiolite does not patch Parquet in place. Saves rewrite the payload into a new immutable revision snapshot and rematerialize the visible package head from that revision.
+Log packages are still an important example, but they are no longer the whole packaging story.

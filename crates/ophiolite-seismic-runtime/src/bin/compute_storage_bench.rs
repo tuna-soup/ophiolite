@@ -1680,7 +1680,7 @@ fn synthetic_dataset(ilines: usize, xlines: usize, samples: usize) -> BenchmarkD
         samples_per_trace: samples,
         sample_interval_us: 2000,
         sample_format_code: 5,
-        sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(5),
+        sample_data_fidelity: ophiolite_seismic_runtime::segy_sample_data_fidelity(5),
         endianness: "big".to_string(),
         revision_raw: 0,
         fixed_length_trace_flag_raw: 1,

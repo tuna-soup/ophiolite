@@ -1,0 +1,18 @@
+{
+  "name": "ophiolite-platform",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "bun@1.3.5",
+  "workspaces": [
+    "apps/ophiolite-docs",
+    "charts"
+  ],
+  "scripts": {
+    "docs:dev": "bun --filter ophiolite-docs dev",
+    "docs:build": "bun --filter ophiolite-docs build",
+    "charts:dev": "bun run --cwd ./charts dev",
+    "charts:playground": "bun run --cwd ./charts dev:svelte",
+    "charts:build": "bun run --cwd ./charts build",
+    "charts:typecheck": "bun run --cwd ./charts typecheck"
+  }
+}

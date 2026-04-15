@@ -1,0 +1,14 @@
+{
+  "name": "@ophiolite/charts-data-models",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@ophiolite/contracts": "file:../../../contracts/ts/ophiolite-contracts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

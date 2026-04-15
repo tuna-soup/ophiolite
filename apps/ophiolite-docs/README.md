@@ -1,6 +1,6 @@
 # ophiolite-docs
 
-Public documentation site source for `ophiolite.dev`.
+Public documentation site source for `ophiolite.dev`, which documents Ophiolite as the subsurface core of the stack rather than a LAS-only SDK.
 
 ## Local Development
 

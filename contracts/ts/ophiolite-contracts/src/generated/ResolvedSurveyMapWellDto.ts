@@ -2,5 +2,7 @@
 import type { CoordinateReferenceDto } from "./CoordinateReferenceDto";
 import type { ProjectedPoint2Dto } from "./ProjectedPoint2Dto";
 import type { SurveyMapTrajectoryDto } from "./SurveyMapTrajectoryDto";
+import type { SurveyMapTransformDiagnosticsDto } from "./SurveyMapTransformDiagnosticsDto";
+import type { SurveyMapTransformStatusDto } from "./SurveyMapTransformStatusDto";
 
-export type ResolvedSurveyMapWellDto = { well_id: string, wellbore_id: string, name: string, coordinate_reference: CoordinateReferenceDto | null, surface_location: ProjectedPoint2Dto | null, trajectories: Array<SurveyMapTrajectoryDto>, notes: Array<string>, };
+export type ResolvedSurveyMapWellDto = { well_id: string, wellbore_id: string, name: string, coordinate_reference: CoordinateReferenceDto | null, transform_status: SurveyMapTransformStatusDto, transform_diagnostics: SurveyMapTransformDiagnosticsDto, surface_location: ProjectedPoint2Dto | null, plan_trajectory: Array<ProjectedPoint2Dto>, trajectories: Array<SurveyMapTrajectoryDto>, notes: Array<string>, };

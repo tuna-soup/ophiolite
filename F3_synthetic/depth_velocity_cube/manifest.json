@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "source_store_path": "/Users/sc/dev/TraceBoost/sandbox/f3_dataset_regularized.tbvol",
+  "source_transform_id": "f3-paired-horizon-survey-transform",
+  "value_name": "interval_velocity",
+  "value_unit": "m/s",
+  "inline_count": 651,
+  "xline_count": 951,
+  "sample_count": 51,
+  "depth_axis": {
+    "domain": "depth",
+    "unit": "m",
+    "start": 0.0,
+    "step": 50.0,
+    "count": 51
+  },
+  "max_depth_m": 2401.976806640625,
+  "depth_extent_m": 2451.976806640625,
+  "coordinate_reference": {
+    "id": "LOCAL:F3_GRID",
+    "name": "F3 local projected grid (CDP_X/CDP_Y derived; CRS unresolved)",
+    "geodetic_datum": null,
+    "unit": "length"
+  },
+  "grid_transform": {
+    "origin": {
+      "x": 605835.5166893462,
+      "y": 6073556.382131414
+    },
+    "inline_basis": {
+      "x": -0.6980172385331928,
+      "y": 24.989655199006357
+    },
+    "xline_basis": {
+      "x": 24.990253705619743,
+      "y": 0.6984325852074383
+    }
+  },
+  "invalid_trace_count": 0,
+  "values_file": "interval_velocity.values.f32le.bin",
+  "validity_file": "interval_velocity.validity.u8.bin",
+  "notes": [
+    "Depth-domain interval-velocity cube derived from the stored survey time-depth transform.",
+    "The depth axis starts at 0 m and extends beyond the deepest transform sample by the requested margin.",
+    "Per-depth-sample interval velocity is assigned from the containing time-depth segment."
+  ]
+}

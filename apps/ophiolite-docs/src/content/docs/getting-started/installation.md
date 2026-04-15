@@ -23,11 +23,18 @@ The main workspace crates are:
 - `ophiolite-project`
 - `ophiolite-ingest`
 - `ophiolite-compute`
+- `ophiolite-seismic`
+- `ophiolite-seismic-io`
+- `ophiolite-seismic-runtime`
 - `ophiolite-cli`
 
 The compatibility facade is:
 
 - `ophiolite`
+
+The generated contract surface is:
+
+- `contracts/`
 
 The internal app surface is:
 
@@ -52,5 +59,5 @@ bun run build
 
 Next:
 
-- [Open your first log](/getting-started/first-log/)
+- [Open your first asset](/getting-started/first-asset/)
 - [Open your first project](/getting-started/first-project/)

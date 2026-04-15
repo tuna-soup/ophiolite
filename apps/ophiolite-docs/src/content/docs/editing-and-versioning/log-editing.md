@@ -1,22 +1,9 @@
 ---
 title: Log Editing
-description: How Ophiolite edits and saves log assets.
+description: Legacy route for the broader asset-editing guide.
 draft: false
 ---
 
-Log editing currently uses `PackageSession`.
+This page has moved to [Asset Editing](/editing-and-versioning/asset-editing/).
 
-## Characteristics
-
-- in-memory edits against `LasFile`
-- dirty-state tracking
-- metadata edits and curve edits
-- explicit `save` and `save_as`
-- revision-aware persistence
-
-## Save behavior
-
-- accepted edits mutate the session state in memory
-- `save` writes a new canonical revision snapshot
-- the visible package root is rematerialized from that new head
-- the session stays bound to the same package unless `save_as` rebases it
+The implementation still has its deepest editing maturity in logs, but the docs now describe the broader platform boundary.

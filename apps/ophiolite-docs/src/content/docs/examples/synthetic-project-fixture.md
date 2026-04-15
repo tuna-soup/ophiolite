@@ -6,6 +6,8 @@ draft: false
 
 Ophiolite can generate a deterministic synthetic project fixture for testing and demos.
 
+The current fixture is wellbore-focused because that is the richest synthetic project path today. It is an example of the platform, not the limit of the platform.
+
 ## What it includes
 
 - one well

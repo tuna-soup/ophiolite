@@ -40,6 +40,7 @@ pub enum TimeDepthTransformSourceKind {
     SonicLog1D,
     VpLog1D,
     HorizonLayerModel,
+    WellTieObservationSet1D,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -293,6 +294,36 @@ pub struct ManualTimeDepthPickSet1D {
     pub travel_time_reference: TravelTimeReference,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub samples: Vec<WellTimeDepthObservationSample>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct WellTieObservationSet1D {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wellbore_id: Option<String>,
+    pub depth_reference: DepthReferenceKind,
+    pub travel_time_reference: TravelTimeReference,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub samples: Vec<WellTimeDepthObservationSample>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_well_time_depth_model_asset_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tie_window_start_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tie_window_end_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_search_radius_m: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bulk_shift_ms: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stretch_factor: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace_search_offset_m: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correlation: Option<f32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
 }

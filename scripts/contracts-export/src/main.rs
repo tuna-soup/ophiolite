@@ -8,16 +8,24 @@ use ophiolite::{
     BuildSurveyPropertyFieldRequest, BuildSurveyTimeDepthTransformRequest,
     CheckshotVspObservationSet1D, CompiledWellTimeDepthLineage, CoordinateReferenceBindingDto,
     CoordinateReferenceDto, CoordinateReferenceSourceDto, DepthReferenceKind, GatherAxisKind,
-    GatherInteractionChanged, GatherProbe, GatherProbeChanged, GatherSampleDomain, GatherView,
-    GatherViewport, GatherViewportChanged, LateralInterpolationMethod, LayeredVelocityInterval,
-    LayeredVelocityModel, ManualTimeDepthPickSet1D, ProjectedPoint2Dto, ProjectedPolygon2Dto,
-    ProjectedVector2Dto, ResolveSectionWellOverlaysResponse, ResolvedSectionWellOverlayDto,
+    GatherInteractionChanged, GatherPreviewView, GatherProbe, GatherProbeChanged,
+    GatherSampleDomain, GatherView, GatherViewport, GatherViewportChanged,
+    ImportedHorizonDescriptor, LateralInterpolationMethod, LayeredVelocityInterval,
+    LayeredVelocityModel, ManualTimeDepthPickSet1D, PreviewView, ProjectSurveyMapRequestDto,
+    ProjectedPoint2Dto, ProjectedPolygon2Dto, ProjectedVector2Dto,
+    ResolveSectionWellOverlaysResponse, ResolvedSectionDisplayView, ResolvedSectionWellOverlayDto,
     ResolvedSurveyMapSourceDto, ResolvedSurveyMapSurveyDto, ResolvedSurveyMapWellDto,
     ResolvedTrajectoryGeometry, ResolvedTrajectoryStation, ResolvedWellPanelSourceDto,
     ResolvedWellPanelWellDto, SECTION_WELL_OVERLAY_CONTRACT_VERSION, SURVEY_MAP_CONTRACT_VERSION,
-    SectionWellOverlayDomainDto, SectionWellOverlayRequestDto, SectionWellOverlaySampleDto,
-    SectionWellOverlaySegmentDto, SpatialCoverageRelationship, SpatialCoverageSummary,
-    StratigraphicBoundaryReference, SurveyIndexAxisDto, SurveyIndexGridDto,
+    SectionColorMap, SectionCoordinate, SectionDisplayDefaults, SectionHorizonLineStyle,
+    SectionHorizonOverlayView, SectionHorizonSample, SectionHorizonStyle,
+    SectionInteractionChanged, SectionMetadata, SectionPolarity, SectionPrimaryMode, SectionProbe,
+    SectionProbeChanged, SectionRenderMode, SectionScalarOverlayColorMap,
+    SectionScalarOverlayValueRange, SectionScalarOverlayView, SectionTimeDepthDiagnostics,
+    SectionTimeDepthTransformMode, SectionUnits, SectionView, SectionViewport,
+    SectionViewportChanged, SectionWellOverlayDomainDto, SectionWellOverlayRequestDto,
+    SectionWellOverlaySampleDto, SectionWellOverlaySegmentDto, SpatialCoverageRelationship,
+    SpatialCoverageSummary, StratigraphicBoundaryReference, SurveyIndexAxisDto, SurveyIndexGridDto,
     SurveyMapGridTransformDto, SurveyMapRequestDto, SurveyMapSpatialAvailabilityDto,
     SurveyMapSpatialDescriptorDto, SurveyMapTrajectoryDto, SurveyMapTrajectoryStationDto,
     SurveyPropertyField3D, SurveyTimeDepthTransform3D, TimeDepthDomain, TimeDepthSample1D,
@@ -28,7 +36,9 @@ use ophiolite::{
     WellAzimuthReferenceKind, WellPanelDepthSampleDto, WellPanelDrillingObservationDto,
     WellPanelDrillingSetDto, WellPanelLogCurveDto, WellPanelPressureObservationDto,
     WellPanelPressureSetDto, WellPanelRequestDto, WellPanelTopRowDto, WellPanelTopSetDto,
-    WellPanelTrajectoryDto, WellPanelTrajectoryRowDto, WellTimeDepthAssumptionInterval,
+    WellPanelTrajectoryDto, WellPanelTrajectoryRowDto, WellTieAnalysis1D, WellTieCurve1D,
+    WellTieLogCurveSource, WellTieLogSelection1D, WellTieObservationSet1D, WellTieSectionWindow,
+    WellTieTrace1D, WellTieVelocitySourceKind, WellTieWavelet, WellTimeDepthAssumptionInterval,
     WellTimeDepthAssumptionKind, WellTimeDepthAuthoredModel1D, WellTimeDepthModel1D,
     WellTimeDepthObservationSample, WellTimeDepthSourceBinding, WellboreAnchorKind,
     WellboreAnchorReference, WellboreGeometry,
@@ -76,9 +86,13 @@ fn export_ts_types(output_dir: &Path) -> Result<(), Box<dyn Error>> {
         "GatherProbeChanged.ts",
         "GatherSampleDomain.ts",
         "GatherView.ts",
+        "GatherPreviewView.ts",
         "GatherViewport.ts",
         "GatherViewportChanged.ts",
+        "ImportedHorizonDescriptor.ts",
+        "PreviewView.ts",
         "DepthReferenceKind.ts",
+        "ProjectSurveyMapRequestDto.ts",
         "ProjectedPoint2Dto.ts",
         "ProjectedPolygon2Dto.ts",
         "ProjectedVector2Dto.ts",
@@ -91,6 +105,30 @@ fn export_ts_types(output_dir: &Path) -> Result<(), Box<dyn Error>> {
         "SurveyIndexGridDto.ts",
         "SurveyMapGridTransformDto.ts",
         "SurveyMapRequestDto.ts",
+        "SectionColorMap.ts",
+        "SectionRenderMode.ts",
+        "SectionPolarity.ts",
+        "SectionPrimaryMode.ts",
+        "SectionCoordinate.ts",
+        "SectionUnits.ts",
+        "SectionMetadata.ts",
+        "SectionDisplayDefaults.ts",
+        "SectionView.ts",
+        "SectionScalarOverlayColorMap.ts",
+        "SectionTimeDepthTransformMode.ts",
+        "SectionTimeDepthDiagnostics.ts",
+        "SectionScalarOverlayValueRange.ts",
+        "SectionScalarOverlayView.ts",
+        "SectionHorizonLineStyle.ts",
+        "SectionHorizonStyle.ts",
+        "SectionHorizonSample.ts",
+        "SectionHorizonOverlayView.ts",
+        "ResolvedSectionDisplayView.ts",
+        "SectionViewport.ts",
+        "SectionProbe.ts",
+        "SectionProbeChanged.ts",
+        "SectionViewportChanged.ts",
+        "SectionInteractionChanged.ts",
         "SectionWellOverlayDomainDto.ts",
         "SectionWellOverlayRequestDto.ts",
         "SectionWellOverlaySampleDto.ts",
@@ -127,8 +165,17 @@ fn export_ts_types(output_dir: &Path) -> Result<(), Box<dyn Error>> {
         "ResolvedTrajectoryStation.ts",
         "ResolvedTrajectoryGeometry.ts",
         "WellTimeDepthObservationSample.ts",
+        "WellTieVelocitySourceKind.ts",
+        "WellTieLogCurveSource.ts",
+        "WellTieLogSelection1D.ts",
+        "WellTieCurve1D.ts",
+        "WellTieTrace1D.ts",
+        "WellTieWavelet.ts",
+        "WellTieSectionWindow.ts",
+        "WellTieAnalysis1D.ts",
         "CheckshotVspObservationSet1D.ts",
         "ManualTimeDepthPickSet1D.ts",
+        "WellTieObservationSet1D.ts",
         "WellTimeDepthSourceBinding.ts",
         "WellTimeDepthAssumptionKind.ts",
         "WellTimeDepthAssumptionInterval.ts",
@@ -158,15 +205,43 @@ fn export_ts_types(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     }
 
     WellPanelRequestDto::export_all_to(output_dir)?;
+    ProjectSurveyMapRequestDto::export_all_to(output_dir)?;
     ResolvedWellPanelSourceDto::export_all_to(output_dir)?;
     SurveyMapRequestDto::export_all_to(output_dir)?;
     ResolvedSurveyMapSourceDto::export_all_to(output_dir)?;
     SectionWellOverlayRequestDto::export_all_to(output_dir)?;
     ResolveSectionWellOverlaysResponse::export_all_to(output_dir)?;
     GatherView::export_all_to(output_dir)?;
+    GatherPreviewView::export_all_to(output_dir)?;
     GatherViewportChanged::export_all_to(output_dir)?;
     GatherProbeChanged::export_all_to(output_dir)?;
     GatherInteractionChanged::export_all_to(output_dir)?;
+    ImportedHorizonDescriptor::export_all_to(output_dir)?;
+    PreviewView::export_all_to(output_dir)?;
+    SectionColorMap::export_all_to(output_dir)?;
+    SectionRenderMode::export_all_to(output_dir)?;
+    SectionPolarity::export_all_to(output_dir)?;
+    SectionPrimaryMode::export_all_to(output_dir)?;
+    SectionCoordinate::export_all_to(output_dir)?;
+    SectionUnits::export_all_to(output_dir)?;
+    SectionMetadata::export_all_to(output_dir)?;
+    SectionDisplayDefaults::export_all_to(output_dir)?;
+    SectionView::export_all_to(output_dir)?;
+    SectionScalarOverlayColorMap::export_all_to(output_dir)?;
+    SectionTimeDepthTransformMode::export_all_to(output_dir)?;
+    SectionTimeDepthDiagnostics::export_all_to(output_dir)?;
+    SectionScalarOverlayValueRange::export_all_to(output_dir)?;
+    SectionScalarOverlayView::export_all_to(output_dir)?;
+    SectionHorizonLineStyle::export_all_to(output_dir)?;
+    SectionHorizonStyle::export_all_to(output_dir)?;
+    SectionHorizonSample::export_all_to(output_dir)?;
+    SectionHorizonOverlayView::export_all_to(output_dir)?;
+    ResolvedSectionDisplayView::export_all_to(output_dir)?;
+    SectionViewport::export_all_to(output_dir)?;
+    SectionProbe::export_all_to(output_dir)?;
+    SectionProbeChanged::export_all_to(output_dir)?;
+    SectionViewportChanged::export_all_to(output_dir)?;
+    SectionInteractionChanged::export_all_to(output_dir)?;
     StratigraphicBoundaryReference::export_all_to(output_dir)?;
     LateralInterpolationMethod::export_all_to(output_dir)?;
     VerticalInterpolationMethod::export_all_to(output_dir)?;
@@ -182,8 +257,17 @@ fn export_ts_types(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     WellboreGeometry::export_all_to(output_dir)?;
     TrajectoryInputSchemaKind::export_all_to(output_dir)?;
     ResolvedTrajectoryGeometry::export_all_to(output_dir)?;
+    WellTieVelocitySourceKind::export_all_to(output_dir)?;
+    WellTieLogCurveSource::export_all_to(output_dir)?;
+    WellTieLogSelection1D::export_all_to(output_dir)?;
+    WellTieCurve1D::export_all_to(output_dir)?;
+    WellTieTrace1D::export_all_to(output_dir)?;
+    WellTieWavelet::export_all_to(output_dir)?;
+    WellTieSectionWindow::export_all_to(output_dir)?;
+    WellTieAnalysis1D::export_all_to(output_dir)?;
     CheckshotVspObservationSet1D::export_all_to(output_dir)?;
     ManualTimeDepthPickSet1D::export_all_to(output_dir)?;
+    WellTieObservationSet1D::export_all_to(output_dir)?;
     WellTimeDepthAuthoredModel1D::export_all_to(output_dir)?;
     CompiledWellTimeDepthLineage::export_all_to(output_dir)?;
     WellTimeDepthModel1D::export_all_to(output_dir)?;
@@ -217,9 +301,11 @@ fn write_generated_index(output_dir: &Path) -> Result<(), Box<dyn Error>> {
 export type { CoordinateReferenceDto } from "./CoordinateReferenceDto";
 export type { CoordinateReferenceBindingDto } from "./CoordinateReferenceBindingDto";
 export type { CoordinateReferenceSourceDto } from "./CoordinateReferenceSourceDto";
+export type { CoordinateReferenceDescriptor } from "./CoordinateReferenceDescriptor";
 export type { ProjectedPoint2Dto } from "./ProjectedPoint2Dto";
 export type { ProjectedPolygon2Dto } from "./ProjectedPolygon2Dto";
 export type { ProjectedVector2Dto } from "./ProjectedVector2Dto";
+export type { ResolvedSurveyMapHorizonDto } from "./ResolvedSurveyMapHorizonDto";
 export type { ResolvedSurveyMapSourceDto } from "./ResolvedSurveyMapSourceDto";
 export type { ResolvedSurveyMapSurveyDto } from "./ResolvedSurveyMapSurveyDto";
 export type { ResolvedSurveyMapWellDto } from "./ResolvedSurveyMapWellDto";
@@ -231,16 +317,46 @@ export type { GatherProbe } from "./GatherProbe";
 export type { GatherProbeChanged } from "./GatherProbeChanged";
 export type { GatherSampleDomain } from "./GatherSampleDomain";
 export type { GatherView } from "./GatherView";
+export type { GatherPreviewView } from "./GatherPreviewView";
 export type { GatherViewport } from "./GatherViewport";
 export type { GatherViewportChanged } from "./GatherViewportChanged";
+export type { ImportedHorizonDescriptor } from "./ImportedHorizonDescriptor";
+export type { PreviewView } from "./PreviewView";
 export type { DepthReferenceKind } from "./DepthReferenceKind";
+export type { ProjectSurveyMapRequestDto } from "./ProjectSurveyMapRequestDto";
 export type { StratigraphicBoundaryReference } from "./StratigraphicBoundaryReference";
 export type { LateralInterpolationMethod } from "./LateralInterpolationMethod";
 export type { VerticalInterpolationMethod } from "./VerticalInterpolationMethod";
 export type { SurveyIndexAxisDto } from "./SurveyIndexAxisDto";
 export type { SurveyIndexGridDto } from "./SurveyIndexGridDto";
+export type { SurveyGridTransform } from "./SurveyGridTransform";
 export type { SurveyMapGridTransformDto } from "./SurveyMapGridTransformDto";
 export type { SurveyMapRequestDto } from "./SurveyMapRequestDto";
+export type { SurveyMapScalarFieldDto } from "./SurveyMapScalarFieldDto";
+export type { SectionColorMap } from "./SectionColorMap";
+export type { SectionRenderMode } from "./SectionRenderMode";
+export type { SectionPolarity } from "./SectionPolarity";
+export type { SectionPrimaryMode } from "./SectionPrimaryMode";
+export type { SectionCoordinate } from "./SectionCoordinate";
+export type { SectionUnits } from "./SectionUnits";
+export type { SectionMetadata } from "./SectionMetadata";
+export type { SectionDisplayDefaults } from "./SectionDisplayDefaults";
+export type { SectionView } from "./SectionView";
+export type { SectionScalarOverlayColorMap } from "./SectionScalarOverlayColorMap";
+export type { SectionTimeDepthTransformMode } from "./SectionTimeDepthTransformMode";
+export type { SectionTimeDepthDiagnostics } from "./SectionTimeDepthDiagnostics";
+export type { SectionScalarOverlayValueRange } from "./SectionScalarOverlayValueRange";
+export type { SectionScalarOverlayView } from "./SectionScalarOverlayView";
+export type { SectionHorizonLineStyle } from "./SectionHorizonLineStyle";
+export type { SectionHorizonStyle } from "./SectionHorizonStyle";
+export type { SectionHorizonSample } from "./SectionHorizonSample";
+export type { SectionHorizonOverlayView } from "./SectionHorizonOverlayView";
+export type { ResolvedSectionDisplayView } from "./ResolvedSectionDisplayView";
+export type { SectionViewport } from "./SectionViewport";
+export type { SectionProbe } from "./SectionProbe";
+export type { SectionProbeChanged } from "./SectionProbeChanged";
+export type { SectionViewportChanged } from "./SectionViewportChanged";
+export type { SectionInteractionChanged } from "./SectionInteractionChanged";
 export type { SectionWellOverlayDomainDto } from "./SectionWellOverlayDomainDto";
 export type { SectionWellOverlayRequestDto } from "./SectionWellOverlayRequestDto";
 export type { SectionWellOverlaySampleDto } from "./SectionWellOverlaySampleDto";
@@ -251,6 +367,9 @@ export type { SurveyMapSpatialAvailabilityDto } from "./SurveyMapSpatialAvailabi
 export type { SurveyMapSpatialDescriptorDto } from "./SurveyMapSpatialDescriptorDto";
 export type { SurveyMapTrajectoryDto } from "./SurveyMapTrajectoryDto";
 export type { SurveyMapTrajectoryStationDto } from "./SurveyMapTrajectoryStationDto";
+export type { SurveyMapTransformDiagnosticsDto } from "./SurveyMapTransformDiagnosticsDto";
+export type { SurveyMapTransformPolicyDto } from "./SurveyMapTransformPolicyDto";
+export type { SurveyMapTransformStatusDto } from "./SurveyMapTransformStatusDto";
 export type { SpatialCoverageRelationship } from "./SpatialCoverageRelationship";
 export type { SpatialCoverageSummary } from "./SpatialCoverageSummary";
 export type { SurveyPropertyField3D } from "./SurveyPropertyField3D";
@@ -279,8 +398,17 @@ export type { TrajectoryValueOrigin } from "./TrajectoryValueOrigin";
 export type { ResolvedTrajectoryStation } from "./ResolvedTrajectoryStation";
 export type { ResolvedTrajectoryGeometry } from "./ResolvedTrajectoryGeometry";
 export type { WellTimeDepthObservationSample } from "./WellTimeDepthObservationSample";
+export type { WellTieVelocitySourceKind } from "./WellTieVelocitySourceKind";
+export type { WellTieLogCurveSource } from "./WellTieLogCurveSource";
+export type { WellTieLogSelection1D } from "./WellTieLogSelection1D";
+export type { WellTieCurve1D } from "./WellTieCurve1D";
+export type { WellTieTrace1D } from "./WellTieTrace1D";
+export type { WellTieWavelet } from "./WellTieWavelet";
+export type { WellTieSectionWindow } from "./WellTieSectionWindow";
+export type { WellTieAnalysis1D } from "./WellTieAnalysis1D";
 export type { CheckshotVspObservationSet1D } from "./CheckshotVspObservationSet1D";
 export type { ManualTimeDepthPickSet1D } from "./ManualTimeDepthPickSet1D";
+export type { WellTieObservationSet1D } from "./WellTieObservationSet1D";
 export type { WellTimeDepthSourceBinding } from "./WellTimeDepthSourceBinding";
 export type { WellTimeDepthAssumptionKind } from "./WellTimeDepthAssumptionKind";
 export type { WellTimeDepthAssumptionInterval } from "./WellTimeDepthAssumptionInterval";
@@ -316,6 +444,7 @@ fn write_schema_bundle(output_dir: &Path) -> Result<(), Box<dyn Error>> {
             "CoordinateReferenceDto": schema_for!(CoordinateReferenceDto),
             "CoordinateReferenceBindingDto": schema_for!(CoordinateReferenceBindingDto),
             "CoordinateReferenceSourceDto": schema_for!(CoordinateReferenceSourceDto),
+            "ProjectSurveyMapRequestDto": schema_for!(ProjectSurveyMapRequestDto),
             "ProjectedPoint2Dto": schema_for!(ProjectedPoint2Dto),
             "ProjectedPolygon2Dto": schema_for!(ProjectedPolygon2Dto),
             "ProjectedVector2Dto": schema_for!(ProjectedVector2Dto),
@@ -352,11 +481,38 @@ fn write_schema_bundle(output_dir: &Path) -> Result<(), Box<dyn Error>> {
             "GatherAxisKind": schema_for!(GatherAxisKind),
             "GatherSampleDomain": schema_for!(GatherSampleDomain),
             "GatherView": schema_for!(GatherView),
+            "GatherPreviewView": schema_for!(GatherPreviewView),
             "GatherViewport": schema_for!(GatherViewport),
             "GatherProbe": schema_for!(GatherProbe),
             "GatherViewportChanged": schema_for!(GatherViewportChanged),
             "GatherProbeChanged": schema_for!(GatherProbeChanged),
             "GatherInteractionChanged": schema_for!(GatherInteractionChanged),
+            "ImportedHorizonDescriptor": schema_for!(ImportedHorizonDescriptor),
+            "PreviewView": schema_for!(PreviewView),
+            "SectionColorMap": schema_for!(SectionColorMap),
+            "SectionRenderMode": schema_for!(SectionRenderMode),
+            "SectionPolarity": schema_for!(SectionPolarity),
+            "SectionPrimaryMode": schema_for!(SectionPrimaryMode),
+            "SectionCoordinate": schema_for!(SectionCoordinate),
+            "SectionUnits": schema_for!(SectionUnits),
+            "SectionMetadata": schema_for!(SectionMetadata),
+            "SectionDisplayDefaults": schema_for!(SectionDisplayDefaults),
+            "SectionView": schema_for!(SectionView),
+            "SectionScalarOverlayColorMap": schema_for!(SectionScalarOverlayColorMap),
+            "SectionTimeDepthTransformMode": schema_for!(SectionTimeDepthTransformMode),
+            "SectionTimeDepthDiagnostics": schema_for!(SectionTimeDepthDiagnostics),
+            "SectionScalarOverlayValueRange": schema_for!(SectionScalarOverlayValueRange),
+            "SectionScalarOverlayView": schema_for!(SectionScalarOverlayView),
+            "SectionHorizonLineStyle": schema_for!(SectionHorizonLineStyle),
+            "SectionHorizonStyle": schema_for!(SectionHorizonStyle),
+            "SectionHorizonSample": schema_for!(SectionHorizonSample),
+            "SectionHorizonOverlayView": schema_for!(SectionHorizonOverlayView),
+            "ResolvedSectionDisplayView": schema_for!(ResolvedSectionDisplayView),
+            "SectionViewport": schema_for!(SectionViewport),
+            "SectionProbe": schema_for!(SectionProbe),
+            "SectionProbeChanged": schema_for!(SectionProbeChanged),
+            "SectionViewportChanged": schema_for!(SectionViewportChanged),
+            "SectionInteractionChanged": schema_for!(SectionInteractionChanged),
             "TimeDepthDomain": schema_for!(TimeDepthDomain),
             "TimeDepthTransformSourceKind": schema_for!(TimeDepthTransformSourceKind),
             "VelocityQuantityKind": schema_for!(VelocityQuantityKind),
@@ -387,8 +543,17 @@ fn write_schema_bundle(output_dir: &Path) -> Result<(), Box<dyn Error>> {
             "ResolvedTrajectoryGeometry": schema_for!(ResolvedTrajectoryGeometry),
             "TimeDepthSample1D": schema_for!(TimeDepthSample1D),
             "WellTimeDepthObservationSample": schema_for!(WellTimeDepthObservationSample),
+            "WellTieVelocitySourceKind": schema_for!(WellTieVelocitySourceKind),
+            "WellTieLogCurveSource": schema_for!(WellTieLogCurveSource),
+            "WellTieLogSelection1D": schema_for!(WellTieLogSelection1D),
+            "WellTieCurve1D": schema_for!(WellTieCurve1D),
+            "WellTieTrace1D": schema_for!(WellTieTrace1D),
+            "WellTieWavelet": schema_for!(WellTieWavelet),
+            "WellTieSectionWindow": schema_for!(WellTieSectionWindow),
+            "WellTieAnalysis1D": schema_for!(WellTieAnalysis1D),
             "CheckshotVspObservationSet1D": schema_for!(CheckshotVspObservationSet1D),
             "ManualTimeDepthPickSet1D": schema_for!(ManualTimeDepthPickSet1D),
+            "WellTieObservationSet1D": schema_for!(WellTieObservationSet1D),
             "WellTimeDepthSourceBinding": schema_for!(WellTimeDepthSourceBinding),
             "WellTimeDepthAssumptionKind": schema_for!(WellTimeDepthAssumptionKind),
             "WellTimeDepthAssumptionInterval": schema_for!(WellTimeDepthAssumptionInterval),

@@ -12,7 +12,7 @@ The durable boundary is:
 
 - `ophiolite` owns section-plane math, survey-grid math, trajectory densification, tolerance handling, and time/depth projection
 - well-on-section overlays are display DTOs rather than canonical well or trajectory storage types
-- `geoviz` renders the overlay DTOs and does not infer CRS, section planes, or time-depth models
+- `Ophiolite Charts` renders the overlay DTOs and does not infer CRS, section planes, or time-depth models
 - `TraceBoost` owns workflow and activation, not the underlying geometry math
 
 Depth and time overlays are separate display-domain views over the same wellbore geometry. Time overlays require an active compiled well time/depth model. Depth overlays require only canonical resolved trajectory geometry.
@@ -146,13 +146,13 @@ Partial coverage behavior:
 
 ### 5. Renderer boundary
 
-`geoviz` and section charts remain rendering consumers.
+`Ophiolite Charts` and section charts remain rendering consumers.
 
 Rules:
 
-- no section-plane math in `geoviz`
-- no CRS inference in `geoviz`
-- no time-depth compilation in `geoviz`
+- no section-plane math in `Ophiolite Charts`
+- no CRS inference in `Ophiolite Charts`
+- no time-depth compilation in `Ophiolite Charts`
 - chart packages receive preprojected overlays and render them
 
 This stays consistent with the existing source/authored/runtime/display taxonomy.
@@ -186,7 +186,7 @@ Those are covered by adjacent ADRs.
 2. Implement backend projection and densification on resolved trajectory geometry.
 3. Add depth-domain overlays first.
 4. Add time-domain overlays on top of compiled well models.
-5. Extend `geoviz` section charts to render the new DTO family.
+5. Extend `Ophiolite Charts` section charts to render the new DTO family.
 
 ## Follow-On Work
 

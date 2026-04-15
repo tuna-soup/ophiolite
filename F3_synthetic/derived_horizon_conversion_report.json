@@ -1,0 +1,123 @@
+{
+  "store_path": "/Users/sc/dev/TraceBoost/sandbox/f3_dataset_regularized.tbvol",
+  "transform_id": "f3-paired-horizon-survey-transform",
+  "pair_count": 4,
+  "pairs": [
+    {
+      "horizon_pair": "horizon_01",
+      "time_horizon_id": "horizon_01_twt_ms",
+      "depth_horizon_id": "horizon_01_depth_m",
+      "derived_depth_horizon_id": "horizon_01_twt_ms-derived_depth_m",
+      "derived_time_horizon_id": "horizon_01_depth_m-derived_twt_ms",
+      "twt_to_depth_m": {
+        "invalid_cell_count": 0,
+        "count": 619101,
+        "rmse": 0.1292394837718839,
+        "mae": 0.10854894180893192,
+        "mean_bias": 0.10854894180893192,
+        "p95_abs": 0.243743896484375,
+        "max_abs": 0.298797607421875
+      },
+      "depth_to_twt_ms": {
+        "invalid_cell_count": 0,
+        "count": 619101,
+        "rmse": 0.12751688088072943,
+        "mae": 0.10749874708266818,
+        "mean_bias": -0.10749874708266818,
+        "p95_abs": 0.2381591796875,
+        "max_abs": 0.28814697265625
+      }
+    },
+    {
+      "horizon_pair": "horizon_02",
+      "time_horizon_id": "horizon_02_twt_ms",
+      "depth_horizon_id": "horizon_02_depth_m",
+      "derived_depth_horizon_id": "horizon_02_twt_ms-derived_depth_m",
+      "derived_time_horizon_id": "horizon_02_depth_m-derived_twt_ms",
+      "twt_to_depth_m": {
+        "invalid_cell_count": 0,
+        "count": 619101,
+        "rmse": 0.1407873473365189,
+        "mae": 0.12131640719170064,
+        "mean_bias": 0.12131640679735364,
+        "p95_abs": 0.24951171875,
+        "max_abs": 0.3316650390625
+      },
+      "depth_to_twt_ms": {
+        "invalid_cell_count": 0,
+        "count": 619101,
+        "rmse": 0.1200651444786969,
+        "mae": 0.10331001542931555,
+        "mean_bias": -0.10331001503496855,
+        "p95_abs": 0.21490478515625,
+        "max_abs": 0.2860107421875
+      }
+    },
+    {
+      "horizon_pair": "horizon_03",
+      "time_horizon_id": "horizon_03_twt_ms",
+      "depth_horizon_id": "horizon_03_depth_m",
+      "derived_depth_horizon_id": "horizon_03_twt_ms-derived_depth_m",
+      "derived_time_horizon_id": "horizon_03_depth_m-derived_twt_ms",
+      "twt_to_depth_m": {
+        "invalid_cell_count": 0,
+        "count": 619101,
+        "rmse": 0.1195657636198643,
+        "mae": 0.10060660847988277,
+        "mean_bias": 0.10058792471314379,
+        "p95_abs": 0.2186279296875,
+        "max_abs": 0.30230712890625
+      },
+      "depth_to_twt_ms": {
+        "invalid_cell_count": 0,
+        "count": 619101,
+        "rmse": 0.08935087715358869,
+        "mae": 0.07505116812097426,
+        "mean_bias": -0.0750374058048548,
+        "p95_abs": 0.16387939453125,
+        "max_abs": 0.22784423828125
+      }
+    },
+    {
+      "horizon_pair": "horizon_04",
+      "time_horizon_id": "horizon_04_twt_ms",
+      "depth_horizon_id": "horizon_04_depth_m",
+      "derived_depth_horizon_id": "horizon_04_twt_ms-derived_depth_m",
+      "derived_time_horizon_id": "horizon_04_depth_m-derived_twt_ms",
+      "twt_to_depth_m": {
+        "invalid_cell_count": 0,
+        "count": 619101,
+        "rmse": 3.41026613542468e-05,
+        "mae": 8.204192260733709e-06,
+        "mean_bias": -6.092661223693711e-08,
+        "p95_abs": 0.0001220703125,
+        "max_abs": 0.000244140625
+      },
+      "depth_to_twt_ms": {
+        "invalid_cell_count": 0,
+        "count": 619101,
+        "rmse": 2.0034349548643958e-05,
+        "mae": 3.288065325770755e-06,
+        "mean_bias": -1.1041716133554945e-08,
+        "p95_abs": 0.0,
+        "max_abs": 0.0001220703125
+      }
+    }
+  ],
+  "summary": {
+    "twt_to_depth_m": {
+      "mean_rmse": 0.09740667434740534,
+      "mean_mae": 0.08262004041819401,
+      "worst_p95_abs": 0.24951171875,
+      "worst_max_abs": 0.3316650390625,
+      "total_invalid_cell_count": 0
+    },
+    "depth_to_twt_ms": {
+      "mean_rmse": 0.08423823421564092,
+      "mean_mae": 0.07146580467457093,
+      "worst_p95_abs": 0.2381591796875,
+      "worst_max_abs": 0.28814697265625,
+      "total_invalid_cell_count": 0
+    }
+  }
+}

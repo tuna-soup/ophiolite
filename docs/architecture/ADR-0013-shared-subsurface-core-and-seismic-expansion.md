@@ -12,7 +12,7 @@ This means:
 
 - `ophiolite` owns canonical domain models, import/IO layers, package/storage conventions, project/catalog identity, compute, and generated app-boundary contracts
 - product repositories such as `TraceBoost` consume that core rather than owning duplicate canonical seismic types over time
-- visualization repositories such as `geoviz` stay outside the core and use adapter/view models over canonical asset/query results
+- visualization repositories such as `Ophiolite Charts` stay outside the core and use adapter/view models over canonical asset/query results
 
 The first implementation step is a shared seismic core inside `ophiolite` that owns canonical seismic descriptors, app-boundary section/trace DTOs, SEG-Y IO, and runtime/store execution.
 

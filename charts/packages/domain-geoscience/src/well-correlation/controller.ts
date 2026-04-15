@@ -1,0 +1,1064 @@
+import {
+  InteractionManager,
+  layoutWellCorrelationPanel,
+  mapNativeDepthToPanelDepth,
+  mapPanelDepthToNativeDepth,
+  normalizeWellPanelModel,
+  type NormalizedCurveLayer,
+  type NormalizedPointLayer,
+  type NormalizedReferenceTrack,
+  type NormalizedScalarTrack,
+  type NormalizedSeismicSectionLayer,
+  type NormalizedSeismicSectionTrack,
+  type NormalizedSeismicTraceLayer,
+  type NormalizedSeismicTraceTrack,
+  type NormalizedTopOverlayLayer,
+  type NormalizedTrack,
+  type NormalizedWellColumn,
+  type NormalizedWellPanelModel
+} from "@ophiolite/charts-core";
+import type {
+  CorrelationMarkerLink,
+  InteractionCapabilities,
+  InteractionEvent,
+  InteractionTarget,
+  LassoPoint,
+  LassoSelectionResult,
+  PrimaryInteractionMode,
+  TrackAxis,
+  WellCorrelationPanelModel,
+  WellPanelModel,
+  WellCorrelationProbe,
+  WellCorrelationViewport
+} from "@ophiolite/charts-data-models";
+import type { WellCorrelationRendererAdapter, WellCorrelationViewState } from "@ophiolite/charts-renderer";
+
+const DEFAULT_MARKER_COLOR = "#cc4d4d";
+
+export class WellCorrelationController {
+  private container: HTMLElement | null = null;
+  private readonly renderer: WellCorrelationRendererAdapter;
+  readonly interactions = new InteractionManager(WELL_CORRELATION_INTERACTION_CAPABILITIES, "cursor", ["crosshair"]);
+  private readonly listeners = new Set<(state: WellCorrelationViewState) => void>();
+  private readonly interactionEventListeners = new Set<(event: InteractionEvent) => void>();
+  private state: WellCorrelationViewState = {
+    panel: null,
+    viewport: null,
+    probe: null,
+    interactions: this.interactions.getState(),
+    activeMarkerName: "Correlation Marker",
+    activeMarkerColor: DEFAULT_MARKER_COLOR,
+    correlationLines: [],
+    previewCorrelationLines: null,
+    previewTop: null
+  };
+
+  constructor(renderer: WellCorrelationRendererAdapter) {
+    this.renderer = renderer;
+    this.interactions.on((event) => {
+      this.state.interactions = this.interactions.getState();
+      this.render();
+      for (const listener of this.interactionEventListeners) {
+        listener(cloneInteractionEvent(event));
+      }
+    });
+  }
+
+  mount(container: HTMLElement): void {
+    this.container = container;
+    this.renderer.mount(container);
+    this.render();
+  }
+
+  setPanel(panel: WellCorrelationPanelModel | WellPanelModel | null): void {
+    if (!panel) {
+      this.state.panel = null;
+      this.state.viewport = null;
+      this.state.probe = null;
+      this.state.previewCorrelationLines = null;
+      this.state.previewTop = null;
+      this.state.correlationLines = [];
+      this.interactions.cancelSession();
+      this.interactions.setHoverTarget(null);
+      this.render();
+      return;
+    }
+    this.state.panel = normalizeWellPanelModel(panel);
+    this.state.viewport = {
+      depthStart: panel.depthDomain.start,
+      depthEnd: panel.depthDomain.end
+    };
+    this.state.probe = null;
+    this.state.previewCorrelationLines = null;
+    this.state.previewTop = null;
+    this.interactions.cancelSession();
+    this.interactions.setHoverTarget(null);
+    this.recomputeCorrelationLines();
+    this.render();
+  }
+
+  fitToData(): void {
+    if (!this.state.panel) {
+      return;
+    }
+    this.state.viewport = {
+      depthStart: this.state.panel.depthDomain.start,
+      depthEnd: this.state.panel.depthDomain.end
+    };
+    this.render();
+  }
+
+  zoomVertical(factor: number): void {
+    if (!this.state.panel || !this.state.viewport || factor <= 0) {
+      return;
+    }
+    const center = (this.state.viewport.depthStart + this.state.viewport.depthEnd) / 2;
+    const span = (this.state.viewport.depthEnd - this.state.viewport.depthStart) / factor;
+    this.setViewport({
+      depthStart: center - span / 2,
+      depthEnd: center + span / 2
+    });
+  }
+
+  zoomVerticalAround(panelDepth: number, factor: number): void {
+    if (!this.state.panel || !this.state.viewport || factor <= 0) {
+      return;
+    }
+    const currentSpan = this.state.viewport.depthEnd - this.state.viewport.depthStart;
+    const nextSpan = Math.max(20, Math.min(this.state.panel.depthDomain.end - this.state.panel.depthDomain.start, currentSpan / factor));
+    const ratio =
+      currentSpan <= 0 ? 0.5 : (panelDepth - this.state.viewport.depthStart) / Math.max(1e-6, currentSpan);
+    this.setViewport({
+      depthStart: panelDepth - ratio * nextSpan,
+      depthEnd: panelDepth + (1 - ratio) * nextSpan
+    });
+  }
+
+  panVertical(deltaDepth: number): void {
+    if (!this.state.viewport) {
+      return;
+    }
+    this.setViewport({
+      depthStart: this.state.viewport.depthStart + deltaDepth,
+      depthEnd: this.state.viewport.depthEnd + deltaDepth
+    });
+  }
+
+  setViewport(viewport: WellCorrelationViewport): void {
+    if (!this.state.panel) {
+      return;
+    }
+    const fullStart = this.state.panel.depthDomain.start;
+    const fullEnd = this.state.panel.depthDomain.end;
+    const span = Math.max(20, Math.min(fullEnd - fullStart, viewport.depthEnd - viewport.depthStart));
+    const depthStart = clamp(viewport.depthStart, fullStart, fullEnd - span);
+    this.state.viewport = {
+      depthStart,
+      depthEnd: depthStart + span
+    };
+    this.render();
+  }
+
+  setActiveMarker(name: string, color: string = DEFAULT_MARKER_COLOR): void {
+    this.state.activeMarkerName = name;
+    this.state.activeMarkerColor = color;
+    this.render();
+  }
+
+  focus(): void {
+    this.interactions.setFocused(true);
+  }
+
+  blur(): void {
+    this.interactions.setFocused(false);
+    this.clearPointer();
+  }
+
+  setPrimaryMode(mode: PrimaryInteractionMode): void {
+    this.cancelPreviewIfNeeded();
+    this.interactions.setPrimaryMode(mode);
+  }
+
+  toggleCrosshair(): void {
+    this.interactions.toggleModifier("crosshair");
+  }
+
+  updatePointer(x: number, y: number, width: number, height: number): void {
+    this.handlePointerMove(x, y, width, height);
+  }
+
+  handlePointerMove(x: number, y: number, width: number, height: number): void {
+    if (!this.state.panel || !this.state.viewport) {
+      return;
+    }
+    this.state.probe = buildProbe(this.state.panel, this.state.viewport, width, height, x, y);
+    const interactionState = this.interactions.getState();
+    const topTarget =
+      interactionState.primaryMode === "topEdit"
+        ? hitTestTopLine(this.state.panel, this.state.viewport, width, height, x, y)
+        : null;
+    this.interactions.setHoverTarget(topTarget ?? targetFromProbe(this.state.panel.id, this.state.probe));
+
+    if (interactionState.session?.kind === "topEdit") {
+      const previewTarget = interactionState.session.target;
+      if (previewTarget.wellId && previewTarget.entityId) {
+        const preview = buildTopPreview(
+          this.state.panel,
+          this.state.viewport,
+          width,
+          height,
+          previewTarget.wellId,
+          previewTarget.entityId,
+          y
+        );
+        if (preview) {
+          this.state.previewTop = preview;
+          this.state.previewCorrelationLines = deriveCorrelationLines(applyTopPreview(this.state.panel, preview));
+          this.interactions.updateSession({
+            ...interactionState.session,
+            previewNativeDepth: preview.nativeDepth,
+            previewPanelDepth: preview.panelDepth
+          });
+        }
+      }
+    } else if (interactionState.session?.kind === "lasso") {
+      const nextPoints = appendLassoPoint(interactionState.session.points, { x, y });
+      const selection = buildLassoSelection(this.state.panel, this.state.viewport, width, height, nextPoints);
+      this.interactions.updateSession({
+        kind: "lasso",
+        points: nextPoints,
+        selection
+      });
+    }
+    this.render();
+  }
+
+  clearPointer(): void {
+    this.state.probe = null;
+    if (!this.interactions.getState().session) {
+      this.interactions.setHoverTarget(null);
+    }
+    this.render();
+  }
+
+  handlePointerDown(x: number, y: number, width: number, height: number): void {
+    this.focus();
+    if (!this.state.panel || !this.state.viewport) {
+      return;
+    }
+    const interactionState = this.interactions.getState();
+    if (interactionState.primaryMode === "topEdit") {
+      const target = hitTestTopLine(this.state.panel, this.state.viewport, width, height, x, y);
+      if (!target || !target.wellId || !target.entityId) {
+        return;
+      }
+      const preview = buildTopPreview(this.state.panel, this.state.viewport, width, height, target.wellId, target.entityId, y);
+      if (!preview) {
+        return;
+      }
+      this.state.previewTop = preview;
+      this.state.previewCorrelationLines = deriveCorrelationLines(applyTopPreview(this.state.panel, preview));
+      this.interactions.beginSession({
+        kind: "topEdit",
+        target,
+        originalNativeDepth: preview.nativeDepth,
+        previewNativeDepth: preview.nativeDepth,
+        previewPanelDepth: preview.panelDepth
+      });
+      this.render();
+      return;
+    }
+    if (interactionState.primaryMode === "lassoSelect") {
+      this.interactions.beginSession({
+        kind: "lasso",
+        points: [{ x, y }],
+        selection: null
+      });
+      this.render();
+    }
+  }
+
+  handlePointerUp(): void {
+    const session = this.interactions.getState().session;
+    if (!session) {
+      return;
+    }
+    if (session.kind === "topEdit" && this.state.panel && this.state.previewTop) {
+      this.state.panel = applyTopPreview(this.state.panel, this.state.previewTop);
+      this.recomputeCorrelationLines();
+      this.state.previewCorrelationLines = null;
+      this.state.previewTop = null;
+      this.interactions.commitSession();
+      this.render();
+      return;
+    }
+    if (session.kind === "lasso") {
+      this.interactions.commitSession();
+      this.render();
+    }
+  }
+
+  handleKeyDown(key: string): void {
+    if (key !== "Escape") {
+      return;
+    }
+    this.cancelPreviewIfNeeded();
+    this.interactions.cancelSession();
+    this.render();
+  }
+
+  getPanelDepthAtViewY(y: number, width: number, height: number): number | null {
+    if (!this.state.panel || !this.state.viewport) {
+      return null;
+    }
+    const layout = layoutWellCorrelationPanel(this.state.panel, width, height);
+    if (y < layout.plotRect.y || y > layout.plotRect.y + layout.plotRect.height) {
+      return null;
+    }
+    return screenYToDepth(layout.plotRect, this.state.viewport, y);
+  }
+
+  pickMarker(x: number, y: number, width: number, height: number): void {
+    if (!this.state.panel || !this.state.viewport || !this.state.activeMarkerName) {
+      return;
+    }
+
+    const panel = clonePanel(this.state.panel);
+    const layout = layoutWellCorrelationPanel(panel, width, height);
+    const hit = hitTestWell(panel, layout, x, y);
+    if (!hit) {
+      return;
+    }
+
+    const panelDepth = screenYToDepth(hit.column.bodyRect, this.state.viewport, y);
+    const nativeDepth = mapPanelDepthToNativeDepth(hit.well.panelDepthMapping, panelDepth);
+    const overlay = topOverlaysForTrack(hit.track)[0] ?? hit.well.tracks.flatMap((track) => topOverlaysForTrack(track))[0];
+    if (!overlay) {
+      return;
+    }
+    const existing = overlay.tops.find((top) => top.name === this.state.activeMarkerName);
+    const pickedTop = {
+      id: existing?.id ?? `${hit.well.id}-${slug(this.state.activeMarkerName)}`,
+      name: this.state.activeMarkerName,
+      nativeDepth,
+      color: this.state.activeMarkerColor,
+      source: "picked" as const
+    };
+
+    overlay.tops = [
+      ...overlay.tops.filter((top) => top.name !== this.state.activeMarkerName),
+      pickedTop
+    ].sort((left, right) => left.nativeDepth - right.nativeDepth);
+    this.state.panel = panel;
+    this.recomputeCorrelationLines();
+    this.state.probe = buildProbe(panel, this.state.viewport, width, height, x, y);
+    this.render();
+  }
+
+  getState(): WellCorrelationViewState {
+    return {
+      panel: this.state.panel,
+      viewport: this.state.viewport ? { ...this.state.viewport } : null,
+      probe: this.state.probe ? { ...this.state.probe } : null,
+      interactions: this.interactions.getState(),
+      activeMarkerName: this.state.activeMarkerName,
+      activeMarkerColor: this.state.activeMarkerColor,
+      correlationLines: this.state.correlationLines,
+      previewCorrelationLines: this.state.previewCorrelationLines ? this.state.previewCorrelationLines.map(cloneCorrelationLine) : null,
+      previewTop: this.state.previewTop ? { ...this.state.previewTop } : null
+    };
+  }
+
+  refresh(): void {
+    this.render();
+  }
+
+  onStateChange(listener: (state: WellCorrelationViewState) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
+  onInteractionEvent(listener: (event: InteractionEvent) => void): () => void {
+    this.interactionEventListeners.add(listener);
+    return () => {
+      this.interactionEventListeners.delete(listener);
+    };
+  }
+
+  dispose(): void {
+    this.renderer.dispose();
+    this.container = null;
+  }
+
+  private recomputeCorrelationLines(): void {
+    this.state.correlationLines = this.state.panel ? deriveCorrelationLines(this.state.panel) : [];
+  }
+
+  private cancelPreviewIfNeeded(): void {
+    this.state.previewCorrelationLines = null;
+    this.state.previewTop = null;
+  }
+
+  private render(): void {
+    if (!this.container) {
+      return;
+    }
+    const state = this.getState();
+    this.renderer.render({ state });
+    for (const listener of this.listeners) {
+      listener(state);
+    }
+  }
+}
+
+export { WellCorrelationController as WellCorrelationPanel };
+
+const WELL_CORRELATION_INTERACTION_CAPABILITIES: InteractionCapabilities = {
+  primaryModes: ["cursor", "panZoom", "topEdit", "lassoSelect"],
+  modifiers: ["crosshair"]
+};
+
+function buildProbe(
+  panel: NormalizedWellPanelModel,
+  viewport: WellCorrelationViewport,
+  width: number,
+  height: number,
+  x: number,
+  y: number
+): WellCorrelationProbe | null {
+  const layout = layoutWellCorrelationPanel(panel, width, height);
+  const hit = hitTestWell(panel, layout, x, y);
+  if (!hit) {
+    return null;
+  }
+
+  const panelDepth = screenYToDepth(hit.trackFrame.bodyRect, viewport, y);
+  const nativeDepth = mapPanelDepthToNativeDepth(hit.well.panelDepthMapping, panelDepth);
+  const marker = nearestTop(topsForTrack(hit.track), nativeDepth);
+
+  if (marker && Math.abs(mapNativeDepthToPanelDepth(hit.well.panelDepthMapping, marker.nativeDepth) - panelDepth) < 6) {
+    return {
+      wellId: hit.well.id,
+      wellName: hit.well.name,
+      trackId: hit.trackFrame.trackId,
+      trackTitle: hit.trackFrame.title,
+      panelDepth,
+      nativeDepth,
+      markerName: marker.name,
+      screenX: x,
+      screenY: y
+    };
+  }
+
+  if (hit.track.kind === "scalar") {
+    const nearestPoint = nearestPointObservation(hit.track, hit.well.panelDepthMapping, viewport, x, y, hit.trackFrame.bodyRect);
+    if (nearestPoint) {
+      return {
+        wellId: hit.well.id,
+        wellName: hit.well.name,
+        trackId: hit.trackFrame.trackId,
+        trackTitle: hit.trackFrame.title,
+        panelDepth,
+        nativeDepth: nearestPoint.nativeDepth,
+        seriesName: nearestPoint.layerName,
+        value: nearestPoint.value,
+        markerName: nearestPoint.label,
+        screenX: x,
+        screenY: y,
+        kind: "point-observation",
+        entityId: nearestPoint.pointId
+      };
+    }
+    const nearest = nearestCurveSample(hit.track, hit.well.panelDepthMapping, panelDepth);
+    return {
+      wellId: hit.well.id,
+      wellName: hit.well.name,
+      trackId: hit.trackFrame.trackId,
+      trackTitle: hit.trackFrame.title,
+      panelDepth,
+      nativeDepth,
+      seriesName: nearest?.seriesName,
+      value: nearest?.value,
+      screenX: x,
+      screenY: y,
+      kind: "curve-sample"
+    };
+  }
+
+  if (hit.track.kind === "seismic-trace") {
+    const sample = nearestSeismicTraceSample(hit.track, hit.trackFrame.bodyRect, viewport, x, y);
+    return {
+      wellId: hit.well.id,
+      wellName: hit.well.name,
+      trackId: hit.trackFrame.trackId,
+      trackTitle: hit.trackFrame.title,
+      panelDepth,
+      nativeDepth,
+      seriesName: sample?.traceName,
+      value: sample?.amplitude,
+      screenX: x,
+      screenY: y,
+      kind: "seismic-trace-sample",
+      traceIndex: sample?.traceIndex,
+      sampleIndex: sample?.sampleIndex
+    };
+  }
+
+  if (hit.track.kind === "seismic-section") {
+    const sample = nearestSeismicSectionSample(hit.track, hit.trackFrame.bodyRect, viewport, x, y);
+    return {
+      wellId: hit.well.id,
+      wellName: hit.well.name,
+      trackId: hit.trackFrame.trackId,
+      trackTitle: hit.trackFrame.title,
+      panelDepth,
+      nativeDepth,
+      value: sample?.amplitude,
+      screenX: x,
+      screenY: y,
+      kind: "seismic-section-sample",
+      traceIndex: sample?.traceIndex,
+      sampleIndex: sample?.sampleIndex
+    };
+  }
+
+  return {
+    wellId: hit.well.id,
+    wellName: hit.well.name,
+    trackId: hit.trackFrame.trackId,
+    trackTitle: hit.trackFrame.title,
+    panelDepth,
+    nativeDepth,
+    screenX: x,
+    screenY: y,
+    kind: "reference"
+  };
+}
+
+function hitTestWell(
+  panel: NormalizedWellPanelModel,
+  layout: ReturnType<typeof layoutWellCorrelationPanel>,
+  x: number,
+  y: number
+): {
+  well: NormalizedWellColumn;
+  column: ReturnType<typeof layoutWellCorrelationPanel>["columns"][number];
+  track: NormalizedTrack;
+  trackFrame: ReturnType<typeof layoutWellCorrelationPanel>["columns"][number]["trackFrames"][number];
+} | null {
+  for (const column of layout.columns) {
+    if (!pointInRect(x, y, column.bodyRect)) {
+      continue;
+    }
+    const well = panel.wells.find((candidate) => candidate.id === column.wellId);
+    if (!well) {
+      continue;
+    }
+    for (const trackFrame of column.trackFrames) {
+      if (!pointInRect(x, y, trackFrame.bodyRect)) {
+        continue;
+      }
+      const track = well.tracks.find((candidate) => candidate.id === trackFrame.trackId);
+      if (track) {
+        return { well, column, track, trackFrame };
+      }
+    }
+  }
+  return null;
+}
+
+function hitTestTopLine(
+  panel: NormalizedWellPanelModel,
+  viewport: WellCorrelationViewport,
+  width: number,
+  height: number,
+  x: number,
+  y: number
+): InteractionTarget | null {
+  const layout = layoutWellCorrelationPanel(panel, width, height);
+  const hit = hitTestWell(panel, layout, x, y);
+  if (!hit) {
+    return null;
+  }
+  let bestTop: ReturnType<typeof topsForTrack>[number] | null = null;
+  let bestDistance = 6;
+  for (const top of topsForTrack(hit.track)) {
+    const panelDepth = mapNativeDepthToPanelDepth(hit.well.panelDepthMapping, top.nativeDepth);
+    const lineY = depthToScreenY(hit.trackFrame.bodyRect, viewport, panelDepth);
+    const distance = Math.abs(lineY - y);
+    if (distance <= bestDistance) {
+      bestDistance = distance;
+      bestTop = top;
+    }
+  }
+  if (!bestTop) {
+    return null;
+  }
+  return {
+    kind: "top-line",
+    chartId: panel.id,
+    wellId: hit.well.id,
+    trackId: hit.trackFrame.trackId,
+    entityId: bestTop.id,
+    nativeDepth: bestTop.nativeDepth,
+    panelDepth: mapNativeDepthToPanelDepth(hit.well.panelDepthMapping, bestTop.nativeDepth)
+  };
+}
+
+function buildTopPreview(
+  panel: NormalizedWellPanelModel,
+  viewport: WellCorrelationViewport,
+  width: number,
+  height: number,
+  wellId: string,
+  topId: string,
+  y: number
+): { wellId: string; topId: string; nativeDepth: number; panelDepth: number } | null {
+  const layout = layoutWellCorrelationPanel(panel, width, height);
+  const column = layout.columns.find((candidate) => candidate.wellId === wellId);
+  const well = panel.wells.find((candidate) => candidate.id === wellId);
+  const trackFrame = column?.trackFrames.find((candidate) => {
+    const track = well?.tracks.find((item) => item.id === candidate.trackId);
+    return track ? topsForTrack(track).some((item) => item.id === topId) : false;
+  });
+  const top = well?.tracks.flatMap((track) => topsForTrack(track)).find((candidate) => candidate.id === topId);
+  if (!column || !well || !top || !trackFrame) {
+    return null;
+  }
+  const panelDepth = screenYToDepth(trackFrame.bodyRect, viewport, y);
+  const nativeDepth = mapPanelDepthToNativeDepth(well.panelDepthMapping, panelDepth);
+  return { wellId, topId, nativeDepth, panelDepth };
+}
+
+function applyTopPreview(
+  panel: NormalizedWellPanelModel,
+  preview: { wellId: string; topId: string; nativeDepth: number }
+): NormalizedWellPanelModel {
+  const next = clonePanel(panel);
+  const well = next.wells.find((candidate) => candidate.id === preview.wellId);
+  if (!well) {
+    return next;
+  }
+  for (const track of well.tracks) {
+    for (const overlay of topOverlaysForTrack(track)) {
+      const top = overlay.tops.find((candidate) => candidate.id === preview.topId);
+      if (top) {
+        top.nativeDepth = preview.nativeDepth;
+        overlay.tops.sort((left, right) => left.nativeDepth - right.nativeDepth);
+      }
+    }
+  }
+  return next;
+}
+
+function appendLassoPoint(points: LassoPoint[], point: LassoPoint): LassoPoint[] {
+  const previous = points[points.length - 1];
+  if (previous && Math.hypot(previous.x - point.x, previous.y - point.y) < 4) {
+    return points;
+  }
+  return [...points, point];
+}
+
+function buildLassoSelection(
+  panel: NormalizedWellPanelModel,
+  viewport: WellCorrelationViewport,
+  width: number,
+  height: number,
+  points: LassoPoint[]
+): LassoSelectionResult | null {
+  if (points.length < 3) {
+    return null;
+  }
+  const layout = layoutWellCorrelationPanel(panel, width, height);
+  const entities: LassoSelectionResult["entities"] = [];
+
+  for (const column of layout.columns) {
+    const well = panel.wells.find((candidate) => candidate.id === column.wellId);
+    if (!well) {
+      continue;
+    }
+    for (const trackFrame of column.trackFrames) {
+      const track = well.tracks.find((candidate) => candidate.id === trackFrame.trackId);
+      if (!track || track.kind !== "scalar") {
+        continue;
+      }
+      for (const layer of track.layers) {
+        if (layer.kind !== "curve") {
+          continue;
+        }
+        const series = layer.series;
+        const axis = series.axis ?? track.xAxis;
+        for (let index = 0; index < series.nativeDepths.length; index += 1) {
+          const panelDepth = mapNativeDepthToPanelDepth(well.panelDepthMapping, series.nativeDepths[index]!);
+          if (panelDepth < viewport.depthStart || panelDepth > viewport.depthEnd) {
+            continue;
+          }
+          const samplePoint = {
+            x: valueToTrackX(series.values[index]!, axis, trackFrame.bodyRect),
+            y: depthToScreenY(trackFrame.bodyRect, viewport, panelDepth)
+          };
+          if (pointInPolygon(samplePoint, points)) {
+            entities.push({
+              kind: "curve-sample",
+              chartId: panel.id,
+              wellId: well.id,
+              trackId: track.id,
+              seriesId: layer.id,
+              sourceIndex: index
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return entities.length > 0
+    ? {
+        chartId: panel.id,
+        targetKind: "curve-sample",
+        entities
+      }
+    : null;
+}
+
+function targetFromProbe(chartId: string, probe: WellCorrelationProbe | null): InteractionTarget | null {
+  if (!probe) {
+    return null;
+  }
+  if (probe.markerName) {
+    return {
+      kind: "top-marker",
+      chartId,
+      wellId: probe.wellId,
+      trackId: probe.trackId,
+      entityId: probe.markerName,
+      nativeDepth: probe.nativeDepth,
+      panelDepth: probe.panelDepth
+    };
+  }
+  if (probe.kind === "point-observation") {
+    return {
+      kind: "point-observation",
+      chartId,
+      wellId: probe.wellId,
+      trackId: probe.trackId,
+      entityId: probe.entityId,
+      nativeDepth: probe.nativeDepth,
+      panelDepth: probe.panelDepth
+    };
+  }
+  if (probe.kind === "seismic-trace-sample") {
+    return {
+      kind: "seismic-trace-sample",
+      chartId,
+      wellId: probe.wellId,
+      trackId: probe.trackId,
+      nativeDepth: probe.nativeDepth,
+      panelDepth: probe.panelDepth,
+      traceIndex: probe.traceIndex,
+      sampleIndex: probe.sampleIndex
+    };
+  }
+  if (probe.kind === "seismic-section-sample") {
+    return {
+      kind: "seismic-section-sample",
+      chartId,
+      wellId: probe.wellId,
+      trackId: probe.trackId,
+      nativeDepth: probe.nativeDepth,
+      panelDepth: probe.panelDepth,
+      traceIndex: probe.traceIndex,
+      sampleIndex: probe.sampleIndex
+    };
+  }
+  return {
+    kind: "curve-sample",
+    chartId,
+    wellId: probe.wellId,
+    trackId: probe.trackId,
+    panelDepth: probe.panelDepth,
+    nativeDepth: probe.nativeDepth
+  };
+}
+
+function screenYToDepth(
+  rect: { x: number; y: number; width: number; height: number },
+  viewport: WellCorrelationViewport,
+  y: number
+): number {
+  const ratio = clamp((y - rect.y) / Math.max(1, rect.height), 0, 1);
+  return viewport.depthStart + ratio * (viewport.depthEnd - viewport.depthStart);
+}
+
+function deriveCorrelationLines(panel: NormalizedWellPanelModel): CorrelationMarkerLink[] {
+  const grouped = new Map<string, CorrelationMarkerLink>();
+  for (const well of panel.wells) {
+    const seenTopIds = new Set<string>();
+    for (const top of allTopsForWell(well)) {
+      if (seenTopIds.has(top.id)) {
+        continue;
+      }
+      seenTopIds.add(top.id);
+      const existing = grouped.get(top.name) ?? {
+        name: top.name,
+        color: top.color,
+        points: []
+      };
+      existing.points.push({
+        wellId: well.id,
+        nativeDepth: top.nativeDepth,
+        panelDepth: mapNativeDepthToPanelDepth(well.panelDepthMapping, top.nativeDepth)
+      });
+      grouped.set(top.name, existing);
+    }
+  }
+  return [...grouped.values()];
+}
+
+function allTopsForWell(well: NormalizedWellColumn) {
+  return well.tracks.flatMap((track) => topsForTrack(track));
+}
+
+function topOverlaysForTrack(track: NormalizedTrack): NormalizedTopOverlayLayer[] {
+  if (track.kind === "reference") {
+    return track.topOverlays;
+  }
+  return track.layers.filter((layer): layer is NormalizedTopOverlayLayer => layer.kind === "top-overlay");
+}
+
+function topsForTrack(track: NormalizedTrack) {
+  return topOverlaysForTrack(track).flatMap((layer) => layer.tops);
+}
+
+function nearestTop(tops: ReturnType<typeof topsForTrack>, nativeDepth: number) {
+  if (tops.length === 0) {
+    return null;
+  }
+  return tops.reduce((best, candidate) =>
+    Math.abs(candidate.nativeDepth - nativeDepth) < Math.abs(best.nativeDepth - nativeDepth) ? candidate : best
+  );
+}
+
+function nearestCurveSample(
+  track: NormalizedScalarTrack,
+  mapping: { nativeDepth: number; panelDepth: number }[],
+  panelDepth: number
+): { seriesName: string; value: number } | null {
+  let best: { seriesName: string; value: number } | null = null;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const layer of track.layers) {
+    if (layer.kind !== "curve") {
+      continue;
+    }
+    const candidate = nearestSeriesSample(layer.series, mapping, panelDepth);
+    if (!candidate) {
+      continue;
+    }
+    const distance = nearestSeriesDistance(layer.series, mapping, panelDepth);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = candidate;
+    }
+  }
+  return best;
+}
+
+function nearestSeriesSample(
+  series: NormalizedCurveLayer["series"],
+  mapping: { nativeDepth: number; panelDepth: number }[],
+  panelDepth: number
+): { seriesName: string; value: number } | null {
+  let bestIndex = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < series.nativeDepths.length; index += 1) {
+    const distance = Math.abs(mapNativeDepthToPanelDepth(mapping, series.nativeDepths[index]!) - panelDepth);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+  if (bestIndex < 0) {
+    return null;
+  }
+  return {
+    seriesName: series.name,
+    value: series.values[bestIndex]!
+  };
+}
+
+function nearestSeriesDistance(
+  series: NormalizedCurveLayer["series"],
+  mapping: { nativeDepth: number; panelDepth: number }[],
+  panelDepth: number
+): number {
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < series.nativeDepths.length; index += 1) {
+    const distance = Math.abs(mapNativeDepthToPanelDepth(mapping, series.nativeDepths[index]!) - panelDepth);
+    bestDistance = Math.min(bestDistance, distance);
+  }
+  return bestDistance;
+}
+
+function nearestPointObservation(
+  track: NormalizedScalarTrack,
+  mapping: { nativeDepth: number; panelDepth: number }[],
+  viewport: WellCorrelationViewport,
+  x: number,
+  y: number,
+  rect: { x: number; y: number; width: number; height: number }
+): { layerName: string; value: number; nativeDepth: number; label?: string; pointId: string } | null {
+  let best: { layerName: string; value: number; nativeDepth: number; label?: string; pointId: string } | null = null;
+  let bestDistance = 10;
+  for (const layer of track.layers) {
+    if (layer.kind !== "point-observation") {
+      continue;
+    }
+    for (const point of layer.points) {
+      const pointPanelDepth = mapNativeDepthToPanelDepth(mapping, point.nativeDepth);
+      const pointX = valueToTrackX(point.value, layer.axis, rect);
+      const pointY = depthToScreenY(rect, viewport, pointPanelDepth);
+      const distance = Math.hypot(pointX - x, pointY - y);
+      if (distance <= bestDistance) {
+        bestDistance = distance;
+        best = {
+          layerName: layer.name,
+          value: point.value,
+          nativeDepth: point.nativeDepth,
+          label: point.label,
+          pointId: point.id
+        };
+      }
+    }
+  }
+  return best;
+}
+
+function nearestSeismicTraceSample(
+  track: NormalizedSeismicTraceTrack,
+  rect: { x: number; y: number; width: number; height: number },
+  viewport: WellCorrelationViewport,
+  x: number,
+  y: number
+): { traceIndex: number; traceName: string; sampleIndex: number; amplitude: number } | null {
+  const layers = track.layers.filter((layer): layer is NormalizedSeismicTraceLayer => layer.kind === "seismic-trace");
+  if (layers.length === 0) {
+    return null;
+  }
+  const layer = layers[0]!;
+  const traces = layer.traces;
+  if (traces.length === 0) {
+    return null;
+  }
+  const traceIndex = clamp(Math.floor(((x - rect.x) / Math.max(1, rect.width)) * traces.length), 0, traces.length - 1);
+  const depths = layer.panelDepths ?? layer.nativeDepths;
+  const sampleIndex = nearestDepthIndex(depths, screenYToDepth(rect, viewport, y));
+  const trace = traces[traceIndex]!;
+  return {
+    traceIndex,
+    traceName: trace.name,
+    sampleIndex,
+    amplitude: trace.amplitudes[sampleIndex] ?? 0
+  };
+}
+
+function nearestSeismicSectionSample(
+  track: NormalizedSeismicSectionTrack,
+  rect: { x: number; y: number; width: number; height: number },
+  viewport: WellCorrelationViewport,
+  x: number,
+  y: number
+): { traceIndex: number; sampleIndex: number; amplitude: number } | null {
+  const layers = track.layers.filter((layer): layer is NormalizedSeismicSectionLayer => layer.kind === "seismic-section");
+  if (layers.length === 0) {
+    return null;
+  }
+  const layer = layers[0]!;
+  const traceIndex = clamp(
+    Math.floor(((x - rect.x) / Math.max(1, rect.width)) * layer.section.dimensions.traces),
+    0,
+    layer.section.dimensions.traces - 1
+  );
+  const sampleIndex = nearestDepthIndex(layer.panelDepths, screenYToDepth(rect, viewport, y));
+  const amplitude = layer.section.amplitudes[traceIndex * layer.section.dimensions.samples + sampleIndex] ?? 0;
+  return { traceIndex, sampleIndex, amplitude };
+}
+
+function nearestDepthIndex(depths: Float32Array, target: number): number {
+  let bestIndex = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < depths.length; index += 1) {
+    const distance = Math.abs(depths[index]! - target);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  }
+  return bestIndex;
+}
+
+function depthToScreenY(
+  rect: { x: number; y: number; width: number; height: number },
+  viewport: WellCorrelationViewport,
+  depth: number
+): number {
+  return rect.y + ((depth - viewport.depthStart) / Math.max(1e-6, viewport.depthEnd - viewport.depthStart)) * rect.height;
+}
+
+function valueToTrackX(
+  value: number,
+  axis: TrackAxis,
+  rect: { x: number; y: number; width: number; height: number }
+): number {
+  const ratio =
+    axis.scale === "log"
+      ? (Math.log10(Math.max(value, 1e-6)) - Math.log10(Math.max(axis.min, 1e-6))) /
+        (Math.log10(Math.max(axis.max, axis.min * 1.0001)) - Math.log10(Math.max(axis.min, 1e-6)))
+      : axis.max === axis.min
+        ? 0.5
+        : (value - axis.min) / (axis.max - axis.min);
+  return rect.x + clamp(ratio, 0, 1) * rect.width;
+}
+
+function pointInPolygon(point: LassoPoint, polygon: LassoPoint[]): boolean {
+  let inside = false;
+  for (let left = 0, right = polygon.length - 1; left < polygon.length; right = left, left += 1) {
+    const a = polygon[left]!;
+    const b = polygon[right]!;
+    const intersects =
+      a.y > point.y !== b.y > point.y &&
+      point.x < ((b.x - a.x) * (point.y - a.y)) / Math.max(1e-6, b.y - a.y) + a.x;
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function pointInRect(x: number, y: number, rect: { x: number; y: number; width: number; height: number }): boolean {
+  return x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height;
+}
+
+function clonePanel(panel: NormalizedWellPanelModel): NormalizedWellPanelModel {
+  return structuredClone(panel);
+}
+
+function slug(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+function cloneCorrelationLine(line: CorrelationMarkerLink): CorrelationMarkerLink {
+  return {
+    ...line,
+    points: line.points.map((point) => ({ ...point }))
+  };
+}
+
+function cloneInteractionEvent(event: InteractionEvent): InteractionEvent {
+  return JSON.parse(JSON.stringify(event)) as InteractionEvent;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}

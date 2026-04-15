@@ -2,6 +2,8 @@
 
 `contracts/` is the shared app-boundary schema layer for `ophiolite`.
 
+It is the canonical contract surface for reusable subsurface meaning in the current stack.
+
 ## Stack And Formats
 
 - Rust 2024 DTOs owned by `ophiolite`
@@ -15,13 +17,14 @@ This layer defines typed payloads that cross:
 - `ophiolite` backend/core <-> frontend apps
 - canonical project/catalog queries <-> chart/application adapters
 
-The current exported slice is intentionally narrow:
+The current exported slice spans multiple subsurface workflows, including:
 
-- well-panel request DTOs
-- resolved well-panel source DTOs
-- survey-map request DTOs
-- resolved survey-map source DTOs
-- typed supporting rows for logs, trajectory, tops, pressure, and drilling
+- well, wellbore, and typed supporting rows for logs, trajectory, tops, pressure, and drilling
+- well-panel request and resolved-source DTOs
+- survey-map request and resolved-source DTOs
+- canonical section and gather view families
+- well-on-section overlay DTOs
+- time-depth, CRS, and related display/runtime boundary types
 
 Regenerate the TypeScript artifact from the repo root with:
 
@@ -38,6 +41,7 @@ The generated output currently lives under:
 
 This layer must not own:
 
-- chart/view models from `geoviz`
+- chart renderer internals
 - storage/runtime implementation details
 - product workflow logic
+- product-specific session/orchestration transport

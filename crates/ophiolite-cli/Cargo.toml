@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 ophiolite-core = { path = "../ophiolite-core" }
+ophiolite-project = { path = "../ophiolite-project" }
 ophiolite-parser = { path = "../ophiolite-parser" }
 ophiolite-package = { path = "../ophiolite-package" }
+serde = { workspace = true }
 serde_json = { workspace = true }

@@ -1,0 +1,1 @@
+F3_synthetic/depth_velocity_cube/*.bin filter=lfs diff=lfs merge=lfs -text

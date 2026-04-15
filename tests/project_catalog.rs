@@ -3,13 +3,14 @@ use ophiolite::{
     AssetBindingInput, AssetKind, AssetStatus, ComputeAvailability, ComputeParameterValue,
     CoordinateReferenceBinding, CoordinateReferenceDescriptor, CoordinateReferenceSource,
     CurveSemanticType, DatasetKind, DepthRangeQuery, GeometryProvenance, HeaderFieldSpec,
-    OphioliteProject, ProjectComputeRunRequest, ProjectedPoint2, ProjectedPolygon2,
-    ProjectedVector2, SourceIdentity, SurveyGridTransform, SurveyMapRequestDto,
+    OphioliteProject, ProjectComputeRunRequest, ProjectSurveyMapRequestDto, ProjectedPoint2,
+    ProjectedPolygon2, ProjectedVector2, SourceIdentity, SurveyGridTransform,
     SurveyMapSpatialAvailabilityDto, SurveyMapTransformStatusDto, SurveySpatialAvailability,
     SurveySpatialDescriptor, TbvolManifest, VolumeAxes, VolumeMetadata, WellAzimuthReferenceKind,
     WellPanelRequestDto, WellboreAnchorKind, WellboreAnchorReference, WellboreGeometry,
     create_tbvol_store, examples, import_las_asset,
 };
+use ophiolite_seismic_runtime::{generate_store_id, segy_sample_data_fidelity};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -515,11 +516,11 @@ fn project_resolves_survey_map_source_with_explicit_spatial_gaps() {
         .unwrap();
 
     let resolved = project
-        .resolve_survey_map_source(&SurveyMapRequestDto {
+        .resolve_survey_map_source(&ProjectSurveyMapRequestDto {
             schema_version: 1,
             survey_asset_ids: vec![seismic.asset.id.0.clone()],
             wellbore_ids: vec![seismic.resolution.wellbore_id.0.clone()],
-            display_coordinate_reference_id: None,
+            display_coordinate_reference_id: "EPSG:23031".to_string(),
         })
         .unwrap();
 
@@ -610,11 +611,11 @@ fn project_resolves_survey_map_source_with_proj_display_transform_and_cache() {
         .unwrap();
 
     let resolved = project
-        .resolve_survey_map_source(&SurveyMapRequestDto {
+        .resolve_survey_map_source(&ProjectSurveyMapRequestDto {
             schema_version: 1,
             survey_asset_ids: vec![seismic.asset.id.0.clone()],
             wellbore_ids: Vec::new(),
-            display_coordinate_reference_id: Some("EPSG:3857".to_string()),
+            display_coordinate_reference_id: "EPSG:3857".to_string(),
         })
         .unwrap();
 
@@ -644,11 +645,11 @@ fn project_resolves_survey_map_source_with_proj_display_transform_and_cache() {
     assert!(!cache_entries.is_empty());
 
     let resolved_cached = project
-        .resolve_survey_map_source(&SurveyMapRequestDto {
+        .resolve_survey_map_source(&ProjectSurveyMapRequestDto {
             schema_version: 1,
             survey_asset_ids: vec![seismic.asset.id.0.clone()],
             wellbore_ids: Vec::new(),
-            display_coordinate_reference_id: Some("EPSG:3857".to_string()),
+            display_coordinate_reference_id: "EPSG:3857".to_string(),
         })
         .unwrap();
     assert!(
@@ -957,6 +958,7 @@ fn sample_store_manifest() -> TbvolManifest {
     TbvolManifest::new(
         VolumeMetadata {
             kind: DatasetKind::Source,
+            store_id: generate_store_id(),
             source: SourceIdentity {
                 source_path: PathBuf::from("survey.sgy"),
                 file_size: 1024,
@@ -964,6 +966,11 @@ fn sample_store_manifest() -> TbvolManifest {
                 samples_per_trace: 4,
                 sample_interval_us: 2000,
                 sample_format_code: 5,
+                sample_data_fidelity: segy_sample_data_fidelity(5),
+                endianness: "big".to_string(),
+                revision_raw: 0,
+                fixed_length_trace_flag_raw: 1,
+                extended_textual_headers: 0,
                 geometry: GeometryProvenance {
                     inline_field: HeaderFieldSpec {
                         name: "INLINE_3D".to_string(),
@@ -985,6 +992,7 @@ fn sample_store_manifest() -> TbvolManifest {
                 xlines: vec![2000.0, 2001.0, 2002.0],
                 sample_axis_ms: vec![0.0, 2.0, 4.0, 6.0],
             },
+            segy_export: None,
             coordinate_reference_binding: None,
             spatial: None,
             created_by: "project_catalog_test".to_string(),

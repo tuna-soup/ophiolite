@@ -1,10 +1,31 @@
+mod operation_catalog;
+
+use operation_catalog::operation_catalog;
 use ophiolite_core::Result;
 use ophiolite_package::{StoredLasFile, write_bundle};
 use ophiolite_parser::{ReadOptions, import_las_file};
+use ophiolite_project::{OphioliteProject, WellId};
 use serde_json::json;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+pub fn supported_cli_commands() -> &'static [&'static str] {
+    &[
+        "operation-catalog",
+        "create-project",
+        "open-project",
+        "project-summary",
+        "list-project-wells",
+        "list-project-wellbores",
+        "import",
+        "inspect-file",
+        "summary",
+        "list-curves",
+        "examples",
+        "generate-fixture-packages",
+    ]
+}
 
 pub fn main_entry() {
     if let Err(err) = run(env::args()) {
@@ -21,6 +42,32 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
     }
 
     match args[1].as_str() {
+        "operation-catalog" if args.len() == 2 => {
+            println!("{}", serde_json::to_string_pretty(operation_catalog())?);
+        }
+        "create-project" if args.len() == 3 => {
+            let project = OphioliteProject::create(&args[2])?;
+            println!("{}", serde_json::to_string_pretty(&project.summary()?)?);
+        }
+        "open-project" if args.len() == 3 => {
+            let project = OphioliteProject::open(&args[2])?;
+            println!("{}", serde_json::to_string_pretty(&project.summary()?)?);
+        }
+        "project-summary" if args.len() == 3 => {
+            let project = OphioliteProject::open(&args[2])?;
+            println!("{}", serde_json::to_string_pretty(&project.summary()?)?);
+        }
+        "list-project-wells" if args.len() == 3 => {
+            let project = OphioliteProject::open(&args[2])?;
+            println!("{}", serde_json::to_string_pretty(&project.list_wells()?)?);
+        }
+        "list-project-wellbores" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.list_wellbores(&WellId(args[3].clone()))?)?
+            );
+        }
         "import" if args.len() == 4 => {
             let file = import_las_file(&args[2])?;
             let bundle = write_bundle(&file, &args[3])?;
@@ -148,6 +195,12 @@ fn print_usage() {
         .unwrap_or_else(|| String::from("ophiolite"));
 
     eprintln!("Usage:");
+    eprintln!("  {binary} operation-catalog");
+    eprintln!("  {binary} create-project <project_root>");
+    eprintln!("  {binary} open-project <project_root>");
+    eprintln!("  {binary} project-summary <project_root>");
+    eprintln!("  {binary} list-project-wells <project_root>");
+    eprintln!("  {binary} list-project-wellbores <project_root> <well_id>");
     eprintln!("  {binary} import <input.las> <bundle_dir>");
     eprintln!("  {binary} inspect-file <input.las>");
     eprintln!("  {binary} summary <bundle_dir>");

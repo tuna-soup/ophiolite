@@ -1,8 +1,14 @@
 /target/
 /tmp/
+/node_modules/
 /apps/*/node_modules/
 /apps/*/dist/
+/apps/*/.astro/
 /apps/*/src-tauri/target/
+/charts/node_modules/
+/charts/apps/*/node_modules/
+/charts/apps/*/dist/
+/charts/packages/*/node_modules/
 /lossless_float_storage_bench.obj
 /openvds_storage_bench.obj
 /lossless_float_storage_bench.exe

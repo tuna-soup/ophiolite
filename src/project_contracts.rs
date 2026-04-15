@@ -138,6 +138,14 @@ pub struct SurveyMapRequestDto {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProjectSurveyMapRequestDto {
+    pub schema_version: u32,
+    pub survey_asset_ids: Vec<String>,
+    pub wellbore_ids: Vec<String>,
+    pub display_coordinate_reference_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct CoordinateReferenceDto {
     pub id: Option<String>,
     pub name: Option<String>,
@@ -320,7 +328,11 @@ pub struct ResolvedSurveyMapWellDto {
     pub wellbore_id: String,
     pub name: String,
     pub coordinate_reference: Option<CoordinateReferenceDto>,
+    pub transform_status: SurveyMapTransformStatusDto,
+    pub transform_diagnostics: SurveyMapTransformDiagnosticsDto,
     pub surface_location: Option<ProjectedPoint2Dto>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plan_trajectory: Vec<ProjectedPoint2Dto>,
     pub trajectories: Vec<SurveyMapTrajectoryDto>,
     pub notes: Vec<String>,
 }

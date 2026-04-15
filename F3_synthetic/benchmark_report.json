@@ -1,0 +1,446 @@
+{
+  "store_path": "/Users/sc/dev/TraceBoost/sandbox/f3_dataset_regularized.tbvol",
+  "survey_package": "/Users/sc/dev/TraceBoost/sandbox/f3_synthetic_f3_crs",
+  "transform_id": "f3-paired-horizon-survey-transform",
+  "inline_count": 651,
+  "xline_count": 951,
+  "sample_count": 462,
+  "control_profile_count": 110,
+  "import_fidelity": [
+    {
+      "horizon_id": "horizon_01_depth_m",
+      "domain": "depth",
+      "unit": "m",
+      "invalid_cell_count": 0,
+      "full_grid": {
+        "count": 619101,
+        "rmse": 1.1024120806834398e-05,
+        "mae": 9.068362709502947e-06,
+        "mean_bias": -3.693296312415501e-08,
+        "p95_abs": 2.2460937543655746e-05,
+        "max_abs": 3.0273437459982233e-05
+      },
+      "control_profiles": {
+        "count": 110,
+        "rmse": 1.1251630182813484e-05,
+        "mae": 9.406072442950311e-06,
+        "mean_bias": -1.1186079518665792e-06,
+        "p95_abs": 2.1972656213620212e-05,
+        "max_abs": 2.832031248090061e-05
+      }
+    },
+    {
+      "horizon_id": "horizon_01_depth_m-derived_twt_ms",
+      "domain": "time",
+      "unit": "ms",
+      "skipped": true,
+      "skip_reason": "source path 'derived:/horizon-conversion/horizon_01_depth_m?transform=f3-paired-horizon-survey-transform&target_domain=time' is not a local ASCII horizon file"
+    },
+    {
+      "horizon_id": "horizon_01_twt_ms",
+      "domain": "time",
+      "unit": "ms",
+      "invalid_cell_count": 0,
+      "full_grid": {
+        "count": 619101,
+        "rmse": 1.3013566845843324e-05,
+        "mae": 1.0638073975390628e-05,
+        "mean_bias": 4.4880632265994084e-09,
+        "p95_abs": 2.6855468718167685e-05,
+        "max_abs": 3.0273437459982233e-05
+      },
+      "control_profiles": {
+        "count": 110,
+        "rmse": 1.3048459427087336e-05,
+        "mae": 1.1044034092513109e-05,
+        "mean_bias": -1.291725852132169e-06,
+        "p95_abs": 2.539062495543476e-05,
+        "max_abs": 2.8808593697249307e-05
+      }
+    },
+    {
+      "horizon_id": "horizon_01_twt_ms-derived_depth_m",
+      "domain": "depth",
+      "unit": "m",
+      "skipped": true,
+      "skip_reason": "source path 'derived:/horizon-conversion/horizon_01_twt_ms?transform=f3-paired-horizon-survey-transform&target_domain=depth' is not a local ASCII horizon file"
+    },
+    {
+      "horizon_id": "horizon_02_depth_m",
+      "domain": "depth",
+      "unit": "m",
+      "invalid_cell_count": 0,
+      "full_grid": {
+        "count": 619101,
+        "rmse": 1.7846961752053324e-05,
+        "mae": 1.5389119761511714e-05,
+        "mean_bias": -1.8542196480315158e-09,
+        "p95_abs": 2.929687502728484e-05,
+        "max_abs": 6.0546874919964466e-05
+      },
+      "control_profiles": {
+        "count": 110,
+        "rmse": 1.7542392364355645e-05,
+        "mae": 1.5070134943264499e-05,
+        "mean_bias": 7.85688923149957e-07,
+        "p95_abs": 2.832031248090061e-05,
+        "max_abs": 3.0273437459982233e-05
+      }
+    },
+    {
+      "horizon_id": "horizon_02_depth_m-derived_twt_ms",
+      "domain": "time",
+      "unit": "ms",
+      "skipped": true,
+      "skip_reason": "source path 'derived:/horizon-conversion/horizon_02_depth_m?transform=f3-paired-horizon-survey-transform&target_domain=time' is not a local ASCII horizon file"
+    },
+    {
+      "horizon_id": "horizon_02_twt_ms",
+      "domain": "time",
+      "unit": "ms",
+      "invalid_cell_count": 0,
+      "full_grid": {
+        "count": 619101,
+        "rmse": 1.7616856214460184e-05,
+        "mae": 1.5255152985765753e-05,
+        "mean_bias": 1.005742595059485e-08,
+        "p95_abs": 2.8808593697249307e-05,
+        "max_abs": 3.0273437459982233e-05
+      },
+      "control_profiles": {
+        "count": 110,
+        "rmse": 1.7135756610449312e-05,
+        "mae": 1.4670632105083892e-05,
+        "mean_bias": 1.198508512474787e-07,
+        "p95_abs": 2.8808593697249307e-05,
+        "max_abs": 3.0273437459982233e-05
+      }
+    },
+    {
+      "horizon_id": "horizon_02_twt_ms-derived_depth_m",
+      "domain": "depth",
+      "unit": "m",
+      "skipped": true,
+      "skip_reason": "source path 'derived:/horizon-conversion/horizon_02_twt_ms?transform=f3-paired-horizon-survey-transform&target_domain=depth' is not a local ASCII horizon file"
+    },
+    {
+      "horizon_id": "horizon_03_depth_m",
+      "domain": "depth",
+      "unit": "m",
+      "invalid_cell_count": 0,
+      "full_grid": {
+        "count": 619101,
+        "rmse": 3.0156445087936577e-05,
+        "mae": 2.5071669255375247e-05,
+        "mean_bias": -1.6327543363491946e-08,
+        "p95_abs": 5.664062496180122e-05,
+        "max_abs": 6.0546874919964466e-05
+      },
+      "control_profiles": {
+        "count": 110,
+        "rmse": 3.120932968089069e-05,
+        "mae": 2.608309660300537e-05,
+        "mean_bias": -3.1960227653888234e-07,
+        "p95_abs": 5.7617187394498615e-05,
+        "max_abs": 6.0546874919964466e-05
+      }
+    },
+    {
+      "horizon_id": "horizon_03_depth_m-derived_twt_ms",
+      "domain": "time",
+      "unit": "ms",
+      "skipped": true,
+      "skip_reason": "source path 'derived:/horizon-conversion/horizon_03_depth_m?transform=f3-paired-horizon-survey-transform&target_domain=time' is not a local ASCII horizon file"
+    },
+    {
+      "horizon_id": "horizon_03_twt_ms",
+      "domain": "time",
+      "unit": "ms",
+      "invalid_cell_count": 0,
+      "full_grid": {
+        "count": 619101,
+        "rmse": 2.6707872364355046e-05,
+        "mae": 2.1853076041402442e-05,
+        "mean_bias": -3.349031369401909e-08,
+        "p95_abs": 5.371093743633537e-05,
+        "max_abs": 6.0546874919964466e-05
+      },
+      "control_profiles": {
+        "count": 110,
+        "rmse": 2.4860574163891818e-05,
+        "mae": 2.094726562208135e-05,
+        "mean_bias": 3.653231540697148e-06,
+        "p95_abs": 4.8828125045474735e-05,
+        "max_abs": 5.859375005456968e-05
+      }
+    },
+    {
+      "horizon_id": "horizon_03_twt_ms-derived_depth_m",
+      "domain": "depth",
+      "unit": "m",
+      "skipped": true,
+      "skip_reason": "source path 'derived:/horizon-conversion/horizon_03_twt_ms?transform=f3-paired-horizon-survey-transform&target_domain=depth' is not a local ASCII horizon file"
+    },
+    {
+      "horizon_id": "horizon_04_depth_m",
+      "domain": "depth",
+      "unit": "m",
+      "invalid_cell_count": 0,
+      "full_grid": {
+        "count": 619101,
+        "rmse": 5.1534073967399214e-05,
+        "mae": 4.2081740549478936e-05,
+        "mean_bias": -1.8016295006504234e-07,
+        "p95_abs": 0.00010546875000727596,
+        "max_abs": 0.00012109374983992893
+      },
+      "control_profiles": {
+        "count": 110,
+        "rmse": 4.8660935355278106e-05,
+        "mae": 3.92578125001819e-05,
+        "mean_bias": -5.752840903286679e-06,
+        "p95_abs": 0.00010937500019281288,
+        "max_abs": 0.00011718750010913936
+      }
+    },
+    {
+      "horizon_id": "horizon_04_depth_m-derived_twt_ms",
+      "domain": "time",
+      "unit": "ms",
+      "skipped": true,
+      "skip_reason": "source path 'derived:/horizon-conversion/horizon_04_depth_m?transform=f3-paired-horizon-survey-transform&target_domain=time' is not a local ASCII horizon file"
+    },
+    {
+      "horizon_id": "horizon_04_twt_ms",
+      "domain": "time",
+      "unit": "ms",
+      "invalid_cell_count": 0,
+      "full_grid": {
+        "count": 619101,
+        "rmse": 3.008609769977845e-05,
+        "mae": 2.224957696954989e-05,
+        "mean_bias": 2.6905507366927607e-08,
+        "p95_abs": 5.664062496180122e-05,
+        "max_abs": 6.0546874919964466e-05
+      },
+      "control_profiles": {
+        "count": 110,
+        "rmse": 2.879482227660136e-05,
+        "mae": 2.1324573861585866e-05,
+        "mean_bias": -6.569602233370957e-07,
+        "p95_abs": 5.664062496180122e-05,
+        "max_abs": 6.0546874919964466e-05
+      }
+    },
+    {
+      "horizon_id": "horizon_04_twt_ms-derived_depth_m",
+      "domain": "depth",
+      "unit": "m",
+      "skipped": true,
+      "skip_reason": "source path 'derived:/horizon-conversion/horizon_04_twt_ms?transform=f3-paired-horizon-survey-transform&target_domain=depth' is not a local ASCII horizon file"
+    }
+  ],
+  "conversion_pairs": [
+    {
+      "horizon_pair": "horizon_01",
+      "time_horizon_id": "horizon_01_twt_ms",
+      "depth_horizon_id": "horizon_01_depth_m",
+      "twt_to_depth_m": {
+        "full_grid": {
+          "count": 619101,
+          "rmse": 0.12923948249158135,
+          "mae": 0.10854893901449975,
+          "mean_bias": 0.10854893901449975,
+          "p95_abs": 0.24374223733320832,
+          "max_abs": 0.2988114235922694
+        },
+        "control_profiles": {
+          "count": 110,
+          "rmse": 0.13803203087864765,
+          "mae": 0.11645197314210236,
+          "mean_bias": 0.11645197314210236,
+          "p95_abs": 0.25423299707472324,
+          "max_abs": 0.28257301542907953
+        }
+      },
+      "depth_to_twt_ms": {
+        "full_grid": {
+          "count": 619101,
+          "rmse": 0.12751688554552906,
+          "mae": 0.10749874986568884,
+          "mean_bias": -0.10749874986568884,
+          "p95_abs": 0.2381639793999284,
+          "max_abs": 0.28817217906009773
+        },
+        "control_profiles": {
+          "count": 110,
+          "rmse": 0.13451610101493372,
+          "mae": 0.11395551909253072,
+          "mean_bias": -0.11395551909253072,
+          "p95_abs": 0.25230182916953936,
+          "max_abs": 0.2667574906788559
+        }
+      }
+    },
+    {
+      "horizon_pair": "horizon_02",
+      "time_horizon_id": "horizon_02_twt_ms",
+      "depth_horizon_id": "horizon_02_depth_m",
+      "twt_to_depth_m": {
+        "full_grid": {
+          "count": 619101,
+          "rmse": 0.14078734684586977,
+          "mae": 0.12131641718614165,
+          "mean_bias": 0.12131641679179464,
+          "p95_abs": 0.2494992669671774,
+          "max_abs": 0.33167705591768026
+        },
+        "control_profiles": {
+          "count": 110,
+          "rmse": 0.13214076965197324,
+          "mae": 0.11340916253287683,
+          "mean_bias": 0.11340916253287683,
+          "p95_abs": 0.23296381905674934,
+          "max_abs": 0.2802451401948929
+        }
+      },
+      "depth_to_twt_ms": {
+        "full_grid": {
+          "count": 619101,
+          "rmse": 0.12006517770024809,
+          "mae": 0.10331002211700692,
+          "mean_bias": -0.103310021815462,
+          "p95_abs": 0.214917458655691,
+          "max_abs": 0.2859978822040148
+        },
+        "control_profiles": {
+          "count": 110,
+          "rmse": 0.1125316144381862,
+          "mae": 0.09638371956424098,
+          "mean_bias": -0.09638371956424098,
+          "p95_abs": 0.2013992236716149,
+          "max_abs": 0.2582561660922238
+        }
+      }
+    },
+    {
+      "horizon_pair": "horizon_03",
+      "time_horizon_id": "horizon_03_twt_ms",
+      "depth_horizon_id": "horizon_03_depth_m",
+      "twt_to_depth_m": {
+        "full_grid": {
+          "count": 619101,
+          "rmse": 0.11956572531973989,
+          "mae": 0.10060657432290554,
+          "mean_bias": 0.10058788231823981,
+          "p95_abs": 0.21864416636526585,
+          "max_abs": 0.30228255689144135
+        },
+        "control_profiles": {
+          "count": 110,
+          "rmse": 0.128952634469063,
+          "mae": 0.11072436008094387,
+          "mean_bias": 0.11071683025326241,
+          "p95_abs": 0.23637130856513977,
+          "max_abs": 0.27966953814029694
+        }
+      },
+      "depth_to_twt_ms": {
+        "full_grid": {
+          "count": 619101,
+          "rmse": 0.08935090301459397,
+          "mae": 0.07505120407802245,
+          "mean_bias": -0.0750374336831326,
+          "p95_abs": 0.16389627052512878,
+          "max_abs": 0.22786027219842708
+        },
+        "control_profiles": {
+          "count": 110,
+          "rmse": 0.09605702871990218,
+          "mae": 0.08224841830923321,
+          "mean_bias": -0.0822428262734816,
+          "p95_abs": 0.18108898663399486,
+          "max_abs": 0.20963539805052278
+        }
+      }
+    },
+    {
+      "horizon_pair": "horizon_04",
+      "time_horizon_id": "horizon_04_twt_ms",
+      "depth_horizon_id": "horizon_04_depth_m",
+      "twt_to_depth_m": {
+        "full_grid": {
+          "count": 619101,
+          "rmse": 3.5531235227821795e-05,
+          "mae": 2.397814509787946e-05,
+          "mean_bias": -2.132355490499827e-08,
+          "p95_abs": 7.465481758117676e-05,
+          "max_abs": 0.00017882883548736572
+        },
+        "control_profiles": {
+          "count": 110,
+          "rmse": 3.272731415679663e-05,
+          "mae": 2.185688777403398e-05,
+          "mean_bias": -2.476708455519243e-06,
+          "p95_abs": 7.753074169158936e-05,
+          "max_abs": 0.0001065284013748169
+        }
+      },
+      "depth_to_twt_ms": {
+        "full_grid": {
+          "count": 619101,
+          "rmse": 2.5111558221418075e-05,
+          "mae": 1.6965305688521945e-05,
+          "mean_bias": 1.6394917135853042e-08,
+          "p95_abs": 5.2686310937133385e-05,
+          "max_abs": 0.00013049656104158203
+        },
+        "control_profiles": {
+          "count": 110,
+          "rmse": 2.30553090023537e-05,
+          "mae": 1.5417718784440447e-05,
+          "mean_bias": 1.755807166277505e-06,
+          "p95_abs": 5.425347217169474e-05,
+          "max_abs": 7.468703529411869e-05
+        }
+      }
+    }
+  ],
+  "conversion_summary": {
+    "twt_to_depth_m": {
+      "full_grid": {
+        "mean_rmse": 0.0974070214731047,
+        "mean_mae": 0.0826239771671612,
+        "worst_p95_abs": 0.2494992669671774,
+        "worst_max_abs": 0.33167705591768026
+      },
+      "control_profiles": {
+        "mean_rmse": 0.09978954057846018,
+        "mean_mae": 0.08515183816092427,
+        "worst_p95_abs": 0.25423299707472324,
+        "worst_max_abs": 0.28257301542907953
+      }
+    },
+    "depth_to_twt_ms": {
+      "full_grid": {
+        "mean_rmse": 0.08423951945464814,
+        "mean_mae": 0.07146923534160168,
+        "worst_p95_abs": 0.2381639793999284,
+        "worst_max_abs": 0.28817217906009773
+      },
+      "control_profiles": {
+        "mean_rmse": 0.08578194987050611,
+        "mean_mae": 0.07315076867119734,
+        "worst_p95_abs": 0.25230182916953936,
+        "worst_max_abs": 0.2667574906788559
+      }
+    }
+  },
+  "reference_notes": {
+    "reviewed_algorithms": [
+      "OpendTect time-depth converter classes",
+      "Madagascar time-to-depth conversion references"
+    ],
+    "external_api_benchmark_status": "not_executed"
+  }
+}

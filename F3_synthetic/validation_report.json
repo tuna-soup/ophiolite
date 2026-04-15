@@ -1,0 +1,9 @@
+{
+  "bundle_root": "/Users/sc/dev/ophiolite/F3_synthetic",
+  "store_root": "/Users/sc/dev/ophiolite/F3_synthetic/f3_dataset_regularized.tbvol",
+  "survey_package": "/Users/sc/dev/ophiolite/F3_synthetic/survey_package",
+  "expected_transform_id": "f3-paired-horizon-survey-transform",
+  "checked_horizon_count": 16,
+  "status": "ok",
+  "failures": []
+}

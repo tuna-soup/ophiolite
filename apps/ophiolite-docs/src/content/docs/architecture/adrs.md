@@ -20,14 +20,20 @@ The ADRs remain the durable record of accepted architectural decisions.
 - [ADR-0010 Typed Compute and Derived Assets](https://github.com/scrooijmans/ophiolite/blob/master/docs/architecture/ADR-0010-typed-compute-and-derived-assets.md)
 - [ADR-0011 Structured Asset Edit Sessions](https://github.com/scrooijmans/ophiolite/blob/master/docs/architecture/ADR-0011-structured-asset-edit-sessions.md)
 - [ADR-0012 Revisioned Overwrite-Oriented Saves](https://github.com/scrooijmans/ophiolite/blob/master/docs/architecture/ADR-0012-revisioned-last-save-wins.md)
+- [ADR-0013 Shared Subsurface Core and Seismic Expansion](https://github.com/scrooijmans/ophiolite/blob/master/docs/architecture/ADR-0013-shared-subsurface-core-and-seismic-expansion.md)
+- [ADR-0014 Seismic CRS Native, Effective, and Display Boundary](https://github.com/scrooijmans/ophiolite/blob/master/docs/architecture/ADR-0014-seismic-crs-native-effective-display-boundary.md)
+- [ADR-0015 Authored Models, Compiled Runtime Assets, Analysis APIs, and Display DTOs](https://github.com/scrooijmans/ophiolite/blob/master/docs/architecture/ADR-0015-authored-models-compiled-runtime-assets-and-display-dtos.md)
+- [ADR-0016 Canonical Wellbore Geometry and Resolved Trajectory Boundary](https://github.com/scrooijmans/ophiolite/blob/master/docs/architecture/ADR-0016-canonical-wellbore-geometry-and-resolved-trajectory-boundary.md)
+- [ADR-0017 Well Time-Depth Source Assets, Authored Models, and Compiled Runtime Output](https://github.com/scrooijmans/ophiolite/blob/master/docs/architecture/ADR-0017-well-time-depth-source-assets-authored-models-and-compiled-runtime-output.md)
+- [ADR-0018 Project-Aware Well-On-Section Overlay DTOs and Backend Projection Rules](https://github.com/scrooijmans/ophiolite/blob/master/docs/architecture/ADR-0018-project-aware-well-on-section-overlay-dtos-and-backend-projection-rules.md)
 
 ## Reading order
 
 If you are new to Ophiolite, start with:
 
-1. ADR-0001
-2. ADR-0003
-3. ADR-0008
-4. ADR-0010
-5. ADR-0011
-6. ADR-0012
+1. ADR-0008
+2. ADR-0009
+3. ADR-0013
+4. ADR-0014
+5. ADR-0015
+6. ADR-0017

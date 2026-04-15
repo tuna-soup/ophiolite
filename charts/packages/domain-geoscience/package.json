@@ -1,0 +1,16 @@
+{
+  "name": "@ophiolite/charts-domain",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ophiolite/charts-core": "file:../chart-core",
+    "@ophiolite/charts-data-models": "file:../data-models",
+    "@ophiolite/charts-renderer": "file:../renderer"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}

@@ -1,0 +1,277 @@
+{
+  "schema_version": 1,
+  "catalog_name": "ophiolite-operations",
+  "product": "Ophiolite",
+  "operations": [
+    {
+      "id": "ophiolite.operation_catalog",
+      "summary": "Return the declared Ophiolite platform automation catalog.",
+      "owner": "ophiolite",
+      "domain": "diagnostics",
+      "stability": "beta",
+      "surfaces": ["rust-cli"],
+      "bindings": {
+        "rust_cli": "operation-catalog"
+      }
+    },
+    {
+      "id": "ophiolite.import_las_bundle",
+      "summary": "Import a LAS file into an optimized local package bundle.",
+      "owner": "ophiolite",
+      "domain": "las",
+      "stability": "beta",
+      "surfaces": ["rust-cli"],
+      "bindings": {
+        "rust_cli": "import"
+      }
+    },
+    {
+      "id": "ophiolite.inspect_las_file",
+      "summary": "Inspect raw LAS content and metadata before packaging.",
+      "owner": "ophiolite",
+      "domain": "las",
+      "stability": "beta",
+      "surfaces": ["rust-cli"],
+      "bindings": {
+        "rust_cli": "inspect-file"
+      }
+    },
+    {
+      "id": "ophiolite.open_bundle_summary",
+      "summary": "Open a packaged LAS bundle and return its summary.",
+      "owner": "ophiolite",
+      "domain": "package",
+      "stability": "beta",
+      "surfaces": ["rust-cli"],
+      "bindings": {
+        "rust_cli": "summary"
+      }
+    },
+    {
+      "id": "ophiolite.list_bundle_curves",
+      "summary": "List canonical curve mnemonics from a packaged LAS bundle.",
+      "owner": "ophiolite",
+      "domain": "package",
+      "stability": "beta",
+      "surfaces": ["rust-cli"],
+      "bindings": {
+        "rust_cli": "list-curves"
+      }
+    },
+    {
+      "id": "ophiolite.examples_root",
+      "summary": "Report local example paths and default read options for development.",
+      "owner": "ophiolite",
+      "domain": "diagnostics",
+      "stability": "internal",
+      "surfaces": ["rust-cli"],
+      "bindings": {
+        "rust_cli": "examples"
+      }
+    },
+    {
+      "id": "ophiolite.generate_fixture_packages",
+      "summary": "Generate package fixtures from a LAS corpus for validation workflows.",
+      "owner": "ophiolite",
+      "domain": "validation",
+      "stability": "internal",
+      "surfaces": ["rust-cli", "rust-api"],
+      "bindings": {
+        "rust_cli": "generate-fixture-packages",
+        "rust_function": "ophiolite_cli::generate_fixture_packages"
+      }
+    },
+    {
+      "id": "ophiolite.create_project",
+      "summary": "Create a new local Ophiolite project root and initialize its catalog.",
+      "owner": "ophiolite",
+      "domain": "project",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::create",
+        "rust_cli": "create-project"
+      }
+    },
+    {
+      "id": "ophiolite.open_project",
+      "summary": "Open an existing local Ophiolite project.",
+      "owner": "ophiolite",
+      "domain": "project",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::open",
+        "rust_cli": "open-project"
+      }
+    },
+    {
+      "id": "ophiolite.project_summary",
+      "summary": "Return the aggregate summary for a local Ophiolite project.",
+      "owner": "ophiolite",
+      "domain": "project",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::summary",
+        "rust_cli": "project-summary"
+      }
+    },
+    {
+      "id": "ophiolite.list_project_wells",
+      "summary": "List wells registered in a local Ophiolite project.",
+      "owner": "ophiolite",
+      "domain": "project",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::list_wells",
+        "rust_cli": "list-project-wells"
+      }
+    },
+    {
+      "id": "ophiolite.list_project_wellbores",
+      "summary": "List wellbores for a selected well in a local Ophiolite project.",
+      "owner": "ophiolite",
+      "domain": "project",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::list_wellbores",
+        "rust_cli": "list-project-wellbores"
+      }
+    },
+    {
+      "id": "ophiolite.list_asset_collections",
+      "summary": "List asset collections grouped under a project wellbore.",
+      "owner": "ophiolite",
+      "domain": "project",
+      "stability": "beta",
+      "surfaces": ["rust-api"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::list_asset_collections"
+      }
+    },
+    {
+      "id": "ophiolite.list_assets",
+      "summary": "List project assets for a wellbore, optionally filtered by asset kind.",
+      "owner": "ophiolite",
+      "domain": "project",
+      "stability": "beta",
+      "surfaces": ["rust-api"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::list_assets"
+      }
+    },
+    {
+      "id": "ophiolite.import_las_asset",
+      "summary": "Import LAS into a project as a canonical log asset.",
+      "owner": "ophiolite",
+      "domain": "ingest",
+      "stability": "beta",
+      "surfaces": ["rust-api"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::import_las"
+      }
+    },
+    {
+      "id": "ophiolite.resolve_well_panel_source",
+      "summary": "Resolve the well-panel payload used by platform consumers and embedders.",
+      "owner": "ophiolite",
+      "domain": "view",
+      "stability": "beta",
+      "surfaces": ["rust-api"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::resolve_well_panel_source"
+      }
+    },
+    {
+      "id": "ophiolite.resolve_survey_map_source",
+      "summary": "Resolve the survey-map payload used by platform consumers and embedders.",
+      "owner": "ophiolite",
+      "domain": "map",
+      "stability": "beta",
+      "surfaces": ["rust-api"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::resolve_survey_map_source"
+      }
+    },
+    {
+      "id": "ophiolite.resolve_wellbore_trajectory",
+      "summary": "Resolve canonical wellbore trajectory geometry from authored assets and anchor metadata.",
+      "owner": "ophiolite",
+      "domain": "geometry",
+      "stability": "beta",
+      "surfaces": ["rust-api"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::resolve_wellbore_trajectory"
+      }
+    },
+    {
+      "id": "ophiolite.resolve_section_well_overlays",
+      "summary": "Resolve well overlay geometry for a seismic section using project-owned canonical models.",
+      "owner": "ophiolite",
+      "domain": "geometry",
+      "stability": "beta",
+      "surfaces": ["rust-api"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::resolve_section_well_overlays"
+      }
+    },
+    {
+      "id": "ophiolite.run_project_compute",
+      "summary": "Execute a typed project compute function and persist the derived asset.",
+      "owner": "ophiolite",
+      "domain": "compute",
+      "stability": "beta",
+      "surfaces": ["rust-api"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::run_compute"
+      }
+    },
+    {
+      "id": "ophiolite.inspect_package_summary",
+      "summary": "Inspect package summary through the package command service.",
+      "owner": "ophiolite",
+      "domain": "package",
+      "stability": "beta",
+      "surfaces": ["rust-api"],
+      "bindings": {
+        "rust_function": "ophiolite::PackageCommandService::inspect_package_summary"
+      }
+    },
+    {
+      "id": "ophiolite.inspect_package_metadata",
+      "summary": "Inspect package metadata through the package command service.",
+      "owner": "ophiolite",
+      "domain": "package",
+      "stability": "beta",
+      "surfaces": ["rust-api"],
+      "bindings": {
+        "rust_function": "ophiolite::PackageCommandService::inspect_package_metadata"
+      }
+    },
+    {
+      "id": "ophiolite.validate_package",
+      "summary": "Validate a package through the package command service.",
+      "owner": "ophiolite",
+      "domain": "validation",
+      "stability": "beta",
+      "surfaces": ["rust-api"],
+      "bindings": {
+        "rust_function": "ophiolite::PackageCommandService::validate_package"
+      }
+    },
+    {
+      "id": "ophiolite.open_package_session",
+      "summary": "Open a mutable package session through the package command service.",
+      "owner": "ophiolite",
+      "domain": "session",
+      "stability": "beta",
+      "surfaces": ["rust-api"],
+      "bindings": {
+        "rust_function": "ophiolite::PackageCommandService::open_package_session"
+      }
+    }
+  ]
+}

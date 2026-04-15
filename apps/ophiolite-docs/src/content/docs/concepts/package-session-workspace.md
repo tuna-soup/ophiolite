@@ -8,13 +8,17 @@ These terms matter because they operate at different levels.
 
 ## Package
 
-A package is an optimized local saved asset. For log assets, that usually means:
+A package is an optimized local saved asset.
+
+For log assets, that usually means:
 
 ```text
 asset.laspkg/
   metadata.json
   curves.parquet
 ```
+
+Other families may use different physical layouts or runtime stores. Ophiolite owns the canonical access semantics above those details.
 
 ## Session
 
@@ -24,6 +28,7 @@ Today:
 
 - log assets use `PackageSession`
 - structured assets use typed edit sessions inside `OphioliteProject`
+- runtime-oriented seismic flows use family-specific stores and query surfaces rather than forcing everything through one log-shaped session
 
 ## Workspace
 

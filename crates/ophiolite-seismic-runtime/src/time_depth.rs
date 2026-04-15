@@ -11,7 +11,7 @@ use ophiolite_seismic::{
 use crate::SectionAxis;
 use crate::error::SeismicStoreError;
 use crate::gather_processing::{validate_velocity_function_source, velocity_at_time_ms};
-use crate::horizons::section_horizon_overlays;
+use crate::horizons::{load_horizon_grids, section_horizon_overlays, slice_horizon_trace_values};
 use crate::store::section_view;
 use crate::survey_time_depth::section_time_depth_transform_slice;
 
@@ -54,18 +54,17 @@ pub fn resolved_section_display_view(
 ) -> Result<ResolvedSectionDisplayView, SeismicStoreError> {
     let root = root.as_ref();
     let source_section = section_view(root, axis, index)?;
-    let source_horizons = section_horizon_overlays(root, axis, index)?;
 
     match domain {
         TimeDepthDomain::Time => {
-            let (scalar_overlays, time_depth_diagnostics) = match velocity_model {
+            let source_time_axis_ms = decode_f32le(&source_section.sample_axis_f32le)?;
+            let (scalar_overlays, time_depth_diagnostics, horizon_overlays) = match velocity_model {
                 Some(VelocityFunctionSource::VelocityAssetReference { asset_id }) => {
-                    let sample_axis_ms = decode_f32le(&source_section.sample_axis_f32le)?;
                     let slice = section_time_depth_transform_slice(root, asset_id, axis, index)?;
                     let scalar_overlays = if include_velocity_overlay {
                         vec![build_time_velocity_overlay_from_transform(
                             &source_section,
-                            &sample_axis_ms,
+                            &source_time_axis_ms,
                             &slice.trace_depths_m,
                             &slice.trace_validity,
                             velocity_kind.unwrap_or(VelocityQuantityKind::Average),
@@ -73,6 +72,16 @@ pub fn resolved_section_display_view(
                     } else {
                         Vec::new()
                     };
+                    let horizon_overlays = resolve_horizon_overlays_with_trace_mappings(
+                        root,
+                        axis,
+                        index,
+                        TimeDepthDomain::Time,
+                        &source_time_axis_ms,
+                        &slice.trace_depths_m,
+                        &slice.trace_validity,
+                        &source_time_axis_ms,
+                    )?;
                     (
                         scalar_overlays,
                         Some(section_time_depth_diagnostics_from_transform(
@@ -80,6 +89,7 @@ pub fn resolved_section_display_view(
                             &slice,
                             velocity_kind,
                         )),
+                        horizon_overlays,
                     )
                 }
                 Some(model) => {
@@ -88,6 +98,20 @@ pub fn resolved_section_display_view(
                     } else {
                         Vec::new()
                     };
+                    let source_depths_m = depth_at_input_samples(
+                        &source_time_axis_ms,
+                        model,
+                        velocity_kind.unwrap_or(VelocityQuantityKind::Average),
+                    )?;
+                    let horizon_overlays = resolve_horizon_overlays_with_global_mapping(
+                        root,
+                        axis,
+                        index,
+                        TimeDepthDomain::Time,
+                        &source_time_axis_ms,
+                        &source_depths_m,
+                        &source_time_axis_ms,
+                    )?;
                     (
                         scalar_overlays,
                         Some(section_time_depth_diagnostics(
@@ -95,6 +119,7 @@ pub fn resolved_section_display_view(
                             Some(model),
                             velocity_kind,
                         )),
+                        horizon_overlays,
                     )
                 }
                 None => (
@@ -104,6 +129,7 @@ pub fn resolved_section_display_view(
                         None,
                         None,
                     )),
+                    section_horizon_overlays(root, axis, index)?,
                 ),
             };
 
@@ -111,7 +137,7 @@ pub fn resolved_section_display_view(
                 section: source_section,
                 time_depth_diagnostics,
                 scalar_overlays,
-                horizon_overlays: source_horizons,
+                horizon_overlays,
             })
         }
         TimeDepthDomain::Depth => {
@@ -147,8 +173,11 @@ pub fn resolved_section_display_view(
                     } else {
                         Vec::new()
                     };
-                    let horizon_overlays = convert_horizon_overlays_to_depth_with_trace_mappings(
-                        &source_horizons,
+                    let horizon_overlays = resolve_horizon_overlays_with_trace_mappings(
+                        root,
+                        axis,
+                        index,
+                        TimeDepthDomain::Depth,
                         &source_time_axis_ms,
                         &slice.trace_depths_m,
                         &slice.trace_validity,
@@ -186,8 +215,11 @@ pub fn resolved_section_display_view(
                     } else {
                         Vec::new()
                     };
-                    let horizon_overlays = convert_horizon_overlays_to_depth(
-                        &source_horizons,
+                    let horizon_overlays = resolve_horizon_overlays_with_global_mapping(
+                        root,
+                        axis,
+                        index,
+                        TimeDepthDomain::Depth,
                         &source_time_axis_ms,
                         &source_depths_m,
                         &output_depth_axis_m,
@@ -207,6 +239,103 @@ pub fn resolved_section_display_view(
             }
         }
     }
+}
+
+fn resolve_horizon_overlays_with_global_mapping(
+    root: &Path,
+    axis: SectionAxis,
+    index: usize,
+    display_domain: TimeDepthDomain,
+    source_time_axis_ms: &[f32],
+    source_depths_m: &[f32],
+    output_axis: &[f32],
+) -> Result<Vec<SectionHorizonOverlayView>, SeismicStoreError> {
+    load_horizon_grids(root)?
+        .into_iter()
+        .map(|horizon| {
+            let samples = slice_horizon_trace_values(&horizon, axis, index)?
+                .into_iter()
+                .filter_map(|sample| {
+                    let display_value = match (horizon.descriptor.vertical_domain, display_domain) {
+                        (TimeDepthDomain::Time, TimeDepthDomain::Time)
+                        | (TimeDepthDomain::Depth, TimeDepthDomain::Depth) => sample.value,
+                        (TimeDepthDomain::Time, TimeDepthDomain::Depth) => {
+                            depth_at_time(source_depths_m, source_time_axis_ms, sample.value)
+                                .ok()?
+                        }
+                        (TimeDepthDomain::Depth, TimeDepthDomain::Time) => {
+                            time_at_depth(source_depths_m, source_time_axis_ms, sample.value)
+                                .ok()?
+                        }
+                    };
+                    let sample_index = nearest_sample_index(output_axis, display_value)?;
+                    Some(ophiolite_seismic::SectionHorizonSample {
+                        trace_index: sample.trace_index,
+                        sample_index,
+                        sample_value: Some(display_value),
+                    })
+                })
+                .collect();
+
+            Ok(SectionHorizonOverlayView {
+                id: horizon.descriptor.id,
+                name: Some(horizon.descriptor.name),
+                style: horizon.descriptor.style,
+                samples,
+            })
+        })
+        .collect()
+}
+
+fn resolve_horizon_overlays_with_trace_mappings(
+    root: &Path,
+    axis: SectionAxis,
+    index: usize,
+    display_domain: TimeDepthDomain,
+    source_time_axis_ms: &[f32],
+    trace_depths_m: &[Vec<f32>],
+    trace_validity: &[bool],
+    output_axis: &[f32],
+) -> Result<Vec<SectionHorizonOverlayView>, SeismicStoreError> {
+    load_horizon_grids(root)?
+        .into_iter()
+        .map(|horizon| {
+            let samples = slice_horizon_trace_values(&horizon, axis, index)?
+                .into_iter()
+                .filter_map(|sample| {
+                    if sample.trace_index >= trace_depths_m.len()
+                        || !trace_validity[sample.trace_index]
+                    {
+                        return None;
+                    }
+                    let trace_depths = &trace_depths_m[sample.trace_index];
+                    let display_value = match (horizon.descriptor.vertical_domain, display_domain) {
+                        (TimeDepthDomain::Time, TimeDepthDomain::Time)
+                        | (TimeDepthDomain::Depth, TimeDepthDomain::Depth) => sample.value,
+                        (TimeDepthDomain::Time, TimeDepthDomain::Depth) => {
+                            depth_at_time(trace_depths, source_time_axis_ms, sample.value).ok()?
+                        }
+                        (TimeDepthDomain::Depth, TimeDepthDomain::Time) => {
+                            time_at_depth(trace_depths, source_time_axis_ms, sample.value).ok()?
+                        }
+                    };
+                    let sample_index = nearest_sample_index(output_axis, display_value)?;
+                    Some(ophiolite_seismic::SectionHorizonSample {
+                        trace_index: sample.trace_index,
+                        sample_index,
+                        sample_value: Some(display_value),
+                    })
+                })
+                .collect();
+
+            Ok(SectionHorizonOverlayView {
+                id: horizon.descriptor.id,
+                name: Some(horizon.descriptor.name),
+                style: horizon.descriptor.style,
+                samples,
+            })
+        })
+        .collect()
 }
 
 fn section_time_depth_diagnostics(
@@ -880,89 +1009,6 @@ fn build_depth_velocity_overlay_from_transform(
     })
 }
 
-fn convert_horizon_overlays_to_depth(
-    overlays: &[SectionHorizonOverlayView],
-    source_time_axis_ms: &[f32],
-    source_depths_m: &[f32],
-    output_depth_axis_m: &[f32],
-) -> Result<Vec<SectionHorizonOverlayView>, SeismicStoreError> {
-    overlays
-        .iter()
-        .map(|overlay| {
-            let samples = overlay
-                .samples
-                .iter()
-                .filter_map(|sample| {
-                    let source_time_ms = sample
-                        .sample_value
-                        .or_else(|| source_time_axis_ms.get(sample.sample_index).copied())?;
-                    let depth_m =
-                        depth_at_time(source_depths_m, source_time_axis_ms, source_time_ms).ok()?;
-                    let sample_index = nearest_sample_index(output_depth_axis_m, depth_m)?;
-                    Some(ophiolite_seismic::SectionHorizonSample {
-                        trace_index: sample.trace_index,
-                        sample_index,
-                        sample_value: Some(depth_m),
-                    })
-                })
-                .collect();
-
-            Ok(SectionHorizonOverlayView {
-                id: overlay.id.clone(),
-                name: overlay.name.clone(),
-                style: overlay.style.clone(),
-                samples,
-            })
-        })
-        .collect()
-}
-
-fn convert_horizon_overlays_to_depth_with_trace_mappings(
-    overlays: &[SectionHorizonOverlayView],
-    source_time_axis_ms: &[f32],
-    trace_depths_m: &[Vec<f32>],
-    trace_validity: &[bool],
-    output_depth_axis_m: &[f32],
-) -> Result<Vec<SectionHorizonOverlayView>, SeismicStoreError> {
-    overlays
-        .iter()
-        .map(|overlay| {
-            let samples = overlay
-                .samples
-                .iter()
-                .filter_map(|sample| {
-                    let trace_index = sample.trace_index;
-                    if trace_index >= trace_depths_m.len() || !trace_validity[trace_index] {
-                        return None;
-                    }
-                    let source_time_ms = sample
-                        .sample_value
-                        .or_else(|| source_time_axis_ms.get(sample.sample_index).copied())?;
-                    let depth_m = depth_at_time(
-                        &trace_depths_m[trace_index],
-                        source_time_axis_ms,
-                        source_time_ms,
-                    )
-                    .ok()?;
-                    let sample_index = nearest_sample_index(output_depth_axis_m, depth_m)?;
-                    Some(ophiolite_seismic::SectionHorizonSample {
-                        trace_index,
-                        sample_index,
-                        sample_value: Some(depth_m),
-                    })
-                })
-                .collect();
-
-            Ok(SectionHorizonOverlayView {
-                id: overlay.id.clone(),
-                name: overlay.name.clone(),
-                style: overlay.style.clone(),
-                samples,
-            })
-        })
-        .collect()
-}
-
 fn build_velocity_samples_for_time_axis(
     sample_axis_ms: &[f32],
     velocity_model: &VelocityFunctionSource,
@@ -1131,9 +1177,37 @@ fn nearest_sample_index(axis: &[f32], value: f32) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use ophiolite_seismic::{DatasetId, SectionAxis, SectionCoordinate};
+    use ndarray::Array3;
+    use ophiolite_seismic::{
+        BuildSurveyTimeDepthTransformRequest, CoordinateReferenceBinding,
+        CoordinateReferenceDescriptor, CoordinateReferenceSource, DatasetId, DepthReferenceKind,
+        LateralInterpolationMethod, LayeredVelocityInterval, LayeredVelocityModel, ProjectedPoint2,
+        ProjectedVector2, SectionAxis, SectionCoordinate, StratigraphicBoundaryReference,
+        SurveySpatialAvailability, SurveySpatialDescriptor, TimeDepthDomain, TravelTimeReference,
+        VelocityIntervalTrend, VelocityQuantityKind,
+    };
+    use tempfile::tempdir;
+
+    use crate::horizons::import_horizon_xyzs_with_vertical_domain;
+    use crate::metadata::{
+        DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, VolumeAxes,
+        VolumeMetadata,
+    };
+    use crate::storage::tbvol::TbvolManifest;
+    use crate::store::create_tbvol_store;
+    use crate::survey_time_depth::build_survey_time_depth_transform;
 
     use super::*;
+
+    fn assert_f32_slice_close(actual: &[f32], expected: &[f32], tolerance: f32) {
+        assert_eq!(actual.len(), expected.len());
+        for (left, right) in actual.iter().zip(expected.iter()) {
+            assert!(
+                (*left - *right).abs() <= tolerance,
+                "expected {right}, got {left}"
+            );
+        }
+    }
 
     #[test]
     fn constant_average_velocity_depth_conversion_resamples_section() {
@@ -1174,9 +1248,13 @@ mod tests {
         .expect("convert section");
 
         let sample_axis_m = decode_f32le(&converted.sample_axis_f32le).expect("decode depth axis");
-        assert_eq!(sample_axis_m, vec![0.0, 6.0, 12.0, 18.0]);
+        assert_f32_slice_close(&sample_axis_m, &[0.0, 6.0, 12.0, 18.0], 1e-4);
         let amplitudes = decode_f32le(&converted.amplitudes_f32le).expect("decode amplitudes");
-        assert_eq!(amplitudes, vec![1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0]);
+        assert_f32_slice_close(
+            &amplitudes,
+            &[1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0],
+            1e-4,
+        );
         assert_eq!(
             converted
                 .units
@@ -1225,5 +1303,220 @@ mod tests {
         )
         .expect_err("RMS conversion should fail");
         assert!(error.to_string().contains("RMS velocity"));
+    }
+
+    #[test]
+    fn resolved_section_display_view_converts_time_and_depth_horizons_both_ways() {
+        let temp = tempdir().expect("tempdir");
+        let store_root = temp.path().join("demo-mixed-horizons.tbvol");
+        let manifest = TbvolManifest::new(
+            VolumeMetadata {
+                kind: DatasetKind::Source,
+                store_id: String::from("store-demo"),
+                source: SourceIdentity {
+                    source_path: std::path::PathBuf::from("demo.segy"),
+                    file_size: 0,
+                    trace_count: 4,
+                    samples_per_trace: 4,
+                    sample_interval_us: 10_000,
+                    sample_format_code: 1,
+                    sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(1),
+                    endianness: String::from("big"),
+                    revision_raw: 0,
+                    fixed_length_trace_flag_raw: 1,
+                    extended_textual_headers: 0,
+                    geometry: GeometryProvenance {
+                        inline_field: HeaderFieldSpec {
+                            name: String::from("INLINE_3D"),
+                            start_byte: 189,
+                            value_type: String::from("I32"),
+                        },
+                        crossline_field: HeaderFieldSpec {
+                            name: String::from("CROSSLINE_3D"),
+                            start_byte: 193,
+                            value_type: String::from("I32"),
+                        },
+                        third_axis_field: None,
+                    },
+                    regularization: None,
+                },
+                shape: [2, 2, 4],
+                axes: VolumeAxes {
+                    ilines: vec![100.0, 101.0],
+                    xlines: vec![200.0, 201.0],
+                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
+                },
+                segy_export: None,
+                coordinate_reference_binding: Some(CoordinateReferenceBinding {
+                    detected: Some(CoordinateReferenceDescriptor {
+                        id: Some(String::from("EPSG:32631")),
+                        name: Some(String::from("WGS 84 / UTM zone 31N")),
+                        geodetic_datum: None,
+                        unit: Some(String::from("metre")),
+                    }),
+                    effective: Some(CoordinateReferenceDescriptor {
+                        id: Some(String::from("EPSG:32631")),
+                        name: Some(String::from("WGS 84 / UTM zone 31N")),
+                        geodetic_datum: None,
+                        unit: Some(String::from("metre")),
+                    }),
+                    source: CoordinateReferenceSource::Header,
+                    notes: Vec::new(),
+                }),
+                spatial: Some(SurveySpatialDescriptor {
+                    coordinate_reference: Some(CoordinateReferenceDescriptor {
+                        id: Some(String::from("EPSG:32631")),
+                        name: Some(String::from("WGS 84 / UTM zone 31N")),
+                        geodetic_datum: None,
+                        unit: Some(String::from("metre")),
+                    }),
+                    grid_transform: Some(crate::SurveyGridTransform {
+                        origin: ProjectedPoint2 {
+                            x: 1_000.0,
+                            y: 2_000.0,
+                        },
+                        inline_basis: ProjectedVector2 { x: 10.0, y: 0.0 },
+                        xline_basis: ProjectedVector2 { x: 0.0, y: 20.0 },
+                    }),
+                    footprint: None,
+                    availability: SurveySpatialAvailability::Available,
+                    notes: Vec::new(),
+                }),
+                created_by: String::from("test"),
+                processing_lineage: None,
+            },
+            [2, 2, 4],
+            false,
+        );
+        let data = Array3::<f32>::zeros((2, 2, 4));
+        create_tbvol_store(&store_root, manifest, &data, None).expect("create store");
+
+        let twt_path = temp.path().join("twt20.xyz");
+        std::fs::write(
+            &twt_path,
+            [
+                "1000 2000 20",
+                "1000 2020 20",
+                "1010 2000 20",
+                "1010 2020 20",
+            ]
+            .join("\n"),
+        )
+        .expect("write twt horizon");
+        import_horizon_xyzs_with_vertical_domain(
+            &store_root,
+            &[&twt_path],
+            TimeDepthDomain::Time,
+            Some("ms"),
+            None,
+            None,
+            true,
+        )
+        .expect("import twt horizon");
+
+        let depth_path = temp.path().join("z20-ft.xyz");
+        std::fs::write(
+            &depth_path,
+            [
+                "1000 2000 65.616798",
+                "1000 2020 65.616798",
+                "1010 2000 65.616798",
+                "1010 2020 65.616798",
+            ]
+            .join("\n"),
+        )
+        .expect("write depth horizon");
+        import_horizon_xyzs_with_vertical_domain(
+            &store_root,
+            &[&depth_path],
+            TimeDepthDomain::Depth,
+            Some("ft"),
+            None,
+            None,
+            true,
+        )
+        .expect("import depth horizon");
+
+        build_survey_time_depth_transform(&BuildSurveyTimeDepthTransformRequest {
+            schema_version: 2,
+            store_path: store_root.to_string_lossy().into_owned(),
+            model: LayeredVelocityModel {
+                id: String::from("constant-vint"),
+                name: String::from("Constant Vint"),
+                derived_from: Vec::new(),
+                coordinate_reference: None,
+                grid_transform: None,
+                vertical_domain: TimeDepthDomain::Time,
+                travel_time_reference: Some(TravelTimeReference::TwoWay),
+                depth_reference: Some(DepthReferenceKind::TrueVerticalDepth),
+                intervals: vec![LayeredVelocityInterval {
+                    id: String::from("survey"),
+                    name: String::from("Survey"),
+                    top_boundary: StratigraphicBoundaryReference::SurveyTop,
+                    base_boundary: StratigraphicBoundaryReference::SurveyBase,
+                    trend: VelocityIntervalTrend::Constant {
+                        velocity_m_per_s: 2000.0,
+                    },
+                    control_profile_set_id: None,
+                    control_profile_velocity_kind: None,
+                    lateral_interpolation: Some(LateralInterpolationMethod::Nearest),
+                    vertical_interpolation: Some(
+                        ophiolite_seismic::VerticalInterpolationMethod::Linear,
+                    ),
+                    control_blend_weight: None,
+                    notes: Vec::new(),
+                }],
+                notes: Vec::new(),
+            },
+            control_profile_sets: Vec::new(),
+            output_id: Some(String::from("constant-transform")),
+            output_name: Some(String::from("Constant Transform")),
+            preferred_velocity_kind: Some(VelocityQuantityKind::Interval),
+            output_depth_unit: String::from("m"),
+            notes: Vec::new(),
+        })
+        .expect("build transform");
+
+        let velocity_model = VelocityFunctionSource::VelocityAssetReference {
+            asset_id: String::from("constant-transform"),
+        };
+
+        let time_view = resolved_section_display_view(
+            &store_root,
+            SectionAxis::Inline,
+            0,
+            TimeDepthDomain::Time,
+            Some(&velocity_model),
+            Some(VelocityQuantityKind::Interval),
+            false,
+        )
+        .expect("resolve time display");
+        assert_eq!(time_view.horizon_overlays.len(), 2);
+        for overlay in &time_view.horizon_overlays {
+            assert_eq!(overlay.samples.len(), 2);
+            for sample in &overlay.samples {
+                assert_eq!(sample.sample_index, 2);
+                assert!((sample.sample_value.expect("value") - 20.0).abs() < 1e-3);
+            }
+        }
+
+        let depth_view = resolved_section_display_view(
+            &store_root,
+            SectionAxis::Inline,
+            0,
+            TimeDepthDomain::Depth,
+            Some(&velocity_model),
+            Some(VelocityQuantityKind::Interval),
+            false,
+        )
+        .expect("resolve depth display");
+        assert_eq!(depth_view.horizon_overlays.len(), 2);
+        for overlay in &depth_view.horizon_overlays {
+            assert_eq!(overlay.samples.len(), 2);
+            for sample in &overlay.samples {
+                assert_eq!(sample.sample_index, 2);
+                assert!((sample.sample_value.expect("value") - 20.0).abs() < 1e-3);
+            }
+        }
     }
 }

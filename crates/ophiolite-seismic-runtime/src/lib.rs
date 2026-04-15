@@ -36,7 +36,8 @@ pub use gather_processing::{
     validate_gather_processing_pipeline, validate_gather_processing_pipeline_for_layout,
 };
 pub use horizons::{
-    ImportedHorizonGrid, import_horizon_xyzs, load_horizon_grids, section_horizon_overlays,
+    ImportedHorizonGrid, convert_horizon_vertical_domain_with_transform, import_horizon_xyzs,
+    import_horizon_xyzs_with_vertical_domain, load_horizon_grids, section_horizon_overlays,
 };
 pub use ingest::{
     IngestOptions, SeisGeometryOptions, SourceVolume, SparseSurveyPolicy, VolumeImportFormat,
@@ -119,7 +120,8 @@ pub use store::{
 pub use survey_time_depth::{
     SectionSurveyTimeDepthTransformSlice, StoredSurveyPropertyField,
     StoredSurveyTimeDepthTransform, build_survey_property_field, build_survey_time_depth_transform,
-    load_survey_property_field, load_survey_property_fields, load_survey_time_depth_transform,
+    build_survey_time_depth_transform_from_horizon_pairs, load_survey_property_field,
+    load_survey_property_fields, load_survey_time_depth_transform,
     load_survey_time_depth_transforms, section_time_depth_transform_slice,
     store_survey_property_field, store_survey_time_depth_transform,
 };
@@ -133,6 +135,8 @@ pub use zarr_export::{
 use std::path::Path;
 
 use serde::Serialize;
+
+pub use metadata::segy_sample_data_fidelity;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SegyInspection {

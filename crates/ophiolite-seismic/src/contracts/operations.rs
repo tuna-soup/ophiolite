@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use super::domain::{DatasetId, SampleDataFidelity, SectionAxis, VolumeDescriptor};
+use super::models::{TimeDepthDomain, WellTieObservationSet1D};
 use super::processing::{
     GatherProcessingPipeline, ProcessingJobStatus, SubvolumeProcessingPipeline,
     TraceLocalProcessingPipeline, TraceLocalProcessingPreset,
@@ -68,6 +69,85 @@ pub struct AmplitudeSpectrumResponse {
     pub curve: AmplitudeSpectrumCurve,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub processing_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum WellTieVelocitySourceKind {
+    PVelocityCurve,
+    SonicCurveConvertedToVp,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct WellTieLogCurveSource {
+    pub asset_id: String,
+    pub asset_name: String,
+    pub curve_name: String,
+    pub original_mnemonic: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    pub sample_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct WellTieLogSelection1D {
+    pub density_curve: WellTieLogCurveSource,
+    pub velocity_curve: WellTieLogCurveSource,
+    pub velocity_source_kind: WellTieVelocitySourceKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct WellTieCurve1D {
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    pub times_ms: Vec<f32>,
+    pub values: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct WellTieTrace1D {
+    pub id: String,
+    pub label: String,
+    pub times_ms: Vec<f32>,
+    pub amplitudes: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct WellTieWavelet {
+    pub id: String,
+    pub label: String,
+    pub times_ms: Vec<f32>,
+    pub amplitudes: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct WellTieSectionWindow {
+    pub id: String,
+    pub label: String,
+    pub times_ms: Vec<f32>,
+    pub trace_offsets_m: Vec<f32>,
+    pub amplitudes: Vec<f32>,
+    pub trace_count: usize,
+    pub sample_count: usize,
+    pub well_trace_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct WellTieAnalysis1D {
+    pub draft_observation_set: WellTieObservationSet1D,
+    pub log_selection: WellTieLogSelection1D,
+    pub acoustic_impedance_curve: WellTieCurve1D,
+    pub reflectivity_trace: WellTieTrace1D,
+    pub synthetic_trace: WellTieTrace1D,
+    pub best_match_trace: WellTieTrace1D,
+    pub well_trace: WellTieTrace1D,
+    pub section_window: WellTieSectionWindow,
+    pub wavelet: WellTieWavelet,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -253,6 +333,10 @@ pub struct ImportHorizonXyzRequest {
     pub schema_version: u32,
     pub store_path: String,
     pub input_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_domain: Option<TimeDepthDomain>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_unit: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_coordinate_reference_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

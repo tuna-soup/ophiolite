@@ -19,7 +19,7 @@ The durable boundary is:
 - survey-map resolution accepts an optional requested display CRS
 - survey-map resolution returns native spatial and display spatial separately
 - `TraceBoost` owns only the workspace display-CRS preference
-- `geoviz` remains a rendering consumer of resolved geometry and does not infer, assign, or transform CRS values
+- `Ophiolite Charts` remains a rendering consumer of resolved geometry and does not infer, assign, or transform CRS values
 
 Unknown CRS remains explicit. The system must not silently treat a workspace display CRS as the asset-native CRS.
 
@@ -116,6 +116,7 @@ Phase-1 runtime behavior:
 Current DTOs in `src/project_contracts.rs`:
 
 - `SurveyMapRequestDto`
+- `ProjectSurveyMapRequestDto`
 - `SurveyMapSpatialDescriptorDto`
 - `ResolvedSurveyMapSurveyDto`
 
@@ -127,6 +128,13 @@ pub struct SurveyMapRequestDto {
     pub survey_asset_ids: Vec<String>,
     pub wellbore_ids: Vec<String>,
     pub display_coordinate_reference_id: Option<String>,
+}
+
+pub struct ProjectSurveyMapRequestDto {
+    pub schema_version: u32,
+    pub survey_asset_ids: Vec<String>,
+    pub wellbore_ids: Vec<String>,
+    pub display_coordinate_reference_id: String,
 }
 
 pub enum CoordinateReferenceSourceDto {

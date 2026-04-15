@@ -1,16 +1,24 @@
 # ophiolite
 
-Status: Early development. The project/domain model, asset package conventions, and editing workflows are still evolving.
+Status: Early development. The public product boundary is now clear even where implementation is still catching up.
 
-`ophiolite` is a Rust-first subsurface data SDK for desktop applications and local tooling. It began from a strong LAS/log foundation, but now also supports a local-first multi-well project/catalog layer, typed well-domain asset families, and a shared seismic core that owns seismic contracts, IO, runtime/store, and compute-facing section/trace workflows.
+`ophiolite` is the platform repo for the Ophiolite stack. It owns canonical subsurface contracts, local-first runtime primitives, typed asset semantics, and the embeddable `Ophiolite Charts` SDK used by applications.
 
-Public docs site source now lives in:
+It began from a strong LAS/log foundation, but it is no longer a LAS-focused project. Today it also includes a local-first multi-asset project/catalog layer, shared seismic runtime paths, chart SDK packages, and frontend-safe DTO boundaries used by applications and embedders.
 
-- `apps/ophiolite-docs`
+The active platform layout is:
 
-The intended public host is:
+- `crates/` for Rust core/runtime crates
+- `contracts/` for shared schemas and generated TypeScript contracts
+- `charts/` for `Ophiolite Charts`
+- `python/` for the thin `ophiolite-automation` wrapper over platform CLI operations
+- `apps/ophiolite-docs` for the public docs site at `https://ophiolite.dev`
 
-- `https://ophiolite.dev`
+The intended product story is:
+
+- `Ophiolite` is the platform
+- `Ophiolite Charts` is the embeddable charts SDK within the platform
+- applications can build workflow products on top of the platform
 
 Today, Ophiolite can:
 
@@ -20,13 +28,15 @@ Today, Ophiolite can:
 - organize multiple linked assets under one `OphioliteProject`
 - discover and run typed compute/UDF functions against eligible log and structured wellbore data
 - expose app-facing query and editing surfaces for desktop workflows
-- resolve focused frontend DTO/query payloads such as well-panel sources without exposing raw catalog internals
-- generate TypeScript contracts for frontend-safe DTOs under `contracts/ts/ophiolite-contracts`, including well-panel and prestack gather views
+- resolve focused frontend DTO/query payloads such as well-panel, survey-map, section, and gather views without exposing raw catalog internals
+- generate TypeScript contracts for frontend-safe DTOs under `contracts/ts/ophiolite-contracts`
 - run seismic processing pipelines through the shared seismic runtime, including section preview, derived-volume materialization, and persisted processing lineage
-- classify seismic datasets with explicit stacking/layout metadata so post-stack and future prestack/gather flows can share one canonical foundation without forcing TraceBoost off its current post-stack runtime path
+- classify seismic datasets with explicit stacking/layout metadata so post-stack and future prestack/gather flows can share one canonical foundation without forcing a product layer into one runtime shape
 - ingest and persist phase-one prestack offset surveys through a dedicated gather-native `tbgath` runtime path, with gather preview and gather-processing materialization separated from the post-stack `tbvol` section path
 - expose phase-one prestack analysis as separate request/response APIs, including offset-gather velocity scan / semblance evaluation and optional first-pass velocity autopick that do not masquerade as materializing operators
 - store canonical seismic trace-data assets in the project/catalog layer while keeping the current volume-oriented runtime paths available as compatibility surfaces
+
+At the product boundary, Ophiolite owns canonical subsurface meaning and runtime primitives rather than commercial workflow orchestration or chart rendering.
 
 Today the shared seismic operator family is intentionally narrow:
 
@@ -39,20 +49,9 @@ The project is designed primarily for Rust desktop applications such as Tauri ba
 
 ## Why Ophiolite Exists
 
-Ophiolite started from a real gap in the LAS ecosystem:
+Ophiolite started from a real gap in the LAS ecosystem, but the underlying need is broader than LAS alone.
 
-- parsers such as Python `lasio`
-- proprietary vendor implementations
-- limited modern developer tooling
-
-What it does not have widely is:
-
-- a Rust-native LAS SDK
-- a canonical domain model for LAS
-- a clean separation between LAS semantics and storage formats
-- an optimized packaging format suitable for local analytics and ML workflows
-
-But the long-term need is broader than LAS alone. Real subsurface applications need a coherent way to work with:
+Real subsurface applications need a coherent way to work with:
 
 - well and wellbore identities
 - log curves
@@ -61,23 +60,25 @@ But the long-term need is broader than LAS alone. Real subsurface applications n
 - pressure observations
 - drilling observations
 - seismic volumes, sections, and trace sets
+- survey maps, time-depth transforms, and related derived/display workflows
 - related provenance, diagnostics, and package/query workflows
 
 Ophiolite therefore aims to provide:
 
-- a robust LAS parser
-- a canonical log-domain model for LAS-derived data
+- canonical subsurface contracts and DTO meaning
+- a robust LAS parser and canonical log-domain model where LAS is the source artifact
 - typed non-log asset families for other wellbore datasets
 - a shared seismic core for canonical seismic descriptors, app-boundary section/gather/trace models, SEG-Y IO, and runtime/store execution
 - an additive seismic trace-data descriptor layer that distinguishes stacking state, organization, layout, and gather-axis semantics before product/runtime layers decide what they support
 - separate runtime storage/query paths for post-stack volumes and prestack gathers so future apps do not need to force both through one fake common shape
+- canonical map, CRS, well-overlay, and time-depth boundaries that products and embedders can share
 - an app-friendly runtime/query abstraction
 - optimized local single-asset package formats
 - a local-first project/catalog layer for assembling multiple linked assets coherently
 - a typed compute layer for derived assets and domain-aware transforms across logs, trajectory, tops, pressure, and drilling
-- a Rust-native SDK suitable for desktop subsurface applications
+- a Rust-native core suitable for desktop subsurface applications
 
-The design philosophy is domain-first: APIs should reflect well-domain concepts and workflows rather than raw storage formats.
+The design philosophy is domain-first: APIs should reflect subsurface concepts and workflows rather than raw storage formats.
 
 ## Quick Examples
 
@@ -123,47 +124,50 @@ fn main() -> Result<(), ophiolite::LasError> {
 
 ## Project Architecture
 
-Ophiolite separates source-file import, well-domain concepts, runtime/query access, and storage formats into distinct layers.
+Ophiolite separates ingest, canonical subsurface meaning, runtime/query access, and storage formats into distinct layers.
 
 ```text
                  Applications
-       (Tauri UI, CLI tools, pipelines)
+       (product shells, internal harnesses, CLI tools)
 
                   Ophiolite SDK API
    (OphioliteProject, PackageSession, LasFile, DTOs)
 
-             Canonical Domain + Asset Model
+             Canonical Domain + Contract Model
    (wells, wellbores, logs, trajectory, tops, pressure,
-               drilling, provenance, diagnostics)
+     drilling, seismic, map, time-depth, provenance)
 
           Runtime / Query / Editing Layer
-      (CurveTable, typed reads, package sessions)
+   (CurveTable, typed reads, runtime stores, sessions)
 
             Storage / Interchange Layer
-    LAS | CSV | metadata.json + parquet asset packages
+    LAS | SEG-Y | CSV | package formats | runtime stores
 ```
 
 This layered architecture allows Ophiolite to evolve storage and runtime implementations without breaking the domain API.
 
 ## Current State
 
-The current implementation still has its deepest maturity in the LAS/log slice, but the SDK is no longer only log-centric. It now combines:
+The current implementation still has its deepest maturity in the LAS/log slice, but the core is no longer only log-centric. It now combines:
 
 - a strong LAS/log import and package/edit path
 - a local-first multi-well project/catalog layer
 - typed non-log asset packages with read/query and bounded in-family edit APIs
 - a typed compute layer for derived assets, with the richest surface currently in logs and family-specific transforms for structured assets
+- canonical contract families for sections, gathers, survey maps, wells, and related overlays
+- shared seismic runtime/store paths and app-boundary DTO projection
 - an internal desktop app that exercises those assets together
 
 Core components:
 
 - workspace crates: `ophiolite-core`, `ophiolite-parser`, `ophiolite-table`, `ophiolite-package`, `ophiolite-project`, `ophiolite-ingest`, `ophiolite-compute`, `ophiolite-seismic`, `ophiolite-seismic-io`, `ophiolite-seismic-runtime`, `ophiolite-cli`
 - root compatibility crate: `ophiolite`
+- thin Python automation package: `python/ophiolite_automation`
 - canonical domain object: `LasFile`
 - explicit editable package session model: `PackageSession`
 - local multi-well project/catalog root: `OphioliteProject`
-- typed multi-well asset families: log, trajectory, tops, pressure observations, and drilling observations
-- shared seismic descriptors, SEG-Y IO, and runtime/store backends for volumes, sections, and trace sets
+- typed multi-well asset families: log, trajectory, tops, pressure observations, drilling observations, and seismic trace data
+- shared seismic descriptors, SEG-Y IO, runtime/store backends, and contract DTO families for volumes, sections, gathers, maps, and related views
 - Tauri/backend adapter surface: `PackageBackend`
 - Tauri-ready shared backend state wrapper: `PackageBackendState`
 - app-boundary command service: `PackageCommandService`
@@ -172,12 +176,12 @@ Core components:
 - typed canonical metadata view: `CanonicalMetadata`, `VersionInfo`, `WellInfo`, `IndexInfo`, `CurveInfo`
 - explicit grouped package metadata schema: `package`, `document`, `storage`, `raw`, and `diagnostics`
 - in-memory app/query layer: `CurveTable`
-- DTO/query layer for package-backed applications
+- DTO/query layer for package-backed applications and embedders
 - optimized package format: `metadata.json + curves.parquet`
 - SQLite-backed project catalog for well, wellbore, collection, and asset discovery
 - Parquet-backed project-managed asset packages for non-log structured wellbore data
 - typed compute registry with semantic eligibility and derived sibling assets across supported families
-- CLI for import and inspection
+- CLI for developer and validation workflows around the core
 - local example corpus and parity tests against `lasio` non-v3 behavior
 
 Arrow/Parquet currently exist at the storage boundary and now also back backend-session window reads internally. The runtime API remains domain-first rather than Arrow-first.
@@ -186,12 +190,11 @@ Arrow/Parquet currently exist at the storage boundary and now also back backend-
 
 ```text
 source artifacts
-  -> LAS / CSV importers
-  -> canonical log + typed asset models
-  -> single-asset packages
-  -> OphioliteProject catalog + linked assets
+  -> import and normalization
+  -> canonical subsurface contracts + typed asset models
+  -> package, catalog, and runtime stores
   -> type-safe compute / derived assets
-  -> app/query/edit workflows
+  -> app/query/edit/display workflows
 ```
 
 Current workspace wiring:
@@ -205,6 +208,9 @@ root compatibility crate: ophiolite
   -> ophiolite-project
   -> ophiolite-ingest
   -> ophiolite-compute
+  -> ophiolite-seismic
+  -> ophiolite-seismic-io
+  -> ophiolite-seismic-runtime
   -> ophiolite-cli
 ```
 
@@ -607,7 +613,7 @@ Ophiolite follows several core principles:
 | Tool | Language | Scope |
 | --- | --- | --- |
 | `lasio` | Python | LAS parser and utilities |
-| `ophiolite` | Rust | Local-first subsurface well-data SDK with logs, typed wellbore assets, packaging, and project catalog |
+| `ophiolite` | Rust | Local-first subsurface core with canonical contracts, typed assets, runtime primitives, packaging, and project/catalog services |
 | Vendor software | Various | Integrated interpretation platforms |
 
 Ophiolite focuses on developer-facing infrastructure rather than end-user interpretation tools.

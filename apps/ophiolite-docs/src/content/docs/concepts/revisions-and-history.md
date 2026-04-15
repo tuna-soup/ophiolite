@@ -20,3 +20,5 @@ Ophiolite uses a simple local save model in the UI, but saves are revision-aware
 - revisions record parent linkage, blob refs, machine diffs, and a readable summary
 
 This keeps desktop workflows simple without giving up lineage, inspection, or future sync hooks.
+
+That same model applies across package-backed assets, project-managed structured assets, and runtime outputs that need durable provenance.

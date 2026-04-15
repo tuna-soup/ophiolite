@@ -43,7 +43,7 @@ pub use project_assets::{
 };
 pub use project_contracts::{
     CoordinateReferenceBindingDto, CoordinateReferenceDto, CoordinateReferenceSourceDto,
-    ProjectedPoint2Dto, ProjectedPolygon2Dto, ProjectedVector2Dto,
+    ProjectSurveyMapRequestDto, ProjectedPoint2Dto, ProjectedPolygon2Dto, ProjectedVector2Dto,
     ResolveSectionWellOverlaysResponse, ResolvedSectionWellOverlayDto, ResolvedSurveyMapHorizonDto,
     ResolvedSurveyMapSourceDto, ResolvedSurveyMapSurveyDto, ResolvedSurveyMapWellDto,
     ResolvedWellPanelSourceDto, ResolvedWellPanelWellDto, SECTION_WELL_OVERLAY_CONTRACT_VERSION,

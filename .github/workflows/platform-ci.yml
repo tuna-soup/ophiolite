@@ -1,0 +1,55 @@
+name: Platform CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify generated platform contracts
+        run: |
+          cargo run -p contracts-export
+          git diff --exit-code -- contracts/ts/ophiolite-contracts
+
+  automation-surfaces:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test Ophiolite CLI catalog and commands
+        run: cargo test -p ophiolite-cli
+      - name: Verify CLI and Python surface conformance
+        run: PYTHONPATH=python/src python3 -m ophiolite_automation.cli verify-surface-contracts
+      - name: Compare CLI and Python operation catalogs
+        run: |
+          cargo run -q -p ophiolite-cli -- operation-catalog > /tmp/ophiolite-cli-catalog.json
+          PYTHONPATH=python/src python3 -m ophiolite_automation.cli operation-catalog > /tmp/ophiolite-python-catalog.json
+          cmp /tmp/ophiolite-cli-catalog.json /tmp/ophiolite-python-catalog.json
+      - name: Smoke test platform project commands through both surfaces
+        run: |
+          tmpdir="$(mktemp -d)"
+          project_root="$tmpdir/demo-project"
+          cargo run -q -p ophiolite-cli -- create-project "$project_root" > /tmp/ophiolite-create-project.json
+          cargo run -q -p ophiolite-cli -- project-summary "$project_root" > /tmp/ophiolite-cli-project-summary.json
+          PYTHONPATH=python/src python3 -m ophiolite_automation.cli project-summary "$project_root" > /tmp/ophiolite-python-project-summary.json
+          cmp /tmp/ophiolite-cli-project-summary.json /tmp/ophiolite-python-project-summary.json
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install workspace dependencies
+        run: bun install --frozen-lockfile
+      - name: Build docs site
+        run: bun run docs:build

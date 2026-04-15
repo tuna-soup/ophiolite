@@ -233,6 +233,8 @@ pub struct ImportedHorizonDescriptor {
     pub point_count: usize,
     pub mapped_point_count: usize,
     pub missing_cell_count: usize,
+    pub vertical_domain: TimeDepthDomain,
+    pub vertical_unit: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_coordinate_reference: Option<CoordinateReferenceDescriptor>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

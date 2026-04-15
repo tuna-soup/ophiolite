@@ -1,0 +1,304 @@
+import type { Snippet } from "svelte";
+import type {
+  GatherAxisKind,
+  GatherInteractionChanged,
+  GatherProbeChanged,
+  GatherView,
+  GatherViewport,
+  GatherViewportChanged,
+  SectionColorMap,
+  SectionInteractionChanged,
+  SectionPolarity,
+  SectionPrimaryMode,
+  SectionProbeChanged,
+  SectionRenderMode,
+  SectionView,
+  SectionViewport,
+  SectionViewportChanged
+} from "@ophiolite/contracts";
+import type {
+  InteractionEvent,
+  SectionHorizonOverlay,
+  SectionWellOverlay,
+  SectionScalarOverlay,
+  SurveyMapModel,
+  SurveyMapProbe,
+  SurveyMapViewport,
+  WellCorrelationPanelModel,
+  WellCorrelationProbe,
+  WellCorrelationViewport,
+  WellPanelModel
+} from "@ophiolite/charts-data-models";
+
+export type SeismicChartPrimaryMode = "cursor" | "panZoom";
+export type SeismicChartColorMap = "grayscale" | "red-white-blue";
+export type SeismicChartRenderMode = "heatmap" | "wiggle";
+export type SeismicChartPolarity = "normal" | "reversed";
+export type SeismicChartTool = "pointer" | "crosshair" | "pan";
+export type SeismicChartAction = "fitToData";
+export type SeismicChartCompareMode = "single" | "split";
+export type EncodedSectionBytes = number[] | Uint8Array;
+export type EncodedGatherBytes = number[] | Uint8Array;
+
+export interface SectionViewLike extends Omit<
+  SectionView,
+  "horizontal_axis_f64le" | "inline_axis_f64le" | "xline_axis_f64le" | "sample_axis_f32le" | "amplitudes_f32le"
+> {
+  horizontal_axis_f64le: EncodedSectionBytes;
+  inline_axis_f64le: EncodedSectionBytes | null;
+  xline_axis_f64le: EncodedSectionBytes | null;
+  sample_axis_f32le: EncodedSectionBytes;
+  amplitudes_f32le: EncodedSectionBytes;
+}
+
+export interface GatherViewLike extends Omit<
+  GatherView,
+  "horizontal_axis_f64le" | "sample_axis_f32le" | "amplitudes_f32le" | "gather_axis_kind"
+> {
+  gather_axis_kind: GatherAxisKind | "trace_ordinal";
+  horizontal_axis_f64le: EncodedGatherBytes;
+  sample_axis_f32le: EncodedGatherBytes;
+  amplitudes_f32le: EncodedGatherBytes;
+}
+
+export interface SeismicChartDisplayTransform {
+  gain: number;
+  clipMin?: number;
+  clipMax?: number;
+  renderMode: SeismicChartRenderMode;
+  colormap: SeismicChartColorMap;
+  polarity: SeismicChartPolarity;
+}
+
+export interface SeismicChartInteractionConfig {
+  tool?: SeismicChartTool;
+}
+
+export interface SeismicChartInteractionCapabilities {
+  tools: SeismicChartTool[];
+  actions: SeismicChartAction[];
+}
+
+export const SEISMIC_CHART_INTERACTION_CAPABILITIES: SeismicChartInteractionCapabilities = {
+  tools: ["pointer", "crosshair", "pan"],
+  actions: ["fitToData"]
+};
+
+export interface SeismicChartInteractionState {
+  capabilities: SeismicChartInteractionCapabilities;
+  tool: SeismicChartTool;
+}
+
+export interface SeismicChartInteractionEventPayload {
+  chartId: string;
+  viewId: string;
+  event: InteractionEvent;
+}
+
+export interface SeismicChartOverlayProps {
+  stageTopLeft?: Snippet;
+  plotTopCenter?: Snippet;
+  plotTopRight?: Snippet;
+  plotBottomRight?: Snippet;
+  plotBottomLeft?: Snippet;
+  stageScale?: number;
+}
+
+export interface SeismicSectionChartProps extends SeismicChartOverlayProps {
+  chartId: string;
+  viewId: string;
+  section: SectionViewLike | null;
+  secondarySection?: SectionViewLike | null;
+  sectionScalarOverlays?: readonly SectionScalarOverlay[];
+  sectionHorizons?: readonly SectionHorizonOverlay[];
+  sectionWellOverlays?: readonly SectionWellOverlay[];
+  viewport?: SectionViewport | null;
+  displayTransform?: Partial<SeismicChartDisplayTransform>;
+  interactions?: SeismicChartInteractionConfig;
+  compareMode?: SeismicChartCompareMode;
+  splitPosition?: number;
+  crosshairEnabled?: boolean;
+  primaryMode?: SeismicChartPrimaryMode;
+  loading?: boolean;
+  emptyMessage?: string;
+  errorMessage?: string | null;
+  resetToken?: string | number | null;
+  onViewportChange?: SeismicSectionViewportChangeHandler;
+  onProbeChange?: SeismicSectionProbeChangeHandler;
+  onInteractionChange?: SeismicSectionInteractionChangeHandler;
+  onInteractionStateChange?: SeismicSectionInteractionStateChangeHandler;
+  onInteractionEvent?: SeismicSectionInteractionEventHandler;
+  onSplitPositionChange?: SeismicSectionSplitPositionChangeHandler;
+}
+
+export type SeismicSectionProbeChangeHandler = (payload: SectionProbeChanged) => void;
+export type SeismicSectionViewportChangeHandler = (payload: SectionViewportChanged) => void;
+export type SeismicSectionInteractionChangeHandler = (payload: SectionInteractionChanged) => void;
+export type SeismicSectionInteractionStateChangeHandler = (payload: SeismicChartInteractionState) => void;
+export type SeismicSectionInteractionEventHandler = (payload: SeismicChartInteractionEventPayload) => void;
+export type SeismicSectionSplitPositionChangeHandler = (splitPosition: number) => void;
+
+export interface SeismicGatherChartProps extends SeismicChartOverlayProps {
+  chartId: string;
+  viewId: string;
+  gather: GatherViewLike | null;
+  viewport?: GatherViewport | null;
+  displayTransform?: Partial<SeismicChartDisplayTransform>;
+  interactions?: SeismicChartInteractionConfig;
+  crosshairEnabled?: boolean;
+  primaryMode?: SeismicChartPrimaryMode;
+  loading?: boolean;
+  emptyMessage?: string;
+  errorMessage?: string | null;
+  resetToken?: string | number | null;
+  onViewportChange?: SeismicGatherViewportChangeHandler;
+  onProbeChange?: SeismicGatherProbeChangeHandler;
+  onInteractionChange?: SeismicGatherInteractionChangeHandler;
+  onInteractionStateChange?: SeismicGatherInteractionStateChangeHandler;
+  onInteractionEvent?: SeismicGatherInteractionEventHandler;
+}
+
+export type SeismicGatherProbeChangeHandler = (payload: GatherProbeChanged) => void;
+export type SeismicGatherViewportChangeHandler = (payload: GatherViewportChanged) => void;
+export type SeismicGatherInteractionChangeHandler = (payload: GatherInteractionChanged) => void;
+export type SeismicGatherInteractionStateChangeHandler = (payload: SeismicChartInteractionState) => void;
+export type SeismicGatherInteractionEventHandler = (payload: SeismicChartInteractionEventPayload) => void;
+
+export type WellCorrelationChartTool = "pointer" | "crosshair" | "pan";
+export type WellCorrelationChartAction = "fitToData";
+
+export interface WellCorrelationChartInteractionConfig {
+  tool?: WellCorrelationChartTool;
+}
+
+export interface WellCorrelationChartInteractionCapabilities {
+  tools: WellCorrelationChartTool[];
+  actions: WellCorrelationChartAction[];
+}
+
+export const WELL_CORRELATION_CHART_INTERACTION_CAPABILITIES: WellCorrelationChartInteractionCapabilities = {
+  tools: ["pointer", "crosshair", "pan"],
+  actions: ["fitToData"]
+};
+
+export interface WellCorrelationChartInteractionState {
+  capabilities: WellCorrelationChartInteractionCapabilities;
+  tool: WellCorrelationChartTool;
+}
+
+export interface WellCorrelationViewportChangePayload {
+  chartId: string;
+  viewport: WellCorrelationViewport | null;
+}
+
+export interface WellCorrelationProbeChangePayload {
+  chartId: string;
+  probe: WellCorrelationProbe | null;
+}
+
+export interface WellCorrelationInteractionEventPayload {
+  chartId: string;
+  event: InteractionEvent;
+}
+
+export interface WellCorrelationChartOverlayProps {
+  stageTopLeft?: Snippet;
+  plotTopCenter?: Snippet;
+  plotTopRight?: Snippet;
+  plotBottomRight?: Snippet;
+  plotBottomLeft?: Snippet;
+  stageScale?: number;
+}
+
+export interface WellCorrelationPanelChartProps extends WellCorrelationChartOverlayProps {
+  chartId: string;
+  panel: WellCorrelationPanelModel | WellPanelModel | null;
+  viewport?: WellCorrelationViewport | null;
+  interactions?: WellCorrelationChartInteractionConfig;
+  loading?: boolean;
+  emptyMessage?: string;
+  errorMessage?: string | null;
+  resetToken?: string | number | null;
+  onViewportChange?: WellCorrelationViewportChangeHandler;
+  onProbeChange?: WellCorrelationProbeChangeHandler;
+  onInteractionStateChange?: WellCorrelationInteractionStateChangeHandler;
+  onInteractionEvent?: WellCorrelationInteractionEventHandler;
+}
+
+export type WellCorrelationViewportChangeHandler = (payload: WellCorrelationViewportChangePayload) => void;
+export type WellCorrelationProbeChangeHandler = (payload: WellCorrelationProbeChangePayload) => void;
+export type WellCorrelationInteractionStateChangeHandler = (payload: WellCorrelationChartInteractionState) => void;
+export type WellCorrelationInteractionEventHandler = (payload: WellCorrelationInteractionEventPayload) => void;
+
+export type SurveyMapChartTool = "pointer" | "pan";
+export type SurveyMapChartAction = "fitToData";
+
+export interface SurveyMapChartInteractionConfig {
+  tool?: SurveyMapChartTool;
+}
+
+export interface SurveyMapChartInteractionCapabilities {
+  tools: SurveyMapChartTool[];
+  actions: SurveyMapChartAction[];
+}
+
+export const SURVEY_MAP_CHART_INTERACTION_CAPABILITIES: SurveyMapChartInteractionCapabilities = {
+  tools: ["pointer", "pan"],
+  actions: ["fitToData"]
+};
+
+export interface SurveyMapChartInteractionState {
+  capabilities: SurveyMapChartInteractionCapabilities;
+  tool: SurveyMapChartTool;
+}
+
+export interface SurveyMapViewportChangePayload {
+  chartId: string;
+  viewport: SurveyMapViewport | null;
+}
+
+export interface SurveyMapProbeChangePayload {
+  chartId: string;
+  probe: SurveyMapProbe | null;
+}
+
+export interface SurveyMapSelectionChangePayload {
+  chartId: string;
+  wellId: string | null;
+}
+
+export interface SurveyMapInteractionEventPayload {
+  chartId: string;
+  event: InteractionEvent;
+}
+
+export interface SurveyMapChartOverlayProps {
+  stageTopLeft?: Snippet;
+  plotTopCenter?: Snippet;
+  plotTopRight?: Snippet;
+  plotBottomRight?: Snippet;
+  plotBottomLeft?: Snippet;
+  stageScale?: number;
+}
+
+export interface SurveyMapChartProps extends SurveyMapChartOverlayProps {
+  chartId: string;
+  map: SurveyMapModel | null;
+  viewport?: SurveyMapViewport | null;
+  interactions?: SurveyMapChartInteractionConfig;
+  loading?: boolean;
+  emptyMessage?: string;
+  errorMessage?: string | null;
+  resetToken?: string | number | null;
+  onViewportChange?: SurveyMapViewportChangeHandler;
+  onProbeChange?: SurveyMapProbeChangeHandler;
+  onSelectionChange?: SurveyMapSelectionChangeHandler;
+  onInteractionStateChange?: SurveyMapInteractionStateChangeHandler;
+  onInteractionEvent?: SurveyMapInteractionEventHandler;
+}
+
+export type SurveyMapViewportChangeHandler = (payload: SurveyMapViewportChangePayload) => void;
+export type SurveyMapProbeChangeHandler = (payload: SurveyMapProbeChangePayload) => void;
+export type SurveyMapSelectionChangeHandler = (payload: SurveyMapSelectionChangePayload) => void;
+export type SurveyMapInteractionStateChangeHandler = (payload: SurveyMapChartInteractionState) => void;
+export type SurveyMapInteractionEventHandler = (payload: SurveyMapInteractionEventPayload) => void;

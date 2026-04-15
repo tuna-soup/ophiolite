@@ -212,6 +212,7 @@ impl StructuredAssetEditSessionStore {
             ),
             AssetKind::CheckshotVspObservationSet
             | AssetKind::ManualTimeDepthPickSet
+            | AssetKind::WellTieObservationSet
             | AssetKind::WellTimeDepthAuthoredModel
             |
             AssetKind::WellTimeDepthModel => {
@@ -695,6 +696,7 @@ fn asset_kind_name(kind: &AssetKind) -> &'static str {
         AssetKind::DrillingObservation => "drilling_observation",
         AssetKind::CheckshotVspObservationSet => "checkshot_vsp_observation_set",
         AssetKind::ManualTimeDepthPickSet => "manual_time_depth_pick_set",
+        AssetKind::WellTieObservationSet => "well_tie_observation_set",
         AssetKind::WellTimeDepthAuthoredModel => "well_time_depth_authored_model",
         AssetKind::WellTimeDepthModel => "well_time_depth_model",
         AssetKind::SeismicTraceData => "seismic_trace_data",
@@ -754,6 +756,10 @@ mod tests {
                     patch: TopRowPatch {
                         name: Some("Top B".to_string()),
                         top_depth: Some(110.0),
+                        base_depth: Some(OptionalFieldPatch {
+                            set: Some(111.0),
+                            clear: false,
+                        }),
                         ..Default::default()
                     },
                 },
@@ -770,6 +776,7 @@ mod tests {
         let rows = reopened.read_tops(&imported.asset.id).unwrap();
         assert_eq!(rows[0].name, "Top B");
         assert_eq!(rows[0].top_depth, 110.0);
+        assert_eq!(rows[0].base_depth, Some(111.0));
     }
 
     #[test]

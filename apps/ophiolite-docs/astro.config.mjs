@@ -7,7 +7,7 @@ export default defineConfig({
     starlight({
       title: "Ophiolite",
       description:
-        "Rust-first subsurface core for canonical contracts, local-first runtime primitives, and app-boundary DTOs.",
+        "Local-first subsurface infrastructure with a canonical Rust runtime and Python, CLI, and Rust surfaces.",
       social: {
         github: "https://github.com/scrooijmans/ophiolite",
       },
@@ -15,117 +15,76 @@ export default defineConfig({
         baseUrl:
           "https://github.com/scrooijmans/ophiolite/edit/master/apps/ophiolite-docs/",
       },
+      disable404Route: true,
       customCss: ["./src/styles/custom.css"],
       sidebar: [
+        { label: "Home", link: "/" },
         {
-          label: "Start Here",
+          label: "Docs",
           items: [
-            { label: "Home", link: "/" },
+            { label: "Overview", link: "/docs/" },
             {
-              label: "Installation",
-              link: "/getting-started/installation/",
+              label: "Start Here",
+              collapsed: true,
+              autogenerate: { directory: "docs/start-here" },
             },
-            { label: "First Asset", link: "/getting-started/first-asset/" },
             {
-              label: "First Project",
-              link: "/getting-started/first-project/",
+              label: "Build Workflows",
+              collapsed: true,
+              autogenerate: { directory: "docs/build-workflows" },
+            },
+            {
+              label: "Core Concepts",
+              collapsed: true,
+              autogenerate: { directory: "docs/core-concepts" },
+            },
+            {
+              label: "Data Model",
+              collapsed: true,
+              autogenerate: { directory: "docs/data-model" },
+            },
+            {
+              label: "Embed in Apps",
+              collapsed: true,
+              autogenerate: { directory: "docs/embed-in-apps" },
+            },
+            {
+              label: "Advanced",
+              collapsed: true,
+              autogenerate: { directory: "docs/advanced" },
             },
           ],
         },
         {
-          label: "Products",
+          label: "Operators",
           items: [
-            { label: "Platform Core", link: "/products/platform-core/" },
-            { label: "Ophiolite Charts", link: "/products/ophiolite-charts/" },
+            { label: "Overview", link: "/operators/" },
+            { label: "Write Your First Operator", slug: "operators/write-your-first-operator" },
+            { label: "Package and Install", slug: "operators/package-and-install" },
+            { label: "Testing and Debugging", slug: "operators/testing-and-debugging" },
           ],
         },
-        {
-          label: "Concepts",
-          items: [
-            { label: "Overview", link: "/concepts/overview/" },
-            {
-              label: "Platform Boundary",
-              link: "/concepts/platform-boundary/",
-            },
-            {
-              label: "Subsurface Domain Model",
-              link: "/concepts/subsurface-domain-model/",
-            },
-            {
-              label: "Package, Session, Workspace",
-              link: "/concepts/package-session-workspace/",
-            },
-            { label: "Asset Families", link: "/concepts/asset-families/" },
-            {
-              label: "Revisions and History",
-              link: "/concepts/revisions-and-history/",
-            },
-            {
-              label: "Compute and Derived Assets",
-              link: "/concepts/compute-and-derived-assets/",
-            },
-          ],
-        },
-        {
-          label: "Packages and Projects",
-          items: [
-            {
-              label: "Asset Packages",
-              link: "/packages-and-projects/asset-packages/",
-            },
-            {
-              label: "OphioliteProject",
-              link: "/packages-and-projects/ophiolite-project/",
-            },
-          ],
-        },
-        {
-          label: "Editing and Versioning",
-          items: [
-            { label: "Asset Editing", link: "/editing-and-versioning/asset-editing/" },
-            {
-              label: "Structured Editing",
-              link: "/editing-and-versioning/structured-editing/",
-            },
-            {
-              label: "Revision History",
-              link: "/editing-and-versioning/revision-history/",
-            },
-          ],
-        },
-        {
-          label: "Interfaces",
-          items: [
-            {
-              label: "Contracts and DTOs",
-              link: "/reference/contracts-and-dtos/",
-            },
-            { label: "CLI", link: "/reference/cli/" },
-            {
-              label: "Automation Surfaces",
-              link: "/reference/automation-interfaces/",
-            },
-            { label: "Harness", link: "/reference/harness/" },
-          ],
-        },
-        {
-          label: "Architecture",
-          items: [
-            { label: "Overview", link: "/architecture/overview/" },
-            { label: "Repo Structure", link: "/architecture/repo-structure/" },
-            { label: "ADRs", link: "/architecture/adrs/" },
-          ],
-        },
-        { label: "Reference", items: [{ label: "Core Types", link: "/reference/core-types/" }] },
         {
           label: "Examples",
           items: [
-            {
-              label: "Synthetic Project Fixture",
-              link: "/examples/synthetic-project-fixture/",
-            },
+            { label: "Overview", link: "/examples/" },
+            { label: "Python Project Workflow", slug: "examples/python-project-workflow" },
+            { label: "CLI Project Automation", slug: "examples/cli-project-automation" },
+            { label: "Custom Python Operator", slug: "examples/custom-python-operator" },
           ],
         },
+        {
+          label: "Reference",
+          items: [
+            { label: "Overview", link: "/reference/" },
+            { label: "Python SDK", slug: "reference/python-sdk" },
+            { label: "CLI", slug: "reference/cli" },
+            { label: "Operator Packages", slug: "reference/operator-packages" },
+            { label: "Contracts and Schemas", slug: "reference/contracts-and-schemas" },
+            { label: "Surface Matrix", slug: "reference/surface-matrix" },
+          ],
+        },
+        { label: "Changelog", link: "/changelog/" },
       ],
     }),
   ],

@@ -1,0 +1,19 @@
+---
+title: Custom Python Operator
+description: The minimal Python operator package example.
+draft: false
+---
+
+```python
+from ophiolite_sdk import OperatorRegistry, computed_curve
+
+registry = OperatorRegistry()
+
+@registry.register("acme:double")
+def double_curve(request):
+    curve = request.payload["inputs"]["input_curve"]
+    values = [None if value is None else value * 2.0 for value in curve["values"]]
+    return computed_curve("DTX", values, unit=curve.get("unit"))
+```
+
+Pair this entrypoint with an `operator-package.json` manifest and install it through `Project.install_operator_package(...)`.

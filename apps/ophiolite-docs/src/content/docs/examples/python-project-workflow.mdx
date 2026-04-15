@@ -1,0 +1,20 @@
+---
+title: Python Project Workflow
+description: A small Python-first example that touches the current public surfaces.
+draft: false
+---
+
+```python
+from ophiolite_sdk import Project
+
+project = Project.create("demo-project")
+summary = project.summary()
+catalog = Project.platform_catalog()
+
+print(summary.root)
+print(summary.asset_count)
+print(catalog.product)
+print(len(catalog.operations))
+```
+
+This example is intentionally small. It proves the local project surface and shared operation catalog without hiding the fact that some richer workflow APIs are still widening.

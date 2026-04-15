@@ -1,30 +1,51 @@
 ---
 title: CLI
-description: The current and intended CLI boundary for Ophiolite.
+description: The operational command surface for Ophiolite.
 draft: false
 ---
 
-The Ophiolite CLI is currently strongest as a developer and validation surface.
+**Audience:** automation and CI builders  
+**Status:** Preview
 
-It is most useful for fixture generation, inspection, and repo-local workflows around the core platform.
+The CLI is the operational command boundary for Ophiolite.
 
-It is not meant to own product-local session behavior or opinionated app workflows.
+## Current commands
 
-The intended direction is a stable platform CLI for import, inspect, open, export, and validation workflows that should remain meaningful across multiple applications built on Ophiolite.
+The current public command set includes:
 
-Examples:
+- `operation-catalog`
+- `create-project`
+- `open-project`
+- `project-summary`
+- `list-project-wells`
+- `list-project-wellbores`
+- `project-operator-lock`
+- `install-operator-package`
+- `list-project-compute-catalog`
+- `run-project-compute`
+- `import`
+- `inspect-file`
+- `summary`
+- `list-curves`
+- `examples`
+- `generate-fixture-packages`
+
+## What the CLI is for
+
+- repeatable local commands
+- JSON output for scripts
+- CI validation
+- package inspection and creation
+- project admin-style tasks
+
+## Design rule
+
+If a behavior is part of the public platform contract, it should be visible as an intentional command, not hidden behind app-specific glue.
+
+## Example
 
 ```powershell
-cargo run -- generate-fixture-packages test_data/logs test_data/logs/packages
+cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- project-summary .\demo-project
 ```
 
-```powershell
-cargo run -- generate-synthetic-project test_data/projects/synthetic_well_project
-```
-
-These are especially useful for:
-
-- testing package generation
-- generating a coherent multi-asset demo project
-- validating the app and SDK against stable local fixtures
-- exercising the core outside the product shell
+Next: [CLI automation guide](/docs/build-workflows/cli-automation/)

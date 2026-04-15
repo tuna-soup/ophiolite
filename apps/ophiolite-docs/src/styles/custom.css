@@ -1,17 +1,21 @@
 :root {
-  --sl-color-accent-low: #dbe6ff;
-  --sl-color-accent: #2457d6;
-  --sl-color-accent-high: #11389d;
+  --sl-color-accent-low: #d9f1ea;
+  --sl-color-accent: #157a68;
+  --sl-color-accent-high: #0f5c4f;
 }
 
 :root[data-theme="dark"] {
-  --sl-color-accent-low: #112047;
-  --sl-color-accent: #78a6ff;
-  --sl-color-accent-high: #d9e5ff;
+  --sl-color-accent-low: #0d2d27;
+  --sl-color-accent: #6dd4bf;
+  --sl-color-accent-high: #d8fbf4;
 }
 
 .hero {
   background:
-    radial-gradient(circle at top left, rgba(36, 87, 214, 0.14), transparent 38%),
-    radial-gradient(circle at bottom right, rgba(17, 56, 157, 0.16), transparent 32%);
+    radial-gradient(circle at top left, rgba(21, 122, 104, 0.12), transparent 38%),
+    radial-gradient(circle at bottom right, rgba(15, 92, 79, 0.12), transparent 32%);
+}
+
+.sl-markdown-content table td strong {
+  white-space: nowrap;
 }

@@ -1,0 +1,15 @@
+---
+title: App Integration Patterns
+description: How apps should consume Ophiolite without becoming the product boundary.
+draft: false
+---
+
+Applications should consume intentional Ophiolite surfaces instead of reaching through raw internals.
+
+That means:
+
+- use public project and runtime concepts
+- keep app-specific workflow logic outside the core
+- treat demo apps as consumers, not as the platform definition
+
+TraceBoost is a reference consumer of Ophiolite, not the canonical definition of what Ophiolite is.

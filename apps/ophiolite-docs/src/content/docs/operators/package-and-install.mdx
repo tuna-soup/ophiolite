@@ -1,0 +1,34 @@
+---
+title: Package and Install
+description: Install an operator package into a project.
+draft: false
+---
+
+**Audience:** operator authors and platform teams  
+**Status:** Preview
+
+Project-scoped operator installation is the reproducibility boundary for external operators.
+
+## Install through the public project surface
+
+```python
+from ophiolite_sdk import Project
+
+project = Project.open("demo-project")
+result = project.install_operator_package("python-operator/operator-package.json")
+print(result.package_name)
+print(result.python_environment_path)
+```
+
+## What installation does
+
+- copies the operator manifest into the project store
+- copies the entrypoint and standard Python support files when present
+- creates a package-local `.venv` for Python runtime isolation
+- updates the project operator lock
+
+## Why this matters
+
+Installation is what keeps external code from becoming an untracked side effect.
+
+Next: [Testing and debugging](/operators/testing-and-debugging/)

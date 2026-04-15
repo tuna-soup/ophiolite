@@ -1,0 +1,15 @@
+---
+title: Architecture Overview
+description: A simple description of the main Ophiolite layers.
+draft: false
+---
+
+Ophiolite separates:
+
+1. source artifacts and ingest
+2. canonical domain and runtime semantics
+3. package and project persistence
+4. operator execution and derived outputs
+5. interface-specific exposure for Python, CLI, Rust, and apps
+
+That separation is how Rust can shape the truth without forcing every interface to mirror internal crate structure.

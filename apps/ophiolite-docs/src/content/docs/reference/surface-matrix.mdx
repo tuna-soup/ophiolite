@@ -1,0 +1,16 @@
+---
+title: Surface Matrix
+description: Audience, maturity, and production guidance for each major Ophiolite surface.
+draft: false
+---
+
+| Surface | Audience | Maturity | Production guidance | Notes |
+| --- | --- | --- | --- | --- |
+| Python SDK | workflow builders | Preview | Recommended first evaluation path | Best starting point, but still narrower than Rust in some areas |
+| CLI | automation and CI | Preview | Good for scripts and operational flows | JSON command boundary |
+| Rust core | embedders and platform teams | Preview | Deepest exact surface | Canonical runtime truth |
+| Operator packages | extension authors | Preview | Strong fit for controlled local extension | Python runtime isolation implemented |
+| Charts integrations | app teams | Experimental | Secondary to the runtime story | Useful in consumers, not the product headline |
+| Reference apps | internal teams and evaluators | Internal | Do not treat as the platform contract | TraceBoost is a consumer, not the identity |
+
+See [stability levels](/docs/advanced/stability-levels/) for the label definitions.

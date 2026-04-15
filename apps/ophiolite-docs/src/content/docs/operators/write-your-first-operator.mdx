@@ -1,0 +1,87 @@
+---
+title: Write Your First Operator
+description: Author a Python operator package against the current Ophiolite contract.
+draft: false
+---
+
+**Audience:** extension authors  
+**Status:** Preview
+
+The current external operator path uses a manifest plus a Python entrypoint.
+
+## 1. Create the Python entrypoint
+
+```python
+from ophiolite_sdk import OperatorRegistry, computed_curve
+
+registry = OperatorRegistry()
+
+@registry.register("acme:double")
+def double_curve(request):
+    curve = request.payload["inputs"]["input_curve"]
+    values = [None if value is None else value * 2.0 for value in curve["values"]]
+    return computed_curve("DTX", values, unit=curve.get("unit"))
+```
+
+## 2. Declare the operator package
+
+```json
+{
+  "schema_version": 1,
+  "package_name": "acme-tools",
+  "package_version": "0.1.0",
+  "provider": "acme",
+  "runtime": "python",
+  "compatibility": { "ophiolite_api": "0.1.0" },
+  "entrypoint": "acme_ops.py",
+  "operators": [
+    {
+      "id": "acme:double",
+      "provider": "acme",
+      "name": "Double Curve",
+      "asset_family": "Log",
+      "category": "Demo",
+      "description": "Doubles a selected curve.",
+      "default_output_mnemonic": "DTX",
+      "output_curve_type": "Computed",
+      "input_specs": [
+        {
+          "SingleCurve": {
+            "parameter_name": "input_curve",
+            "allowed_types": []
+          }
+        }
+      ],
+      "parameters": [
+        {
+          "Number": {
+            "name": "factor",
+            "label": "Factor",
+            "description": "Scale factor",
+            "default": 2.0,
+            "min": 0.0,
+            "max": 10.0,
+            "unit": null
+          }
+        }
+      ],
+      "output_lifecycle": "derived_asset",
+      "deterministic": true,
+      "stability": "preview",
+      "tags": ["demo"]
+    }
+  ]
+}
+```
+
+## 3. What Ophiolite still owns
+
+Even for external operators, Rust still owns:
+
+- project locking
+- input and parameter validation
+- execution contracts
+- provenance
+- derived-asset persistence
+
+Next: [Package and install an operator](/operators/package-and-install/)

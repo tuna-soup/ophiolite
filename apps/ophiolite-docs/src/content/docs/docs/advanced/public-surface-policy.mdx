@@ -1,0 +1,26 @@
+---
+title: Public Surface Policy
+description: Which capabilities should be wrapped and how public surfaces should evolve.
+draft: false
+---
+
+Public surfaces should be policy-driven, not random.
+
+## Wrap a capability when it is:
+
+- stable enough to explain clearly
+- useful in automation or application workflows
+- best understood through platform nouns instead of internal implementation details
+
+## Keep a capability deeper when it is:
+
+- low-level and easy to misuse
+- still changing shape quickly
+- app-internal or demo-internal
+
+## Current recommendation
+
+- lead with Python for builders
+- keep CLI strong for automation
+- keep Rust as the deepest exact surface
+- expose operators as a first-class extension model

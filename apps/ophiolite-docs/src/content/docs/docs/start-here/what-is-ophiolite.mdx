@@ -1,0 +1,48 @@
+---
+title: What Is Ophiolite?
+description: The plain-English product definition for Ophiolite.
+draft: false
+---
+
+**Audience:** technical evaluators, workflow builders, app teams  
+**Status:** Preview
+
+Ophiolite is local-first subsurface infrastructure.
+
+More concretely, it is a canonical Rust runtime plus SDK surfaces that help you organize typed subsurface assets, run operators, produce derived outputs, and build local workflows or applications on top of one shared model.
+
+## What It Owns
+
+At the product boundary, Ophiolite owns:
+
+- the canonical runtime truth
+- typed asset semantics
+- project and package persistence rules
+- operator validation and execution contracts
+- provenance for derived outputs
+- multiple public interfaces over the same runtime
+
+## What It Is Not
+
+Ophiolite is not:
+
+- a hosted cloud API
+- a full interpretation application
+- only a LAS parser
+- only a chart library
+
+TraceBoost and other apps can consume Ophiolite, but they are not the product identity.
+
+## Why the Runtime Matters
+
+The core idea is that Rust shapes the truth. Python, CLI, and app-facing integrations expose that truth for different jobs, but they do not redefine the data model or execution rules.
+
+That keeps the platform from drifting into multiple incompatible versions of the same behavior.
+
+## Interfaces
+
+- **Python:** primary onboarding path for local workflow builders
+- **CLI:** automation, CI, and operational scripting
+- **Rust:** direct embedding and the deepest exact surface
+
+Next: [Why local-first?](/docs/start-here/why-local-first/)

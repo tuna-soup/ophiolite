@@ -1,0 +1,20 @@
+---
+title: Interfaces
+description: How Python, CLI, Rust, and app integrations expose the same runtime truth.
+draft: false
+---
+
+Ophiolite has multiple **Interfaces**, but they should expose one runtime truth.
+
+## Current interface roles
+
+- **Python:** workflow composition and typed results
+- **CLI:** automation and operational commands
+- **Rust:** canonical core and direct embedding
+- **App integrations:** focused DTOs and embedders over the same runtime concepts
+
+## Public rule
+
+Wrappers should expose stable platform concepts. They should not reimplement runtime semantics independently.
+
+Next: [Data model](/docs/data-model/)

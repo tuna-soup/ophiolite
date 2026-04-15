@@ -1,0 +1,38 @@
+---
+title: Current Scope and Maturity
+description: What is public today and how mature each surface is.
+draft: false
+---
+
+**Audience:** evaluators and adopters  
+**Status:** Preview
+
+Ophiolite's direction is clear, but not every public surface is equally mature.
+
+## Current shape
+
+- The **Rust core** is the canonical runtime and deepest implementation surface.
+- The **Python SDK** is the preferred builder entry path, but still reuses CLI-backed operations underneath.
+- The **CLI** is useful for automation, inspection, package creation, and project admin-style tasks.
+- **Operator packages** are the main extensibility story and now support project-local Python runtime isolation.
+
+## Practical maturity
+
+| Area | Maturity | Notes |
+| --- | --- | --- |
+| Canonical runtime semantics | Preview | Direction is stable even where APIs are still widening. |
+| Python SDK | Preview | Best starting point for builders, but not yet the widest workflow surface. |
+| CLI | Preview | Useful for scripting and inspection today. |
+| Rust embedding | Preview | Deepest and most exact surface. |
+| Operator packages | Preview | First external Python runtime path is implemented. |
+| Charts/app integrations | Experimental | Useful for app composition, but secondary to the runtime story. |
+
+## Recommended production posture
+
+Use Ophiolite today when:
+
+- you want a local-first infrastructure layer
+- you can tolerate preview-stage API evolution
+- you value one canonical runtime more than polished breadth in every wrapper
+
+Next: [Build Workflows](/docs/build-workflows/)

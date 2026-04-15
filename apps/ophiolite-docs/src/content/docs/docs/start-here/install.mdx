@@ -1,0 +1,53 @@
+---
+title: Install
+description: Install the current Ophiolite surfaces from the repo.
+draft: false
+---
+
+**Audience:** builders trying Ophiolite locally  
+**Status:** Preview
+
+Ophiolite is still repo-first. The current install path is from source.
+
+## Prerequisites
+
+- Rust toolchain
+- Python 3.10+
+- Git
+
+## Build the CLI
+
+```powershell
+git clone https://github.com/scrooijmans/ophiolite.git
+cd ophiolite
+cargo build -p ophiolite-cli
+```
+
+## Install the Python package
+
+```powershell
+python -m pip install -e .\python
+```
+
+The install exposes the `ophiolite_sdk` import surface and the `ophiolite-automation` console script.
+
+## Verify the CLI
+
+```powershell
+cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- operation-catalog
+```
+
+## Verify Python
+
+```python
+from ophiolite_sdk import Project
+
+project = Project.create("demo-project")
+print(project.summary())
+```
+
+## Current caveat
+
+The public install story is real, but still early. Some project-first ingest and richer workflow APIs remain narrower in public Python and CLI surfaces than they are in the Rust core.
+
+Next: [10-minute quickstart](/docs/start-here/quickstart/)

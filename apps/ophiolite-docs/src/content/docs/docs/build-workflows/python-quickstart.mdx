@@ -1,0 +1,53 @@
+---
+title: Python Quickstart
+description: Use the current Python surface for local Ophiolite workflows.
+draft: false
+---
+
+**Audience:** Python-first builders  
+**Status:** Preview
+
+The current Python surface is centered on project access, typed results, and compute-facing flows.
+
+## Create or open a project
+
+```python
+from ophiolite_sdk import Project
+
+project = Project.create("demo-project")
+summary = project.summary()
+print(summary.root)
+```
+
+## Read project metadata
+
+```python
+print(project.summary())
+print(project.wells())
+```
+
+## Read the platform catalog
+
+```python
+catalog = Project.platform_catalog()
+for operation in catalog.operations[:5]:
+    print(operation.id, operation.surfaces)
+```
+
+## Current boundary
+
+Today the Python SDK is strongest for:
+
+- project lifecycle
+- summaries and discovery
+- operator lock inspection
+- operator package installation
+- compute catalog and compute execution
+
+Some import and broader project-manipulation flows are still more complete in Rust than in the Python wrapper.
+
+## When to stay in Python
+
+Stay in Python when you want typed objects, local scripting, notebook-style composition, or a programmable workflow surface that tracks platform nouns instead of raw commands.
+
+Next: [CLI automation](/docs/build-workflows/cli-automation/)

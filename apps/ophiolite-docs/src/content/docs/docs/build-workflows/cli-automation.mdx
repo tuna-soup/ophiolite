@@ -1,0 +1,33 @@
+---
+title: CLI Automation
+description: Use the CLI for repeatable Ophiolite operations.
+draft: false
+---
+
+**Audience:** automation and CI builders  
+**Status:** Preview
+
+The CLI is the operational surface for repeatable commands and straightforward JSON output.
+
+## Common commands
+
+```powershell
+cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- operation-catalog
+cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- create-project .\demo-project
+cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- project-summary .\demo-project
+cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- inspect-file .\examples\sample.las
+cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- import .\examples\sample.las .\demo-log.laspkg
+```
+
+## Why use the CLI
+
+- stable shell entry point
+- JSON responses for scripts
+- useful in CI and validation workflows
+- clear operational boundary even while higher-level wrappers are evolving
+
+## Recommended pattern
+
+Use the CLI for inspection, packaging, and admin-style tasks. Use Python on top when you want structured workflow composition.
+
+Next: [Core concepts](/docs/core-concepts/)

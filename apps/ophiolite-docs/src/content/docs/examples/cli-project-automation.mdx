@@ -1,0 +1,15 @@
+---
+title: CLI Project Automation
+description: A simple CLI workflow for inspection and packaging.
+draft: false
+---
+
+```powershell
+cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- create-project .\demo-project
+cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- project-summary .\demo-project
+cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- inspect-file .\examples\sample.las
+cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- import .\examples\sample.las .\demo-log.laspkg
+cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- summary .\demo-log.laspkg
+```
+
+This is the current practical CLI path for local validation, standalone package creation, and scriptable inspection.

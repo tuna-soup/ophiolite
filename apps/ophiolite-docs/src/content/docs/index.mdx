@@ -1,51 +1,68 @@
 ---
-title: Ophiolite Docs
-description: Platform documentation for Ophiolite and Ophiolite Charts.
+title: Ophiolite
+description: Local-first subsurface infrastructure with a canonical Rust runtime and Python, CLI, and Rust surfaces.
 draft: false
 template: splash
+tableOfContents: false
 hero:
-  tagline: Canonical subsurface contracts, local-first runtime primitives, and embeddable charts for wells, seismic, maps, and time-depth workflows.
+  title: Local-first subsurface infrastructure
+  tagline: Build workflows on a canonical runtime using Python, CLI, and Rust. Import typed assets, run operators, and persist derived outputs locally.
   actions:
-    - text: Get Started
-      link: /getting-started/installation/
+    - text: Start with Python
+      link: /docs/start-here/quickstart/
       icon: right-arrow
       variant: primary
-    - text: Explore Products
-      link: /products/platform-core/
+    - text: Build an Operator
+      link: /operators/write-your-first-operator/
       variant: secondary
-    - text: GitHub
-      link: https://github.com/scrooijmans/ophiolite
-      icon: external
+    - text: Explore Examples
+      link: /examples/
       variant: minimal
 features:
-  - title: Canonical platform core
-    description: Ophiolite is the place where reusable subsurface meaning lives first, including well, seismic, survey-map, and time-depth DTOs.
-  - title: Local-first runtime and storage
-    description: Packages, project catalogs, runtime stores, and revision-aware persistence are designed for desktop applications and local tooling.
-  - title: Embeddable charts
-    description: Ophiolite Charts provides reusable rendering, interaction, and wrapper APIs without taking ownership of domain meaning.
+  - title: Canonical runtime
+    description: Rust owns the project model, typed assets, operator contracts, provenance, and persistence rules.
+  - title: Multiple interfaces
+    description: Start in Python, automate with the CLI, or embed Ophiolite directly from Rust without changing the underlying truth.
+  - title: Operator extensibility
+    description: Extend workflows with built-in and external operators while keeping validation, lineage, and derived assets inside the core.
 ---
 
-Ophiolite is the platform for applications that need canonical domain contracts, local-first runtime primitives, stable app-boundary DTOs, and embeddable subsurface charts.
+Ophiolite is a local-first infrastructure layer for subsurface developers. It gives you a canonical runtime, typed asset model, and SDK surfaces for workflows, automation, and application embedding.
 
-It started with a strong LAS and log foundation, but it is no longer a LAS-focused project. Today the platform spans:
+## What It Is
 
-- well and wellbore assets such as logs, trajectory, tops, pressure, and drilling observations
-- shared seismic descriptors, runtime/store paths, section and gather display DTOs, and processing-facing semantics
-- survey-map and time-depth boundary types used by applications and embedders
-- embeddable seismic, gather, survey-map, and well-correlation charts through Ophiolite Charts
-- optimized local package and project storage
-- a local-first `OphioliteProject` catalog
-- typed compute and derived assets
-- revision-aware editing and persistence
-- frontend-safe contracts for apps and SDK adapters
+Use Ophiolite when you want one local runtime to handle:
 
-Use this site to get from the platform boundary to concrete code and interfaces quickly:
+- project structure for related subsurface work
+- typed assets such as logs and other wellbore-linked data
+- operator execution and derived outputs
+- provenance and reproducibility
+- app-facing access through Python, CLI, Rust, and focused integration layers
 
-- start with [Installation](/getting-started/installation/)
-- understand the [Platform Core](/products/platform-core/)
-- understand [Ophiolite Charts](/products/ophiolite-charts/)
-- understand the [Platform Boundary](/concepts/platform-boundary/)
-- learn the core [Concepts](/concepts/overview/)
-- understand [Automation Surfaces](/reference/automation-interfaces/)
-- review the current [Architecture](/architecture/overview/)
+## How You Use It
+
+- **Python** for the default builder path and local workflow composition.
+- **CLI** for automation, CI, and repeatable operational tasks.
+- **Rust** for direct embedding, deeper integrations, and the canonical core.
+
+## Core Workflow
+
+1. Create a project.
+2. Import or discover typed assets.
+3. Inspect the operator catalog for a chosen asset.
+4. Run an operator.
+5. Persist and reuse the derived output.
+
+## Why Teams Adopt It
+
+- **Local-first by default:** keep workflows close to the data.
+- **Canonical runtime:** one truth for validation, lineage, and persistence.
+- **Typed assets:** move beyond ad hoc file scripts.
+- **Bring-your-own operators:** extend workflows without forking the core.
+
+## Start Here
+
+- [Read the docs](/docs/)
+- [Write an operator](/operators/)
+- [Run an example workflow](/examples/)
+- [Check the public surfaces](/reference/)

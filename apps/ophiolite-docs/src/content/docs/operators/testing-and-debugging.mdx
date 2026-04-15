@@ -1,0 +1,23 @@
+---
+title: Testing and Debugging
+description: Practical checks for operator packages.
+draft: false
+---
+
+**Audience:** operator authors  
+**Status:** Preview
+
+The minimum useful checks for an operator package are:
+
+- validate the manifest shape
+- ensure the entrypoint loads
+- verify the handler is registered under the declared operator id
+- run the operator inside its package-local virtual environment
+
+## Debugging rule
+
+If behavior differs between the manifest contract and the Python function body, trust the manifest as the public contract and fix the function to match it.
+
+## Isolation rule
+
+Python operators should run out of process and inside the package-local environment. That is how Ophiolite avoids dependency drift and keeps failures contained.

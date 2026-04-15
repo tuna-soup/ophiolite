@@ -1,0 +1,37 @@
+---
+title: Why Local-First?
+description: Why Ophiolite leads with local runtime behavior instead of a hosted service.
+draft: false
+---
+
+**Audience:** evaluators and platform designers  
+**Status:** Preview
+
+Ophiolite leads with local-first usage because the current product promise is a reusable infrastructure layer, not a hosted SaaS.
+
+## What Local-First Buys You
+
+- predictable access to project data on disk
+- easier workflow scripting and notebook usage
+- simpler adoption inside internal tools
+- fewer deployment assumptions when teams are still shaping their workflows
+
+## What This Does Not Mean
+
+Local-first does not block future remote services.
+
+It means the canonical product story today is:
+
+1. the runtime works locally
+2. public interfaces are designed around local use first
+3. remote capabilities can layer on later without redefining the core nouns
+
+## Mental Model
+
+Think of Ophiolite as the infrastructure layer you install close to the work, then expose through the interface that matches the job:
+
+- Python for composition
+- CLI for automation
+- Rust for embedding
+
+Next: [Install Ophiolite](/docs/start-here/install/)

@@ -1,0 +1,60 @@
+---
+import ExampleFrame from "../components/ExampleFrame.astro";
+import { launchExamples } from "../data/launchExamples";
+import MarketingLayout from "../layouts/MarketingLayout.astro";
+
+const featuredExample = launchExamples[0]!;
+const supportingExamples = launchExamples.slice(1);
+---
+
+<MarketingLayout
+  title="Examples | Ophiolite Charts"
+  description="Explore live Ophiolite Charts examples for seismic, gathers, well correlation, survey maps, and rock physics."
+>
+  <section class="page-intro">
+    <p class="eyebrow">Examples</p>
+    <h1>Live examples that reflect the launch product surface.</h1>
+    <p>
+      These examples are the public demonstration layer for the current commercial rollout. They focus on the chart families that already have clear wrapper boundaries, purposeful controls, and matching docs.
+    </p>
+  </section>
+
+  <section class="featured-example">
+    <div class="featured-example__copy">
+      <p class="eyebrow">{featuredExample.eyebrow}</p>
+      <h2>{featuredExample.title}</h2>
+      <p>{featuredExample.description}</p>
+      <div class="featured-example__actions">
+        <a href={featuredExample.href} class="button button--primary">Open Live Example</a>
+        <a href={featuredExample.docsHref} class="button button--ghost">Read Docs</a>
+      </div>
+    </div>
+    <a href={featuredExample.href} class="featured-example__media">
+      <img src={featuredExample.imageSrc} alt={featuredExample.imageAlt} />
+    </a>
+  </section>
+
+  <section class="example-grid">
+    {supportingExamples.map((example) => (
+      <ExampleFrame
+        title={example.title}
+        description={example.description}
+        href={example.href}
+        docsHref={example.docsHref}
+        imageSrc={example.imageSrc}
+        imageAlt={example.imageAlt}
+        compact={true}
+      />
+    ))}
+  </section>
+
+  <section class="content-band content-band--accent">
+    <div class="section-heading">
+      <p class="eyebrow">Evaluation Use</p>
+      <h2>Use screenshots to browse, then switch to the live route when the question becomes behavioral.</h2>
+      <p>
+        The gallery is there to make scanning faster. The real evaluation step is still the live example plus the matching docs page for the wrapper and chart family you care about.
+      </p>
+    </div>
+  </section>
+</MarketingLayout>

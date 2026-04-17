@@ -1,0 +1,76 @@
+---
+import MarketingLayout from "../layouts/MarketingLayout.astro";
+
+const plans = [
+  {
+    name: "Evaluation",
+    summary: "Use this when you need to validate chart-family fit, integration shape, and rollout constraints before committing to a license.",
+    points: ["Launch-family examples", "Docs and API review", "Commercial evaluation path"],
+    cta: "Start Evaluation"
+  },
+  {
+    name: "Team",
+    summary: "Commercial access for product teams shipping against the supported wrapper surface and documented chart families.",
+    points: ["Team licensing", "Implementation guidance", "Priority issue handling"],
+    cta: "Discuss Team Access"
+  },
+  {
+    name: "Enterprise",
+    summary: "For larger programs that need rollout planning, support expectations, and alignment around long-lived product ownership.",
+    points: ["Enterprise rollout support", "Planning and escalation path", "Commercial alignment for larger deployments"],
+    cta: "Talk Enterprise"
+  }
+];
+---
+
+<MarketingLayout
+  title="Pricing | Ophiolite Charts"
+  description="Evaluation, team licensing, and enterprise support for Ophiolite Charts."
+>
+  <section class="page-intro">
+    <p class="eyebrow">Pricing</p>
+    <h1>Simple commercial packaging for an early but serious product surface.</h1>
+    <p>
+      The pricing page is intentionally structured like a commercial library, even while the launch surface stays focused. The immediate goal is clean evaluation and rollout conversations, not fake self-serve complexity.
+    </p>
+  </section>
+
+  <section class="pricing-grid">
+    {plans.map((plan) => (
+      <article class="pricing-card">
+        <p class="pricing-card__eyebrow">Commercial Access</p>
+        <h2>{plan.name}</h2>
+        <p>{plan.summary}</p>
+        <ul class="pricing-card__list">
+          {plan.points.map((point) => <li>{point}</li>)}
+        </ul>
+        <a href="/contact/" class="button button--primary">{plan.cta}</a>
+      </article>
+    ))}
+  </section>
+
+  <section class="content-band content-band--accent">
+    <div class="section-heading">
+      <p class="eyebrow">Current Commercial Policy</p>
+      <h2>Sell what exists, document what is stable, and leave the rest clearly marked.</h2>
+    </div>
+    <div class="value-grid">
+      <article>
+        <h3>Launch wrappers first</h3>
+        <p>JavaScript and Svelte support are the public entry points today, so pricing and support center on those paths.</p>
+      </article>
+      <article>
+        <h3>Scope by chart family</h3>
+        <p>The contract is easier to trust when each supported family has explicit boundaries instead of a vague platform promise.</p>
+      </article>
+      <article>
+        <h3>Examples and docs stay aligned</h3>
+        <p>Commercial discussions should not get ahead of the examples and docs that engineers will actually use during evaluation.</p>
+      </article>
+      <article>
+        <h3>Enterprise support is real support</h3>
+        <p>That tier is for rollout planning and execution, not just a renamed email inbox.</p>
+      </article>
+    </div>
+  </section>
+</MarketingLayout>

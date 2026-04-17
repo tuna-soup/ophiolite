@@ -1,0 +1,75 @@
+---
+import "../styles/marketing.css";
+
+interface Props {
+  title: string;
+  description: string;
+}
+
+const { title, description } = Astro.props;
+
+const navItems = [
+  { href: "/", label: "Home" },
+  { href: "/examples/", label: "Examples" },
+  { href: "/docs/", label: "Docs" },
+  { href: "/pricing/", label: "Pricing" },
+  { href: "/benchmarks/", label: "Benchmarks" },
+  { href: "/contact/", label: "Contact" }
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site)} />
+  </head>
+  <body class="marketing-shell">
+    <div class="marketing-background">
+      <header class="site-header">
+        <div class="site-header__inner">
+          <a href="/" class="site-brand" aria-label="Ophiolite Charts home">
+            <span class="site-brand__mark" aria-hidden="true"></span>
+            <span>Ophiolite Charts</span>
+          </a>
+          <nav class="site-nav" aria-label="Primary">
+            {navItems.map((item) => (
+              <a href={item.href} class:list={{ "site-nav__link": true, "is-active": Astro.url.pathname === item.href }}>
+                {item.label}
+              </a>
+            ))}
+          </nav>
+          <div class="site-header__actions">
+            <a href="/live/?mode=public#/seismic" class="button button--ghost">Live Demo</a>
+            <a href="/pricing/" class="button button--primary">Start Evaluation</a>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <slot />
+      </main>
+
+      <footer class="site-footer">
+        <div class="site-footer__inner">
+          <div>
+            <p class="site-footer__label">Ophiolite Charts</p>
+            <p class="site-footer__copy">
+              Commercial scientific and subsurface charting for teams shipping production web applications.
+            </p>
+          </div>
+          <div class="site-footer__links">
+            <a href="/docs/">Docs</a>
+            <a href="/examples/">Examples</a>
+            <a href="/pricing/">Pricing</a>
+            <a href="/contact/">Contact</a>
+          </div>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>

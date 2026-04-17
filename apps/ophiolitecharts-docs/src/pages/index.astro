@@ -1,0 +1,200 @@
+---
+import ExampleFrame from "../components/ExampleFrame.astro";
+import { launchExamples } from "../data/launchExamples";
+import MarketingLayout from "../layouts/MarketingLayout.astro";
+
+const heroExample = launchExamples[0]!;
+const heroStripExamples = launchExamples.slice(1, 4);
+---
+
+<MarketingLayout
+  title="Ophiolite Charts | Commercial Scientific Charting"
+  description="Commercial scientific and subsurface charts with live examples, typed wrappers, and focused launch chart families."
+>
+  <section class="hero-band">
+    <div class="hero-band__copy">
+      <p class="eyebrow">Commercial Scientific Charting</p>
+      <h1>Charts for scientific web apps that need more than dashboard defaults.</h1>
+      <p class="hero-band__lede">
+        Ophiolite Charts is a focused commercial chart library for subsurface and scientific workflows, with live launch examples, typed wrappers, and a documentation surface built around real integration work.
+      </p>
+      <div class="hero-band__actions">
+        <a href="/examples/" class="button button--primary">Browse Examples</a>
+        <a href="/docs/" class="button button--ghost">Read Docs</a>
+        <a href="/pricing/" class="button button--ghost">View Pricing</a>
+      </div>
+      <div class="hero-band__facts">
+        <div>
+          <span>Wrappers</span>
+          <strong>JavaScript and Svelte</strong>
+        </div>
+        <div>
+          <span>Launch Scope</span>
+          <strong>5 chart families</strong>
+        </div>
+        <div>
+          <span>Commercial Model</span>
+          <strong>Evaluation to enterprise</strong>
+        </div>
+      </div>
+    </div>
+    <div class="hero-band__stage">
+      <a href={heroExample.href} class="hero-shot">
+        <img src={heroExample.imageSrc} alt={heroExample.imageAlt} class="hero-shot__image" />
+        <div class="hero-shot__overlay">
+          <p class="eyebrow">Featured Example</p>
+          <h2>{heroExample.title}</h2>
+          <p>{heroExample.description}</p>
+        </div>
+      </a>
+      <div class="hero-strip">
+        {heroStripExamples.map((example) => (
+          <a href={example.href} class="hero-strip__item">
+            <img src={example.imageSrc} alt={example.imageAlt} class="hero-strip__image" />
+            <div class="hero-strip__copy">
+              <p>{example.title}</p>
+            </div>
+          </a>
+        ))}
+      </div>
+      <div class="hero-band__stage-meta">
+        <div class="metric-panel">
+          <p class="metric-panel__label">What ships today</p>
+          <ul class="metric-panel__list">
+            <li>Typed chart handles and viewport control</li>
+            <li>Live public examples for launch families</li>
+            <li>Docs centered on actual wrapper boundaries</li>
+          </ul>
+        </div>
+        <div class="metric-panel">
+          <p class="metric-panel__label">Where it fits</p>
+          <ul class="metric-panel__list">
+            <li>Interpretation tooling</li>
+            <li>Scientific workstations</li>
+            <li>Specialized product interfaces</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="content-band">
+    <div class="section-heading">
+      <p class="eyebrow">Launch Families</p>
+      <h2>Built around the chart surfaces your users actually work in.</h2>
+      <p>
+        The launch story is intentionally narrow. Instead of pretending to cover every chart category, the site centers on the families that already have real product value and clear documentation paths.
+      </p>
+    </div>
+    <div class="family-grid">
+      {launchExamples.map((chart) => (
+        <article class="family-card">
+          <p class="family-card__eyebrow">Launch Family</p>
+          <h3>{chart.title}</h3>
+          <p>{chart.description}</p>
+          <div class="family-card__actions">
+            <a href={chart.href}>Open example</a>
+            <a href={chart.docsHref}>Documentation</a>
+          </div>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="content-band content-band--accent">
+    <div class="section-heading">
+      <p class="eyebrow">Why Teams Buy</p>
+      <h2>Commercial setup without pretending the API is broader than it is.</h2>
+    </div>
+    <div class="value-grid">
+      <article>
+        <h3>Live examples before marketing promises</h3>
+        <p>Every primary CTA can lead to a runnable chart, not just a screenshot wall or feature list.</p>
+      </article>
+      <article>
+        <h3>Typed wrapper boundary</h3>
+        <p>The current public surface is explicit about what belongs to the wrapper, what belongs to the host app, and what is still early access.</p>
+      </article>
+      <article>
+        <h3>Domain-aware interaction model</h3>
+        <p>Scientific workflows need probes, overlays, and chart-specific actions that generic BI libraries rarely model cleanly.</p>
+      </article>
+      <article>
+        <h3>Commercial rollout path</h3>
+        <p>Evaluation, team licensing, and enterprise support sit in the product story from day one instead of being bolted on later.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="content-band">
+    <div class="section-heading">
+      <p class="eyebrow">Integration</p>
+      <h2>Start with wrappers that are easy to explain to engineering teams.</h2>
+    </div>
+    <div class="code-grid">
+      <article class="code-panel">
+        <div class="code-panel__header">
+          <h3>Svelte</h3>
+          <a href="/docs/embedding/svelte-api/">Wrapper docs</a>
+        </div>
+        <pre><code>{`<SeismicSectionChart
+  chartId="section-demo"
+  section={section}
+  viewport={viewport}
+  onViewportChange={({ viewport }) => {
+    currentViewport = viewport;
+  }}
+/>`}</code></pre>
+      </article>
+      <article class="code-panel">
+        <div class="code-panel__header">
+          <h3>JavaScript</h3>
+          <a href="/docs/embedding/javascript-notes/">Embedding notes</a>
+        </div>
+        <pre><code>{`import { SeismicSectionChart } from "@ophiolite/charts";
+
+const chart = new SeismicSectionChart({
+  target,
+  props: {
+    chartId: "section-demo",
+    section,
+    viewport
+  }
+});`}</code></pre>
+      </article>
+    </div>
+  </section>
+
+  <section class="content-band">
+    <div class="section-heading">
+      <p class="eyebrow">Live Launch Examples</p>
+      <h2>Use a visual gallery on the site, then open the real demo when you need to poke at behavior.</h2>
+    </div>
+    <div class="example-grid">
+      {launchExamples.slice(0, 3).map((chart) => (
+        <ExampleFrame
+          title={chart.title}
+          description={chart.description}
+          href={chart.href}
+          docsHref={chart.docsHref}
+          imageSrc={chart.imageSrc}
+          imageAlt={chart.imageAlt}
+        />
+      ))}
+    </div>
+  </section>
+
+  <section class="cta-band">
+    <div>
+      <p class="eyebrow">Early Access</p>
+      <h2>Use the site like a commercial library today, then harden the API in public.</h2>
+      <p>
+        The immediate goal is a credible product surface: live examples, clear docs, and pricing that matches a serious rollout conversation.
+      </p>
+    </div>
+    <div class="cta-band__actions">
+      <a href="/pricing/" class="button button--primary">Start Evaluation</a>
+      <a href="/contact/" class="button button--ghost">Talk Through Rollout</a>
+    </div>
+  </section>
+</MarketingLayout>

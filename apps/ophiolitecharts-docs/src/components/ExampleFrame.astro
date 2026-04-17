@@ -1,0 +1,39 @@
+---
+interface Props {
+  title: string;
+  description: string;
+  href: string;
+  docsHref?: string;
+  imageSrc: string;
+  imageAlt: string;
+  eyebrow?: string;
+  compact?: boolean;
+}
+
+const { title, description, href, docsHref, imageSrc, imageAlt, eyebrow = "Live Example", compact = false } =
+  Astro.props;
+---
+
+<article class:list={{ "example-card": true, "example-card--compact": compact }}>
+  <div class="example-card__media">
+    <img src={imageSrc} alt={imageAlt} class="example-card__image" loading="lazy" />
+    <div class="example-card__media-bar">
+      <span></span>
+      <span></span>
+      <span></span>
+    </div>
+  </div>
+  <div class="example-card__body">
+    <p class="example-card__eyebrow">{eyebrow}</p>
+    <h3>{title}</h3>
+    <p>{description}</p>
+    <div class="example-card__actions">
+      <a href={href} class="button button--primary">Open Example</a>
+      {docsHref && (
+        <a href={docsHref} class="button button--ghost">
+          Read Docs
+        </a>
+      )}
+    </div>
+  </div>
+</article>

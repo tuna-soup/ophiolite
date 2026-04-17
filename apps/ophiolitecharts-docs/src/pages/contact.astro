@@ -1,0 +1,81 @@
+---
+import MarketingLayout from "../layouts/MarketingLayout.astro";
+---
+
+<MarketingLayout
+  title="Contact | Ophiolite Charts"
+  description="Contact Ophiolite Charts for evaluation, team licensing, and enterprise rollout discussions."
+>
+  <section class="page-intro">
+    <p class="eyebrow">Contact</p>
+    <h1>Start with the product surface, then move into rollout questions.</h1>
+    <p>
+      The current commercial motion is deliberately direct. Use the examples, read the docs, and then start a conversation once you know which chart families and integration boundaries matter for your application.
+    </p>
+  </section>
+
+  <section class="contact-grid">
+    <article class="contact-card">
+      <p class="contact-card__eyebrow">Recommended Path</p>
+      <h2>Evaluation first</h2>
+      <ol class="contact-card__steps">
+        <li>Open the launch-family live examples.</li>
+        <li>Read the matching wrapper and chart-family docs.</li>
+        <li>Use pricing to choose evaluation, team, or enterprise scope.</li>
+      </ol>
+      <div class="contact-card__actions">
+        <a href="/examples/" class="button button--primary">Open Examples</a>
+        <a href="/pricing/" class="button button--ghost">Review Pricing</a>
+      </div>
+    </article>
+
+    <article class="contact-card">
+      <p class="contact-card__eyebrow">Prepare the Conversation</p>
+      <h2>Arrive with a concrete rollout shape</h2>
+      <p>
+        The fastest commercial conversation starts with specifics: which chart family, which wrapper, what data volume, and what interaction patterns your product actually needs.
+      </p>
+      <ul class="contact-card__steps">
+        <li>Which launch family or families matter</li>
+        <li>Whether you need JavaScript or Svelte first</li>
+        <li>What kind of rollout, support, and performance questions are blocking you</li>
+      </ul>
+      <div class="contact-card__actions">
+        <a href="/pricing/" class="button button--primary">Review Access Options</a>
+        <a href="/docs/" class="button button--ghost">Documentation</a>
+      </div>
+    </article>
+  </section>
+
+  <section class="content-band content-band--accent">
+    <div class="section-heading">
+      <p class="eyebrow">Current Channels</p>
+      <h2>Use the public project surface while the commercial intake stays lean.</h2>
+      <p>
+        Early access is still coordinated directly, so the public site should help teams self-qualify before a commercial thread starts.
+      </p>
+    </div>
+    <div class="value-grid">
+      <article>
+        <h3>Examples first</h3>
+        <p>Use the live examples page to narrow the conversation to a concrete chart family.</p>
+      </article>
+      <article>
+        <h3>Docs second</h3>
+        <p>Match the example with the wrapper and chart-family docs so the API conversation has a stable reference point.</p>
+      </article>
+      <article>
+        <h3>Pricing third</h3>
+        <p>Move into evaluation, team, or enterprise scope only after the technical surface is clear.</p>
+      </article>
+      <article>
+        <h3>Repository context</h3>
+        <p>The project repository still acts as the public anchor while the commercial site tightens around the supported surface.</p>
+      </article>
+    </div>
+    <div class="cta-band__actions">
+      <a href="/examples/" class="button button--primary">Open Examples</a>
+      <a href="https://github.com/tuna-soup/ophiolite" class="button button--ghost">Project Repository</a>
+    </div>
+  </section>
+</MarketingLayout>

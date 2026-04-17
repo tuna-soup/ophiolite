@@ -17,47 +17,37 @@ export default defineConfig({
       disable404Route: true,
       customCss: ["./src/styles/custom.css"],
       sidebar: [
-        { label: "Home", link: "/" },
+        { label: "Overview", link: "/docs/" },
         {
-          label: "Docs",
-          items: [
-            { label: "Overview", link: "/docs/" },
-            {
-              label: "Getting Started",
-              collapsed: true,
-              autogenerate: { directory: "docs/getting-started" }
-            },
-            {
-              label: "Core Concepts",
-              collapsed: true,
-              autogenerate: { directory: "docs/core-concepts" }
-            },
-            {
-              label: "Chart Families",
-              collapsed: true,
-              autogenerate: { directory: "docs/chart-families" }
-            },
-            {
-              label: "Data Models",
-              collapsed: true,
-              autogenerate: { directory: "docs/data-models" }
-            },
-            {
-              label: "Interactions",
-              collapsed: true,
-              autogenerate: { directory: "docs/interactions" }
-            },
-            {
-              label: "Embedding",
-              collapsed: true,
-              autogenerate: { directory: "docs/embedding" }
-            }
-          ]
+          label: "Getting Started",
+          collapsed: true,
+          autogenerate: { directory: "docs/getting-started" }
         },
-        { label: "Examples", link: "/examples/" },
-        { label: "Pricing", link: "/pricing/" },
-        { label: "Benchmarks", link: "/benchmarks/" },
-        { label: "Contact", link: "/contact/" }
+        {
+          label: "Core Concepts",
+          collapsed: true,
+          autogenerate: { directory: "docs/core-concepts" }
+        },
+        {
+          label: "Chart Families",
+          collapsed: true,
+          autogenerate: { directory: "docs/chart-families" }
+        },
+        {
+          label: "Data Models",
+          collapsed: true,
+          autogenerate: { directory: "docs/data-models" }
+        },
+        {
+          label: "Interactions",
+          collapsed: true,
+          autogenerate: { directory: "docs/interactions" }
+        },
+        {
+          label: "Embedding",
+          collapsed: true,
+          autogenerate: { directory: "docs/embedding" }
+        }
       ]
     })
   ]

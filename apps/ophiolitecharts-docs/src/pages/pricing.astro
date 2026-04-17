@@ -1,24 +1,40 @@
 ---
 import MarketingLayout from "../layouts/MarketingLayout.astro";
+import { enterpriseMailto, evaluationMailto, teamMailto } from "../data/contact";
 
 const plans = [
   {
     name: "Evaluation",
-    summary: "Use this when you need to validate chart-family fit, integration shape, and rollout constraints before committing to a license.",
-    points: ["Launch-family examples", "Docs and API review", "Commercial evaluation path"],
-    cta: "Start Evaluation"
+    summary: "Use this when you need to validate chart-family fit, wrapper shape, and rollout constraints before committing to a license.",
+    points: [
+      "Launch-family examples and docs alignment",
+      "Direct evaluation intake by email",
+      "Fit assessment around current JS and Svelte surfaces"
+    ],
+    cta: "Start Evaluation",
+    href: evaluationMailto
   },
   {
     name: "Team",
-    summary: "Commercial access for product teams shipping against the supported wrapper surface and documented chart families.",
-    points: ["Team licensing", "Implementation guidance", "Priority issue handling"],
-    cta: "Discuss Team Access"
+    summary: "Commercial access for product teams shipping against the supported wrapper surface and documented launch families.",
+    points: [
+      "Team licensing around the supported product surface",
+      "Implementation guidance during integration",
+      "Priority issue handling for supported flows"
+    ],
+    cta: "Discuss Team Access",
+    href: teamMailto
   },
   {
     name: "Enterprise",
     summary: "For larger programs that need rollout planning, support expectations, and alignment around long-lived product ownership.",
-    points: ["Enterprise rollout support", "Planning and escalation path", "Commercial alignment for larger deployments"],
-    cta: "Talk Enterprise"
+    points: [
+      "Enterprise rollout support and planning",
+      "Escalation path for serious delivery programs",
+      "Commercial alignment for larger deployments"
+    ],
+    cta: "Talk Enterprise",
+    href: enterpriseMailto
   }
 ];
 ---
@@ -29,9 +45,9 @@ const plans = [
 >
   <section class="page-intro">
     <p class="eyebrow">Pricing</p>
-    <h1>Simple commercial packaging for an early but serious product surface.</h1>
+    <h1>Commercial packaging for teams evaluating and shipping a focused chart surface.</h1>
     <p>
-      The pricing page is intentionally structured like a commercial library, even while the launch surface stays focused. The immediate goal is clean evaluation and rollout conversations, not fake self-serve complexity.
+      The launch scope is narrow on purpose, so the pricing story is narrow too. The site should make it obvious how to start an evaluation, when to move to a team license, and when an enterprise rollout conversation is justified.
     </p>
   </section>
 
@@ -44,9 +60,37 @@ const plans = [
         <ul class="pricing-card__list">
           {plan.points.map((point) => <li>{point}</li>)}
         </ul>
-        <a href="/contact/" class="button button--primary">{plan.cta}</a>
+        <a href={plan.href} class="button button--primary">{plan.cta}</a>
       </article>
     ))}
+  </section>
+
+  <section class="content-band">
+    <div class="section-heading">
+      <p class="eyebrow">What To Send</p>
+      <h2>Good evaluation emails are specific.</h2>
+      <p>
+        The fastest path is a short message that states the chart families you care about, which wrapper you need first, and what makes the rollout commercially meaningful.
+      </p>
+    </div>
+    <div class="value-grid">
+      <article>
+        <h3>Technical scope</h3>
+        <p>List the chart families, data shape, and wrapper surface you need to validate first.</p>
+      </article>
+      <article>
+        <h3>Product scope</h3>
+        <p>Explain whether this is a prototype, a team rollout, or an enterprise delivery program.</p>
+      </article>
+      <article>
+        <h3>Decision blockers</h3>
+        <p>Call out the interaction, performance, or support questions that have to be answered before you proceed.</p>
+      </article>
+      <article>
+        <h3>Timeline</h3>
+        <p>Include when you need an answer so the conversation can match the urgency of the project.</p>
+      </article>
+    </div>
   </section>
 
   <section class="content-band content-band--accent">
@@ -71,6 +115,10 @@ const plans = [
         <h3>Enterprise support is real support</h3>
         <p>That tier is for rollout planning and execution, not just a renamed email inbox.</p>
       </article>
+    </div>
+    <div class="cta-band__actions">
+      <a href={evaluationMailto} class="button button--primary">Email Evaluation Intake</a>
+      <a href="/examples/" class="button button--ghost">Browse Launch Examples</a>
     </div>
   </section>
 </MarketingLayout>

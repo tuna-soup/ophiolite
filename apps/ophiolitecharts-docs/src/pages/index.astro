@@ -1,5 +1,6 @@
 ---
 import ExampleFrame from "../components/ExampleFrame.astro";
+import { evaluationMailto } from "../data/contact";
 import { launchExamples } from "../data/launchExamples";
 import MarketingLayout from "../layouts/MarketingLayout.astro";
 
@@ -194,7 +195,7 @@ const chart = new SeismicSectionChart({
     </div>
     <div class="cta-band__actions">
       <a href="/pricing/" class="button button--primary">Start Evaluation</a>
-      <a href="/contact/" class="button button--ghost">Talk Through Rollout</a>
+      <a href={evaluationMailto} class="button button--ghost">Email Evaluation Intake</a>
     </div>
   </section>
 </MarketingLayout>

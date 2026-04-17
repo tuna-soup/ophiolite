@@ -1,5 +1,6 @@
 ---
 import MarketingLayout from "../layouts/MarketingLayout.astro";
+import { enterpriseMailto, evaluationEmail, evaluationMailto, teamMailto } from "../data/contact";
 ---
 
 <MarketingLayout
@@ -8,10 +9,35 @@ import MarketingLayout from "../layouts/MarketingLayout.astro";
 >
   <section class="page-intro">
     <p class="eyebrow">Contact</p>
-    <h1>Start with the product surface, then move into rollout questions.</h1>
+    <h1>Start with a direct evaluation email, not a vague contact funnel.</h1>
     <p>
-      The current commercial motion is deliberately direct. Use the examples, read the docs, and then start a conversation once you know which chart families and integration boundaries matter for your application.
+      The current intake path is intentionally simple. Review the examples and docs, then send a concise email describing your chart family needs, wrapper surface, and rollout scope.
     </p>
+  </section>
+
+  <section class="featured-example">
+    <div class="featured-example__copy">
+      <p class="eyebrow">Direct Intake</p>
+      <h2>{evaluationEmail}</h2>
+      <p>
+        Use this address for evaluation, team-license, and enterprise-rollout conversations. The best first message is short, technical, and specific about the product surface you need.
+      </p>
+      <div class="featured-example__actions">
+        <a href={evaluationMailto} class="button button--primary">Start Evaluation Email</a>
+        <a href={teamMailto} class="button button--ghost">Team License Email</a>
+        <a href={enterpriseMailto} class="button button--ghost">Enterprise Email</a>
+      </div>
+    </div>
+    <article class="contact-card">
+      <p class="contact-card__eyebrow">Include These Fields</p>
+      <ol class="contact-card__steps">
+        <li>Company and product context</li>
+        <li>Chart families you need first</li>
+        <li>Whether JavaScript or Svelte is the first wrapper surface</li>
+        <li>Expected rollout scale and timeline</li>
+        <li>Any performance or support questions that block adoption</li>
+      </ol>
+    </article>
   </section>
 
   <section class="contact-grid">
@@ -21,11 +47,12 @@ import MarketingLayout from "../layouts/MarketingLayout.astro";
       <ol class="contact-card__steps">
         <li>Open the launch-family live examples.</li>
         <li>Read the matching wrapper and chart-family docs.</li>
-        <li>Use pricing to choose evaluation, team, or enterprise scope.</li>
+        <li>Choose evaluation, team, or enterprise scope.</li>
+        <li>Send the matching intake email.</li>
       </ol>
       <div class="contact-card__actions">
         <a href="/examples/" class="button button--primary">Open Examples</a>
-        <a href="/pricing/" class="button button--ghost">Review Pricing</a>
+        <a href={evaluationMailto} class="button button--ghost">Email Evaluation Intake</a>
       </div>
     </article>
 

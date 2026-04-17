@@ -1,0 +1,23 @@
+---
+title: Ophiolite Adapters
+description: Adapter guidance for teams already using Ophiolite-native contracts.
+---
+
+When your application already speaks Ophiolite-native contracts, use the adapter layer explicitly.
+
+## Import Path
+
+```ts
+import { decodeSectionView } from "@ophiolite/charts/adapters/ophiolite";
+```
+
+The older `@ophiolite/charts/contracts` path remains available for compatibility, but the adapter namespace is the cleaner product-facing path.
+
+## Why It Is Separate
+
+The adapter path exists to keep two concerns distinct:
+
+- the public chart wrapper surface
+- first-party Ophiolite contract translation
+
+That separation makes it easier for external product teams to evaluate Ophiolite Charts without needing to adopt the full Ophiolite contract model up front.

@@ -1,0 +1,36 @@
+---
+title: Rock Physics Crossplot
+description: Launch-family guidance for the rock physics crossplot wrapper.
+---
+
+`RockPhysicsCrossplotChart` is the point-cloud launch family for rock-physics analysis.
+
+## Use It For
+
+- template-scoped crossplots
+- dense point-cloud inspection
+- axis overrides owned by the host
+- categorical or continuous color binding
+
+## Stable Public Ideas
+
+- model input
+- viewport
+- probe callbacks
+- axis override callbacks
+- host-owned axis editing flow
+
+## Handle Surface
+
+```ts
+type RockPhysicsCrossplotChartHandle = {
+  fitToData(): void;
+  setViewport(nextViewport: NonNullable<RockPhysicsCrossplotChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+  panBy(deltaX: number, deltaY: number): void;
+};
+```
+
+## Positioning
+
+This family shows the product direction clearly: constrained scientific semantics, strong interaction support, and a more credible story for domain applications than a generic scatterplot wrapper.

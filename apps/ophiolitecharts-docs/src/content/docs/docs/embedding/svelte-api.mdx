@@ -1,0 +1,53 @@
+---
+title: Svelte API
+description: Public wrapper and handle guidance for the Svelte-first launch surface.
+---
+
+The launch product is Svelte-first.
+
+## Public Wrapper Surface
+
+Use `@ophiolite/charts` as the default import path:
+
+```ts
+import {
+  SeismicSectionChart,
+  SeismicGatherChart,
+  SurveyMapChart,
+  WellCorrelationPanelChart,
+  RockPhysicsCrossplotChart,
+  type SeismicSectionChartHandle,
+  type SeismicGatherChartHandle,
+  type SurveyMapChartHandle,
+  type WellCorrelationPanelChartHandle,
+  type RockPhysicsCrossplotChartHandle
+} from "@ophiolite/charts";
+```
+
+## Handle Contract
+
+The public handle contract is intentionally narrow.
+
+For the launch families, expect documented methods such as:
+
+- `fitToData()`
+- `setViewport(...)`
+- `zoomBy(...)`
+- `panBy(...)` where the family supports it
+
+Some wrappers expose additional methods, but the product direction is to document only the methods that are stable enough to support commercially.
+
+## Host Responsibilities
+
+The host application should own:
+
+- data fetching and model assembly
+- external workflow state
+- axis editing dialogs
+- cross-chart coordination
+
+The wrapper should own:
+
+- chart rendering
+- chart-local interaction handling
+- chart-native callbacks

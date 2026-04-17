@@ -1,0 +1,35 @@
+---
+title: Well Correlation Panel
+description: Launch-family guidance for the well correlation panel wrapper.
+---
+
+`WellCorrelationPanelChart` is the multi-well depth-aligned family in the launch surface.
+
+## Use It For
+
+- multi-track well displays
+- tops and markers
+- depth-aligned comparison across wells
+- embedded seismic content inside a panel workflow
+
+## Stable Public Ideas
+
+- panel model input
+- explicit viewport
+- probe callbacks
+- interaction events for host-owned workflows
+
+## Handle Surface
+
+```ts
+type WellCorrelationPanelChartHandle = {
+  fitToData(): void;
+  setViewport(nextViewport: NonNullable<WellCorrelationPanelChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+  panBy(deltaDepth: number): void;
+};
+```
+
+## Positioning
+
+This family is one of the strongest differentiators in the current product direction because it reflects a real scientific interpretation workflow rather than a commodity chart category.

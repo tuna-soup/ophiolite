@@ -1,0 +1,22 @@
+{
+  "name": "ophiolitecharts-docs",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build:live-examples": "bun run ./scripts/build-live-examples.ts",
+    "dev": "astro dev",
+    "dev:with-live": "bun run build:live-examples && astro dev",
+    "build:site": "astro build",
+    "build": "bun run build:live-examples && astro build",
+    "preview": "astro preview",
+    "preview:with-live": "bun run build && astro preview"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.32.0",
+    "astro": "^5.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

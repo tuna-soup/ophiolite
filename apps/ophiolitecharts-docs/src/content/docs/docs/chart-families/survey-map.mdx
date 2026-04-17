@@ -1,0 +1,34 @@
+---
+title: Survey Map
+description: Launch-family guidance for the survey map wrapper.
+---
+
+`SurveyMapChart` is the plan-view mapping family in the launch release.
+
+## Use It For
+
+- survey outlines
+- well surface positions
+- plan trajectories
+- optional scalar-field overlays
+
+## Stable Public Ideas
+
+- map model input
+- selection callbacks
+- explicit viewport
+- minimal interaction vocabulary compared with the denser chart families
+
+## Handle Surface
+
+```ts
+type SurveyMapChartHandle = {
+  fitToData(): void;
+  setViewport(nextViewport: NonNullable<SurveyMapChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+};
+```
+
+## Positioning
+
+The family is intentionally simpler than a GIS platform. It is a chart-level plan view that fits into scientific applications already shaped by the rest of the Ophiolite Charts surface.

@@ -1,0 +1,82 @@
+---
+title: Hosting and Deploying
+description: Production hosting options and required setup for ophiolitecharts.com.
+---
+
+The charts site is now built as a self-contained static artifact with the live examples runtime bundled under `/live/`.
+
+## What Is Already Done
+
+- the docs site builds as static output
+- the public examples runtime is bundled into the site artifact
+- the workflow uploads a deployable artifact
+- no runtime server or backend service is required for the current site
+
+## What Still Needs A Choice
+
+You still need to choose the production host for `ophiolitecharts.com`.
+
+## Recommended Hosting Options
+
+### 1. Separate GitHub Pages repository
+
+Choose this when you want to stay close to the current `ophiolite.dev` model.
+
+Use this shape:
+
+- keep this repo as the source of truth
+- publish the built `apps/ophiolitecharts-docs/dist` artifact into a separate repository
+- bind `ophiolitecharts.com` to that separate Pages site
+
+Why this works:
+
+- it avoids colliding with the existing `ophiolite.dev` Pages setup
+- it keeps the charts site static and cheap to host
+
+### 2. Cloudflare Pages
+
+Choose this when you want the cleanest custom-domain setup with minimal operational overhead.
+
+Use this shape:
+
+- deploy `apps/ophiolitecharts-docs/dist`
+- point `ophiolitecharts.com` at the Cloudflare Pages project
+
+Why this works:
+
+- very good fit for static assets
+- easy DNS and TLS management if the domain is already in Cloudflare
+
+### 3. Netlify or Vercel
+
+Choose this when you prefer a polished static-host workflow and preview deployments.
+
+Use this shape:
+
+- deploy the built artifact
+- bind the apex domain and optional `www` redirect there
+
+Why this works:
+
+- good preview workflows
+- simple static hosting path
+
+## Required External Configuration
+
+Whichever host you choose, these are the external steps:
+
+1. Create the production site or repository.
+2. Point `ophiolitecharts.com` DNS at that host.
+3. Add the `www` redirect if you want it.
+4. Enable HTTPS.
+
+## What I Need From You
+
+I need one decision from you:
+
+- separate GitHub Pages repository
+- Cloudflare Pages
+- Netlify
+- Vercel
+
+Once that is chosen, the remaining configuration is mostly mechanical.

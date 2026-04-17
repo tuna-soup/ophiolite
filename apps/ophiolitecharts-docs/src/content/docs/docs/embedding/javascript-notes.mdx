@@ -1,0 +1,24 @@
+---
+title: JavaScript Notes
+description: Current JavaScript positioning for the early-access release.
+---
+
+The launch product is not yet a separate first-class vanilla-JavaScript chart runtime with a distinct public API.
+
+## Current Position
+
+JavaScript support today means:
+
+- the wrappers are frontend-native
+- JavaScript applications can embed the same public chart package
+- the primary product examples and documentation remain Svelte-first
+
+## Why This Is The Current Scope
+
+The public boundary is still being hardened. Expanding the product promise before the wrapper and model surface is cleaner would create unnecessary compatibility churn.
+
+The right order is:
+
+1. make the Svelte-first surface explicit and credible
+2. stabilize model and handle contracts
+3. broaden the JavaScript story from that stronger base

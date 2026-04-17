@@ -1,0 +1,75 @@
+---
+title: Getting Started
+description: Install the public charts package and start with the launch chart families.
+---
+
+The first release centers on `@ophiolite/charts`.
+
+Start here when you want:
+
+- the public package entry point
+- the supported launch scope
+- the smallest successful embedding path
+
+The initial public flow is:
+
+1. choose a launch chart family
+2. shape data into the documented chart model
+3. render through the public wrapper
+4. wire viewport and interaction callbacks only where needed
+
+## Launch Scope
+
+The early-access release is deliberately narrow.
+
+Supported launch families:
+
+- `SeismicSectionChart`
+- `SeismicGatherChart`
+- `WellCorrelationPanelChart`
+- `SurveyMapChart`
+- `RockPhysicsCrossplotChart`
+
+Held back from the main product story for now:
+
+- `VolumeInterpretationChart`
+- AVO families as product-facing launch pillars
+
+## Public Entry Points
+
+Use these imports as the default mental model:
+
+```ts
+import {
+  SeismicSectionChart,
+  SeismicGatherChart,
+  SurveyMapChart,
+  WellCorrelationPanelChart,
+  RockPhysicsCrossplotChart
+} from "@ophiolite/charts";
+```
+
+Use the Ophiolite adapter layer only when you are already inside the Ophiolite contract ecosystem:
+
+```ts
+import { decodeSectionView } from "@ophiolite/charts/adapters/ophiolite";
+```
+
+## First Successful Embed
+
+The first successful integration should be small:
+
+1. render one chart family
+2. pass a single documented model into the wrapper
+3. call `fitToData()` or `setViewport(...)` only if your host needs view control
+4. listen to `onProbeChange` or `onViewportChange` only if the surrounding application needs those signals
+
+## Product Boundary
+
+`@ophiolite/charts` is the public wrapper package.
+
+The product direction is:
+
+- start with public wrappers
+- keep lower-level packages out of first-pass adoption
+- treat Ophiolite-specific adapters as integration helpers rather than the default story

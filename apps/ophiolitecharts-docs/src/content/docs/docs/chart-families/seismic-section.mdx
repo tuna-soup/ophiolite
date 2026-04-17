@@ -1,0 +1,40 @@
+---
+title: Seismic Section
+description: Launch-family guidance for the seismic section wrapper.
+---
+
+`SeismicSectionChart` is the primary 2D seismic surface in the launch release.
+
+## Use It For
+
+- inline, crossline, or arbitrary section views
+- heatmap and wiggle presentation
+- horizon overlays
+- well overlays
+- probe-driven interpretation workflows
+
+## Stable Public Ideas
+
+- section input
+- optional secondary section for comparison
+- explicit viewport
+- display transform
+- interaction callbacks
+- split comparison state
+
+## Handle Surface
+
+```ts
+type SeismicSectionChartHandle = {
+  fitToData(): void;
+  resetView(): void;
+  setViewport(nextViewport: NonNullable<SeismicSectionChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+  panBy(deltaTrace: number, deltaSample: number): void;
+  setSplitRatio(nextSplitPosition: number): void;
+};
+```
+
+## Current Boundary
+
+Today the wrapper still accepts Ophiolite-shaped encoded section data. The product direction is to preserve adapter compatibility while making the public model boundary clearer in the docs and examples.

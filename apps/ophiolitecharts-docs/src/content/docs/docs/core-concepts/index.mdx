@@ -1,0 +1,62 @@
+---
+title: Core Concepts
+description: The mental model behind public chart wrappers, view state, and domain-aware interactions.
+---
+
+The public SDK is being hardened around a few stable ideas:
+
+- a chart family owns a constrained visual and interaction domain
+- data reaches the wrapper through a chart-specific model
+- viewport and probe state are explicit
+- imperative handles stay narrow and documented
+
+The public surface is intentionally smaller than the internal implementation surface.
+
+## Chart Families Are Contracts
+
+Each family owns more than a renderer. It owns:
+
+- what data shapes are valid
+- what interactions are available
+- what overlays or annotations make sense
+- what imperative controls are safe to rely on
+
+This is a deliberate difference from generic chart libraries that encourage arbitrary series composition everywhere.
+
+## View State Is Explicit
+
+The launch families are built around explicit state rather than hidden internal view mutations.
+
+Typical public concepts:
+
+- `viewport`
+- `probe`
+- `interaction state`
+- chart-specific overlays or axis overrides
+
+That keeps charts composable inside larger scientific applications where the host often needs to coordinate multiple views.
+
+## Handles Stay Narrow
+
+The public handle contract is intentionally modest:
+
+- `fitToData()`
+- `setViewport(...)`
+- `zoomBy(...)`
+- `panBy(...)` where the family supports panning
+
+Some families expose additional methods, but the product direction is to document only the methods that are genuinely stable and reusable.
+
+## Adapters Are Not The Product Boundary
+
+Ophiolite-native DTO adapters remain important for first-party integration, but they are not the default public mental model for the SDK.
+
+The default product story is:
+
+- public wrapper
+- documented chart model
+- explicit view and interaction callbacks
+
+The adapter story is:
+
+- bridge existing Ophiolite contracts into those wrappers when that ecosystem is already present

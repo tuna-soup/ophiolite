@@ -1,0 +1,36 @@
+---
+title: Prestack Gather
+description: Launch-family guidance for the prestack gather wrapper.
+---
+
+`SeismicGatherChart` is the prestack counterpart to the seismic section family.
+
+## Use It For
+
+- gather inspection
+- wiggle and heatmap comparison
+- shared seismic viewport interactions
+- probe-based prestack analysis
+
+## Stable Public Ideas
+
+- gather input
+- explicit viewport
+- display transform
+- interaction callbacks
+
+## Handle Surface
+
+```ts
+type SeismicGatherChartHandle = {
+  fitToData(): void;
+  resetView(): void;
+  setViewport(nextViewport: NonNullable<SeismicGatherChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+  panBy(deltaTrace: number, deltaSample: number): void;
+};
+```
+
+## Positioning
+
+This family is intentionally narrow. It does not pretend to be a generic matrix or dense-image chart. The strength is a constrained seismic interaction and presentation model.

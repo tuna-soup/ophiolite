@@ -1,0 +1,37 @@
+---
+title: Data Models
+description: Public model boundaries for launch chart families.
+---
+
+The public product direction is to present neutral chart models at the wrapper boundary, while Ophiolite-specific DTO adapters remain available as an integration layer rather than the default story.
+
+This area is under active hardening for early access.
+
+## Model Strategy
+
+The target public shape is:
+
+- chart-family-specific model types
+- wrapper props that read as chart concepts rather than transport contracts
+- adapter layers for first-party Ophiolite contracts
+
+## Current Reality
+
+The current codebase still exposes some Ophiolite-native types and encoded seismic payload structures through the public wrapper types.
+
+That means early-access docs should make a clear distinction between:
+
+- the product direction
+- the current compatibility layer
+
+## What To Expect
+
+Short term:
+
+- launch examples will use the current public wrapper types honestly
+- adapter guidance will be explicit and separate
+
+Medium term:
+
+- neutral chart models will become more prominent
+- Ophiolite adapters will read as a sidecar integration path rather than the main API story

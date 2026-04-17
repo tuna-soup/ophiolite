@@ -1,0 +1,35 @@
+---
+title: Interactions
+description: Shared interaction ideas across launch chart families.
+---
+
+The launch surface is organized around shared interaction ideas:
+
+- pointer and probe behavior
+- panning and viewport control
+- crosshair-style modifiers where supported
+- chart-family-specific actions such as fit-to-data
+
+The goal is a stable user mental model across chart families instead of one-off behavior per chart.
+
+## Stable Public Signals
+
+The public wrapper surface already exposes a few interaction-related ideas consistently:
+
+- current tool or interaction config
+- `onProbeChange`
+- `onViewportChange`
+- `onInteractionStateChange`
+- `onInteractionEvent`
+
+## Chart-Family Variation
+
+The interaction model is shared, but not identical across all charts.
+
+Examples:
+
+- seismic and rock-physics families expose crosshair-style behavior
+- survey map keeps a smaller tool set
+- well correlation centers on depth-aligned navigation
+
+The product direction is to keep those differences intentional and documented rather than flattening everything into one vague interaction abstraction.

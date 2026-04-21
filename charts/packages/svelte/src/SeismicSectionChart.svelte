@@ -1,15 +1,23 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
+  import {
+    formatSeismicCssFont,
+    resolveProbePanelPresentation,
+    resolveSeismicPresentationProfile
+  } from "@ophiolite/charts-core";
   import type { SectionHorizonOverlay, SectionScalarOverlay, SectionWellOverlay } from "@ophiolite/charts-data-models";
   import { SeismicViewerController } from "@ophiolite/charts-domain";
   import { MockCanvasRenderer, PLOT_MARGIN, getPlotRect } from "@ophiolite/charts-renderer";
   import type { SectionViewport } from "@ophiolite/contracts";
+  import ProbePanel from "./ProbePanel.svelte";
+  import SeismicAxisOverlay from "./SeismicAxisOverlay.svelte";
   import { resolveSeismicStageSize, scaleSeismicStageSize } from "./seismic-stage";
   import {
     decodeSectionView,
     interactionToContract,
-    isCompatibleSectionIdentity,
+    canReuseSectionViewport,
+    shouldIgnoreExternalSectionViewport,
     mergeDisplayTransform,
     probeToContract,
     viewportFromContract,
@@ -35,6 +43,9 @@
     visibleSpan: number;
   }
 
+  const seismicPresentation = resolveSeismicPresentationProfile("standard");
+  const seismicOverlayFont = formatSeismicCssFont(seismicPresentation.typography.overlay);
+
   let {
     chartId,
     viewId,
@@ -51,6 +62,7 @@
     crosshairEnabled = true,
     primaryMode = "cursor",
     loading = false,
+    loadingMessage = "Loading section...",
     emptyMessage = "No section selected.",
     errorMessage = null,
     resetToken = null,
@@ -81,6 +93,7 @@
   let lastProbeKey = "";
   let lastInteractionKey = "";
   let lastInteractionStateKey = "";
+  let ignoredExternalViewportKey: string | null = null;
   let activePointerId: number | null = null;
   let activeDragKind: "pan" | "zoomRect" | null = null;
   let lastPanPoint: { x: number; y: number } | null = null;
@@ -90,11 +103,23 @@
   let lastRequestedTool = resolveRequestedTool();
   let effectiveTool = $state(lastRequestedTool);
   let resolvedDisplayTransform = $derived(mergeDisplayTransform(section, displayTransform));
+  const seismicProbePanelInset = resolveProbePanelPresentation("light", "standard").frame.insetPx;
   let stageSize = $derived(
     scaleSeismicStageSize(
       resolveSeismicStageSize("section", section?.traces, section?.samples, resolvedDisplayTransform.renderMode),
       stageScale
     )
+  );
+  let decodedSectionPayload = $derived(section ? decodeSectionView(section) : null);
+  let overlayViewport = $derived(
+    currentViewport
+      ? {
+          traceStart: currentViewport.trace_start,
+          traceEnd: currentViewport.trace_end,
+          sampleStart: currentViewport.sample_start,
+          sampleEnd: currentViewport.sample_end
+        }
+      : null
   );
   let hostCursor = $derived.by(() => {
     if (activeDragKind === "pan") {
@@ -128,7 +153,7 @@
   });
 
   function attachChartHost(element: HTMLDivElement): () => void {
-    const activeController = new SeismicViewerController(new MockCanvasRenderer());
+    const activeController = new SeismicViewerController(new MockCanvasRenderer({ axisChrome: "none" }));
     controller = activeController;
     currentProbe = null;
 
@@ -299,10 +324,18 @@
     const sectionScalarOverlaysChanged = sectionScalarOverlays !== lastSectionScalarOverlays;
     const sectionHorizonsChanged = sectionHorizons !== lastSectionHorizons;
     const sectionWellOverlaysChanged = sectionWellOverlays !== lastSectionWellOverlays;
+    const canReuseViewportAcrossSections = canReuseSectionViewport(lastSection, section);
     const shouldReset =
       forceReset ||
       resetToken !== lastResetToken ||
-      (sectionChanged && !isCompatibleSectionIdentity(lastSection, section));
+      (sectionChanged && !canReuseViewportAcrossSections);
+    const externalViewportKey = viewport ? `${viewId}:${JSON.stringify(viewport)}` : null;
+    const shouldIgnoreExternalViewport = shouldIgnoreExternalSectionViewport(
+      lastSection,
+      section,
+      externalViewportKey,
+      ignoredExternalViewportKey
+    );
 
     lastResetToken = resetToken;
 
@@ -315,6 +348,7 @@
       lastSection = section;
     } else if (!section) {
       lastSection = null;
+      ignoredExternalViewportKey = null;
     }
 
     if ((secondarySectionChanged || forceReset) && section) {
@@ -344,11 +378,15 @@
     activeController.setComparisonMode(compareMode);
     activeController.setSplitPosition(splitPosition);
 
-    if (viewport) {
+    if (viewport && section && !shouldIgnoreExternalViewport) {
+      ignoredExternalViewportKey = null;
       currentViewport = viewport;
       activeController.setViewport(viewportFromContract(viewport));
+    } else if (viewport && shouldIgnoreExternalViewport) {
+      ignoredExternalViewportKey = externalViewportKey;
     } else if (!section) {
       currentViewport = null;
+      ignoredExternalViewportKey = null;
     }
 
     applyTool(activeController, effectiveTool);
@@ -411,15 +449,18 @@
     activePointerId = event.pointerId;
     element.setPointerCapture(event.pointerId);
     const point = pointerPoint(event, element);
+    if (event.shiftKey) {
+      activeDragKind = controller.beginZoomRect(point.x, point.y, element.clientWidth, element.clientHeight)
+        ? "zoomRect"
+        : null;
+      return;
+    }
     if (effectiveTool === "pan") {
       activeDragKind = "pan";
       lastPanPoint = point;
       controller.clearPointer();
       return;
     }
-    activeDragKind = controller.beginZoomRect(point.x, point.y, element.clientWidth, element.clientHeight)
-      ? "zoomRect"
-      : null;
   }
 
   function handlePointerUp(event: PointerEvent): void {
@@ -434,9 +475,6 @@
     if (activeDragKind === "zoomRect") {
       const zoomed = controller.commitZoomRect(element.clientWidth, element.clientHeight);
       activeDragKind = null;
-      if (zoomed) {
-        setEffectiveTool("pointer");
-      }
       controller.updatePointer(point.x, point.y, element.clientWidth, element.clientHeight);
     } else if (activeDragKind === "pan") {
       activeDragKind = null;
@@ -541,7 +579,6 @@
     const point = pointerPoint(event, element);
     const zoomed = controller.zoomAt(point.x, point.y, element.clientWidth, element.clientHeight, 0.7);
     if (zoomed) {
-      setEffectiveTool("pointer");
       controller.updatePointer(point.x, point.y, element.clientWidth, element.clientHeight);
     }
     event.preventDefault();
@@ -767,6 +804,46 @@
     event.stopPropagation();
   }
 
+  function sectionProbeRows(): Array<{ label: string; value: string }> {
+    if (!currentProbe) {
+      return [];
+    }
+
+    const rows = [
+      {
+        label: "trace",
+        value: `${currentProbe.trace_index} (${currentProbe.trace_coordinate.toFixed(1)})`
+      }
+    ];
+
+    if (currentProbe.inline_coordinate !== null && currentProbe.inline_coordinate !== undefined) {
+      rows.push({
+        label: "IL",
+        value: currentProbe.inline_coordinate.toFixed(1)
+      });
+    }
+
+    if (currentProbe.xline_coordinate !== null && currentProbe.xline_coordinate !== undefined) {
+      rows.push({
+        label: "XL",
+        value: currentProbe.xline_coordinate.toFixed(1)
+      });
+    }
+
+    rows.push(
+      {
+        label: "sample",
+        value: `${currentProbe.sample_index} (${currentProbe.sample_value.toFixed(1)})`
+      },
+      {
+        label: "amplitude",
+        value: currentProbe.amplitude.toFixed(4)
+      }
+    );
+
+    return rows;
+  }
+
   function getScrollbarMetrics(axis: ScrollbarAxis): {
     trackStart: number;
     trackLength: number;
@@ -835,7 +912,22 @@
   }
 </script>
 
-<div class="ophiolite-charts-svelte-chart-shell">
+<div
+  class="ophiolite-charts-svelte-chart-shell"
+  style:--ophiolite-chart-shell-bg={seismicPresentation.palette.shellBackground}
+  style:--ophiolite-chart-overlay-bg={seismicPresentation.palette.overlayBackground}
+  style:--ophiolite-chart-overlay-text={seismicPresentation.palette.overlayText}
+  style:--ophiolite-chart-overlay-error={seismicPresentation.palette.overlayError}
+  style:--ophiolite-chart-overlay-font={seismicOverlayFont}
+  style:--ophiolite-chart-scrollbar-track-bg={seismicPresentation.palette.scrollbarTrack}
+  style:--ophiolite-chart-scrollbar-track-border={seismicPresentation.palette.scrollbarTrackBorder}
+  style:--ophiolite-chart-scrollbar-thumb-start={seismicPresentation.palette.scrollbarThumbStart}
+  style:--ophiolite-chart-scrollbar-thumb-end={seismicPresentation.palette.scrollbarThumbEnd}
+  style:--ophiolite-chart-scrollbar-thumb-active-start={seismicPresentation.palette.scrollbarThumbActiveStart}
+  style:--ophiolite-chart-scrollbar-thumb-active-end={seismicPresentation.palette.scrollbarThumbActiveEnd}
+  style:--ophiolite-chart-scrollbar-thumb-inner-border={seismicPresentation.palette.scrollbarThumbInnerBorder}
+  style:--ophiolite-chart-scrollbar-thumb-outer-border={seismicPresentation.palette.scrollbarThumbOuterBorder}
+>
   <div class="ophiolite-charts-svelte-chart-lane">
     <div
       class="ophiolite-charts-svelte-chart-stage"
@@ -857,8 +949,15 @@
         style:cursor={hostCursor ?? undefined}
         {@attach attachChartHost}
       ></div>
+      <SeismicAxisOverlay
+        section={decodedSectionPayload}
+        viewport={overlayViewport}
+        renderMode={resolvedDisplayTransform.renderMode}
+        stageWidth={stageSize.width}
+        stageHeight={stageSize.height}
+      />
       {#if loading}
-        <div class="ophiolite-charts-overlay">{emptyMessage}</div>
+        <div class="ophiolite-charts-overlay">{loadingMessage}</div>
       {:else if errorMessage}
         <div class="ophiolite-charts-overlay ophiolite-charts-overlay-error">{errorMessage}</div>
       {:else if !section}
@@ -900,36 +999,13 @@
         </div>
       {/if}
       {#if currentProbe && !loading && !errorMessage && section}
-        <div
-          class="ophiolite-charts-probe-panel"
-          style:right={`${PLOT_MARGIN.right}px`}
-          style:bottom={`${PLOT_MARGIN.bottom}px`}
-        >
-          <div class="ophiolite-charts-probe-panel-row">
-            <span>trace</span>
-            <span>{currentProbe.trace_index} ({currentProbe.trace_coordinate.toFixed(1)})</span>
-          </div>
-          {#if currentProbe.inline_coordinate !== null && currentProbe.inline_coordinate !== undefined}
-            <div class="ophiolite-charts-probe-panel-row">
-              <span>IL</span>
-              <span>{currentProbe.inline_coordinate.toFixed(1)}</span>
-            </div>
-          {/if}
-          {#if currentProbe.xline_coordinate !== null && currentProbe.xline_coordinate !== undefined}
-            <div class="ophiolite-charts-probe-panel-row">
-              <span>XL</span>
-              <span>{currentProbe.xline_coordinate.toFixed(1)}</span>
-            </div>
-          {/if}
-          <div class="ophiolite-charts-probe-panel-row">
-            <span>sample</span>
-            <span>{currentProbe.sample_index} ({currentProbe.sample_value.toFixed(1)})</span>
-          </div>
-          <div class="ophiolite-charts-probe-panel-row">
-            <span>amplitude</span>
-            <span>{currentProbe.amplitude.toFixed(4)}</span>
-          </div>
-        </div>
+        <ProbePanel
+          theme="light"
+          size="standard"
+          right={`${PLOT_MARGIN.right + seismicProbePanelInset}px`}
+          bottom={`${PLOT_MARGIN.bottom + seismicProbePanelInset}px`}
+          rows={sectionProbeRows()}
+        />
       {/if}
       {#if compareMode === "split" && resolvedDisplayTransform.renderMode === "heatmap" && section && secondarySection}
         <div
@@ -1033,12 +1109,12 @@
     justify-content: center;
     background: var(--ophiolite-chart-overlay-bg, rgba(244, 247, 249, 0.88));
     color: var(--ophiolite-chart-overlay-text, #284052);
-    font: 500 14px/1.4 sans-serif;
+    font: var(--ophiolite-chart-overlay-font, 500 14px/1.4 sans-serif);
     pointer-events: none;
   }
 
   .ophiolite-charts-overlay-error {
-    color: #8f3c3c;
+    color: var(--ophiolite-chart-overlay-error, #8f3c3c);
   }
 
   .ophiolite-charts-chart-anchor {
@@ -1077,39 +1153,6 @@
     bottom: calc(var(--ophiolite-charts-plot-bottom) + var(--ophiolite-charts-overlay-pad));
   }
 
-  .ophiolite-charts-probe-panel {
-    position: absolute;
-    padding: 4px 8px;
-    border: 1px solid var(--ophiolite-chart-probe-border, rgba(176, 212, 238, 0.78));
-    border-radius: 6px;
-    background: var(--ophiolite-chart-probe-bg, rgba(255, 255, 255, 0.96));
-    box-shadow:
-      0 8px 18px rgba(42, 64, 84, 0.14),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.35);
-    color: var(--ophiolite-chart-probe-text, #213746);
-    pointer-events: none;
-  }
-
-  .ophiolite-charts-probe-panel-row {
-    display: grid;
-    grid-template-columns: 64px auto;
-    column-gap: 6px;
-    align-items: baseline;
-    font-size: 12px;
-    line-height: 1.2;
-    font-family: sans-serif;
-    white-space: nowrap;
-  }
-
-  .ophiolite-charts-probe-panel-row span:first-child {
-    color: #5f7788;
-    text-transform: lowercase;
-  }
-
-  .ophiolite-charts-probe-panel-row span:last-child {
-    color: #213746;
-  }
-
   .ophiolite-charts-split-divider {
     position: absolute;
     width: 18px;
@@ -1145,8 +1188,8 @@
     position: absolute;
     pointer-events: auto;
     touch-action: none;
-    background: rgba(228, 236, 241, 0.92);
-    box-shadow: inset 0 0 0 1px rgba(176, 212, 238, 0.68);
+    background: var(--ophiolite-chart-scrollbar-track-bg, rgba(228, 236, 241, 0.92));
+    box-shadow: inset 0 0 0 1px var(--ophiolite-chart-scrollbar-track-border, rgba(176, 212, 238, 0.68));
     cursor: grab;
   }
 
@@ -1160,10 +1203,14 @@
 
   .ophiolite-charts-scrollbar-thumb {
     position: absolute;
-    background: linear-gradient(180deg, rgba(163, 199, 221, 0.9), rgba(128, 169, 194, 0.9));
+    background: linear-gradient(
+      180deg,
+      var(--ophiolite-chart-scrollbar-thumb-start, rgba(245, 249, 252, 0.96)),
+      var(--ophiolite-chart-scrollbar-thumb-end, rgba(190, 208, 219, 0.94))
+    );
     box-shadow:
-      inset 0 0 0 1px rgba(255, 255, 255, 0.35),
-      0 0 0 1px rgba(66, 102, 126, 0.18);
+      inset 0 0 0 1px var(--ophiolite-chart-scrollbar-thumb-inner-border, rgba(255, 255, 255, 0.72)),
+      0 0 0 1px var(--ophiolite-chart-scrollbar-thumb-outer-border, rgba(69, 93, 112, 0.2));
   }
 
   .ophiolite-charts-scrollbar-dragging {
@@ -1183,6 +1230,10 @@
   }
 
   .ophiolite-charts-scrollbar-active .ophiolite-charts-scrollbar-thumb {
-    background: linear-gradient(180deg, rgba(186, 215, 232, 0.94), rgba(149, 186, 208, 0.94));
+    background: linear-gradient(
+      180deg,
+      var(--ophiolite-chart-scrollbar-thumb-active-start, rgba(186, 215, 232, 0.94)),
+      var(--ophiolite-chart-scrollbar-thumb-active-end, rgba(149, 186, 208, 0.94))
+    );
   }
 </style>

@@ -7,11 +7,12 @@ use ophiolite_seismic::{
     CoordinateReferenceSource, DatasetId, GeometryDescriptor, GeometryProvenanceSummary,
     GeometrySummary, ProcessingLineageSummary, SectionAxis, SectionColorMap, SectionCoordinate,
     SectionDisplayDefaults, SectionMetadata, SectionPolarity, SectionRenderMode, SectionUnits,
-    SectionView, SurveySpatialDescriptor, VolumeDescriptor,
+    SectionView, SurveySpatialDescriptor, TimeDepthDomain, VolumeDescriptor,
 };
+use serde::Serialize;
 
 use crate::error::SeismicStoreError;
-use crate::metadata::DatasetKind;
+use crate::metadata::{DatasetKind, default_sample_axis_unit_for_domain, validate_vertical_axis};
 use crate::storage::section_assembler;
 use crate::storage::tbvol::{TbvolManifest, TbvolReader, TbvolWriter, load_tbvol_manifest};
 use crate::storage::volume_store::{
@@ -40,6 +41,16 @@ pub struct SectionPlane {
     pub occupancy: Option<Vec<u8>>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct SectionTileView {
+    pub section: SectionView,
+    pub trace_range: [usize; 2],
+    pub sample_range: [usize; 2],
+    pub lod: u8,
+    pub trace_step: usize,
+    pub sample_step: usize,
+}
+
 impl StoreHandle {
     pub fn manifest_path(&self) -> PathBuf {
         self.root.join("manifest.json")
@@ -50,13 +61,18 @@ impl StoreHandle {
     }
 
     pub fn volume_descriptor(&self) -> VolumeDescriptor {
+        let sample_interval_ms = if self.manifest.volume.axes.sample_axis_unit == "ms" {
+            regular_f32_step(&self.manifest.volume.axes.sample_axis_ms).unwrap_or(0.0)
+        } else {
+            0.0
+        };
         VolumeDescriptor {
             id: self.dataset_id(),
             store_id: self.manifest.volume.store_id.clone(),
             label: dataset_label(&self.root),
             shape: self.manifest.volume.shape,
             chunk_shape: self.manifest.tile_shape,
-            sample_interval_ms: self.manifest.volume.source.sample_interval_us as f32 / 1000.0,
+            sample_interval_ms,
             sample_data_fidelity: self.manifest.volume.source.sample_data_fidelity.clone(),
             geometry: self.geometry_descriptor(),
             coordinate_reference_binding: self.manifest.volume.coordinate_reference_binding.clone(),
@@ -85,6 +101,37 @@ impl StoreHandle {
         section_assembler::read_section_plane(&reader, axis, index)
     }
 
+    pub fn section_tile_view(
+        &self,
+        axis: SectionAxis,
+        index: usize,
+        trace_range: [usize; 2],
+        sample_range: [usize; 2],
+        lod: u8,
+    ) -> Result<SectionTileView, SeismicStoreError> {
+        let plane = self.read_section_tile_plane(axis, index, trace_range, sample_range, lod)?;
+        self.section_tile_view_from_plane(&plane, trace_range, sample_range, lod)
+    }
+
+    pub fn read_section_tile_plane(
+        &self,
+        axis: SectionAxis,
+        index: usize,
+        trace_range: [usize; 2],
+        sample_range: [usize; 2],
+        lod: u8,
+    ) -> Result<SectionPlane, SeismicStoreError> {
+        let reader = TbvolReader::open(&self.root)?;
+        section_assembler::read_section_tile_plane(
+            &reader,
+            axis,
+            index,
+            trace_range,
+            sample_range,
+            lod,
+        )
+    }
+
     pub fn section_view_from_plane(&self, plane: &SectionPlane) -> SectionView {
         SectionView {
             dataset_id: self.dataset_id(),
@@ -105,7 +152,7 @@ impl StoreHandle {
                     SectionAxis::Inline => "xline".to_string(),
                     SectionAxis::Xline => "inline".to_string(),
                 }),
-                sample: Some("ms".to_string()),
+                sample: Some(self.manifest.volume.axes.sample_axis_unit.clone()),
                 amplitude: Some("amplitude".to_string()),
             }),
             metadata: Some(SectionMetadata {
@@ -116,7 +163,13 @@ impl StoreHandle {
                     .processing_lineage
                     .as_ref()
                     .map(|lineage| lineage.parent_store.to_string_lossy().into_owned()),
-                notes: vec![format!("kind:{:?}", self.manifest.volume.kind)],
+                notes: vec![
+                    format!("kind:{:?}", self.manifest.volume.kind),
+                    format!(
+                        "sample_axis_domain:{:?}",
+                        self.manifest.volume.axes.sample_axis_domain
+                    ),
+                ],
             }),
             display_defaults: Some(SectionDisplayDefaults {
                 gain: 1.0,
@@ -129,6 +182,25 @@ impl StoreHandle {
         }
     }
 
+    pub fn section_tile_view_from_plane(
+        &self,
+        plane: &SectionPlane,
+        trace_range: [usize; 2],
+        sample_range: [usize; 2],
+        lod: u8,
+    ) -> Result<SectionTileView, SeismicStoreError> {
+        let trace_step = section_tile_stride(lod)?;
+        let sample_step = section_tile_stride(lod)?;
+        Ok(SectionTileView {
+            section: self.section_view_from_plane(plane),
+            trace_range,
+            sample_range,
+            lod,
+            trace_step,
+            sample_step,
+        })
+    }
+
     fn geometry_descriptor(&self) -> GeometryDescriptor {
         GeometryDescriptor {
             compare_family: GEOMETRY_COMPARE_FAMILY.to_string(),
@@ -136,7 +208,10 @@ impl StoreHandle {
             summary: GeometrySummary {
                 inline_axis: summarize_i32_axis(&self.manifest.volume.axes.ilines),
                 xline_axis: summarize_i32_axis(&self.manifest.volume.axes.xlines),
-                sample_axis: summarize_f32_axis(&self.manifest.volume.axes.sample_axis_ms),
+                sample_axis: summarize_f32_axis(
+                    &self.manifest.volume.axes.sample_axis_ms,
+                    Some(self.manifest.volume.axes.sample_axis_unit.clone()),
+                ),
                 layout: None,
                 gather_axis_kind: None,
                 gather_axis: None,
@@ -226,6 +301,57 @@ pub fn set_store_native_coordinate_reference(
     Ok(StoreHandle { root, manifest }.volume_descriptor())
 }
 
+pub fn set_store_vertical_axis(
+    root: impl AsRef<Path>,
+    vertical_domain: TimeDepthDomain,
+    vertical_unit: Option<&str>,
+    vertical_start: Option<f32>,
+    vertical_step: Option<f32>,
+) -> Result<VolumeDescriptor, SeismicStoreError> {
+    let root = root.as_ref().to_path_buf();
+    let manifest_path = root.join("manifest.json");
+    let mut manifest = serde_json::from_slice::<TbvolManifest>(&fs::read(&manifest_path)?)?;
+    let sample_count = manifest.volume.shape[2];
+    let inferred_axis = manifest.volume.axes.sample_axis_ms.clone();
+    if inferred_axis.len() != sample_count {
+        return Err(SeismicStoreError::Message(format!(
+            "store vertical axis length mismatch: expected {sample_count}, found {}",
+            inferred_axis.len()
+        )));
+    }
+
+    let inferred_start = inferred_axis.first().copied().unwrap_or(0.0);
+    let inferred_step = if inferred_axis.len() >= 2 {
+        inferred_axis[1] - inferred_axis[0]
+    } else {
+        0.0
+    };
+
+    let sample_axis = if vertical_start.is_some() || vertical_step.is_some() {
+        let start = vertical_start.unwrap_or(inferred_start);
+        let step = vertical_step.unwrap_or(inferred_step);
+        (0..sample_count)
+            .map(|index| start + step * index as f32)
+            .collect::<Vec<_>>()
+    } else {
+        inferred_axis
+    };
+
+    let vertical_unit = vertical_unit
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| default_sample_axis_unit_for_domain(vertical_domain));
+    validate_vertical_axis(&sample_axis, sample_count, "store vertical axis")
+        .map_err(SeismicStoreError::Message)?;
+
+    manifest.volume.axes.sample_axis_domain = vertical_domain;
+    manifest.volume.axes.sample_axis_unit = vertical_unit;
+    manifest.volume.axes.sample_axis_ms = sample_axis;
+    fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    Ok(StoreHandle { root, manifest }.volume_descriptor())
+}
+
 pub fn section_view(
     root: impl AsRef<Path>,
     axis: SectionAxis,
@@ -242,6 +368,17 @@ pub fn read_section_plane(
     open_store(root)?.read_section_plane(axis, index)
 }
 
+pub fn section_tile_view(
+    root: impl AsRef<Path>,
+    axis: SectionAxis,
+    index: usize,
+    trace_range: [usize; 2],
+    sample_range: [usize; 2],
+    lod: u8,
+) -> Result<SectionTileView, SeismicStoreError> {
+    open_store(root)?.section_tile_view(axis, index, trace_range, sample_range, lod)
+}
+
 pub fn load_array(handle: &StoreHandle) -> Result<Array3<f32>, SeismicStoreError> {
     let reader = TbvolReader::open(&handle.root)?;
     read_dense_volume(&reader)
@@ -250,6 +387,14 @@ pub fn load_array(handle: &StoreHandle) -> Result<Array3<f32>, SeismicStoreError
 pub fn load_occupancy(handle: &StoreHandle) -> Result<Option<Array2<u8>>, SeismicStoreError> {
     let reader = TbvolReader::open(&handle.root)?;
     read_dense_occupancy(&reader)
+}
+
+fn section_tile_stride(lod: u8) -> Result<usize, SeismicStoreError> {
+    1usize.checked_shl(lod as u32).ok_or_else(|| {
+        SeismicStoreError::Message(format!(
+            "section tile lod {lod} exceeds the supported stride width"
+        ))
+    })
 }
 
 pub(crate) fn apply_native_coordinate_reference_override(
@@ -294,6 +439,29 @@ pub(crate) fn apply_native_coordinate_reference_override(
         if coordinate_reference_name.is_some() {
             effective.name = coordinate_reference_name;
         }
+        binding.effective = Some(effective.clone());
+        binding.source = CoordinateReferenceSource::UserOverride;
+        binding
+            .notes
+            .retain(|note| note != "effective native coordinate reference overridden by user");
+        binding.notes.push(String::from(
+            "effective native coordinate reference overridden by user",
+        ));
+        if let Some(spatial) = spatial {
+            spatial.coordinate_reference = Some(effective);
+        }
+        return Some(binding);
+    }
+
+    if let Some(coordinate_reference_name) = coordinate_reference_name {
+        let mut effective = template.unwrap_or(CoordinateReferenceDescriptor {
+            id: None,
+            name: None,
+            geodetic_datum: None,
+            unit: None,
+        });
+        effective.id = None;
+        effective.name = Some(coordinate_reference_name);
         binding.effective = Some(effective.clone());
         binding.source = CoordinateReferenceSource::UserOverride;
         binding
@@ -358,7 +526,7 @@ fn summarize_i32_axis(values: &[f64]) -> AxisSummaryI32 {
     }
 }
 
-fn summarize_f32_axis(values: &[f32]) -> AxisSummaryF32 {
+fn summarize_f32_axis(values: &[f32], units: Option<String>) -> AxisSummaryF32 {
     let first = values.first().copied().unwrap_or_default();
     let last = values.last().copied().unwrap_or_default();
     let step = regular_f32_step(values);
@@ -368,7 +536,7 @@ fn summarize_f32_axis(values: &[f32]) -> AxisSummaryF32 {
         last,
         step,
         regular: step.is_some(),
-        units: Some("ms".to_string()),
+        units,
     }
 }
 
@@ -514,11 +682,11 @@ mod tests {
                     regularization: None,
                 },
                 shape,
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0, 102.0],
-                    xlines: vec![200.0, 201.0, 202.0, 203.0],
-                    sample_axis_ms: vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0, 102.0],
+                    vec![200.0, 201.0, 202.0, 203.0],
+                    vec![0.0, 2.0, 4.0, 6.0, 8.0, 10.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: None,
                 spatial: None,
@@ -611,6 +779,42 @@ mod tests {
     }
 
     #[test]
+    fn section_tile_view_reads_window_with_lod_without_materializing_full_section() {
+        let temp_dir = tempdir().expect("temp dir");
+        let root = temp_dir.path().join("survey.tbvol");
+        let manifest = fixture_manifest([3, 4, 6]);
+        let data = Array3::from_shape_fn((3, 4, 6), |(iline, xline, sample)| {
+            iline as f32 * 100.0 + xline as f32 * 10.0 + sample as f32
+        });
+        create_tbvol_store(&root, manifest, &data, None).expect("store should be created");
+        let handle = open_store(&root).expect("store should open");
+
+        let tile = handle
+            .section_tile_view(SectionAxis::Inline, 1, [1, 4], [2, 6], 1)
+            .expect("section tile should be valid");
+
+        assert_eq!(tile.trace_range, [1, 4]);
+        assert_eq!(tile.sample_range, [2, 6]);
+        assert_eq!(tile.lod, 1);
+        assert_eq!(tile.trace_step, 2);
+        assert_eq!(tile.sample_step, 2);
+        assert_eq!(tile.section.traces, 2);
+        assert_eq!(tile.section.samples, 2);
+        assert_eq!(tile.section.horizontal_axis_f64le.len(), 2 * 8);
+        assert_eq!(tile.section.sample_axis_f32le.len(), 2 * 4);
+        assert_eq!(tile.section.amplitudes_f32le.len(), 2 * 2 * 4);
+
+        let horizontal_axis = f64_vec_from_le_bytes(&tile.section.horizontal_axis_f64le);
+        assert_eq!(horizontal_axis, vec![201.0, 203.0]);
+        let sample_axis = f32_vec_from_le_bytes(&tile.section.sample_axis_f32le);
+        assert_eq!(sample_axis, vec![4.0, 8.0]);
+        let amplitudes = f32_vec_from_le_bytes(&tile.section.amplitudes_f32le);
+        assert_eq!(amplitudes, vec![112.0, 114.0, 132.0, 134.0]);
+
+        fs::remove_dir_all(&root).expect("temp store should be removable");
+    }
+
+    #[test]
     fn open_store_accepts_legacy_manifest_without_expanded_segy_fields() {
         let temp_dir = tempdir().expect("temp dir");
         let root = temp_dir.path().join("legacy.tbvol");
@@ -670,5 +874,27 @@ mod tests {
         assert_eq!(handle.manifest.volume.source.revision_raw, 0);
         assert_eq!(handle.manifest.volume.source.fixed_length_trace_flag_raw, 1);
         assert_eq!(handle.manifest.volume.source.extended_textual_headers, 0);
+    }
+
+    fn f32_vec_from_le_bytes(bytes: &[u8]) -> Vec<f32> {
+        bytes
+            .chunks_exact(std::mem::size_of::<f32>())
+            .map(|chunk| {
+                let mut value = [0_u8; std::mem::size_of::<f32>()];
+                value.copy_from_slice(chunk);
+                f32::from_le_bytes(value)
+            })
+            .collect()
+    }
+
+    fn f64_vec_from_le_bytes(bytes: &[u8]) -> Vec<f64> {
+        bytes
+            .chunks_exact(std::mem::size_of::<f64>())
+            .map(|chunk| {
+                let mut value = [0_u8; std::mem::size_of::<f64>()];
+                value.copy_from_slice(chunk);
+                f64::from_le_bytes(value)
+            })
+            .collect()
     }
 }

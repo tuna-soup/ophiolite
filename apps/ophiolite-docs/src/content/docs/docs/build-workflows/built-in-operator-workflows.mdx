@@ -1,0 +1,111 @@
+---
+title: Built-in Operator Workflows
+description: How built-in Ophiolite operators should be exposed through typed workflow surfaces.
+draft: false
+---
+
+**Audience:** Python builders  
+**Status:** Preview
+
+Built-in operators should feel like typed workflow steps, not generic command transport.
+
+## Design rule
+
+Prefer this:
+
+- object-first discovery
+- typed operator configuration
+- typed result objects
+- explicit conversion to downstream DTOs only at the edge
+
+Avoid making the primary user story about raw payload assembly.
+
+## Log-to-AVO
+
+The intended shape is:
+
+1. discover a `Wellbore`
+2. resolve elastic inputs through `elastic_log_set(...)`
+3. define interval layering
+4. define the AVO experiment
+5. run AVO
+6. export a response or crossplot source only when needed
+
+```python
+from ophiolite_sdk.avo import (
+    AngleSampling,
+    AvoExperiment,
+    ElasticChannelBindings,
+    LayeringSpec,
+)
+
+elastic = wellbore.elastic_log_set(
+    bindings=ElasticChannelBindings(vp="Dt", vs="Dts", density="Rho")
+)
+
+layering = LayeringSpec.fixed_interval(20, unit="ft")
+experiment = AvoExperiment.zoeppritz(
+    angles=AngleSampling.range(0, 40, 5)
+)
+
+result = elastic.run_avo(
+    layering=layering,
+    experiment=experiment,
+)
+
+response = result.response_source()
+crossplot = result.crossplot_source()
+```
+
+The main point is that users talk about wells, elastic channels, layering, and experiments, not request envelopes.
+
+## Seismic processing
+
+The intended shape is:
+
+1. open a typed dataset
+2. pick a section
+3. build a typed processing pipeline
+4. preview
+5. run the pipeline and persist the output
+
+```python
+from ophiolite_sdk import SectionSelection, TraceBoostApp, TraceProcessingPipeline
+
+app = TraceBoostApp()
+dataset = app.open_dataset("input.tbvol")
+selection = SectionSelection.inline(120)
+
+pipeline = (
+    TraceProcessingPipeline.named("Bandpass + RMS AGC")
+    .bandpass(8.0, 12.0, 45.0, 60.0)
+    .agc_rms(40.0)
+)
+
+preview = dataset.preview_processing(selection, pipeline)
+processed = dataset.run_processing(
+    pipeline,
+    output_store_path="input_bandpass_agc.tbvol",
+)
+```
+
+Again, the public language stays close to what the user is actually doing.
+
+## External operators are a different surface
+
+Do not mix built-in workflow composition with external operator authoring.
+
+Use:
+
+- typed workflow helpers for built-in runtime capabilities
+- `ophiolite_sdk.operators` for external operator packages
+
+That separation keeps the main SDK legible while still exposing extensibility as a first-class system.
+
+## Current non-goal
+
+Charts, widget hosts, and app wrappers are not part of the main built-in operator story for now.
+
+They consume workflow outputs. They do not define the public workflow vocabulary.
+
+Next: [Python SDK reference](/reference/python-sdk/)

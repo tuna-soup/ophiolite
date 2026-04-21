@@ -10,6 +10,8 @@ import type {
   VolumeInterpretationWellTrajectory
 } from "@ophiolite/charts-data-models";
 import type {
+  VolumeInterpretationPickDebugCandidate,
+  VolumeInterpretationPickDebugSnapshot,
   VolumeInterpretationPickResult,
   VolumeInterpretationRenderFrame,
   VolumeInterpretationRendererAdapter
@@ -18,12 +20,14 @@ import type {
 interface Point2D {
   x: number;
   y: number;
+  depth: number;
 }
 
 interface ProjectedPolygonTarget {
   type: "polygon";
   pick: VolumeInterpretationPickResult;
   points: Point2D[];
+  depth: number;
 }
 
 interface ProjectedPolylineTarget {
@@ -31,6 +35,7 @@ interface ProjectedPolylineTarget {
   pick: VolumeInterpretationPickResult;
   points: Point2D[];
   strokeWidth: number;
+  depth: number;
 }
 
 interface ProjectedPointTarget {
@@ -38,15 +43,13 @@ interface ProjectedPointTarget {
   pick: VolumeInterpretationPickResult;
   point: Point2D;
   radius: number;
+  depth: number;
 }
 
 type ProjectedTarget = ProjectedPolygonTarget | ProjectedPolylineTarget | ProjectedPointTarget;
 
 const BG_TOP = "#0d1822";
 const BG_BOTTOM = "#152c3c";
-const BOUNDS_COLOR = "rgba(214, 231, 240, 0.46)";
-const CROP_COLOR = "rgba(255, 221, 128, 0.68)";
-
 export class VolumeInterpretationPlaceholderRenderer implements VolumeInterpretationRendererAdapter {
   private container: HTMLElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
@@ -92,11 +95,6 @@ export class VolumeInterpretationPlaceholderRenderer implements VolumeInterpreta
     }
 
     const projector = createProjector(model.sceneBounds, view, width, height);
-
-    drawVolumeBounds(context, model.sceneBounds, projector);
-    if (model.cropBox) {
-      drawCropBox(context, model.cropBox, projector);
-    }
 
     model.slicePlanes
       .filter((plane) => plane.visible)
@@ -154,24 +152,43 @@ export class VolumeInterpretationPlaceholderRenderer implements VolumeInterpreta
   }
 
   pick(screenX: number, screenY: number): VolumeInterpretationPickResult | null {
-    let best: { pick: VolumeInterpretationPickResult; score: number } | null = null;
-    for (const target of this.projectedTargets) {
-      const score = pickScore(target, screenX, screenY);
-      if (score === null) {
-        continue;
-      }
-      if (!best || score < best.score) {
-        best = {
-          pick: {
-            ...target.pick,
-            screenX,
-            screenY
-          },
-          score
-        };
-      }
+    return this.debugPick(screenX, screenY).winner;
+  }
+
+  projectWorldToScreen(worldX: number, worldY: number, worldZ: number): Point2D | null {
+    if (!this.container || !this.frame?.state.model || !this.frame.state.view) {
+      return null;
     }
-    return best?.pick ?? null;
+    const width = Math.max(1, this.container.clientWidth);
+    const height = Math.max(1, this.container.clientHeight);
+    const projector = createProjector(this.frame.state.model.sceneBounds, this.frame.state.view, width, height);
+    return projector(worldX, worldY, worldZ);
+  }
+
+  debugPick(screenX: number, screenY: number): VolumeInterpretationPickDebugSnapshot {
+    const ranked = rankProjectedTargets(this.projectedTargets, screenX, screenY);
+    const syntheticWinnerTarget = ranked.find((candidate) => candidate.hit)?.target ?? null;
+    const syntheticWinner = syntheticWinnerTarget
+      ? {
+          ...syntheticWinnerTarget.pick,
+          screenX,
+          screenY
+        }
+      : null;
+    return {
+      pointerX: screenX,
+      pointerY: screenY,
+      renderPointerX: screenX,
+      renderPointerY: screenY,
+      renderScaleX: 1,
+      renderScaleY: 1,
+      actualWinner: null,
+      actualPickedCount: 0,
+      actualMatchedBy: null,
+      syntheticWinner,
+      winner: syntheticWinner,
+      candidates: ranked.slice(0, 8).map((candidate) => toDebugCandidate(candidate.target, candidate.hit, candidate.score))
+    };
   }
 
   dispose(): void {
@@ -223,58 +240,13 @@ function createProjector(
     const dz = z - view.focusZ;
     const rx = dx * Math.cos(yaw) - dy * Math.sin(yaw);
     const ry = dx * Math.sin(yaw) + dy * Math.cos(yaw);
+    const depth = rx * Math.cos(pitch) + ry * Math.sin(pitch) + dz * Math.cos(pitch);
     return {
       x: centerX + (rx - ry * 0.92) * baseScale * view.zoom,
-      y: centerY + ((rx + ry) * horizonScale - dz * depthScale) * baseScale * view.zoom
+      y: centerY + ((rx + ry) * horizonScale - dz * depthScale) * baseScale * view.zoom,
+      depth
     };
   };
-}
-
-function drawVolumeBounds(
-  context: CanvasRenderingContext2D,
-  bounds: VolumeInterpretationBounds,
-  projector: (x: number, y: number, z: number) => Point2D
-): void {
-  const corners = boundsCorners(bounds).map((point) => projector(point.x, point.y, point.z));
-  const edges = [
-    [0, 1], [1, 2], [2, 3], [3, 0],
-    [4, 5], [5, 6], [6, 7], [7, 4],
-    [0, 4], [1, 5], [2, 6], [3, 7]
-  ];
-
-  context.strokeStyle = BOUNDS_COLOR;
-  context.lineWidth = 1.2;
-  for (const [start, end] of edges) {
-    context.beginPath();
-    context.moveTo(corners[start]!.x, corners[start]!.y);
-    context.lineTo(corners[end]!.x, corners[end]!.y);
-    context.stroke();
-  }
-}
-
-function drawCropBox(
-  context: CanvasRenderingContext2D,
-  bounds: VolumeInterpretationBounds,
-  projector: (x: number, y: number, z: number) => Point2D
-): void {
-  const corners = boundsCorners(bounds).map((point) => projector(point.x, point.y, point.z));
-  const edges = [
-    [0, 1], [1, 2], [2, 3], [3, 0],
-    [4, 5], [5, 6], [6, 7], [7, 4],
-    [0, 4], [1, 5], [2, 6], [3, 7]
-  ];
-
-  context.save();
-  context.setLineDash([6, 6]);
-  context.strokeStyle = CROP_COLOR;
-  context.lineWidth = 1;
-  for (const [start, end] of edges) {
-    context.beginPath();
-    context.moveTo(corners[start]!.x, corners[start]!.y);
-    context.lineTo(corners[end]!.x, corners[end]!.y);
-    context.stroke();
-  }
-  context.restore();
 }
 
 function drawSlicePlane(
@@ -314,6 +286,7 @@ function drawSlicePlane(
   const center = polygonCenter(corners);
   return {
     type: "polygon",
+    depth: center.depth,
     pick: {
       kind: "slice-plane",
       itemId: plane.id,
@@ -459,6 +432,7 @@ function drawHorizon(
     type: "point",
     point: center,
     radius: 18,
+    depth: center.depth,
     pick: {
       kind: "horizon-surface",
       itemId: horizon.id,
@@ -510,6 +484,7 @@ function drawWell(
     type: "polyline",
     points,
     strokeWidth: well.style.mode === "tube" ? Math.max(4, well.style.width) : Math.max(2, well.style.width),
+    depth: average(points.map((point) => point.depth)),
     pick: {
       kind: "well-trajectory",
       itemId: well.id,
@@ -540,6 +515,7 @@ function drawMarker(
     type: "point",
     point,
     radius: marker.size + 4,
+    depth: point.depth,
     pick: {
       kind: "well-marker",
       itemId: marker.id,
@@ -568,6 +544,7 @@ function drawAnnotation(
     type: "point",
     point,
     radius: 14,
+    depth: point.depth,
     pick: {
       kind: "annotation",
       itemId: annotation.id,
@@ -592,13 +569,14 @@ function highlightSelection(
   }
 
   context.save();
-  context.strokeStyle = "rgba(255, 210, 96, 0.94)";
-  context.lineWidth = 2;
+  context.strokeStyle = "rgba(92, 181, 255, 0.96)";
   if (target.type === "point") {
+    context.lineWidth = 4;
     context.beginPath();
-    context.arc(target.point.x, target.point.y, target.radius + 4, 0, Math.PI * 2);
+    context.arc(target.point.x, target.point.y, target.radius + 5, 0, Math.PI * 2);
     context.stroke();
   } else if (target.type === "polyline") {
+    context.lineWidth = Math.max(4, target.strokeWidth + 2.5);
     context.beginPath();
     context.moveTo(target.points[0]!.x, target.points[0]!.y);
     for (let index = 1; index < target.points.length; index += 1) {
@@ -606,6 +584,7 @@ function highlightSelection(
     }
     context.stroke();
   } else {
+    context.lineWidth = 4.5;
     context.beginPath();
     context.moveTo(target.points[0]!.x, target.points[0]!.y);
     for (let index = 1; index < target.points.length; index += 1) {
@@ -625,19 +604,6 @@ function highlightProbe(context: CanvasRenderingContext2D, x: number, y: number)
   context.arc(x, y, 10, 0, Math.PI * 2);
   context.stroke();
   context.restore();
-}
-
-function boundsCorners(bounds: VolumeInterpretationBounds): Array<{ x: number; y: number; z: number }> {
-  return [
-    { x: bounds.minX, y: bounds.minY, z: bounds.minZ },
-    { x: bounds.maxX, y: bounds.minY, z: bounds.minZ },
-    { x: bounds.maxX, y: bounds.maxY, z: bounds.minZ },
-    { x: bounds.minX, y: bounds.maxY, z: bounds.minZ },
-    { x: bounds.minX, y: bounds.minY, z: bounds.maxZ },
-    { x: bounds.maxX, y: bounds.minY, z: bounds.maxZ },
-    { x: bounds.maxX, y: bounds.maxY, z: bounds.maxZ },
-    { x: bounds.minX, y: bounds.maxY, z: bounds.maxZ }
-  ];
 }
 
 function slicePlaneCorners(
@@ -673,13 +639,15 @@ function polygonCenter(points: Point2D[]): Point2D {
   const sum = points.reduce(
     (accumulator, point) => ({
       x: accumulator.x + point.x,
-      y: accumulator.y + point.y
+      y: accumulator.y + point.y,
+      depth: accumulator.depth + point.depth
     }),
-    { x: 0, y: 0 }
+    { x: 0, y: 0, depth: 0 }
   );
   return {
     x: sum.x / Math.max(1, points.length),
-    y: sum.y / Math.max(1, points.length)
+    y: sum.y / Math.max(1, points.length),
+    depth: sum.depth / Math.max(1, points.length)
   };
 }
 
@@ -746,6 +714,62 @@ function pickScore(target: ProjectedTarget, screenX: number, screenY: number): n
   }
   const distance = polygonDistance(target.points, screenX, screenY);
   return distance <= 8 ? distance : null;
+}
+
+function rankProjectedTargets(
+  targets: ProjectedTarget[],
+  screenX: number,
+  screenY: number
+): Array<{ target: ProjectedTarget; hit: boolean; score: number | null }> {
+  return targets
+    .map((target) => {
+      const score = pickScore(target, screenX, screenY);
+      return {
+        target,
+        hit: score !== null,
+        score
+      };
+    })
+    .sort((left, right) => compareCandidateRank(left, right));
+}
+
+function compareCandidateRank(
+  left: { target: ProjectedTarget; hit: boolean; score: number | null },
+  right: { target: ProjectedTarget; hit: boolean; score: number | null }
+): number {
+  if (left.hit !== right.hit) {
+    return left.hit ? -1 : 1;
+  }
+  const leftScore = left.score ?? Number.POSITIVE_INFINITY;
+  const rightScore = right.score ?? Number.POSITIVE_INFINITY;
+  if (Math.abs(leftScore - rightScore) > 1e-6) {
+    return leftScore - rightScore;
+  }
+  if (Math.abs(left.target.depth - right.target.depth) > 1e-6) {
+    return left.target.depth - right.target.depth;
+  }
+  return left.target.pick.itemId.localeCompare(right.target.pick.itemId);
+}
+
+function toDebugCandidate(
+  target: ProjectedTarget,
+  hit: boolean,
+  score: number | null
+): VolumeInterpretationPickDebugCandidate {
+  return {
+    targetType: target.type,
+    kind: target.pick.kind,
+    itemId: target.pick.itemId,
+    itemName: target.pick.itemName,
+    hit,
+    score,
+    depth: target.depth,
+    screenX: target.pick.screenX,
+    screenY: target.pick.screenY,
+    worldX: target.pick.worldX,
+    worldY: target.pick.worldY,
+    worldZ: target.pick.worldZ
+  };
 }
 
 function polylineDistance(points: Point2D[], x: number, y: number): number {

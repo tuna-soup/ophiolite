@@ -25,6 +25,18 @@ pub enum ComputeParameterDefinition {
         max: Option<f64>,
         unit: Option<String>,
     },
+    String {
+        name: String,
+        label: String,
+        description: String,
+        default: Option<String>,
+    },
+    Boolean {
+        name: String,
+        label: String,
+        description: String,
+        default: Option<bool>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,6 +53,7 @@ pub enum ComputeInputSpec {
     },
     Trajectory,
     TopSet,
+    WellMarkerSet,
     PressureObservation,
     DrillingObservation,
 }
@@ -916,6 +929,31 @@ pub fn validate_compute_parameters(
                     )));
                 }
             }
+            ComputeParameterDefinition::String { name, default, .. } => {
+                parameters
+                    .get(name)
+                    .and_then(ComputeParameterValue::as_str)
+                    .map(str::to_string)
+                    .or_else(|| default.clone())
+                    .ok_or_else(|| {
+                        LasError::Validation(format!(
+                            "string compute parameter '{}' is required",
+                            name
+                        ))
+                    })?;
+            }
+            ComputeParameterDefinition::Boolean { name, default, .. } => {
+                parameters
+                    .get(name)
+                    .and_then(ComputeParameterValue::as_bool)
+                    .or(*default)
+                    .ok_or_else(|| {
+                        LasError::Validation(format!(
+                            "boolean compute parameter '{}' is required",
+                            name
+                        ))
+                    })?;
+            }
         }
     }
     Ok(())
@@ -1134,9 +1172,11 @@ fn impedance_reference_terms(
     let mut density_sum = 0.0;
     let mut ratio_sum = 0.0;
 
-    for ((vp_value, vs_value), density_value) in vp.values.iter().zip(&vs.values).zip(&density.values)
+    for ((vp_value, vs_value), density_value) in
+        vp.values.iter().zip(&vs.values).zip(&density.values)
     {
-        let (Some(vp_value), Some(vs_value), Some(density_value)) = (vp_value, vs_value, density_value)
+        let (Some(vp_value), Some(vs_value), Some(density_value)) =
+            (vp_value, vs_value, density_value)
         else {
             continue;
         };
@@ -2092,7 +2132,11 @@ impl LogComputeFunction for ElasticImpedanceFunction {
                 vp.curve_name, vs.curve_name, density.curve_name
             )),
             semantic_type: CurveSemanticType::ElasticImpedance,
-            semantic_parameters: impedance_semantic_parameters("incident_angle_deg", angle_deg, terms),
+            semantic_parameters: impedance_semantic_parameters(
+                "incident_angle_deg",
+                angle_deg,
+                terms,
+            ),
             values: vp
                 .values
                 .iter()
@@ -2128,8 +2172,9 @@ impl LogComputeFunction for ExtendedElasticImpedanceFunction {
             provider: "rock_physics".to_string(),
             name: "Extended Elastic Impedance".to_string(),
             category: "Rock Physics".to_string(),
-            description: "Compute rotated extended elastic impedance from Vp, Vs, and bulk density."
-                .to_string(),
+            description:
+                "Compute rotated extended elastic impedance from Vp, Vs, and bulk density."
+                    .to_string(),
             default_output_mnemonic: "EEI".to_string(),
             output_curve_type: CurveSemanticType::ExtendedElasticImpedance,
             tags: vec![
@@ -3353,10 +3398,8 @@ mod tests {
             ("density_curve".to_string(), "RHOB".to_string()),
         ]);
 
-        let elastic_parameters = BTreeMap::from([(
-            "angle_deg".to_string(),
-            ComputeParameterValue::Number(30.0),
-        )]);
+        let elastic_parameters =
+            BTreeMap::from([("angle_deg".to_string(), ComputeParameterValue::Number(30.0))]);
         let (_, elastic_output) = registry
             .run_log_compute(
                 "rock_physics:elastic_impedance",
@@ -3366,14 +3409,19 @@ mod tests {
                 None,
             )
             .unwrap();
-        assert_eq!(elastic_output.semantic_type, CurveSemanticType::ElasticImpedance);
+        assert_eq!(
+            elastic_output.semantic_type,
+            CurveSemanticType::ElasticImpedance
+        );
         assert_eq!(
             elastic_output.semantic_parameters.get("incident_angle_deg"),
             Some(&30.0)
         );
-        assert!(elastic_output
-            .semantic_parameters
-            .contains_key("normalization_reference_vp_m_per_s"));
+        assert!(
+            elastic_output
+                .semantic_parameters
+                .contains_key("normalization_reference_vp_m_per_s")
+        );
         assert_values_close(
             &elastic_output.values,
             &[
@@ -3385,10 +3433,8 @@ mod tests {
             1.0e-9,
         );
 
-        let extended_parameters = BTreeMap::from([(
-            "chi_deg".to_string(),
-            ComputeParameterValue::Number(20.0),
-        )]);
+        let extended_parameters =
+            BTreeMap::from([("chi_deg".to_string(), ComputeParameterValue::Number(20.0))]);
         let (_, extended_output) = registry
             .run_log_compute(
                 "rock_physics:extended_elastic_impedance",
@@ -3406,9 +3452,11 @@ mod tests {
             extended_output.semantic_parameters.get("chi_angle_deg"),
             Some(&20.0)
         );
-        assert!(extended_output
-            .semantic_parameters
-            .contains_key("velocity_ratio_k"));
+        assert!(
+            extended_output
+                .semantic_parameters
+                .contains_key("velocity_ratio_k")
+        );
         assert_values_close(
             &extended_output.values,
             &[

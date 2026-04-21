@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ophiolite-jupyter"
+version = "0.1.0"
+description = "Preview Jupyter widgets for Ophiolite chart-ready DTOs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "anywidget>=0.9.18",
+  "traitlets>=5.14.0"
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ophiolite_jupyter = ["static/*.js", "static/*.css", "static/assets/*.js"]

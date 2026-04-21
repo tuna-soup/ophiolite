@@ -25,6 +25,7 @@ const SURVEY_MAP_INTERACTION_CAPABILITIES: InteractionCapabilities = {
   primaryModes: ["cursor", "panZoom"],
   modifiers: []
 };
+const SURVEY_MAP_FIT_PADDING = 0.08;
 
 export class SurveyMapController {
   private container: HTMLElement | null = null;
@@ -63,13 +64,13 @@ export class SurveyMapController {
     this.state.probe = null;
     this.state.selectedWellId = null;
     this.worldBounds = mapBoundsWithPadding(this.state.map);
-    this.state.viewport = fitSurveyMapViewport(this.worldBounds, 0);
+    this.state.viewport = fitSurveyMapViewport(this.worldBounds, SURVEY_MAP_FIT_PADDING);
     this.interactions.setHoverTarget(null);
     this.render();
   }
 
   fitToData(): void {
-    this.state.viewport = fitSurveyMapViewport(this.worldBounds, 0);
+    this.state.viewport = fitSurveyMapViewport(this.worldBounds, SURVEY_MAP_FIT_PADDING);
     this.render();
   }
 
@@ -393,4 +394,3 @@ function cloneInteractionEvent(event: InteractionEvent): InteractionEvent {
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
-

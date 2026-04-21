@@ -1341,11 +1341,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [2, 2, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0],
-                    xlines: vec![200.0, 201.0],
-                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {

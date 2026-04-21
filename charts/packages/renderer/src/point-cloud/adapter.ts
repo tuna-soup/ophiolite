@@ -1,4 +1,5 @@
 import type {
+  CartesianAxisOverrides,
   InteractionState,
   RockPhysicsCrossplotModel,
   RockPhysicsCrossplotProbe,
@@ -9,6 +10,7 @@ export interface RockPhysicsCrossplotViewState {
   model: RockPhysicsCrossplotModel | null;
   viewport: RockPhysicsCrossplotViewport | null;
   probe: RockPhysicsCrossplotProbe | null;
+  axisOverrides: CartesianAxisOverrides;
   interactions: InteractionState;
 }
 

@@ -1,0 +1,56 @@
+Metadata-Version: 2.4
+Name: ophiolite-automation
+Version: 0.1.0
+Summary: Local-first Python automation and SDK surfaces for Ophiolite
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+
+# ophiolite-automation
+
+`ophiolite-automation` is a thin Python wrapper around the local `ophiolite-cli`.
+
+It does not introduce a second backend. It shells out to the existing JSON-producing CLI so
+scripts, notebooks, and local automation can reuse the same platform-owned operation surface.
+
+## Scope
+
+Current wrapped platform operations:
+
+- project lifecycle and inventory
+- well, wellbore, and survey discovery
+- well-panel, survey-map, trajectory, and section-overlay resolution
+- operator lock inspection and operator package installation
+- compute catalog lookup and compute execution
+- import preview, vendor bridge, and fixture-generation utilities
+
+The Python wrapper stays checked against the platform operation catalog, so the wrapped CLI surface does not drift silently.
+
+## Usage
+
+From this directory:
+
+```bash
+python -m pip install -e .
+ophiolite-automation operation-catalog
+```
+
+Or from Python:
+
+```python
+from ophiolite_automation import OphioliteApp
+
+app = OphioliteApp()
+catalog = app.operation_catalog()
+print(catalog["catalog_name"])
+```
+
+## Surface Conformance
+
+Ophiolite keeps a checked-in platform operation catalog at
+`crates/ophiolite-cli/operations/catalog.json`.
+
+Run the Python-side conformance check with:
+
+```bash
+ophiolite-automation verify-surface-contracts
+```

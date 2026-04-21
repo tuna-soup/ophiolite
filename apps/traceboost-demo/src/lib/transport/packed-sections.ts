@@ -25,6 +25,29 @@ export interface TransportSectionView
   amplitudes_f32le: SectionBytePayload;
 }
 
+export interface TransportWindowedSectionView extends TransportSectionView {
+  logical_dimensions: {
+    traces: number;
+    samples: number;
+  };
+  window: {
+    trace_start: number;
+    trace_end: number;
+    sample_start: number;
+    sample_end: number;
+    lod?: number;
+  };
+}
+
+export interface TransportSectionTileView {
+  section: TransportSectionView;
+  trace_range: [number, number];
+  sample_range: [number, number];
+  lod: number;
+  trace_step: number;
+  sample_step: number;
+}
+
 export interface TransportSectionScalarOverlayView {
   id: string;
   name: string | null;
@@ -81,6 +104,15 @@ interface PackedPreviewResponseHeader {
 
 interface PackedSectionResponseHeader {
   section: PackedPreviewSectionHeader;
+}
+
+interface PackedSectionTileResponseHeader {
+  section: PackedPreviewSectionHeader;
+  traceRange: [number, number];
+  sampleRange: [number, number];
+  lod: number;
+  traceStep: number;
+  sampleStep: number;
 }
 
 interface PackedSectionScalarOverlayHeader {
@@ -191,6 +223,22 @@ export function parsePackedPreviewProcessingResponse(bytes: Uint8Array): Transpo
 export function parsePackedSectionViewResponse(bytes: Uint8Array): TransportSectionView {
   const { header, nextBytes } = parseHeader<PackedSectionResponseHeader>(bytes, "TBSEC001", "packed section response");
   return sectionFromPackedHeader(header.section, nextBytes);
+}
+
+export function parsePackedSectionTileResponse(bytes: Uint8Array): TransportSectionTileView {
+  const { header, nextBytes } = parseHeader<PackedSectionTileResponseHeader>(
+    bytes,
+    "TBTIL001",
+    "packed section tile response"
+  );
+  return {
+    section: sectionFromPackedHeader(header.section, nextBytes),
+    trace_range: header.traceRange,
+    sample_range: header.sampleRange,
+    lod: header.lod,
+    trace_step: header.traceStep,
+    sample_step: header.sampleStep
+  };
 }
 
 export function parsePackedSectionDisplayResponse(bytes: Uint8Array): TransportResolvedSectionDisplayView {

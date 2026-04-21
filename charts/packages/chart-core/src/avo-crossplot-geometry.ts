@@ -1,3 +1,4 @@
+import { resolveCartesianPresentationProfile, resolveCartesianStageLayout } from "./cartesian-presentation";
 import type { AvoCartesianViewport, AvoCrossplotModel } from "@ophiolite/charts-data-models";
 
 export interface AvoCrossplotRect {
@@ -7,20 +8,10 @@ export interface AvoCrossplotRect {
   height: number;
 }
 
-export const AVO_CROSSPLOT_MARGIN = {
-  top: 56,
-  right: 28,
-  bottom: 56,
-  left: 72
-} as const;
+export const AVO_CROSSPLOT_MARGIN = resolveCartesianPresentationProfile("avo").frame.plotInsets;
 
 export function getAvoCrossplotPlotRect(width: number, height: number): AvoCrossplotRect {
-  return {
-    x: AVO_CROSSPLOT_MARGIN.left,
-    y: AVO_CROSSPLOT_MARGIN.top,
-    width: Math.max(1, width - AVO_CROSSPLOT_MARGIN.left - AVO_CROSSPLOT_MARGIN.right),
-    height: Math.max(1, height - AVO_CROSSPLOT_MARGIN.top - AVO_CROSSPLOT_MARGIN.bottom)
-  };
+  return resolveCartesianStageLayout(width, height, "avo").plotRect;
 }
 
 export function fitAvoCrossplotViewport(model: AvoCrossplotModel | null, paddingRatio = 0.08): AvoCartesianViewport | null {

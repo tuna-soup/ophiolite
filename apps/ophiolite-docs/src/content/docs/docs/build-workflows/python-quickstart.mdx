@@ -7,7 +7,22 @@ draft: false
 **Audience:** Python-first builders  
 **Status:** Preview
 
-The current Python surface is centered on project access, typed results, and compute-facing flows.
+The current Python surface is centered on project access, typed results, and domain-first workflow composition.
+
+## Public vocabulary
+
+The main Python story should be learned through stable nouns first:
+
+- `Project`
+- `Survey`
+- `Well`
+- `Wellbore`
+- `WellboreBinding`
+- `TraceBoostApp`
+- `SeismicDataset`
+- `TraceProcessingPipeline`
+
+Advanced transport and extension details still exist, but they should not define the beginner story.
 
 ## Create or open a project
 
@@ -23,15 +38,17 @@ print(summary.root)
 
 ```python
 print(project.summary())
-print(project.wells())
-```
 
-## Read the platform catalog
-
-```python
-catalog = Project.platform_catalog()
-for operation in catalog.operations[:5]:
-    print(operation.id, operation.surfaces)
+wells = project.wells()
+surveys = project.surveys()
+print(len(wells))
+print(len(surveys))
+if wells:
+    well = wells[0]
+    wellbores = well.wellbores()
+    print(well.name)
+    print(len(wellbores))
+    print(len(well.surveys()))
 ```
 
 ## Current boundary
@@ -39,7 +56,9 @@ for operation in catalog.operations[:5]:
 Today the Python SDK is strongest for:
 
 - project lifecycle
-- summaries and discovery
+- survey-backed seismic discovery
+- well and wellbore navigation
+- typed seismic operator chains
 - operator lock inspection
 - operator package installation
 - compute catalog and compute execution
@@ -49,5 +68,7 @@ Some import and broader project-manipulation flows are still more complete in Ru
 ## When to stay in Python
 
 Stay in Python when you want typed objects, local scripting, notebook-style composition, or a programmable workflow surface that tracks platform nouns instead of raw commands.
+
+Use `ophiolite_sdk.operators` only when you are authoring external operators. For built-in workflows, prefer typed helpers such as `elastic.run_avo(...)` and `TraceProcessingPipeline.bandpass(...).agc_rms(...)`.
 
 Next: [CLI automation](/docs/build-workflows/cli-automation/)

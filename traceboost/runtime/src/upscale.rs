@@ -55,11 +55,13 @@ pub fn upscale_store(
             store_id: generate_store_id(),
             source: input.manifest.volume.source.clone(),
             shape,
-            axes: VolumeAxes {
-                ilines: densify_coords(&input.manifest.volume.axes.ilines),
-                xlines: densify_coords(&input.manifest.volume.axes.xlines),
-                sample_axis_ms: input.manifest.volume.axes.sample_axis_ms.clone(),
-            },
+            axes: VolumeAxes::with_vertical_axis(
+                densify_coords(&input.manifest.volume.axes.ilines),
+                densify_coords(&input.manifest.volume.axes.xlines),
+                input.manifest.volume.axes.sample_axis_domain,
+                input.manifest.volume.axes.sample_axis_unit.clone(),
+                input.manifest.volume.axes.sample_axis_ms.clone(),
+            ),
             segy_export: input.manifest.volume.segy_export.clone(),
             coordinate_reference_binding: input
                 .manifest

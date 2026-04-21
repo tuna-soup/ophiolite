@@ -1,3 +1,4 @@
+use crate::crs_registry::resolve_coordinate_reference;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -11,6 +12,15 @@ const PROJECT_SETTINGS_FILENAME: &str = "project-settings.json";
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProjectDisplayCoordinateReference {
     NativeEngineering,
+    AuthorityCode {
+        authority: String,
+        code: String,
+        #[serde(rename = "authId")]
+        auth_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        name: Option<String>,
+    },
+    #[serde(alias = "coordinate_reference_id")]
     CoordinateReferenceId {
         #[serde(rename = "coordinateReferenceId")]
         coordinate_reference_id: String,
@@ -43,7 +53,7 @@ pub fn load_project_geospatial_settings(
                 path.display()
             )
         })?;
-    Ok(Some(normalize_settings(settings)))
+    Ok(Some(normalize_settings(settings)?))
 }
 
 pub fn save_project_geospatial_settings(
@@ -67,7 +77,7 @@ pub fn save_project_geospatial_settings(
         source: normalize_source(source),
         created_at_unix_s,
         updated_at_unix_s: now,
-    });
+    })?;
     let bytes = serde_json::to_vec_pretty(&settings).map_err(|error| error.to_string())?;
     fs::write(&path, bytes).map_err(|error| error.to_string())?;
     Ok(settings)
@@ -80,7 +90,9 @@ pub fn project_settings_path(project_root: impl AsRef<Path>) -> PathBuf {
         .join(PROJECT_SETTINGS_FILENAME)
 }
 
-fn normalize_settings(mut settings: ProjectGeospatialSettings) -> ProjectGeospatialSettings {
+fn normalize_settings(
+    mut settings: ProjectGeospatialSettings,
+) -> Result<ProjectGeospatialSettings, String> {
     settings.schema_version = PROJECT_SETTINGS_SCHEMA_VERSION;
     settings.source = normalize_source(&settings.source);
     if settings.created_at_unix_s == 0 {
@@ -91,13 +103,44 @@ fn normalize_settings(mut settings: ProjectGeospatialSettings) -> ProjectGeospat
     }
     match &mut settings.display_coordinate_reference {
         ProjectDisplayCoordinateReference::NativeEngineering => {}
+        ProjectDisplayCoordinateReference::AuthorityCode {
+            authority,
+            code,
+            auth_id,
+            name,
+        } => {
+            let resolved = resolve_coordinate_reference(
+                crate::crs_registry::ResolveCoordinateReferenceRequest {
+                    authority: Some(authority.clone()),
+                    code: Some(code.clone()),
+                    auth_id: Some(auth_id.clone()),
+                },
+            )?;
+            *authority = resolved.authority;
+            *code = resolved.code;
+            *auth_id = resolved.auth_id;
+            *name = Some(resolved.name);
+        }
         ProjectDisplayCoordinateReference::CoordinateReferenceId {
             coordinate_reference_id,
         } => {
-            *coordinate_reference_id = coordinate_reference_id.trim().to_string();
+            let resolved = resolve_coordinate_reference(
+                crate::crs_registry::ResolveCoordinateReferenceRequest {
+                    authority: None,
+                    code: None,
+                    auth_id: Some(coordinate_reference_id.trim().to_string()),
+                },
+            )?;
+            settings.display_coordinate_reference =
+                ProjectDisplayCoordinateReference::AuthorityCode {
+                    authority: resolved.authority,
+                    code: resolved.code,
+                    auth_id: resolved.auth_id,
+                    name: Some(resolved.name),
+                };
         }
     }
-    settings
+    Ok(settings)
 }
 
 fn normalize_source(source: &str) -> String {
@@ -140,8 +183,11 @@ mod tests {
         let project_root = temp_project_root("project-settings-round-trip");
         let saved = save_project_geospatial_settings(
             &project_root,
-            ProjectDisplayCoordinateReference::CoordinateReferenceId {
-                coordinate_reference_id: " EPSG:23031 ".to_string(),
+            ProjectDisplayCoordinateReference::AuthorityCode {
+                authority: " epsg ".to_string(),
+                code: " 23031 ".to_string(),
+                auth_id: " EPSG:23031 ".to_string(),
+                name: None,
             },
             " auto_seeded ",
         )
@@ -158,11 +204,52 @@ mod tests {
         assert_eq!(loaded.source, "auto_seeded");
         assert_eq!(
             loaded.display_coordinate_reference,
-            ProjectDisplayCoordinateReference::CoordinateReferenceId {
-                coordinate_reference_id: "EPSG:23031".to_string()
+            ProjectDisplayCoordinateReference::AuthorityCode {
+                authority: "EPSG".to_string(),
+                code: "23031".to_string(),
+                auth_id: "EPSG:23031".to_string(),
+                name: Some("ED50 / UTM zone 31N".to_string()),
             }
         );
         assert!(project_settings_path(&project_root).exists());
+
+        fs::remove_dir_all(&project_root).expect("failed to clean temp project root");
+    }
+
+    #[test]
+    fn project_settings_load_normalizes_legacy_coordinate_reference_id_variant() {
+        let project_root = temp_project_root("project-settings-legacy");
+        let path = project_settings_path(&project_root);
+        fs::create_dir_all(path.parent().expect("parent should exist"))
+            .expect("failed to create project settings parent");
+        fs::write(
+            &path,
+            r#"{
+  "schemaVersion": 1,
+  "displayCoordinateReference": {
+    "kind": "coordinate_reference_id",
+    "coordinateReferenceId": "EPSG:4326"
+  },
+  "source": "legacy",
+  "createdAtUnixS": 1,
+  "updatedAtUnixS": 1
+}"#,
+        )
+        .expect("failed to seed legacy settings");
+
+        let loaded = load_project_geospatial_settings(&project_root)
+            .expect("failed to load project settings")
+            .expect("settings should exist");
+
+        assert_eq!(
+            loaded.display_coordinate_reference,
+            ProjectDisplayCoordinateReference::AuthorityCode {
+                authority: "EPSG".to_string(),
+                code: "4326".to_string(),
+                auth_id: "EPSG:4326".to_string(),
+                name: Some("WGS 84".to_string()),
+            }
+        );
 
         fs::remove_dir_all(&project_root).expect("failed to clean temp project root");
     }

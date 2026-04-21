@@ -385,6 +385,310 @@ pub struct SurveyPreflightResponse {
     pub notes: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SegyImportWizardStage {
+    Scan,
+    Structure,
+    Spatial,
+    Review,
+    Import,
+    RawInspect,
+    Result,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SegyImportIssueSeverity {
+    Blocking,
+    Warning,
+    Info,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SegyImportIssueSection {
+    Scan,
+    Structure,
+    Spatial,
+    Review,
+    Import,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SegyImportSparseHandling {
+    BlockImport,
+    RegularizeToDense,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SegyImportPlanSource {
+    ScanDefault,
+    Candidate,
+    SavedRecipe,
+    SourceMemory,
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SegyImportRecipeScope {
+    Global,
+    SourceFingerprint,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportPolicy {
+    pub sparse_handling: SegyImportSparseHandling,
+    pub output_store_path: String,
+    #[serde(default)]
+    pub overwrite_existing: bool,
+    #[serde(default)]
+    pub acknowledge_warnings: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportSpatialPlan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x_field: Option<SegyHeaderField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y_field: Option<SegyHeaderField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_scalar_field: Option<SegyHeaderField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_units: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_reference_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_reference_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportProvenance {
+    pub plan_source: SegyImportPlanSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_candidate_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportPlan {
+    pub input_path: String,
+    pub source_fingerprint: String,
+    pub header_mapping: SegyGeometryOverride,
+    pub spatial: SegyImportSpatialPlan,
+    pub policy: SegyImportPolicy,
+    pub provenance: SegyImportProvenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportIssue {
+    pub severity: SegyImportIssueSeverity,
+    pub code: String,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_path: Option<String>,
+    pub section: SegyImportIssueSection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_fix: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportRiskSummary {
+    pub observed_trace_count: u64,
+    pub expected_trace_count: u64,
+    pub completeness_ratio: f64,
+    pub blowup_ratio: f64,
+    pub estimated_amplitude_bytes: u64,
+    pub estimated_occupancy_bytes: u64,
+    pub estimated_total_bytes: u64,
+    pub classification: String,
+    pub suggested_action: SuggestedImportAction,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportResolvedDataset {
+    pub classification: String,
+    pub stacking_state: String,
+    pub organization: String,
+    pub layout: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gather_axis_kind: Option<String>,
+    pub inline_count: usize,
+    pub crossline_count: usize,
+    pub third_axis_count: usize,
+    pub trace_count: u64,
+    pub samples_per_trace: usize,
+    pub sample_data_fidelity: SampleDataFidelity,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportResolvedSpatial {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x_field: Option<SegyHeaderField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y_field: Option<SegyHeaderField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_scalar_field: Option<SegyHeaderField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_units: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_reference_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_reference_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportFieldObservation {
+    pub field: SegyHeaderField,
+    pub label: String,
+    pub unique_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_value: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_value: Option<i64>,
+    pub zero_count: usize,
+    pub nonzero_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportCandidatePlan {
+    pub candidate_id: String,
+    pub label: String,
+    pub plan_patch: SegyImportPlan,
+    pub resolved_dataset: SegyImportResolvedDataset,
+    pub risk_summary: SegyImportRiskSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issues: Vec<SegyImportIssue>,
+    pub auto_selectable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ScanSegyImportRequest {
+    pub schema_version: u32,
+    pub input_path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportScanResponse {
+    pub schema_version: u32,
+    pub input_path: String,
+    pub source_fingerprint: String,
+    pub file_size: u64,
+    pub trace_count: u64,
+    pub samples_per_trace: usize,
+    pub sample_interval_us: u16,
+    pub sample_format_code: u16,
+    pub endianness: String,
+    pub default_plan: SegyImportPlan,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub candidate_plans: Vec<SegyImportCandidatePlan>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub field_observations: Vec<SegyImportFieldObservation>,
+    pub risk_summary: SegyImportRiskSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issues: Vec<SegyImportIssue>,
+    pub recommended_next_stage: SegyImportWizardStage,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ValidateSegyImportPlanRequest {
+    pub schema_version: u32,
+    pub plan: SegyImportPlan,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportValidationResponse {
+    pub schema_version: u32,
+    pub validated_plan: SegyImportPlan,
+    pub validation_fingerprint: String,
+    pub resolved_dataset: SegyImportResolvedDataset,
+    pub resolved_spatial: SegyImportResolvedSpatial,
+    pub risk_summary: SegyImportRiskSummary,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub issues: Vec<SegyImportIssue>,
+    pub can_import: bool,
+    pub requires_acknowledgement: bool,
+    pub recommended_next_stage: SegyImportWizardStage,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ImportSegyWithPlanRequest {
+    pub schema_version: u32,
+    pub plan: SegyImportPlan,
+    pub validation_fingerprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ImportSegyWithPlanResponse {
+    pub schema_version: u32,
+    pub dataset: DatasetSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SegyImportRecipe {
+    pub recipe_id: String,
+    pub name: String,
+    pub scope: SegyImportRecipeScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_fingerprint: Option<String>,
+    pub plan: SegyImportPlan,
+    pub created_at_unix_s: u64,
+    pub updated_at_unix_s: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ListSegyImportRecipesRequest {
+    pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ListSegyImportRecipesResponse {
+    pub schema_version: u32,
+    pub recipes: Vec<SegyImportRecipe>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SaveSegyImportRecipeRequest {
+    pub schema_version: u32,
+    pub recipe: SegyImportRecipe,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SaveSegyImportRecipeResponse {
+    pub schema_version: u32,
+    pub recipe: SegyImportRecipe,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct DeleteSegyImportRecipeRequest {
+    pub schema_version: u32,
+    pub recipe_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct DeleteSegyImportRecipeResponse {
+    pub schema_version: u32,
+    pub deleted: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ImportDatasetRequest {
     pub schema_version: u32,

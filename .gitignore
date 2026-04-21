@@ -16,3 +16,4 @@
 /openvds_storage_bench.exe
 **/__pycache__/
 *.py[cod]
+traceboost/contracts/seis-contracts-operations/bindings/

@@ -1,0 +1,12 @@
+[package]
+name = "traceboost-contracts-export"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ophiolite-project = { path = "../../crates/ophiolite-project" }
+schemars = { workspace = true }
+seis-contracts-core = { path = "../../traceboost/contracts/seis-contracts-core" }
+seis-contracts-operations = { path = "../../traceboost/contracts/seis-contracts-operations" }
+serde_json = { workspace = true }
+ts-rs = { workspace = true }

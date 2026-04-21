@@ -21,6 +21,7 @@ members = [
     "traceboost/app/traceboost-app",
     "apps/traceboost-demo/src-tauri",
     "scripts/contracts-export",
+    "scripts/traceboost-contracts-export",
 ]
 exclude = ["apps/ophiolite-harness/src-tauri"]
 resolver = "2"

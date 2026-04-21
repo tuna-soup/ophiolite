@@ -1,4 +1,5 @@
 export * from "./interactions";
+export * from "./cartesian-axis";
 export * from "./chart-registry";
 export * from "./gather";
 export * from "./gather-mock";

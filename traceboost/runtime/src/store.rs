@@ -6,7 +6,7 @@ use ophiolite_seismic_runtime::{self as runtime, SectionAxis, SeismicStoreError}
 use serde_json::{Value, json};
 
 pub use ophiolite_seismic_runtime::{
-    SectionPlane, StoreHandle, create_tbvol_store, load_array, load_occupancy,
+    SectionPlane, SectionTileView, StoreHandle, create_tbvol_store, load_array, load_occupancy,
 };
 
 fn maybe_normalize_legacy_processing_manifest(
@@ -79,6 +79,18 @@ pub fn read_section_plane(
 ) -> Result<SectionPlane, SeismicStoreError> {
     maybe_normalize_legacy_processing_manifest(root.as_ref())?;
     runtime::read_section_plane(root, axis, index)
+}
+
+pub fn section_tile_view(
+    root: impl AsRef<Path>,
+    axis: SectionAxis,
+    index: usize,
+    trace_range: [usize; 2],
+    sample_range: [usize; 2],
+    lod: u8,
+) -> Result<SectionTileView, SeismicStoreError> {
+    maybe_normalize_legacy_processing_manifest(root.as_ref())?;
+    runtime::section_tile_view(root, axis, index, trace_range, sample_range, lod)
 }
 
 pub fn import_horizon_xyzs<P: AsRef<Path>>(

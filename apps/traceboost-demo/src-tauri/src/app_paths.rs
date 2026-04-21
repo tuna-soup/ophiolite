@@ -2,10 +2,38 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager};
 
+const LEGACY_TRACEBOOST_LOGS_DIR_NAME: &str = "TraceBoost";
+
+pub fn preferred_traceboost_logs_dir() -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    {
+        return std::env::var_os("HOME").map(|home| {
+            PathBuf::from(home)
+                .join("Library")
+                .join("Logs")
+                .join(LEGACY_TRACEBOOST_LOGS_DIR_NAME)
+        });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        None
+    }
+}
+
+fn resolve_logs_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Some(logs_dir) = preferred_traceboost_logs_dir() {
+        return Ok(logs_dir);
+    }
+
+    app.path().app_log_dir().map_err(|error| error.to_string())
+}
+
 #[derive(Debug, Clone)]
 pub struct AppPaths {
     logs_dir: PathBuf,
     pipeline_presets_dir: PathBuf,
+    segy_import_recipes_dir: PathBuf,
     imported_volumes_dir: PathBuf,
     imported_gathers_dir: PathBuf,
     derived_volumes_dir: PathBuf,
@@ -21,15 +49,13 @@ pub struct AppPaths {
 
 impl AppPaths {
     pub fn resolve(app: &AppHandle) -> Result<Self, String> {
-        let logs_dir = app
-            .path()
-            .app_log_dir()
-            .map_err(|error| error.to_string())?;
+        let logs_dir = resolve_logs_dir(app)?;
         let app_data_dir = app
             .path()
             .app_data_dir()
             .map_err(|error| error.to_string())?;
         let pipeline_presets_dir = app_data_dir.join("processing-pipelines");
+        let segy_import_recipes_dir = app_data_dir.join("segy-import-recipes");
         let imported_volumes_dir = app_data_dir.join("volumes");
         let imported_gathers_dir = app_data_dir.join("gathers");
         let derived_volumes_dir = app_data_dir.join("derived-volumes");
@@ -44,6 +70,7 @@ impl AppPaths {
         Ok(Self {
             logs_dir,
             pipeline_presets_dir,
+            segy_import_recipes_dir,
             imported_volumes_dir,
             imported_gathers_dir,
             derived_volumes_dir,
@@ -64,6 +91,10 @@ impl AppPaths {
 
     pub fn pipeline_presets_dir(&self) -> &Path {
         &self.pipeline_presets_dir
+    }
+
+    pub fn segy_import_recipes_dir(&self) -> &Path {
+        &self.segy_import_recipes_dir
     }
 
     pub fn imported_volumes_dir(&self) -> &Path {

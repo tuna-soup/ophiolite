@@ -10,6 +10,29 @@ import type {
   SectionScalarOverlayColorMap,
   SectionPayload
 } from "@ophiolite/charts-data-models";
+import {
+  globalTraceToLocalIndex,
+  resolveLoadedSectionWindow,
+  sectionAmplitudeAt,
+  sectionHorizontalCoordinateAt,
+  sectionSampleValueAt
+} from "@ophiolite/charts-data-models";
+import {
+  buildSeismicTickIndices,
+  buildSeismicTopAxisRows,
+  formatSeismicAxisValue,
+  formatSeismicCanvasFont,
+  resolveSeismicPresentationProfile,
+  resolveSeismicSampleAxisTitle,
+  resolveSeismicSectionTitle
+} from "@ophiolite/charts-core";
+import {
+  applyCanvasSurfaceTransform,
+  createRasterSurfaceMetrics,
+  resizeCanvasBackingStore,
+  scaleRasterRect,
+  type RasterSurfaceMetrics
+} from "../../internal/rasterSurface";
 import type { RendererAdapter } from "../adapter";
 import {
   buildOverlaySpatialIndex,
@@ -58,6 +81,13 @@ interface PlotPalette {
   metaText: string;
 }
 
+const SEISMIC_PRESENTATION = resolveSeismicPresentationProfile("standard");
+const SEISMIC_TICK_FONT = formatSeismicCanvasFont(SEISMIC_PRESENTATION.typography.tick);
+const SEISMIC_AXIS_LABEL_FONT = formatSeismicCanvasFont(SEISMIC_PRESENTATION.typography.axisLabel);
+const SEISMIC_TITLE_FONT = formatSeismicCanvasFont(SEISMIC_PRESENTATION.typography.title);
+const SEISMIC_OVERLAY_FONT = formatSeismicCanvasFont(SEISMIC_PRESENTATION.typography.overlay);
+const SEISMIC_ANNOTATION_FONT = formatSeismicCanvasFont(SEISMIC_PRESENTATION.typography.annotation);
+
 const scalarOverlayImageCache = new WeakMap<
   SectionScalarOverlay,
   {
@@ -66,7 +96,14 @@ const scalarOverlayImageCache = new WeakMap<
   }
 >();
 
+type SeismicBaseRendererKind = "auto" | "worker-webgl" | "local-webgl" | "local-canvas";
+
+interface MockCanvasRendererOptions {
+  axisChrome?: "canvas" | "none";
+}
+
 export class MockCanvasRenderer implements RendererAdapter {
+  private mountContainer: HTMLElement | null = null;
   private host: HTMLDivElement | null = null;
   private baseCanvas: HTMLCanvasElement | null = null;
   private overlayCanvas: HTMLCanvasElement | null = null;
@@ -85,8 +122,16 @@ export class MockCanvasRenderer implements RendererAdapter {
   private workerMode = false;
   private workerReady = false;
   private workerInitTimeout: number | null = null;
+  private forcedBaseRenderer: SeismicBaseRendererKind = "auto";
+  private readonly axisChrome: "canvas" | "none";
+
+  constructor(options: MockCanvasRendererOptions = {}) {
+    this.axisChrome = options.axisChrome ?? "canvas";
+  }
 
   mount(container: HTMLElement): void {
+    this.mountContainer = container;
+    this.forcedBaseRenderer = resolveForcedBaseRendererKind();
     this.host = document.createElement("div");
     this.host.style.position = "relative";
     this.host.style.width = "100%";
@@ -108,7 +153,10 @@ export class MockCanvasRenderer implements RendererAdapter {
     container.replaceChildren(this.host);
     this.overlayContext = this.overlayCanvas.getContext("2d");
 
-    if (canUseOffscreenWorkerRenderer(this.baseCanvas)) {
+    if (
+      (this.forcedBaseRenderer === "auto" || this.forcedBaseRenderer === "worker-webgl") &&
+      canUseOffscreenWorkerRenderer(this.baseCanvas)
+    ) {
       this.startWorkerRenderer();
     } else {
       this.initLocalBaseRenderer();
@@ -120,10 +168,16 @@ export class MockCanvasRenderer implements RendererAdapter {
       return;
     }
 
-    const { width, height } = this.ensureCanvasSize();
-    const plotRect = getPlotRect(width, height);
-    const nextBaseState = createBaseRenderState(frame, plotRect, width, height);
-    const nextOverlayState = createOverlayRenderState(frame, plotRect, width, height);
+    const surface = this.ensureCanvasSize();
+    const plotRect = getPlotRect(surface.cssWidth, surface.cssHeight);
+    const nextBaseState = createBaseRenderState(frame, plotRect, surface.cssWidth, surface.cssHeight, surface.pixelRatio);
+    const nextOverlayState = createOverlayRenderState(
+      frame,
+      plotRect,
+      surface.cssWidth,
+      surface.cssHeight,
+      surface.pixelRatio
+    );
     if (
       nextBaseState.comparisonMode === "split" &&
       nextBaseState.displayTransform.renderMode === "heatmap" &&
@@ -138,14 +192,14 @@ export class MockCanvasRenderer implements RendererAdapter {
       if (this.workerMode && this.worker) {
         this.renderBaseWorker(nextBaseState, invalidation);
       } else if (this.gl && this.resources) {
-        this.renderBaseWebGl(nextBaseState, invalidation);
+        this.renderBaseWebGl(nextBaseState, invalidation, surface);
       } else if (this.baseContext2d) {
-        this.renderBaseCanvas(nextBaseState);
+        this.renderBaseCanvas(nextBaseState, surface);
       }
     }
 
     if (invalidation.overlayNeedsDraw || invalidation.baseChanged) {
-      this.renderOverlay(nextOverlayState);
+      this.renderOverlay(nextOverlayState, surface);
     }
 
     this.lastBaseState = nextBaseState;
@@ -193,20 +247,19 @@ export class MockCanvasRenderer implements RendererAdapter {
     this.lastUploadedOverlay = null;
     this.workerMode = false;
     this.workerReady = false;
+    this.mountContainer = null;
   }
 
-  private ensureCanvasSize(): { width: number; height: number } {
-    const width = Math.max(1, Math.round(this.host?.clientWidth || 1));
-    const height = Math.max(1, Math.round(this.host?.clientHeight || 1));
+  private ensureCanvasSize(): RasterSurfaceMetrics {
+    const surface = createRasterSurfaceMetrics(this.host?.clientWidth || 1, this.host?.clientHeight || 1);
 
     for (const canvas of [this.baseCanvas, this.overlayCanvas]) {
-      if (canvas && (canvas.width !== width || canvas.height !== height)) {
-        canvas.width = width;
-        canvas.height = height;
+      if (canvas) {
+        resizeCanvasBackingStore(canvas, surface);
       }
     }
 
-    return { width, height };
+    return surface;
   }
 
   private startWorkerRenderer(): void {
@@ -216,8 +269,8 @@ export class MockCanvasRenderer implements RendererAdapter {
 
     try {
       this.setBaseRendererKind("worker-pending");
-      const { width, height } = this.ensureCanvasSize();
-      const plotRect = getPlotRect(width, height);
+      const surface = this.ensureCanvasSize();
+      const plotRect = getPlotRect(surface.cssWidth, surface.cssHeight);
       const offscreen = this.baseCanvas.transferControlToOffscreen();
       this.worker = new Worker(new URL("./baseRenderWorker.ts", import.meta.url), {
         type: "module"
@@ -231,7 +284,7 @@ export class MockCanvasRenderer implements RendererAdapter {
         {
           type: "init",
           canvas: offscreen,
-          state: this.createWorkerState(width, height, plotRect)
+          state: this.createWorkerState(surface, plotRect)
         },
         [offscreen]
       );
@@ -249,6 +302,12 @@ export class MockCanvasRenderer implements RendererAdapter {
 
   private initLocalBaseRenderer(): void {
     if (!this.baseCanvas) {
+      return;
+    }
+
+    if (this.forcedBaseRenderer === "local-canvas") {
+      this.baseContext2d = this.baseCanvas.getContext("2d");
+      this.setBaseRendererKind("local-canvas");
       return;
     }
 
@@ -274,9 +333,10 @@ export class MockCanvasRenderer implements RendererAdapter {
     }
 
     if (invalidation.sizeChanged) {
+      const surface = this.ensureCanvasSize();
       this.worker.postMessage({
         type: "resize",
-        state: this.createWorkerState(baseState.width, baseState.height, baseState.plotRect)
+        state: this.createWorkerState(surface, baseState.plotRect)
       });
     }
 
@@ -367,7 +427,7 @@ export class MockCanvasRenderer implements RendererAdapter {
     this.host.insertBefore(replacement, this.overlayCanvas);
     this.baseCanvas?.remove();
     this.baseCanvas = replacement;
-    this.ensureCanvasSize();
+    const surface = this.ensureCanvasSize();
     this.initLocalBaseRenderer();
 
     if (this.lastBaseState) {
@@ -381,75 +441,96 @@ export class MockCanvasRenderer implements RendererAdapter {
           sizeChanged: true,
           baseChanged: true,
           overlayNeedsDraw: true
-        });
+        }, surface);
       } else if (this.baseContext2d) {
-        this.renderBaseCanvas(this.lastBaseState);
+        this.renderBaseCanvas(this.lastBaseState, surface);
       }
     }
   }
 
-  private createWorkerState(width: number, height: number, plotRect: PlotRect): WorkerBaseStatePayload {
+  private createWorkerState(surface: RasterSurfaceMetrics, plotRect: PlotRect): WorkerBaseStatePayload {
     return {
-      width,
-      height,
+      cssWidth: surface.cssWidth,
+      cssHeight: surface.cssHeight,
+      pixelRatio: surface.pixelRatio,
+      pixelWidth: surface.pixelWidth,
+      pixelHeight: surface.pixelHeight,
       plotRect
     };
   }
 
   private setBaseRendererKind(kind: string): void {
     this.host?.setAttribute("data-base-renderer", kind);
+    this.mountContainer?.setAttribute("data-base-renderer", kind);
   }
 
-  private renderBaseWebGl(baseState: BaseRenderState, invalidation: ReturnType<typeof diffRenderStates>): void {
+  private renderBaseWebGl(
+    baseState: BaseRenderState,
+    invalidation: ReturnType<typeof diffRenderStates>,
+    surface: RasterSurfaceMetrics
+  ): void {
     if (!this.gl || !this.resources || !this.baseCanvas) {
       return;
     }
 
     const { gl, resources } = this;
-    gl.viewport(0, 0, baseState.width, baseState.height);
+    const pixelPlotRect = scaleRasterRect(baseState.plotRect, surface.pixelRatio);
+    const pixelState: BaseRenderState = {
+      ...baseState,
+      plotRect: pixelPlotRect,
+      width: surface.pixelWidth,
+      height: surface.pixelHeight
+    };
+    gl.viewport(0, 0, pixelState.width, pixelState.height);
 
-    if (!baseState.section || !baseState.viewport) {
+    if (!pixelState.section || !pixelState.viewport) {
       clearGl(gl, [0.016, 0.075, 0.114, 1]);
       return;
     }
 
-    if (invalidation.dataChanged || this.lastUploadedSection !== baseState.section) {
-      uploadAmplitudeTexture(gl, resources.amplitudeTexture, baseState.section);
-      this.lastUploadedSection = baseState.section;
+    if (invalidation.dataChanged || this.lastUploadedSection !== pixelState.section) {
+      uploadAmplitudeTexture(gl, resources.amplitudeTexture, pixelState.section);
+      this.lastUploadedSection = pixelState.section;
     }
 
-    if (baseState.secondarySection && this.lastUploadedSecondarySection !== baseState.secondarySection) {
-      uploadAmplitudeTexture(gl, resources.secondaryAmplitudeTexture, baseState.secondarySection);
-      this.lastUploadedSecondarySection = baseState.secondarySection;
-    } else if (!baseState.secondarySection) {
+    if (pixelState.secondarySection && this.lastUploadedSecondarySection !== pixelState.secondarySection) {
+      uploadAmplitudeTexture(gl, resources.secondaryAmplitudeTexture, pixelState.secondarySection);
+      this.lastUploadedSecondarySection = pixelState.secondarySection;
+    } else if (!pixelState.secondarySection) {
       this.lastUploadedSecondarySection = null;
     }
 
-    if ((invalidation.dataChanged || invalidation.overlayChanged) && baseState.overlay) {
-      uploadOverlayTexture(gl, resources.overlayTexture, baseState.overlay);
-      this.lastUploadedOverlay = baseState.overlay;
-    } else if (!baseState.overlay) {
+    if ((invalidation.dataChanged || invalidation.overlayChanged) && pixelState.overlay) {
+      uploadOverlayTexture(gl, resources.overlayTexture, pixelState.overlay);
+      this.lastUploadedOverlay = pixelState.overlay;
+    } else if (!pixelState.overlay) {
       this.lastUploadedOverlay = null;
     }
 
-    if (invalidation.styleChanged || invalidation.dataChanged || invalidation.viewportChanged || invalidation.overlayChanged) {
-      if (baseState.displayTransform.renderMode === "heatmap") {
+    if (
+      invalidation.styleChanged ||
+      invalidation.dataChanged ||
+      invalidation.viewportChanged ||
+      invalidation.overlayChanged ||
+      invalidation.sizeChanged
+    ) {
+      if (pixelState.displayTransform.renderMode === "heatmap") {
         this.preparedHeatmap = prepareHeatmapData(
-          baseState.section,
-          baseState.viewport,
-          baseState.displayTransform,
-          baseState.overlay,
-          baseState.comparisonMode === "split" ? baseState.secondarySection : null
+          pixelState.section,
+          pixelState.viewport,
+          pixelState.displayTransform,
+          pixelState.overlay,
+          pixelState.comparisonMode === "split" ? pixelState.secondarySection : null
         );
         uploadLutTexture(gl, resources.lutTexture, this.preparedHeatmap.lut);
       } else {
         this.preparedWiggles = prepareWiggleData(
-          baseState.section,
-          baseState.viewport,
-          baseState.displayTransform,
-          baseState.plotRect,
-          baseState.width,
-          baseState.height
+          pixelState.section,
+          pixelState.viewport,
+          pixelState.displayTransform,
+          pixelState.plotRect,
+          pixelState.width,
+          pixelState.height
         );
         gl.bindBuffer(gl.ARRAY_BUFFER, resources.wiggleLineBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, this.preparedWiggles.lineVertices, gl.DYNAMIC_DRAW);
@@ -462,48 +543,49 @@ export class MockCanvasRenderer implements RendererAdapter {
 
     if (invalidation.sizeChanged || invalidation.viewportChanged || invalidation.styleChanged) {
       gl.bindBuffer(gl.ARRAY_BUFFER, resources.heatmapQuadBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, buildPlotQuadVertices(baseState.plotRect, baseState.width, baseState.height), gl.DYNAMIC_DRAW);
+      gl.bufferData(gl.ARRAY_BUFFER, buildPlotQuadVertices(pixelState.plotRect, pixelState.width, pixelState.height), gl.DYNAMIC_DRAW);
     }
 
-    const palette = paletteForMode(baseState.displayTransform.renderMode);
+    const palette = paletteForMode(pixelState.displayTransform.renderMode);
     clearGl(gl, hexToRgbaArray(palette.shellBackground));
-    clearPlotGl(gl, baseState.plotRect, baseState.height, hexToRgbaArray(palette.plotBackground));
+    clearPlotGl(gl, pixelState.plotRect, pixelState.height, hexToRgbaArray(palette.plotBackground));
 
-    if (baseState.displayTransform.renderMode === "heatmap" && this.preparedHeatmap) {
+    if (pixelState.displayTransform.renderMode === "heatmap" && this.preparedHeatmap) {
       const splitHeatmapEnabled =
-        baseState.comparisonMode === "split" && Boolean(baseState.secondarySection);
-      if (splitHeatmapEnabled && baseState.secondarySection) {
-        const splitX = Math.round(baseState.plotRect.x + baseState.plotRect.width * baseState.splitPosition);
-        drawHeatmapGl(gl, resources, baseState, this.preparedHeatmap, resources.amplitudeTexture, {
-          x: baseState.plotRect.x,
-          width: Math.max(0, splitX - baseState.plotRect.x)
+        pixelState.comparisonMode === "split" && Boolean(pixelState.secondarySection);
+      if (splitHeatmapEnabled && pixelState.secondarySection) {
+        const splitX = Math.round(pixelState.plotRect.x + pixelState.plotRect.width * pixelState.splitPosition);
+        drawHeatmapGl(gl, resources, pixelState, this.preparedHeatmap, resources.amplitudeTexture, {
+          x: pixelState.plotRect.x,
+          width: Math.max(0, splitX - pixelState.plotRect.x)
         });
         drawHeatmapGl(
           gl,
           resources,
-          { ...baseState, section: baseState.secondarySection, overlay: null },
+          { ...pixelState, section: pixelState.secondarySection, overlay: null },
           this.preparedHeatmap,
           resources.secondaryAmplitudeTexture,
           {
             x: splitX,
-            width: Math.max(0, baseState.plotRect.x + baseState.plotRect.width - splitX)
+            width: Math.max(0, pixelState.plotRect.x + pixelState.plotRect.width - splitX)
           }
         );
       } else {
-        drawHeatmapGl(gl, resources, baseState, this.preparedHeatmap, resources.amplitudeTexture);
+        drawHeatmapGl(gl, resources, pixelState, this.preparedHeatmap, resources.amplitudeTexture);
       }
       return;
     }
 
-    if (baseState.displayTransform.renderMode === "wiggle" && this.preparedWiggles) {
+    if (pixelState.displayTransform.renderMode === "wiggle" && this.preparedWiggles) {
       drawWigglesGl(gl, resources, palette);
     }
   }
 
-  private renderBaseCanvas(baseState: BaseRenderState): void {
+  private renderBaseCanvas(baseState: BaseRenderState, surface: RasterSurfaceMetrics): void {
     if (!this.baseContext2d) {
       return;
     }
+    applyCanvasSurfaceTransform(this.baseContext2d, surface);
 
     if (!baseState.section || !baseState.viewport) {
       drawEmptyState(this.baseContext2d, baseState.width, baseState.height);
@@ -526,12 +608,13 @@ export class MockCanvasRenderer implements RendererAdapter {
     );
   }
 
-  private renderOverlay(overlayState: OverlayRenderState): void {
+  private renderOverlay(overlayState: OverlayRenderState, surface: RasterSurfaceMetrics): void {
     if (!this.overlayContext) {
       return;
     }
 
     const ctx = this.overlayContext;
+    applyCanvasSurfaceTransform(ctx, surface);
     if (this.host) {
       this.host.style.cursor = cursorForInteractionState(overlayState.interactions);
     }
@@ -565,17 +648,19 @@ export class MockCanvasRenderer implements RendererAdapter {
       );
     }
 
-    drawAxes(
-      ctx,
-      overlayState.section,
-      overlayState.viewport.traceStart,
-      overlayState.viewport.traceEnd,
-      overlayState.viewport.sampleStart,
-      overlayState.viewport.sampleEnd,
-      overlayState.plotRect,
-      overlayState.displayTransform.renderMode,
-      palette
-    );
+    if (this.axisChrome === "canvas") {
+      drawAxes(
+        ctx,
+        overlayState.section,
+        overlayState.viewport.traceStart,
+        overlayState.viewport.traceEnd,
+        overlayState.viewport.sampleStart,
+        overlayState.viewport.sampleEnd,
+        overlayState.plotRect,
+        overlayState.displayTransform.renderMode,
+        palette
+      );
+    }
 
     for (const overlay of overlayState.sectionHorizonOverlays) {
       drawSectionHorizonOverlay(
@@ -697,11 +782,7 @@ function drawHeatmapGl(
   gl.uniform1i(gl.getUniformLocation(resources.heatmapProgram, "uAmplitude"), 0);
   gl.uniform1i(gl.getUniformLocation(resources.heatmapProgram, "uLut"), 1);
   gl.uniform1i(gl.getUniformLocation(resources.heatmapProgram, "uOverlay"), 2);
-  gl.uniform2f(
-    gl.getUniformLocation(resources.heatmapProgram, "uSectionSize"),
-    baseState.section.dimensions.samples,
-    baseState.section.dimensions.traces
-  );
+  setSectionTextureUniforms(gl, resources.heatmapProgram, baseState.section);
   gl.uniform4f(
     gl.getUniformLocation(resources.heatmapProgram, "uViewport"),
     baseState.viewport.traceStart,
@@ -726,6 +807,28 @@ function drawHeatmapGl(
 
   gl.drawArrays(gl.TRIANGLES, 0, 6);
   gl.disable(gl.SCISSOR_TEST);
+}
+
+function setSectionTextureUniforms(
+  gl: WebGL2RenderingContext,
+  program: WebGLProgram,
+  section: SectionPayload,
+  sectionSizeUniform = "uSectionSize",
+  loadedWindowUniform = "uLoadedWindow"
+): void {
+  const window = resolveLoadedSectionWindow(section);
+  gl.uniform2f(
+    gl.getUniformLocation(program, sectionSizeUniform),
+    section.dimensions.samples,
+    section.dimensions.traces
+  );
+  gl.uniform4f(
+    gl.getUniformLocation(program, loadedWindowUniform),
+    window.traceStart,
+    window.traceEnd,
+    window.sampleStart,
+    window.sampleEnd
+  );
 }
 
 function drawWigglesGl(gl: WebGL2RenderingContext, resources: GLResources, palette: PlotPalette): void {
@@ -757,11 +860,25 @@ function drawWigglesGl(gl: WebGL2RenderingContext, resources: GLResources, palet
 
 function drawEmptyState(ctx: CanvasRenderingContext2D, width: number, height: number): void {
   ctx.clearRect(0, 0, width, height);
-  ctx.fillStyle = "#f2f6f8";
+  ctx.fillStyle = SEISMIC_PRESENTATION.palette.shellBackground;
   ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = "#435c6b";
-  ctx.font = "18px sans-serif";
-  ctx.fillText("No section loaded", 32, 48);
+  ctx.fillStyle = SEISMIC_PRESENTATION.palette.title;
+  ctx.font = SEISMIC_OVERLAY_FONT;
+  ctx.textBaseline = "top";
+  ctx.fillText("No section loaded", 32, 40);
+}
+
+function resolveForcedBaseRendererKind(): SeismicBaseRendererKind {
+  const forced = (globalThis as { __OPHIOLITE_FORCE_SEISMIC_BASE_RENDERER__?: unknown })
+    .__OPHIOLITE_FORCE_SEISMIC_BASE_RENDERER__;
+  switch (forced) {
+    case "worker-webgl":
+    case "local-webgl":
+    case "local-canvas":
+      return forced;
+    default:
+      return "auto";
+  }
 }
 
 function drawBaseLayer2d(
@@ -919,14 +1036,16 @@ function drawHeatmap2d(
   const traceCount = traceEnd - traceStart;
   const sampleCount = sampleEnd - sampleStart;
   const image = ctx.createImageData(traceCount, sampleCount);
-  const amplitudes = section.amplitudes;
-  const samples = section.dimensions.samples;
 
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
   for (let trace = traceStart; trace < traceEnd; trace += 1) {
     for (let sample = sampleStart; sample < sampleEnd; sample += 1) {
-      const value = amplitudes[trace * samples + sample] * displayTransform.gain;
+      const amplitude = sectionAmplitudeAt(section, trace, sample);
+      if (amplitude === null) {
+        continue;
+      }
+      const value = amplitude * displayTransform.gain;
       min = Math.min(min, value);
       max = Math.max(max, value);
     }
@@ -934,12 +1053,19 @@ function drawHeatmap2d(
 
   const clipMin = forcedClipMin ?? displayTransform.clipMin ?? min;
   const clipMax = forcedClipMax ?? displayTransform.clipMax ?? max;
+  if (!Number.isFinite(clipMin) || !Number.isFinite(clipMax)) {
+    return;
+  }
   const denominator = Math.max(1e-6, clipMax - clipMin);
   const symmetricExtent = Math.max(Math.abs(clipMin), Math.abs(clipMax), 1e-6);
 
   for (let trace = traceStart; trace < traceEnd; trace += 1) {
     for (let sample = sampleStart; sample < sampleEnd; sample += 1) {
-      const source = amplitudes[trace * samples + sample] * displayTransform.gain;
+      const amplitude = sectionAmplitudeAt(section, trace, sample);
+      if (amplitude === null) {
+        continue;
+      }
+      const source = amplitude * displayTransform.gain;
       const normalized =
         displayTransform.colormap === "red-white-blue"
           ? Math.max(0, Math.min(1, (source / symmetricExtent + 1) / 2))
@@ -1364,12 +1490,12 @@ function drawSectionWellOverlay(
 
   if (overlay.name && labelPoint) {
     ctx.save();
-    ctx.font = "600 12px sans-serif";
+    ctx.font = SEISMIC_ANNOTATION_FONT;
     ctx.textBaseline = "middle";
     ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(4, 19, 29, 0.82)";
-    ctx.strokeText(overlay.name, labelPoint.x + 6, labelPoint.y);
-    ctx.fillText(overlay.name, labelPoint.x + 6, labelPoint.y);
+    ctx.strokeStyle = SEISMIC_PRESENTATION.palette.annotationHalo;
+    ctx.strokeText(overlay.name, labelPoint.x + SEISMIC_PRESENTATION.frame.annotationOffsetX, labelPoint.y);
+    ctx.fillText(overlay.name, labelPoint.x + SEISMIC_PRESENTATION.frame.annotationOffsetX, labelPoint.y);
     ctx.restore();
   }
 
@@ -1453,61 +1579,90 @@ function drawAxes(
   ctx.strokeRect(plotRect.x, plotRect.y, plotRect.width, plotRect.height);
 
   ctx.fillStyle = palette.axisLabel;
-  ctx.font = "12px sans-serif";
+  ctx.font = SEISMIC_TICK_FONT;
   ctx.textAlign = "center";
   ctx.textBaseline = "bottom";
 
-  const coordMin = Math.min(...Array.from(section.horizontalAxis.slice(traceStart, traceEnd)));
-  const coordMax = Math.max(...Array.from(section.horizontalAxis.slice(traceStart, traceEnd)));
-  const topTicks = buildTickIndices(traceStart, traceEnd, 12);
-  const topAxisRows = buildTopAxisRows(section);
+  const visibleCoords = [];
+  for (let trace = traceStart; trace < traceEnd; trace += 1) {
+    const coordinate = sectionHorizontalCoordinateAt(section, trace);
+    if (coordinate !== null) {
+      visibleCoords.push(coordinate);
+    }
+  }
+  const coordMin = Math.min(...visibleCoords);
+  const coordMax = Math.max(...visibleCoords);
+  const topTicks = buildSeismicTickIndices(traceStart, traceEnd, 12);
+  const topAxisRows = buildSeismicTopAxisRows(section);
   for (const traceIndex of topTicks) {
     const x =
       renderMode === "wiggle"
-        ? mapCoordinateToPlotX(section.horizontalAxis[traceIndex], coordMin, coordMax, plotRect)
+        ? mapCoordinateToPlotX(
+            sectionHorizontalCoordinateAt(section, traceIndex) ?? traceIndex,
+            coordMin,
+            coordMax,
+            plotRect
+          )
         : plotRect.x + ((traceIndex - traceStart) / Math.max(1, traceEnd - traceStart - 1)) * plotRect.width;
     ctx.beginPath();
     ctx.moveTo(x, plotRect.y);
-    ctx.lineTo(x, plotRect.y - 7);
+    ctx.lineTo(x, plotRect.y - SEISMIC_PRESENTATION.frame.topTickLength);
     ctx.stroke();
     for (const [rowIndex, row] of topAxisRows.entries()) {
-      ctx.fillText(formatAxisValue(row.values[traceIndex]!), x, plotRect.y - 10 - rowIndex * 16);
+      const localTraceIndex = globalTraceToLocalIndex(section, traceIndex);
+      if (localTraceIndex === null) {
+        continue;
+      }
+      ctx.fillText(
+        formatSeismicAxisValue(row.values[localTraceIndex]!),
+        x,
+        plotRect.y -
+          SEISMIC_PRESENTATION.frame.topTickOffset -
+          rowIndex * SEISMIC_PRESENTATION.frame.topAxisRowSpacing
+      );
     }
   }
 
   ctx.textAlign = "right";
   ctx.textBaseline = "middle";
-  const leftTicks = buildTickIndices(sampleStart, sampleEnd, 14);
+  const leftTicks = buildSeismicTickIndices(sampleStart, sampleEnd, 14);
   for (const sampleIndex of leftTicks) {
     const ratio = (sampleIndex - sampleStart) / Math.max(1, sampleEnd - sampleStart - 1);
     const y = plotRect.y + ratio * plotRect.height;
     ctx.beginPath();
     ctx.moveTo(plotRect.x, y);
-    ctx.lineTo(plotRect.x - 7, y);
+    ctx.lineTo(plotRect.x - SEISMIC_PRESENTATION.frame.leftTickLength, y);
     ctx.stroke();
-    ctx.fillText(formatAxisValue(section.sampleAxis[sampleIndex]), plotRect.x - 10, y);
+    ctx.fillText(
+      formatSeismicAxisValue(sectionSampleValueAt(section, sampleIndex) ?? sampleIndex),
+      plotRect.x - SEISMIC_PRESENTATION.frame.leftTickOffset,
+      y
+    );
   }
 
   ctx.fillStyle = palette.metaText;
-  ctx.font = "13px sans-serif";
+  ctx.font = SEISMIC_TITLE_FONT;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
-  const sectionLabel =
-    section.presentation?.title ??
-    (isArbitrarySection(section) ? "Arbitrary Section" : `${capitalize(section.axis)}: ${formatAxisValue(section.coordinate.value)}`);
-  ctx.fillText(sectionLabel, plotRect.x + plotRect.width / 2, 18);
+  ctx.fillText(resolveSeismicSectionTitle(section), plotRect.x + plotRect.width / 2, SEISMIC_PRESENTATION.frame.titleY);
 
+  ctx.font = SEISMIC_AXIS_LABEL_FONT;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
   for (const [rowIndex, row] of topAxisRows.entries()) {
-    ctx.fillText(row.label, 8, plotRect.y - 16 - rowIndex * 16);
+    ctx.fillText(
+      row.label,
+      SEISMIC_PRESENTATION.frame.topAxisLabelX,
+      plotRect.y -
+        SEISMIC_PRESENTATION.frame.topAxisRowLabelOffset -
+        rowIndex * SEISMIC_PRESENTATION.frame.topAxisRowSpacing
+    );
   }
   ctx.save();
-  ctx.translate(18, plotRect.y + plotRect.height / 2);
+  ctx.translate(SEISMIC_PRESENTATION.frame.yAxisLabelX, plotRect.y + plotRect.height / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.textAlign = "center";
-  const sampleAxisLabel = section.presentation?.sampleAxisLabel ?? "Sample";
-  ctx.fillText(section.units?.sample ? `${sampleAxisLabel} (${section.units.sample})` : sampleAxisLabel, 0, 0);
+  ctx.fillText(resolveSeismicSampleAxisTitle(section), 0, 0);
   ctx.restore();
   ctx.restore();
 }
@@ -1522,7 +1677,7 @@ function drawHorizontalGuides(
   ctx.save();
   ctx.strokeStyle = guideColor;
   ctx.lineWidth = 1;
-  const ticks = buildTickIndices(sampleStart, sampleEnd, 14);
+  const ticks = buildSeismicTickIndices(sampleStart, sampleEnd, 14);
   for (const sampleIndex of ticks) {
     const ratio = (sampleIndex - sampleStart) / Math.max(1, sampleEnd - sampleStart - 1);
     const y = plotRect.y + ratio * plotRect.height;
@@ -1532,60 +1687,6 @@ function drawHorizontalGuides(
     ctx.stroke();
   }
   ctx.restore();
-}
-
-function buildTickIndices(start: number, end: number, maxTicks: number): number[] {
-  const count = end - start;
-  if (count <= 0) {
-    return [];
-  }
-
-  const tickCount = Math.min(maxTicks, count);
-  const ticks = new Set<number>();
-  for (let index = 0; index < tickCount; index += 1) {
-    const ratio = tickCount === 1 ? 0 : index / (tickCount - 1);
-    ticks.add(start + Math.round(ratio * (count - 1)));
-  }
-  return [...ticks].sort((a, b) => a - b);
-}
-
-function buildTopAxisRows(section: SectionPayload): Array<{ label: string; values: Float64Array }> {
-  if (section.presentation?.topAxisRows?.length) {
-    return section.presentation.topAxisRows;
-  }
-
-  if (isArbitrarySection(section) && section.inlineAxis && section.xlineAxis) {
-    return [
-      { label: "Trace", values: section.horizontalAxis },
-      { label: "IL", values: section.inlineAxis },
-      { label: "XL", values: section.xlineAxis }
-    ];
-  }
-
-  return [
-    {
-      label: section.axis === "inline" ? "Xline" : "Inline",
-      values: section.horizontalAxis
-    }
-  ];
-}
-
-function isArbitrarySection(section: SectionPayload): boolean {
-  return hasAxisVariation(section.inlineAxis) && hasAxisVariation(section.xlineAxis);
-}
-
-function hasAxisVariation(axis: Float64Array | undefined): boolean {
-  if (!axis || axis.length < 2) {
-    return false;
-  }
-
-  const first = axis[0]!;
-  for (let index = 1; index < axis.length; index += 1) {
-    if (Math.abs(axis[index]! - first) > 1e-6) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function cursorForInteractionState(interactions: RenderFrame["state"]["interactions"]): string {
@@ -1746,17 +1847,6 @@ function clipToCanvasY(value: number, height: number): number {
   return ((1 - value) * 0.5) * height;
 }
 
-function formatAxisValue(value: number): string {
-  if (Math.abs(value) >= 100) {
-    return Math.round(value).toString();
-  }
-  return value.toFixed(1);
-}
-
-function capitalize(value: string): string {
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
 function colorFromMap(colormap: DisplayTransform["colormap"], normalized: number): [number, number, number] {
   if (colormap === "red-white-blue") {
     if (normalized <= 0.5) {
@@ -1825,26 +1915,26 @@ function colorFromStops(
 function paletteForMode(renderMode: DisplayTransform["renderMode"]): PlotPalette {
   if (renderMode === "wiggle") {
     return {
-      shellBackground: "#f2f6f8",
+      shellBackground: SEISMIC_PRESENTATION.palette.shellBackground,
       plotBackground: "#ffffff",
       traceColor: "#101418",
       fillColor: "#101418aa",
       guideColor: "rgba(120, 128, 138, 0.24)",
-      axisStroke: "#89a0af",
-      axisLabel: "#35505f",
-      metaText: "#4a6576"
+      axisStroke: SEISMIC_PRESENTATION.palette.axisStroke,
+      axisLabel: SEISMIC_PRESENTATION.palette.axisLabel,
+      metaText: SEISMIC_PRESENTATION.palette.title
     };
   }
 
   return {
-    shellBackground: "#f2f6f8",
+    shellBackground: SEISMIC_PRESENTATION.palette.shellBackground,
     plotBackground: "#f7fafc",
     traceColor: "#0b0f12",
     fillColor: "#0b0f1299",
     guideColor: "rgba(120, 140, 155, 0.22)",
-    axisStroke: "#a4bac8",
-    axisLabel: "#35505f",
-    metaText: "#4a6576"
+    axisStroke: SEISMIC_PRESENTATION.palette.axisStroke,
+    axisLabel: SEISMIC_PRESENTATION.palette.axisLabel,
+    metaText: SEISMIC_PRESENTATION.palette.title
   };
 }
 
@@ -1887,6 +1977,7 @@ uniform sampler2D uAmplitude;
 uniform sampler2D uLut;
 uniform sampler2D uOverlay;
 uniform vec2 uSectionSize;
+uniform vec4 uLoadedWindow;
 uniform vec4 uViewport;
 uniform float uGain;
 uniform float uClipMin;
@@ -1901,7 +1992,18 @@ out vec4 outColor;
 void main() {
   float traceIndex = mix(uViewport.x, uViewport.y - 1.0, vUv.x);
   float sampleIndex = mix(uViewport.z, uViewport.w - 1.0, vUv.y);
-  vec2 sampleUv = vec2((sampleIndex + 0.5) / uSectionSize.x, (traceIndex + 0.5) / uSectionSize.y);
+  if (
+    traceIndex < uLoadedWindow.x ||
+    traceIndex >= uLoadedWindow.y ||
+    sampleIndex < uLoadedWindow.z ||
+    sampleIndex >= uLoadedWindow.w
+  ) {
+    discard;
+  }
+  vec2 sampleUv = vec2(
+    ((sampleIndex - uLoadedWindow.z) + 0.5) / uSectionSize.x,
+    ((traceIndex - uLoadedWindow.x) + 0.5) / uSectionSize.y
+  );
   float amplitude = texture(uAmplitude, sampleUv).r * uGain * uPolaritySign;
 
   float normalized = uUseDiverging > 0.5

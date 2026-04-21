@@ -6,21 +6,24 @@ interface SurveyMapStageSize {
   height: number;
 }
 
-const PLOT_HEIGHT = 320;
-const MIN_STAGE_WIDTH = 520;
-const MAX_STAGE_WIDTH = 760;
-const MIN_STAGE_HEIGHT = 372;
+const MIN_PLOT_SIZE = 360;
+const MAX_PLOT_SIZE = 460;
+const DEFAULT_PLOT_SIZE = 420;
+const MIN_STAGE_WIDTH = SURVEY_MAP_MARGIN.left + SURVEY_MAP_MARGIN.right + MIN_PLOT_SIZE;
+const MAX_STAGE_WIDTH = SURVEY_MAP_MARGIN.left + SURVEY_MAP_MARGIN.right + MAX_PLOT_SIZE;
+const MIN_STAGE_HEIGHT = SURVEY_MAP_MARGIN.top + SURVEY_MAP_MARGIN.bottom + MIN_PLOT_SIZE;
+const MAX_STAGE_HEIGHT = SURVEY_MAP_MARGIN.top + SURVEY_MAP_MARGIN.bottom + MAX_PLOT_SIZE;
 
 export function resolveSurveyMapStageSize(map: SurveyMapModel | null): SurveyMapStageSize {
   const bounds = computeSurveyMapBounds(map);
   const spanX = Math.max(1, (bounds?.maxX ?? 1) - (bounds?.minX ?? 0));
   const spanY = Math.max(1, (bounds?.maxY ?? 1) - (bounds?.minY ?? 0));
-  const aspect = spanX / spanY;
-  const intrinsicWidth = SURVEY_MAP_MARGIN.left + SURVEY_MAP_MARGIN.right + PLOT_HEIGHT * aspect;
+  const coverage = Math.min(spanX, spanY) / Math.max(spanX, spanY);
+  const plotSize = clamp(DEFAULT_PLOT_SIZE + Math.round(coverage * 24), MIN_PLOT_SIZE, MAX_PLOT_SIZE);
 
   return {
-    width: clamp(intrinsicWidth, MIN_STAGE_WIDTH, MAX_STAGE_WIDTH),
-    height: MIN_STAGE_HEIGHT
+    width: clamp(SURVEY_MAP_MARGIN.left + SURVEY_MAP_MARGIN.right + plotSize, MIN_STAGE_WIDTH, MAX_STAGE_WIDTH),
+    height: clamp(SURVEY_MAP_MARGIN.top + SURVEY_MAP_MARGIN.bottom + plotSize, MIN_STAGE_HEIGHT, MAX_STAGE_HEIGHT)
   };
 }
 
@@ -35,4 +38,3 @@ export function scaleSurveyMapStageSize(size: SurveyMapStageSize, scale: number 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
-

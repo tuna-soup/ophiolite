@@ -43,6 +43,6 @@ The repo now supports:
 
 ## Authoring helpers
 
-Use `OperatorRegistry`, `OperatorRequest`, and `computed_curve(...)` from `ophiolite_sdk` in Python entrypoints.
+Use `OperatorRegistry`, `OperatorRequest`, and `computed_curve(...)` from `ophiolite_sdk.operators` in Python entrypoints.
 
 See [Write your first operator](/operators/write-your-first-operator/) for the end-to-end example.

@@ -1236,6 +1236,8 @@ fn derived_subvolume_volume_metadata(
                 .to_vec(),
             xlines: input.axes.xlines[crop_bounds.xline_start..crop_bounds.xline_end_exclusive]
                 .to_vec(),
+            sample_axis_domain: input.axes.sample_axis_domain,
+            sample_axis_unit: input.axes.sample_axis_unit.clone(),
             sample_axis_ms: input.axes.sample_axis_ms
                 [crop_bounds.sample_start..crop_bounds.sample_end_exclusive]
                 .to_vec(),

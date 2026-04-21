@@ -148,6 +148,239 @@ class ProjectSummary:
 
 
 @dataclass(frozen=True)
+class SurveySummary:
+    asset_id: str
+    logical_asset_id: str
+    collection_id: str
+    name: str
+    status: str
+    owner_scope: str
+    owner_id: str
+    owner_name: str
+    well_id: str
+    well_name: str
+    wellbore_id: str
+    wellbore_name: str
+    effective_coordinate_reference_id: str | None
+    effective_coordinate_reference_name: str | None
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> SurveySummary:
+        return cls(
+            asset_id=_string(data["asset_id"], "asset_id"),
+            logical_asset_id=_string(data["logical_asset_id"], "logical_asset_id"),
+            collection_id=_string(data["collection_id"], "collection_id"),
+            name=_string(data["name"], "name"),
+            status=_string(data["status"], "status"),
+            owner_scope=_string(data["owner_scope"], "owner_scope"),
+            owner_id=_string(data["owner_id"], "owner_id"),
+            owner_name=_string(data["owner_name"], "owner_name"),
+            well_id=_string(data["well_id"], "well_id"),
+            well_name=_string(data["well_name"], "well_name"),
+            wellbore_id=_string(data["wellbore_id"], "wellbore_id"),
+            wellbore_name=_string(data["wellbore_name"], "wellbore_name"),
+            effective_coordinate_reference_id=_optional_string(
+                data.get("effective_coordinate_reference_id"),
+                "effective_coordinate_reference_id",
+            ),
+            effective_coordinate_reference_name=_optional_string(
+                data.get("effective_coordinate_reference_name"),
+                "effective_coordinate_reference_name",
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class ImportResolution:
+    status: str
+    well_id: str
+    wellbore_id: str
+    created_well: bool
+    created_wellbore: bool
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> ImportResolution:
+        return cls(
+            status=_string(data["status"], "status"),
+            well_id=_string(data["well_id"], "well_id"),
+            wellbore_id=_string(data["wellbore_id"], "wellbore_id"),
+            created_well=bool(data["created_well"]),
+            created_wellbore=bool(data["created_wellbore"]),
+        )
+
+
+@dataclass(frozen=True)
+class LogAssetImportResult:
+    resolution: ImportResolution
+    collection: Mapping[str, Any]
+    asset: Mapping[str, Any]
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> LogAssetImportResult:
+        return cls(
+            resolution=ImportResolution.from_json(_mapping(data["resolution"], "resolution")),
+            collection=_mapping(data["collection"], "collection"),
+            asset=_mapping(data["asset"], "asset"),
+        )
+
+
+@dataclass(frozen=True)
+class TopsSourceImportResult:
+    schema_version: int
+    source_path: Path
+    source_name: str | None
+    reported_well_name: str | None
+    reported_depth_reference: str | None
+    resolved_source_depth_reference: str | None
+    resolved_depth_domain: str | None
+    resolved_depth_datum: str | None
+    source_row_count: int
+    imported_row_count: int
+    omitted_row_count: int
+    import_result: LogAssetImportResult
+    issues: tuple[Mapping[str, Any], ...]
+    omissions: tuple[Mapping[str, Any], ...]
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> TopsSourceImportResult:
+        schema_version = data.get("schemaVersion", data.get("schema_version"))
+        source_path = data.get("sourcePath", data.get("source_path"))
+        source_name = data.get("sourceName", data.get("source_name"))
+        reported_well_name = data.get("reportedWellName", data.get("reported_well_name"))
+        reported_depth_reference = data.get(
+            "reportedDepthReference",
+            data.get("reported_depth_reference"),
+        )
+        resolved_source_depth_reference = data.get(
+            "resolvedSourceDepthReference",
+            data.get("resolved_source_depth_reference"),
+        )
+        resolved_depth_domain = data.get(
+            "resolvedDepthDomain",
+            data.get("resolved_depth_domain"),
+        )
+        resolved_depth_datum = data.get(
+            "resolvedDepthDatum",
+            data.get("resolved_depth_datum"),
+        )
+        source_row_count = data.get("sourceRowCount", data.get("source_row_count"))
+        imported_row_count = data.get("importedRowCount", data.get("imported_row_count"))
+        omitted_row_count = data.get("omittedRowCount", data.get("omitted_row_count"))
+        import_result = data.get("importResult", data.get("import_result"))
+
+        return cls(
+            schema_version=int(schema_version),
+            source_path=Path(_string(source_path, "source_path")),
+            source_name=_optional_string(source_name, "source_name"),
+            reported_well_name=_optional_string(reported_well_name, "reported_well_name"),
+            reported_depth_reference=_optional_string(
+                reported_depth_reference,
+                "reported_depth_reference",
+            ),
+            resolved_source_depth_reference=_optional_string(
+                resolved_source_depth_reference,
+                "resolved_source_depth_reference",
+            ),
+            resolved_depth_domain=_optional_string(
+                resolved_depth_domain,
+                "resolved_depth_domain",
+            ),
+            resolved_depth_datum=_optional_string(
+                resolved_depth_datum,
+                "resolved_depth_datum",
+            ),
+            source_row_count=int(source_row_count),
+            imported_row_count=int(imported_row_count),
+            omitted_row_count=int(omitted_row_count),
+            import_result=LogAssetImportResult.from_json(_mapping(import_result, "import_result")),
+            issues=_mapping_list(data.get("issues", []), "issues"),
+            omissions=_mapping_list(data.get("omissions", []), "omissions"),
+        )
+
+
+@dataclass(frozen=True)
+class WellboreBinding:
+    well_name: str
+    wellbore_name: str
+    uwi: str | None = None
+    api: str | None = None
+    operator_aliases: tuple[str, ...] = ()
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "well_name": self.well_name,
+            "wellbore_name": self.wellbore_name,
+            "uwi": self.uwi,
+            "api": self.api,
+            "operator_aliases": list(self.operator_aliases),
+        }
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> WellboreBinding:
+        return cls(
+            well_name=_string(data["well_name"], "well_name"),
+            wellbore_name=_string(data["wellbore_name"], "wellbore_name"),
+            uwi=_optional_string(data.get("uwi"), "uwi"),
+            api=_optional_string(data.get("api"), "api"),
+            operator_aliases=_string_list(data.get("operator_aliases", []), "operator_aliases"),
+        )
+
+
+@dataclass(frozen=True)
+class WellPanelRequest:
+    wellbore_ids: tuple[str, ...]
+    depth_min: float | None = None
+    depth_max: float | None = None
+    schema_version: int = 1
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "wellbore_ids": list(self.wellbore_ids),
+            "depth_min": self.depth_min,
+            "depth_max": self.depth_max,
+        }
+
+
+@dataclass(frozen=True)
+class SurveyMapRequest:
+    survey_asset_ids: tuple[str, ...]
+    wellbore_ids: tuple[str, ...]
+    display_coordinate_reference_id: str
+    schema_version: int = 2
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "survey_asset_ids": list(self.survey_asset_ids),
+            "wellbore_ids": list(self.wellbore_ids),
+            "display_coordinate_reference_id": self.display_coordinate_reference_id,
+        }
+
+
+@dataclass(frozen=True)
+class SectionWellOverlayRequest:
+    survey_asset_id: str
+    wellbore_ids: tuple[str, ...]
+    axis: str
+    index: int
+    display_domain: str
+    tolerance_m: float | None = None
+    schema_version: int = 1
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "survey_asset_id": self.survey_asset_id,
+            "wellbore_ids": list(self.wellbore_ids),
+            "axis": self.axis,
+            "index": self.index,
+            "display_domain": self.display_domain,
+            "tolerance_m": self.tolerance_m,
+        }
+
+
+@dataclass(frozen=True)
 class PlatformOperation:
     id: str
     summary: str

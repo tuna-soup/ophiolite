@@ -1,6 +1,8 @@
 import type {
   RockPhysicsCategoricalSemantic,
   RockPhysicsCurveSemantic,
+  RockPhysicsAxisDirection,
+  RockPhysicsTemplateAxisTick,
   RockPhysicsTemplateId,
   RockPhysicsTemplateLine,
   RockPhysicsTemplateOverlay
@@ -15,11 +17,19 @@ export interface RockPhysicsTemplateSpec {
   yLabel: string;
   xUnit?: string;
   yUnit?: string;
+  xDirection?: RockPhysicsAxisDirection;
+  yDirection?: RockPhysicsAxisDirection;
   allowedContinuousColorSemantics: readonly RockPhysicsCurveSemantic[];
   allowedCategoricalColorSemantics: readonly RockPhysicsCategoricalSemantic[];
   templateLines?: readonly RockPhysicsTemplateLine[];
   templateOverlays?: readonly RockPhysicsTemplateOverlay[];
   recommendedColorSemantic: RockPhysicsCurveSemantic | RockPhysicsCategoricalSemantic;
+}
+
+export interface RockPhysicsTemplateGroup {
+  id: string;
+  label: string;
+  templateIds: readonly RockPhysicsTemplateId[];
 }
 
 export const ROCK_PHYSICS_TEMPLATE_SPECS: Record<RockPhysicsTemplateId, RockPhysicsTemplateSpec> = {
@@ -239,56 +249,84 @@ export const ROCK_PHYSICS_TEMPLATE_SPECS: Record<RockPhysicsTemplateId, RockPhys
   },
   "neutron-porosity-vs-bulk-density": {
     templateId: "neutron-porosity-vs-bulk-density",
-    title: "Neutron Porosity vs Bulk Density",
+    title: "Density Neutron Crossplot",
     xSemantics: ["neutron-porosity"],
     ySemantics: ["bulk-density"],
     xLabel: "Neutron Porosity",
     yLabel: "Bulk Density",
     xUnit: "%",
     yUnit: "g/cc",
+    yDirection: "reversed",
     allowedContinuousColorSemantics: ["gamma-ray", "water-saturation", "v-shale"],
     allowedCategoricalColorSemantics: ["well", "wellbore", "facies"],
     templateOverlays: [
       {
-        kind: "polyline",
+        kind: "axis",
         id: "sandstone-matrix",
         label: "Sandstone",
         color: "#d97706",
+        domain: { min: 0, max: 45 },
+        ticks: buildObliqueAxisTicks(45),
+        side: "left",
+        labelValue: 20,
+        tickLabelOffsetPx: 4,
+        labelOffsetPx: 22,
         points: [
           { x: -2, y: 2.66 },
-          { x: 6, y: 2.48 },
-          { x: 16, y: 2.34 },
-          { x: 28, y: 2.18 }
+          { x: 3, y: 2.58 },
+          { x: 9, y: 2.49 },
+          { x: 16, y: 2.39 },
+          { x: 24, y: 2.28 },
+          { x: 34, y: 2.14 },
+          { x: 47, y: 1.95 }
         ]
       },
       {
-        kind: "polyline",
+        kind: "axis",
         id: "limestone-matrix",
         label: "Limestone",
         color: "#60a5fa",
+        domain: { min: 0, max: 45 },
+        ticks: buildObliqueAxisTicks(45),
+        side: "left",
+        labelValue: 17,
+        tickLabelOffsetPx: 4,
+        labelOffsetPx: 18,
         points: [
           { x: 0, y: 2.72 },
-          { x: 10, y: 2.55 },
-          { x: 22, y: 2.35 },
-          { x: 34, y: 2.15 }
+          { x: 4, y: 2.66 },
+          { x: 11, y: 2.56 },
+          { x: 19, y: 2.44 },
+          { x: 28, y: 2.31 },
+          { x: 37, y: 2.16 },
+          { x: 47, y: 1.98 }
         ]
       },
       {
-        kind: "polyline",
+        kind: "axis",
         id: "dolomite-matrix",
         label: "Dolomite",
         color: "#c084fc",
+        domain: { min: 0, max: 45 },
+        ticks: buildObliqueAxisTicks(45),
+        side: "right",
+        labelValue: 32,
+        tickLabelOffsetPx: 4,
+        labelOffsetPx: 18,
         points: [
-          { x: 4, y: 2.84 },
-          { x: 14, y: 2.62 },
-          { x: 28, y: 2.38 },
-          { x: 42, y: 2.12 }
+          { x: 3, y: 2.88 },
+          { x: 7, y: 2.81 },
+          { x: 14, y: 2.67 },
+          { x: 23, y: 2.50 },
+          { x: 33, y: 2.32 },
+          { x: 41, y: 2.17 },
+          { x: 47, y: 2.06 }
         ]
       },
       {
         kind: "polygon",
         id: "shale-window",
-        label: "Shale Window",
+        label: "Shale",
         fillColor: "rgba(250, 204, 21, 0.10)",
         strokeColor: "#facc15",
         points: [
@@ -302,12 +340,23 @@ export const ROCK_PHYSICS_TEMPLATE_SPECS: Record<RockPhysicsTemplateId, RockPhys
       },
       {
         kind: "text",
-        id: "gas-correction",
-        text: "Approximate Gas Correction",
-        color: "#e2e8f0",
-        x: 9,
-        y: 2.18,
-        rotationDeg: -58
+        id: "salt-label",
+        text: "Salt",
+        color: "#eef7fb",
+        x: -1.2,
+        y: 2.08,
+        align: "left",
+        baseline: "middle"
+      },
+      {
+        kind: "text",
+        id: "anhydrite-label",
+        text: "Anhydrite",
+        color: "#d7e4ea",
+        x: -2.2,
+        y: 2.95,
+        align: "left",
+        baseline: "middle"
       }
     ],
     recommendedColorSemantic: "gamma-ray"
@@ -362,6 +411,43 @@ export const STANDARD_ROCK_PHYSICS_TEMPLATE_IDS = [
   "neutron-porosity-vs-bulk-density"
 ] as const satisfies readonly RockPhysicsTemplateId[];
 
+export const ADDITIONAL_ROCK_PHYSICS_TEMPLATE_IDS = [
+  "phi-vs-ai",
+  "pr-vs-ai",
+  "vp-vs-density"
+] as const satisfies readonly RockPhysicsTemplateId[];
+
+export const ALL_ROCK_PHYSICS_TEMPLATE_IDS = [
+  ...STANDARD_ROCK_PHYSICS_TEMPLATE_IDS,
+  ...ADDITIONAL_ROCK_PHYSICS_TEMPLATE_IDS
+] as const satisfies readonly RockPhysicsTemplateId[];
+
+export const ROCK_PHYSICS_TEMPLATE_GROUPS = [
+  {
+    id: "standard",
+    label: "Standard Templates",
+    templateIds: STANDARD_ROCK_PHYSICS_TEMPLATE_IDS
+  },
+  {
+    id: "additional",
+    label: "Additional Templates",
+    templateIds: ADDITIONAL_ROCK_PHYSICS_TEMPLATE_IDS
+  }
+] as const satisfies readonly RockPhysicsTemplateGroup[];
+
 export function getRockPhysicsTemplateSpec(templateId: RockPhysicsTemplateId): RockPhysicsTemplateSpec {
   return ROCK_PHYSICS_TEMPLATE_SPECS[templateId];
+}
+
+function buildObliqueAxisTicks(maxValue: number): RockPhysicsTemplateAxisTick[] {
+  const ticks: RockPhysicsTemplateAxisTick[] = [];
+  for (let value = 0; value <= maxValue; value += 1) {
+    const isMajor = value % 5 === 0;
+    ticks.push({
+      value,
+      label: isMajor ? `${value}` : undefined,
+      lengthPx: isMajor ? 8 : 4
+    });
+  }
+  return ticks;
 }

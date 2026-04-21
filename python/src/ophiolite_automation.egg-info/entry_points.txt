@@ -1,0 +1,2 @@
+[console_scripts]
+ophiolite-automation = ophiolite_automation.cli:main

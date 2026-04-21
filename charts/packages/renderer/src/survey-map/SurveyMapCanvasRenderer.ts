@@ -2,10 +2,9 @@ import {
   getSurveyMapPlotRect,
   resolveSurveyMapViewMetrics,
   worldToScreen,
-  SURVEY_MAP_MARGIN,
   type SurveyMapRect
 } from "@ophiolite/charts-core";
-import type { SurveyMapPoint, SurveyMapScalarField, SurveyMapViewport, SurveyMapWell } from "@ophiolite/charts-data-models";
+import type { SurveyMapScalarField, SurveyMapViewport, SurveyMapWell } from "@ophiolite/charts-data-models";
 import type { SurveyMapRenderFrame, SurveyMapRendererAdapter } from "./adapter";
 
 const DEFAULT_BACKGROUND = "#f4f2ee";
@@ -17,6 +16,9 @@ const WELL_COLOR = "#f7fbff";
 const TRAJECTORY_COLOR = "rgba(244, 247, 250, 0.72)";
 const SELECTED_WELL_COLOR = "#ffe38a";
 const HOVER_WELL_COLOR = "#ffffff";
+const TITLE_COLOR = "#20262c";
+const SCALE_BAR_DARK = "#111111";
+const SCALE_BAR_LIGHT = "#ffffff";
 
 export class SurveyMapCanvasRenderer implements SurveyMapRendererAdapter {
   private container: HTMLElement | null = null;
@@ -58,15 +60,22 @@ export class SurveyMapCanvasRenderer implements SurveyMapRendererAdapter {
     this.context.fillRect(0, 0, width, height);
 
     const plotRect = getSurveyMapPlotRect(width, height);
-    this.context.fillStyle = PLOT_BACKGROUND;
-    this.context.fillRect(plotRect.x, plotRect.y, plotRect.width, plotRect.height);
 
     if (!map || !viewport) {
+      this.context.fillStyle = PLOT_BACKGROUND;
+      this.context.fillRect(plotRect.x, plotRect.y, plotRect.width, plotRect.height);
       this.drawFrame(plotRect);
       return;
     }
 
     const viewMetrics = resolveSurveyMapViewMetrics(viewport, plotRect);
+    this.context.fillStyle = PLOT_BACKGROUND;
+    this.context.fillRect(
+      viewMetrics.drawRect.x,
+      viewMetrics.drawRect.y,
+      viewMetrics.drawRect.width,
+      viewMetrics.drawRect.height
+    );
 
     this.context.save();
     this.context.beginPath();
@@ -85,11 +94,13 @@ export class SurveyMapCanvasRenderer implements SurveyMapRendererAdapter {
 
     this.context.restore();
 
+    this.drawTitle(map.name, viewMetrics.drawRect);
     this.drawAxes(map, viewport, plotRect);
     if (map.scalarField) {
-      this.drawLegend(map.scalarField, width, plotRect);
+      this.drawLegend(map.scalarField, viewMetrics.drawRect);
     }
-    this.drawFrame(plotRect);
+    this.drawScaleBar(map.coordinateUnit, viewport, plotRect);
+    this.drawFrame(viewMetrics.drawRect);
   }
 
   dispose(): void {
@@ -265,42 +276,43 @@ export class SurveyMapCanvasRenderer implements SurveyMapRendererAdapter {
     }
 
     const metrics = resolveSurveyMapViewMetrics(viewport, plotRect);
+    const drawRect = metrics.drawRect;
     this.context.strokeStyle = AXIS_COLOR;
     this.context.fillStyle = AXIS_COLOR;
     this.context.lineWidth = 1;
     this.context.font = "11px sans-serif";
 
-    const xTicks = ticks(viewport.xMin, viewport.xMax, 4);
-    const yTicks = ticks(viewport.yMin, viewport.yMax, 4);
+    const xTicks = ticks(viewport.xMin, viewport.xMax, 5);
+    const yTicks = ticks(viewport.yMin, viewport.yMax, 5);
 
     for (const tick of xTicks) {
       const position = worldToScreen({ x: tick, y: viewport.yMin }, viewport, plotRect);
       this.context.beginPath();
-      this.context.moveTo(position.x, metrics.drawRect.y + metrics.drawRect.height);
-      this.context.lineTo(position.x, metrics.drawRect.y + metrics.drawRect.height + 4);
+      this.context.moveTo(position.x, drawRect.y + drawRect.height);
+      this.context.lineTo(position.x, drawRect.y + drawRect.height + 6);
       this.context.stroke();
       this.context.textAlign = "center";
       this.context.textBaseline = "top";
-      this.context.fillText(formatCoordinate(tick), position.x, metrics.drawRect.y + metrics.drawRect.height + 6);
+      this.context.fillText(formatCoordinate(tick), position.x, drawRect.y + drawRect.height + 8);
     }
 
     for (const tick of yTicks) {
       const position = worldToScreen({ x: viewport.xMin, y: tick }, viewport, plotRect);
       this.context.beginPath();
-      this.context.moveTo(metrics.drawRect.x - 4, position.y);
-      this.context.lineTo(metrics.drawRect.x, position.y);
+      this.context.moveTo(drawRect.x - 6, position.y);
+      this.context.lineTo(drawRect.x, position.y);
       this.context.stroke();
       this.context.textAlign = "right";
       this.context.textBaseline = "middle";
-      this.context.fillText(formatCoordinate(tick), metrics.drawRect.x - 8, position.y);
+      this.context.fillText(formatCoordinate(tick), drawRect.x - 10, position.y);
     }
 
     this.context.textAlign = "center";
     this.context.textBaseline = "bottom";
-    this.context.fillText(axisLabel(map.xLabel, map.coordinateUnit), plotRect.x + plotRect.width / 2, plotRect.y + plotRect.height + SURVEY_MAP_MARGIN.bottom - 4);
+    this.context.fillText(axisLabel(map.xLabel, map.coordinateUnit), drawRect.x + drawRect.width / 2, drawRect.y + drawRect.height + 42);
 
     this.context.save();
-    this.context.translate(12, plotRect.y + plotRect.height / 2);
+    this.context.translate(drawRect.x - 60, drawRect.y + drawRect.height / 2);
     this.context.rotate(-Math.PI / 2);
     this.context.textAlign = "center";
     this.context.textBaseline = "top";
@@ -308,16 +320,33 @@ export class SurveyMapCanvasRenderer implements SurveyMapRendererAdapter {
     this.context.restore();
   }
 
-  private drawLegend(field: SurveyMapScalarField, width: number, plotRect: SurveyMapRect): void {
+  private drawTitle(title: string | undefined, drawRect: SurveyMapRect): void {
+    if (!this.context) {
+      return;
+    }
+
+    const label = title?.trim();
+    if (!label) {
+      return;
+    }
+
+    this.context.fillStyle = TITLE_COLOR;
+    this.context.font = "600 18px sans-serif";
+    this.context.textAlign = "center";
+    this.context.textBaseline = "middle";
+    this.context.fillText(label, drawRect.x + drawRect.width / 2, Math.max(28, drawRect.y - 24));
+  }
+
+  private drawLegend(field: SurveyMapScalarField, drawRect: SurveyMapRect): void {
     if (!this.context) {
       return;
     }
 
     const { min, max } = scalarRange(field);
-    const x = width - SURVEY_MAP_MARGIN.right + 20;
-    const y = plotRect.y + 16;
-    const barWidth = 12;
-    const barHeight = 96;
+    const x = drawRect.x + drawRect.width + 24;
+    const y = drawRect.y + 18;
+    const barWidth = 16;
+    const barHeight = clamp(Math.round(drawRect.height * 0.38), 108, 164);
 
     for (let index = 0; index < barHeight; index += 1) {
       const value = max - (index / Math.max(1, barHeight - 1)) * (max - min);
@@ -333,10 +362,64 @@ export class SurveyMapCanvasRenderer implements SurveyMapRendererAdapter {
     this.context.font = "11px sans-serif";
     this.context.textAlign = "left";
     this.context.textBaseline = "middle";
-    this.context.fillText(formatScalar(max), x + barWidth + 6, y + 4);
-    this.context.fillText(formatScalar(min), x + barWidth + 6, y + barHeight - 4);
+    this.context.fillText(formatScalar(max), x + barWidth + 8, y + 4);
+    this.context.fillText(formatScalar(min), x + barWidth + 8, y + barHeight - 4);
+    this.context.textAlign = "center";
     this.context.textBaseline = "bottom";
-    this.context.fillText(axisLabel(field.name, field.unit), x - 2, y - 6);
+    this.context.fillText(axisLabel(field.name, field.unit), x + barWidth / 2, y - 8);
+  }
+
+  private drawScaleBar(unit: string | undefined, viewport: SurveyMapViewport, plotRect: SurveyMapRect): void {
+    if (!this.context) {
+      return;
+    }
+
+    const metrics = resolveSurveyMapViewMetrics(viewport, plotRect);
+    const drawRect = metrics.drawRect;
+    const segmentCount = 4;
+    const targetSegmentPixels = clamp(drawRect.width * 0.075, 28, 44);
+    const segmentDistance = niceScaleDistance(targetSegmentPixels / Math.max(metrics.scale, 1e-6));
+    const totalDistance = segmentDistance * segmentCount;
+    const totalPixels = totalDistance * metrics.scale;
+    const barHeight = 8;
+    const x = drawRect.x + drawRect.width - totalPixels - 18;
+    const y = drawRect.y + drawRect.height - 24;
+
+    if (totalPixels < 48 || x < drawRect.x + 12) {
+      return;
+    }
+
+    this.context.save();
+    this.context.fillStyle = "rgba(255, 255, 255, 0.82)";
+    this.context.fillRect(x - 8, y - 18, totalPixels + 16, 38);
+
+    const segmentPixels = totalPixels / segmentCount;
+    for (let index = 0; index < segmentCount; index += 1) {
+      this.context.fillStyle = index % 2 === 0 ? SCALE_BAR_DARK : SCALE_BAR_LIGHT;
+      this.context.fillRect(x + index * segmentPixels, y, segmentPixels, barHeight);
+    }
+
+    this.context.strokeStyle = SCALE_BAR_DARK;
+    this.context.lineWidth = 1;
+    this.context.strokeRect(x, y, totalPixels, barHeight);
+    this.context.font = "10px sans-serif";
+    this.context.fillStyle = AXIS_COLOR;
+    this.context.textAlign = "center";
+    this.context.textBaseline = "bottom";
+
+    for (let index = 0; index <= segmentCount; index += 1) {
+      const tickX = x + index * segmentPixels;
+      this.context.beginPath();
+      this.context.moveTo(tickX, y + barHeight);
+      this.context.lineTo(tickX, y + barHeight + 4);
+      this.context.stroke();
+      this.context.fillText(formatScaleDistance(segmentDistance * index), tickX, y - 4);
+    }
+
+    this.context.textAlign = "right";
+    this.context.textBaseline = "top";
+    this.context.fillText(unit ?? "", x + totalPixels, y + barHeight + 6);
+    this.context.restore();
   }
 
   private drawFrame(plotRect: SurveyMapRect): void {
@@ -419,6 +502,40 @@ function formatCoordinate(value: number): string {
 
 function formatScalar(value: number): string {
   return Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(1);
+}
+
+function formatScaleDistance(value: number): string {
+  if (Math.abs(value) >= 1000) {
+    return value.toFixed(0);
+  }
+  if (Math.abs(value) >= 100) {
+    return value.toFixed(0);
+  }
+  if (Math.abs(value) >= 10) {
+    return value.toFixed(1);
+  }
+  return value.toFixed(2);
+}
+
+function niceScaleDistance(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 1;
+  }
+
+  const exponent = Math.floor(Math.log10(value));
+  const magnitude = 10 ** exponent;
+  const normalized = value / magnitude;
+
+  if (normalized <= 1) {
+    return magnitude;
+  }
+  if (normalized <= 2) {
+    return 2 * magnitude;
+  }
+  if (normalized <= 5) {
+    return 5 * magnitude;
+  }
+  return 10 * magnitude;
 }
 
 function clamp(value: number, min: number, max: number): number {

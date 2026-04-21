@@ -1,4 +1,8 @@
 import type { RenderMode, SectionPayload, SectionViewport } from "@ophiolite/charts-data-models";
+import {
+  sectionHorizontalCoordinateAt,
+  sectionSampleValueAt
+} from "@ophiolite/charts-data-models";
 import { mapCoordinateToPlotX, type PlotRect } from "./wiggleGeometry";
 
 export const PLOT_MARGIN = {
@@ -25,9 +29,19 @@ export function traceIndexToScreenX(
   traceIndex: number
 ): number {
   if (renderMode === "wiggle") {
-    const coords = Array.from(section.horizontalAxis.slice(viewport.traceStart, viewport.traceEnd));
+    const coords = [];
+    for (let trace = viewport.traceStart; trace < viewport.traceEnd; trace += 1) {
+      const coordinate = sectionHorizontalCoordinateAt(section, trace);
+      if (coordinate !== null) {
+        coords.push(coordinate);
+      }
+    }
+    if (coords.length === 0) {
+      return plotRect.x + plotRect.width / 2;
+    }
+    const traceCoordinate = sectionHorizontalCoordinateAt(section, traceIndex) ?? traceIndex;
     return mapCoordinateToPlotX(
-      section.horizontalAxis[traceIndex],
+      traceCoordinate,
       Math.min(...coords),
       Math.max(...coords),
       plotRect
@@ -59,13 +73,14 @@ export function sampleValueToScreenY(
 ): number | null {
   const start = viewport.sampleStart;
   const end = viewport.sampleEnd;
-  const axis = section.sampleAxis;
-  if (start < 0 || end <= start || end > axis.length) {
+  if (start < 0 || end <= start) {
     return null;
   }
-
-  const first = axis[start];
-  const last = axis[end - 1];
+  const first = sectionSampleValueAt(section, start);
+  const last = sectionSampleValueAt(section, end - 1);
+  if (first === null || last === null) {
+    return null;
+  }
   const ascending = last >= first;
   const minValue = ascending ? first : last;
   const maxValue = ascending ? last : first;
@@ -77,7 +92,10 @@ export function sampleValueToScreenY(
   let upper = end - 1;
   while (lower <= upper) {
     const middle = Math.floor((lower + upper) / 2);
-    const current = axis[middle]!;
+    const current = sectionSampleValueAt(section, middle);
+    if (current === null) {
+      return null;
+    }
     if (Math.abs(current - sampleValue) <= 1e-6) {
       return sampleIndexToScreenY(viewport, plotRect, middle);
     }
@@ -90,8 +108,11 @@ export function sampleValueToScreenY(
 
   const nextIndex = clamp(lower, start + 1, end - 1);
   const previousIndex = nextIndex - 1;
-  const previousValue = axis[previousIndex]!;
-  const nextValue = axis[nextIndex]!;
+  const previousValue = sectionSampleValueAt(section, previousIndex);
+  const nextValue = sectionSampleValueAt(section, nextIndex);
+  if (previousValue === null || nextValue === null) {
+    return null;
+  }
   const denominator = nextValue - previousValue;
   if (Math.abs(denominator) <= 1e-6) {
     return sampleIndexToScreenY(viewport, plotRect, previousIndex);
@@ -111,12 +132,21 @@ export function resolveNearestTraceIndex(
   x: number
 ): number {
   if (renderMode === "wiggle") {
-    const visibleCoords = section.horizontalAxis.slice(viewport.traceStart, viewport.traceEnd);
-    const coordMin = Math.min(...Array.from(visibleCoords));
-    const coordMax = Math.max(...Array.from(visibleCoords));
+    const visibleCoords = [];
+    for (let trace = viewport.traceStart; trace < viewport.traceEnd; trace += 1) {
+      const coordinate = sectionHorizontalCoordinateAt(section, trace);
+      if (coordinate !== null) {
+        visibleCoords.push(coordinate);
+      }
+    }
+    if (visibleCoords.length === 0) {
+      return viewport.traceStart;
+    }
+    const coordMin = Math.min(...visibleCoords);
+    const coordMax = Math.max(...visibleCoords);
     const ratio = clamp((x - plotRect.x) / Math.max(1, plotRect.width), 0, 1);
     const targetCoord = coordMin + ratio * (coordMax - coordMin);
-    return nearestCoordinateIndex(visibleCoords, targetCoord) + viewport.traceStart;
+    return nearestCoordinateIndex(Float64Array.from(visibleCoords), targetCoord) + viewport.traceStart;
   }
 
   const ratio = clamp((x - plotRect.x) / Math.max(1, plotRect.width), 0, 1);

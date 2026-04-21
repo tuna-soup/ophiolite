@@ -16,6 +16,17 @@
         "typescript": "^5.6.3",
       },
     },
+    "apps/ophiolitecharts-docs": {
+      "name": "ophiolitecharts-docs",
+      "version": "0.1.0",
+      "dependencies": {
+        "@astrojs/starlight": "^0.32.0",
+        "astro": "^5.0.0",
+      },
+      "devDependencies": {
+        "typescript": "^5.6.3",
+      },
+    },
     "charts": {
       "name": "ophiolite-charts",
       "version": "0.1.0",
@@ -722,6 +733,8 @@
     "ophiolite-charts": ["ophiolite-charts@workspace:charts"],
 
     "ophiolite-docs": ["ophiolite-docs@workspace:apps/ophiolite-docs"],
+
+    "ophiolitecharts-docs": ["ophiolitecharts-docs@workspace:apps/ophiolitecharts-docs"],
 
     "p-limit": ["p-limit@6.2.0", "", { "dependencies": { "yocto-queue": "^1.1.1" } }, "sha512-kuUqqHNUqoIWp/c467RI4X6mmyuojY5jGutNU0wVTmEOOfcuwLqyMVoAi9MKi2Ak+5i9+nhmrK4ufZE8069kHA=="],
 

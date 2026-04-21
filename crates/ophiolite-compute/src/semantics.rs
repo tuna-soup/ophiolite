@@ -61,6 +61,36 @@ impl CurveSemanticType {
             Self::Unknown => "Unknown",
         }
     }
+
+    pub fn log_type_name(&self) -> &'static str {
+        match self {
+            Self::GammaRay => "GammaRay",
+            Self::BulkDensity => "BulkDensity",
+            Self::NeutronPorosity => "NeutronPorosity",
+            Self::DeepResistivity => "DeepResistivity",
+            Self::MediumResistivity => "MediumResistivity",
+            Self::ShallowResistivity => "ShallowResistivity",
+            Self::Sonic => "CompressionalSlowness",
+            Self::ShearSonic => "ShearSlowness",
+            Self::Depth => "Depth",
+            Self::Time => "Time",
+            Self::PVelocity => "PVelocity",
+            Self::SVelocity => "SVelocity",
+            Self::VpVsRatio => "VpVsRatio",
+            Self::AcousticImpedance => "AcousticImpedance",
+            Self::ElasticImpedance => "ElasticImpedance",
+            Self::ExtendedElasticImpedance => "ExtendedElasticImpedance",
+            Self::ShearImpedance => "ShearImpedance",
+            Self::LambdaRho => "LambdaRho",
+            Self::MuRho => "MuRho",
+            Self::PoissonsRatio => "PoissonsRatio",
+            Self::EffectivePorosity => "EffectivePorosity",
+            Self::WaterSaturation => "WaterSaturation",
+            Self::VShale => "VShale",
+            Self::Computed => "Computed",
+            Self::Unknown => "Unknown",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -68,6 +98,7 @@ pub enum AssetSemanticFamily {
     Log,
     Trajectory,
     TopSet,
+    WellMarkerSet,
     PressureObservation,
     DrillingObservation,
 }
@@ -126,9 +157,14 @@ pub fn classify_curve_semantic(
         Some("deep_resistivity") => return CurveSemanticType::DeepResistivity,
         Some("medium_resistivity") => return CurveSemanticType::MediumResistivity,
         Some("shallow_resistivity") => return CurveSemanticType::ShallowResistivity,
+        Some("sonic") => return CurveSemanticType::Sonic,
+        Some("shear_sonic") => return CurveSemanticType::ShearSonic,
+        Some("p_velocity") => return CurveSemanticType::PVelocity,
+        Some("s_velocity") => return CurveSemanticType::SVelocity,
         Some("depth") => return CurveSemanticType::Depth,
         Some("time") => return CurveSemanticType::Time,
         Some("vp_vs_ratio") => return CurveSemanticType::VpVsRatio,
+        Some("acoustic_impedance") => return CurveSemanticType::AcousticImpedance,
         Some("elastic_impedance") => return CurveSemanticType::ElasticImpedance,
         Some("extended_elastic_impedance") => {
             return CurveSemanticType::ExtendedElasticImpedance;
@@ -145,8 +181,11 @@ pub fn classify_curve_semantic(
     let normalized_unit = unit.unwrap_or_default().trim().to_ascii_lowercase();
 
     match mnemonic.as_str() {
-        "DT" | "DTC" | "AC" => CurveSemanticType::Sonic,
-        "DTS" | "DTSM" => CurveSemanticType::ShearSonic,
+        "GR" | "GR1AX" | "GRAX" => CurveSemanticType::GammaRay,
+        "RHOB" | "RHO" | "RHOZ" | "DEN" | "DENS" | "BDCX" => CurveSemanticType::BulkDensity,
+        "NPHI" | "NPLX" | "CNL" => CurveSemanticType::NeutronPorosity,
+        "DT" | "DTC" | "DTCO" | "AC" => CurveSemanticType::Sonic,
+        "DTS" | "DTSM" | "DTSH" => CurveSemanticType::ShearSonic,
         "VP" | "PVEL" | "P_VEL" => CurveSemanticType::PVelocity,
         "VS" | "SVEL" | "S_VEL" => CurveSemanticType::SVelocity,
         "VPVS" | "VP_VS" | "VP/VS" => CurveSemanticType::VpVsRatio,
@@ -161,6 +200,27 @@ pub fn classify_curve_semantic(
         "PR" | "NU" | "POISSON" => CurveSemanticType::PoissonsRatio,
         "PHIE" | "EFFECTIVE_POROSITY" => CurveSemanticType::EffectivePorosity,
         "SW" | "SWT" | "WATER_SATURATION" => CurveSemanticType::WaterSaturation,
+        _ if mnemonic.starts_with("GR")
+            && (normalized_unit.contains("gapi") || normalized_unit.contains("api")) =>
+        {
+            CurveSemanticType::GammaRay
+        }
+        _ if (normalized_unit.contains("g/cc")
+            || normalized_unit.contains("g/cm3")
+            || normalized_unit.contains("g/cm^3")
+            || normalized_unit.contains("kg/m3")
+            || normalized_unit.contains("kg/m^3"))
+            && (mnemonic.contains("RHO")
+                || mnemonic.contains("DEN")
+                || mnemonic.starts_with("BDC")) =>
+        {
+            CurveSemanticType::BulkDensity
+        }
+        _ if mnemonic.starts_with("DTS")
+            && (normalized_unit.contains("us/ft") || normalized_unit.contains("us/m")) =>
+        {
+            CurveSemanticType::ShearSonic
+        }
         _ if normalized_unit.contains("us/ft") || normalized_unit.contains("us/m") => {
             CurveSemanticType::Sonic
         }
@@ -192,6 +252,22 @@ mod tests {
             CurveSemanticType::Sonic
         );
         assert_eq!(
+            classify_curve_semantic(&unknown, "DTCO", Some("us/ft"), false),
+            CurveSemanticType::Sonic
+        );
+        assert_eq!(
+            classify_curve_semantic(&unknown, "DTSM", Some("us/ft"), false),
+            CurveSemanticType::ShearSonic
+        );
+        assert_eq!(
+            classify_curve_semantic(&unknown, "BDCX", Some("g/cc"), false),
+            CurveSemanticType::BulkDensity
+        );
+        assert_eq!(
+            classify_curve_semantic(&unknown, "GR1AX", Some("MWD-API"), false),
+            CurveSemanticType::GammaRay
+        );
+        assert_eq!(
             classify_curve_semantic(&unknown, "VPVS", None, false),
             CurveSemanticType::VpVsRatio
         );
@@ -211,5 +287,22 @@ mod tests {
             classify_curve_semantic(&unknown, "SW", None, false),
             CurveSemanticType::WaterSaturation
         );
+    }
+
+    #[test]
+    fn log_type_names_expose_stable_user_facing_nouns() {
+        assert_eq!(
+            CurveSemanticType::Sonic.log_type_name(),
+            "CompressionalSlowness"
+        );
+        assert_eq!(
+            CurveSemanticType::ShearSonic.log_type_name(),
+            "ShearSlowness"
+        );
+        assert_eq!(
+            CurveSemanticType::BulkDensity.log_type_name(),
+            "BulkDensity"
+        );
+        assert_eq!(CurveSemanticType::PVelocity.log_type_name(), "PVelocity");
     }
 }

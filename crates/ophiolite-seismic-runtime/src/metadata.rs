@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use ophiolite_seismic::{
     CoordinateReferenceBinding, ProcessingArtifactRole, ProcessingPipelineSpec,
     SampleDataConversionKind, SampleDataFidelity, SampleValuePreservation, SurveySpatialDescriptor,
+    TimeDepthDomain,
 };
 use ophiolite_seismic_io::SampleFormat;
 use serde::{Deserialize, Serialize};
@@ -82,7 +83,39 @@ pub struct SegyExportDescriptor {
 pub struct VolumeAxes {
     pub ilines: Vec<f64>,
     pub xlines: Vec<f64>,
+    #[serde(default = "default_sample_axis_domain")]
+    pub sample_axis_domain: TimeDepthDomain,
+    #[serde(default = "default_sample_axis_unit")]
+    pub sample_axis_unit: String,
     pub sample_axis_ms: Vec<f32>,
+}
+
+impl VolumeAxes {
+    pub fn from_time_axis(ilines: Vec<f64>, xlines: Vec<f64>, sample_axis_ms: Vec<f32>) -> Self {
+        Self {
+            ilines,
+            xlines,
+            sample_axis_domain: default_sample_axis_domain(),
+            sample_axis_unit: default_sample_axis_unit(),
+            sample_axis_ms,
+        }
+    }
+
+    pub fn with_vertical_axis(
+        ilines: Vec<f64>,
+        xlines: Vec<f64>,
+        sample_axis_domain: TimeDepthDomain,
+        sample_axis_unit: String,
+        sample_axis_ms: Vec<f32>,
+    ) -> Self {
+        Self {
+            ilines,
+            xlines,
+            sample_axis_domain,
+            sample_axis_unit,
+            sample_axis_ms,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -272,12 +305,68 @@ pub fn normalize_source_identity(source: &mut SourceIdentity) -> bool {
     needs_update
 }
 
+pub fn normalize_volume_axes(axes: &mut VolumeAxes) -> bool {
+    let mut changed = false;
+    if axes.sample_axis_unit.trim().is_empty() {
+        axes.sample_axis_unit = default_sample_axis_unit_for_domain(axes.sample_axis_domain);
+        changed = true;
+    }
+    changed
+}
+
+pub fn validate_vertical_axis(
+    values: &[f32],
+    expected_count: usize,
+    axis_label: &str,
+) -> Result<(), String> {
+    if values.len() != expected_count {
+        return Err(format!(
+            "{axis_label} length mismatch: expected {expected_count}, found {}",
+            values.len()
+        ));
+    }
+    if values.is_empty() {
+        return Err(format!(
+            "{axis_label} must contain at least one sample coordinate"
+        ));
+    }
+    for (index, value) in values.iter().copied().enumerate() {
+        if !value.is_finite() {
+            return Err(format!(
+                "{axis_label} contains non-finite coordinate at sample index {index}"
+            ));
+        }
+        if index > 0 && value <= values[index - 1] {
+            return Err(format!(
+                "{axis_label} must be strictly increasing; sample index {index} has {value} after {}",
+                values[index - 1]
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn default_source_endianness() -> String {
     "big".to_string()
 }
 
 fn default_fixed_length_trace_flag_raw() -> u16 {
     1
+}
+
+fn default_sample_axis_domain() -> TimeDepthDomain {
+    TimeDepthDomain::Time
+}
+
+fn default_sample_axis_unit() -> String {
+    "ms".to_string()
+}
+
+pub fn default_sample_axis_unit_for_domain(domain: TimeDepthDomain) -> String {
+    match domain {
+        TimeDepthDomain::Time => "ms".to_string(),
+        TimeDepthDomain::Depth => "m".to_string(),
+    }
 }
 
 fn exact_cast_fidelity(source_sample_type: &str) -> SampleDataFidelity {

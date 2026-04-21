@@ -322,6 +322,9 @@ impl WorkspaceState {
                     .selected_project_well_time_depth_model_asset_id
                     .as_deref(),
             ),
+            native_engineering_accepted_store_paths: normalize_string_list(
+                &request.native_engineering_accepted_store_paths,
+            ),
         };
 
         if let Some(active_entry_id) = session.active_entry_id.as_ref() {
@@ -531,6 +534,7 @@ fn default_session() -> WorkspaceSession {
         project_wellbore_id: None,
         project_section_tolerance_m: None,
         selected_project_well_time_depth_model_asset_id: None,
+        native_engineering_accepted_store_paths: Vec::new(),
     }
 }
 
@@ -575,6 +579,18 @@ fn normalize_optional_string(value: Option<&str>) -> Option<String> {
 
 fn normalize_optional_path(value: Option<&str>) -> Option<String> {
     normalize_optional_string(value)
+}
+
+fn normalize_string_list(values: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for value in values {
+        if let Some(value) = normalize_optional_string(Some(value.as_str())) {
+            if !normalized.iter().any(|existing| existing == &value) {
+                normalized.push(value);
+            }
+        }
+    }
+    normalized
 }
 
 fn apply_status(entry: &mut DatasetRegistryEntry) {
@@ -633,6 +649,13 @@ mod tests {
                 "shape": [4, 4, 4],
                 "chunk_shape": [4, 4, 4],
                 "sample_interval_ms": 2.0,
+                "sample_data_fidelity": {
+                    "source_sample_type": "f32",
+                    "working_sample_type": "f32",
+                    "conversion": "identity",
+                    "preservation": "exact",
+                    "notes": []
+                },
                 "geometry": {
                     "compare_family": "seismic-grid:v1",
                     "fingerprint": "geom:test",
@@ -692,6 +715,10 @@ mod tests {
                 project_wellbore_id: Some("wellbore-1".to_string()),
                 project_section_tolerance_m: Some(18.5),
                 selected_project_well_time_depth_model_asset_id: Some("well-model-1".to_string()),
+                native_engineering_accepted_store_paths: vec![
+                    "C:/data/demo.tbvol".to_string(),
+                    "C:/data/demo-secondary.tbvol".to_string(),
+                ],
             })
             .expect("save session");
 
@@ -732,6 +759,13 @@ mod tests {
                 .selected_project_well_time_depth_model_asset_id
                 .as_deref(),
             Some("well-model-1")
+        );
+        assert_eq!(
+            restored.session.native_engineering_accepted_store_paths,
+            vec![
+                "C:/data/demo.tbvol".to_string(),
+                "C:/data/demo-secondary.tbvol".to_string()
+            ]
         );
     }
 

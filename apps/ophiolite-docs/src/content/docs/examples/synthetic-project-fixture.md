@@ -17,6 +17,7 @@ The current fixture is wellbore-focused because that is the richest synthetic pr
 - one tops CSV
 - one pressure CSV
 - one drilling CSV
+- one synthetic seismic survey store
 
 These are imported through the real project APIs so the result exercises:
 
@@ -26,6 +27,17 @@ These are imported through the real project APIs so the result exercises:
 - typed reads
 - compute
 - structured edits
+- survey-backed map and section overlay resolution
+
+The synthetic LAS log includes:
+
+- gamma ray
+- bulk density
+- neutron porosity
+- compressional slowness
+- shear slowness
+
+That makes the fixture useful for well-panel demos, log-derived rock physics, and sonic-to-velocity AVO workflow examples.
 
 ## Generate it
 

@@ -1,0 +1,8 @@
+{
+  "schema_version": "0.6.0",
+  "created_at_unix_seconds": 1776695951,
+  "operator_lock": {
+    "schema_version": 1,
+    "packages": []
+  }
+}

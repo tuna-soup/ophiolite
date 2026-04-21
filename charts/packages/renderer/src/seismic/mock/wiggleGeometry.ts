@@ -1,3 +1,6 @@
+import type { SectionPayload } from "@ophiolite/charts-data-models";
+import { sectionAmplitudeAt, sectionHorizontalCoordinateAt } from "@ophiolite/charts-data-models";
+
 export interface PlotRect {
   x: number;
   y: number;
@@ -27,9 +30,7 @@ export interface WigglePanelGeometry {
 }
 
 export interface WigglePanelGeometryArgs {
-  horizontalAxis: Float64Array;
-  amplitudes: Float32Array;
-  samplesPerTrace: number;
+  section: SectionPayload;
   traceStart: number;
   traceEnd: number;
   sampleStart: number;
@@ -43,9 +44,7 @@ export interface WigglePanelGeometryArgs {
 
 export function buildWigglePanelGeometry(args: WigglePanelGeometryArgs): WigglePanelGeometry {
   const {
-    horizontalAxis,
-    amplitudes,
-    samplesPerTrace,
+    section,
     traceStart,
     traceEnd,
     sampleStart,
@@ -61,21 +60,22 @@ export function buildWigglePanelGeometry(args: WigglePanelGeometryArgs): WiggleP
   const maxReadableTraces = Math.max(1, Math.floor(plotRect.width / minTraceSpacingPx));
   const traceStride = Math.max(1, Math.ceil(visibleTraceCount / maxReadableTraces));
   const drawnTraceIndices = buildTraceIndices(traceStart, traceEnd, traceStride);
-  const visibleCoords = Array.from(horizontalAxis.slice(traceStart, traceEnd));
+  const visibleCoords = [];
+  for (let trace = traceStart; trace < traceEnd; trace += 1) {
+    const coordinate = sectionHorizontalCoordinateAt(section, trace);
+    if (coordinate !== null) {
+      visibleCoords.push(coordinate);
+    }
+  }
+  if (visibleCoords.length === 0) {
+    visibleCoords.push(0);
+  }
   const coordMin = Math.min(...visibleCoords);
   const coordMax = Math.max(...visibleCoords);
-  const globalScale = visibleAmplitudeScale(
-    amplitudes,
-    samplesPerTrace,
-    traceStart,
-    traceEnd,
-    sampleStart,
-    sampleEnd,
-    gain
-  );
+  const globalScale = visibleAmplitudeScale(section, traceStart, traceEnd, sampleStart, sampleEnd, gain);
 
   const baselines = drawnTraceIndices.map((traceIndex) =>
-    mapCoordinateToPlotX(horizontalAxis[traceIndex], coordMin, coordMax, plotRect)
+    mapCoordinateToPlotX(sectionHorizontalCoordinateAt(section, traceIndex) ?? traceIndex, coordMin, coordMax, plotRect)
   );
 
   const traces = drawnTraceIndices.map((traceIndex, index) => {
@@ -83,8 +83,7 @@ export function buildWigglePanelGeometry(args: WigglePanelGeometryArgs): WiggleP
     const localSpacing = localBaselineSpacing(baselines, index, plotRect.width);
     const amplitudeScale = Math.max(localSpacing * amplitudeRatio, 1);
     const stroke = buildTracePoints(
-      amplitudes,
-      samplesPerTrace,
+      section,
       traceIndex,
       sampleStart,
       sampleEnd,
@@ -127,8 +126,7 @@ export function mapCoordinateToPlotX(
 }
 
 export function buildTracePoints(
-  amplitudes: Float32Array,
-  samplesPerTrace: number,
+  section: SectionPayload,
   traceIndex: number,
   sampleStart: number,
   sampleEnd: number,
@@ -144,7 +142,7 @@ export function buildTracePoints(
 
   for (let sample = sampleStart; sample < sampleEnd; sample += 1) {
     const offset = sampleAmplitudeOffset(
-      amplitudes[traceIndex * samplesPerTrace + sample],
+      sectionAmplitudeAt(section, traceIndex, sample) ?? 0,
       gain,
       globalScale,
       amplitudeScale,
@@ -165,7 +163,7 @@ export function buildTracePoints(
     }
 
     const nextOffset = sampleAmplitudeOffset(
-      amplitudes[traceIndex * samplesPerTrace + sample + 1],
+      sectionAmplitudeAt(section, traceIndex, sample + 1) ?? 0,
       gain,
       globalScale,
       amplitudeScale,
@@ -212,8 +210,7 @@ export function buildPositiveFillSegments(points: WigglePoint[]): WigglePoint[][
 }
 
 export function visibleAmplitudeScale(
-  amplitudes: Float32Array,
-  samplesPerTrace: number,
+  section: SectionPayload,
   traceStart: number,
   traceEnd: number,
   sampleStart: number,
@@ -223,7 +220,7 @@ export function visibleAmplitudeScale(
   let maxAbs = 0;
   for (let trace = traceStart; trace < traceEnd; trace += 1) {
     for (let sample = sampleStart; sample < sampleEnd; sample += 1) {
-      maxAbs = Math.max(maxAbs, Math.abs(amplitudes[trace * samplesPerTrace + sample] * gain));
+      maxAbs = Math.max(maxAbs, Math.abs((sectionAmplitudeAt(section, trace, sample) ?? 0) * gain));
     }
   }
   return Math.max(maxAbs, 1e-6);

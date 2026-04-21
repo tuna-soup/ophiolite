@@ -215,6 +215,34 @@
       }
     },
     {
+      "id": "traceboost.preview_processing",
+      "summary": "Preview a trace-local processing pipeline on a seismic section.",
+      "owner": "traceboost",
+      "domain": "processing",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli"],
+      "request_type": "PreviewTraceLocalProcessingRequest",
+      "response_type": "PreviewTraceLocalProcessingResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::preview_processing",
+        "rust_cli": "preview-processing"
+      }
+    },
+    {
+      "id": "traceboost.run_processing",
+      "summary": "Materialize a trace-local processing pipeline to a derived dataset store.",
+      "owner": "traceboost",
+      "domain": "processing",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli"],
+      "request_type": "RunTraceLocalProcessingRequest",
+      "response_type": "DatasetSummary",
+      "bindings": {
+        "rust_function": "traceboost_app::apply_processing",
+        "rust_cli": "run-processing"
+      }
+    },
+    {
       "id": "traceboost.view_section_horizons",
       "summary": "Load horizon overlays for a seismic inline or crossline section.",
       "owner": "traceboost",
@@ -243,6 +271,38 @@
         "rust_cli": "load-velocity-models",
         "python_method": "load_velocity_models",
         "python_cli": "load-velocity-models"
+      }
+    },
+    {
+      "id": "traceboost.describe_velocity_volume",
+      "summary": "Describe a velocity tbvol store with explicit vertical-axis semantics for downstream processing.",
+      "owner": "traceboost",
+      "domain": "velocity",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "request_type": "DescribeVelocityVolumeRequest",
+      "response_type": "DescribeVelocityVolumeResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::describe_velocity_volume",
+        "rust_cli": "describe-velocity-volume",
+        "python_method": "describe_velocity_volume",
+        "python_cli": "describe-velocity-volume"
+      }
+    },
+    {
+      "id": "traceboost.ingest_velocity_volume",
+      "summary": "Ingest a velocity SEG-Y volume into tbvol and optionally delete the source after validation succeeds.",
+      "owner": "traceboost",
+      "domain": "velocity",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "request_type": "IngestVelocityVolumeRequest",
+      "response_type": "IngestVelocityVolumeResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::ingest_velocity_volume",
+        "rust_cli": "ingest-velocity-volume",
+        "python_method": "ingest_velocity_volume",
+        "python_cli": "ingest-velocity-volume"
       }
     },
     {

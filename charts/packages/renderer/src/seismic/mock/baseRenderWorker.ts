@@ -1,6 +1,13 @@
 /// <reference lib="webworker" />
 
-import type { DisplayTransform, OverlayPayload, SectionPayload, SectionViewport } from "@ophiolite/charts-data-models";
+import {
+  resolveLoadedSectionWindow,
+  type DisplayTransform,
+  type OverlayPayload,
+  type SectionPayload,
+  type SectionViewport
+} from "@ophiolite/charts-data-models";
+import { scaleRasterRect } from "../../internal/rasterSurface";
 import { prepareHeatmapData, prepareWiggleInstances, type PreparedHeatmapData, type PreparedWiggleInstances } from "./renderModel";
 import type { WorkerIncomingMessage, WorkerOutgoingMessage, WorkerOverlayPayload, WorkerSectionPayload } from "./workerProtocol";
 
@@ -37,9 +44,11 @@ let section: SectionPayload | null = null;
 let overlay: OverlayPayload | null = null;
 let viewport: SectionViewport | null = null;
 let displayTransform: DisplayTransform = { ...DEFAULT_DISPLAY };
-let width = 0;
-let height = 0;
+let pixelRatio = 1;
+let pixelWidth = 0;
+let pixelHeight = 0;
 let plotRect = { x: 68, y: 72, width: 1, height: 1 };
+let pixelPlotRect = scaleRasterRect(plotRect, pixelRatio);
 let preparedHeatmap: PreparedHeatmapData | null = null;
 let preparedWiggles: PreparedWiggleInstances | null = null;
 let dirty: DirtyFlags = {
@@ -66,11 +75,13 @@ function handleMessage(message: WorkerIncomingMessage): void {
   switch (message.type) {
     case "init":
       canvas = message.canvas;
-      width = message.state.width;
-      height = message.state.height;
+      pixelRatio = message.state.pixelRatio;
+      pixelWidth = message.state.pixelWidth;
+      pixelHeight = message.state.pixelHeight;
       plotRect = message.state.plotRect;
-      canvas.width = width;
-      canvas.height = height;
+      pixelPlotRect = scaleRasterRect(plotRect, pixelRatio);
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
       gl = canvas.getContext("webgl2", {
         alpha: true,
         antialias: true,
@@ -94,12 +105,14 @@ function handleMessage(message: WorkerIncomingMessage): void {
       });
       break;
     case "resize":
-      width = message.state.width;
-      height = message.state.height;
+      pixelRatio = message.state.pixelRatio;
+      pixelWidth = message.state.pixelWidth;
+      pixelHeight = message.state.pixelHeight;
       plotRect = message.state.plotRect;
+      pixelPlotRect = scaleRasterRect(plotRect, pixelRatio);
       if (canvas) {
-        canvas.width = width;
-        canvas.height = height;
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
       }
       markDirty({ sizeChanged: true });
       break;
@@ -146,7 +159,7 @@ function renderFrame(): void {
     return;
   }
 
-  gl.viewport(0, 0, width, height);
+  gl.viewport(0, 0, pixelWidth, pixelHeight);
   clearGl(gl, [0.949, 0.965, 0.973, 1]);
 
   if (!section || !viewport) {
@@ -165,7 +178,7 @@ function renderFrame(): void {
 
   if (dirty.sizeChanged || dirty.viewportChanged || dirty.styleChanged) {
     gl.bindBuffer(gl.ARRAY_BUFFER, resources.heatmapQuadBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, buildPlotQuadVertices(plotRect, width, height), gl.DYNAMIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, buildPlotQuadVertices(pixelPlotRect, pixelWidth, pixelHeight), gl.DYNAMIC_DRAW);
   }
 
   if (displayTransform.renderMode === "heatmap") {
@@ -173,15 +186,15 @@ function renderFrame(): void {
       preparedHeatmap = prepareHeatmapData(section, viewport, displayTransform, overlay);
       uploadLutTexture(gl, resources.lutTexture, preparedHeatmap.lut);
     }
-    clearPlotGl(gl, plotRect, height, hexToRgbaArray("#f7fafc"));
+    clearPlotGl(gl, pixelPlotRect, pixelHeight, hexToRgbaArray("#f7fafc"));
     drawHeatmap(gl, resources, section, viewport, displayTransform, preparedHeatmap, overlay);
   } else {
     if (dirty.dataChanged || dirty.viewportChanged || dirty.styleChanged || dirty.sizeChanged || !preparedWiggles) {
-      preparedWiggles = prepareWiggleInstances(section, viewport, displayTransform, plotRect, width);
+      preparedWiggles = prepareWiggleInstances(section, viewport, displayTransform, pixelPlotRect, pixelWidth);
       uploadWiggleInstances(gl, resources.wiggleInstanceBuffer, preparedWiggles);
       resources.traceInstanceCount = preparedWiggles.traceIndices.length;
     }
-    clearPlotGl(gl, plotRect, height, hexToRgbaArray("#f8fafb"));
+    clearPlotGl(gl, pixelPlotRect, pixelHeight, hexToRgbaArray("#f8fafb"));
     drawWiggles(gl, resources, section, displayTransform, preparedWiggles);
   }
 
@@ -194,6 +207,8 @@ function reconstructSection(payload: WorkerSectionPayload): SectionPayload {
     axis: payload.axis,
     coordinate: payload.coordinate,
     dimensions: payload.dimensions,
+    logicalDimensions: payload.logicalDimensions,
+    window: payload.window,
     amplitudes: new Float32Array(payload.amplitudesBuffer),
     horizontalAxis: new Float64Array(payload.horizontalAxisBuffer),
     inlineAxis: payload.inlineAxisBuffer ? new Float64Array(payload.inlineAxisBuffer) : undefined,
@@ -254,7 +269,12 @@ function drawHeatmap(
   visibleOverlay: OverlayPayload | null
 ): void {
   glContext.enable(glContext.SCISSOR_TEST);
-  glContext.scissor(plotRect.x, height - plotRect.y - plotRect.height, plotRect.width, plotRect.height);
+  glContext.scissor(
+    pixelPlotRect.x,
+    pixelHeight - pixelPlotRect.y - pixelPlotRect.height,
+    pixelPlotRect.width,
+    pixelPlotRect.height
+  );
   glContext.useProgram(glResources.heatmapProgram);
   glContext.bindBuffer(glContext.ARRAY_BUFFER, glResources.heatmapQuadBuffer);
 
@@ -275,8 +295,14 @@ function drawHeatmap(
   glContext.uniform1i(glContext.getUniformLocation(glResources.heatmapProgram, "uAmplitude"), 0);
   glContext.uniform1i(glContext.getUniformLocation(glResources.heatmapProgram, "uLut"), 1);
   glContext.uniform1i(glContext.getUniformLocation(glResources.heatmapProgram, "uOverlay"), 2);
-  glContext.uniform2f(glContext.getUniformLocation(glResources.heatmapProgram, "uSectionSize"), seismicSection.dimensions.samples, seismicSection.dimensions.traces);
-  glContext.uniform4f(glContext.getUniformLocation(glResources.heatmapProgram, "uViewport"), seismicViewport.traceStart, seismicViewport.traceEnd, seismicViewport.sampleStart, seismicViewport.sampleEnd);
+  setSectionTextureUniforms(glContext, glResources.heatmapProgram, seismicSection);
+  glContext.uniform4f(
+    glContext.getUniformLocation(glResources.heatmapProgram, "uViewport"),
+    seismicViewport.traceStart,
+    seismicViewport.traceEnd,
+    seismicViewport.sampleStart,
+    seismicViewport.sampleEnd
+  );
   glContext.uniform1f(glContext.getUniformLocation(glResources.heatmapProgram, "uGain"), transform.gain);
   glContext.uniform1f(glContext.getUniformLocation(glResources.heatmapProgram, "uClipMin"), prepared.clipMin);
   glContext.uniform1f(glContext.getUniformLocation(glResources.heatmapProgram, "uClipMax"), prepared.clipMax);
@@ -301,18 +327,23 @@ function drawWiggles(
   }
 
   glContext.enable(glContext.SCISSOR_TEST);
-  glContext.scissor(plotRect.x, height - plotRect.y - plotRect.height, plotRect.width, plotRect.height);
+  glContext.scissor(
+    pixelPlotRect.x,
+    pixelHeight - pixelPlotRect.y - pixelPlotRect.height,
+    pixelPlotRect.width,
+    pixelPlotRect.height
+  );
   glContext.enable(glContext.BLEND);
   glContext.blendFunc(glContext.SRC_ALPHA, glContext.ONE_MINUS_SRC_ALPHA);
   glContext.useProgram(glResources.wiggleProgram);
   bindTexture(glContext, glResources.amplitudeTexture, 0);
   glContext.uniform1i(glContext.getUniformLocation(glResources.wiggleProgram, "uAmplitude"), 0);
-  glContext.uniform2f(glContext.getUniformLocation(glResources.wiggleProgram, "uTextureSize"), seismicSection.dimensions.samples, seismicSection.dimensions.traces);
+  setSectionTextureUniforms(glContext, glResources.wiggleProgram, seismicSection, "uTextureSize", "uLoadedWindow");
   glContext.uniform1f(glContext.getUniformLocation(glResources.wiggleProgram, "uGain"), transform.gain);
   glContext.uniform1f(glContext.getUniformLocation(glResources.wiggleProgram, "uPolaritySign"), transform.polarity === "reversed" ? -1 : 1);
-  glContext.uniform1f(glContext.getUniformLocation(glResources.wiggleProgram, "uPlotY"), plotRect.y);
-  glContext.uniform1f(glContext.getUniformLocation(glResources.wiggleProgram, "uPlotHeight"), plotRect.height);
-  glContext.uniform1f(glContext.getUniformLocation(glResources.wiggleProgram, "uCanvasHeight"), height);
+  glContext.uniform1f(glContext.getUniformLocation(glResources.wiggleProgram, "uPlotY"), pixelPlotRect.y);
+  glContext.uniform1f(glContext.getUniformLocation(glResources.wiggleProgram, "uPlotHeight"), pixelPlotRect.height);
+  glContext.uniform1f(glContext.getUniformLocation(glResources.wiggleProgram, "uCanvasHeight"), pixelHeight);
   glContext.uniform1f(glContext.getUniformLocation(glResources.wiggleProgram, "uSampleStart"), prepared.sampleStart);
   glContext.uniform1f(glContext.getUniformLocation(glResources.wiggleProgram, "uSampleCount"), prepared.sampleCount);
 
@@ -343,6 +374,28 @@ function drawWiggles(
   glContext.vertexAttribDivisor(amplitudeScaleLocation, 0);
   glContext.disable(glContext.BLEND);
   glContext.disable(glContext.SCISSOR_TEST);
+}
+
+function setSectionTextureUniforms(
+  glContext: WebGL2RenderingContext,
+  program: WebGLProgram,
+  seismicSection: SectionPayload,
+  sectionSizeUniform = "uSectionSize",
+  loadedWindowUniform = "uLoadedWindow"
+): void {
+  const window = resolveLoadedSectionWindow(seismicSection);
+  glContext.uniform2f(
+    glContext.getUniformLocation(program, sectionSizeUniform),
+    seismicSection.dimensions.samples,
+    seismicSection.dimensions.traces
+  );
+  glContext.uniform4f(
+    glContext.getUniformLocation(program, loadedWindowUniform),
+    window.traceStart,
+    window.traceEnd,
+    window.sampleStart,
+    window.sampleEnd
+  );
 }
 
 function uploadAmplitudeTexture(glContext: WebGL2RenderingContext, texture: WebGLTexture, seismicSection: SectionPayload): void {
@@ -515,6 +568,7 @@ uniform sampler2D uAmplitude;
 uniform sampler2D uLut;
 uniform sampler2D uOverlay;
 uniform vec2 uSectionSize;
+uniform vec4 uLoadedWindow;
 uniform vec4 uViewport;
 uniform float uGain;
 uniform float uClipMin;
@@ -528,7 +582,18 @@ out vec4 outColor;
 void main() {
   float traceIndex = mix(uViewport.x, uViewport.y - 1.0, vUv.x);
   float sampleIndex = mix(uViewport.z, uViewport.w - 1.0, vUv.y);
-  vec2 sampleUv = vec2((sampleIndex + 0.5) / uSectionSize.x, (traceIndex + 0.5) / uSectionSize.y);
+  if (
+    traceIndex < uLoadedWindow.x ||
+    traceIndex >= uLoadedWindow.y ||
+    sampleIndex < uLoadedWindow.z ||
+    sampleIndex >= uLoadedWindow.w
+  ) {
+    discard;
+  }
+  vec2 sampleUv = vec2(
+    ((sampleIndex - uLoadedWindow.z) + 0.5) / uSectionSize.x,
+    ((traceIndex - uLoadedWindow.x) + 0.5) / uSectionSize.y
+  );
   float amplitude = texture(uAmplitude, sampleUv).r * uGain * uPolaritySign;
   float normalized = uUseDiverging > 0.5
     ? (amplitude / max(uSymmetricExtent, 0.000001) + 1.0) * 0.5
@@ -549,6 +614,7 @@ in float aBaselineClipX;
 in float aAmplitudeScaleClip;
 uniform sampler2D uAmplitude;
 uniform vec2 uTextureSize;
+uniform vec4 uLoadedWindow;
 uniform float uGain;
 uniform float uPolaritySign;
 uniform float uPlotY;
@@ -561,7 +627,17 @@ void main() {
   float logicalVertex = float(gl_VertexID);
   float sampleOffset = uFillMode > 0.5 ? floor(logicalVertex / 2.0) : logicalVertex;
   float sampleIndex = uSampleStart + sampleOffset;
-  float amplitude = texelFetch(uAmplitude, ivec2(int(sampleIndex), int(aTraceIndex)), 0).r;
+  float localSampleIndex = sampleIndex - uLoadedWindow.z;
+  float localTraceIndex = aTraceIndex - uLoadedWindow.x;
+  float amplitude = 0.0;
+  if (
+    localSampleIndex >= 0.0 &&
+    localSampleIndex < uTextureSize.x &&
+    localTraceIndex >= 0.0 &&
+    localTraceIndex < uTextureSize.y
+  ) {
+    amplitude = texelFetch(uAmplitude, ivec2(int(localSampleIndex), int(localTraceIndex)), 0).r;
+  }
   float offset = amplitude * uGain * aAmplitudeScaleClip * uPolaritySign;
   if (uFillMode > 0.5) {
     float side = mod(logicalVertex, 2.0);

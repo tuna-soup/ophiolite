@@ -302,13 +302,15 @@ export function adaptOphioliteRockPhysicsCrossplotToChart(
       label: source.x_axis.label ?? template.xLabel,
       unit: source.x_axis.unit ?? template.xUnit,
       semantic: source.x_axis.semantic,
-      range: deriveRange(source.x_axis.min_value, source.x_axis.max_value, x)
+      range: deriveRange(source.x_axis.min_value, source.x_axis.max_value, x),
+      direction: template.xDirection ?? "normal"
     },
     yAxis: {
       label: source.y_axis.label ?? template.yLabel,
       unit: source.y_axis.unit ?? template.yUnit,
       semantic: source.y_axis.semantic,
-      range: deriveRange(source.y_axis.min_value, source.y_axis.max_value, y)
+      range: deriveRange(source.y_axis.min_value, source.y_axis.max_value, y),
+      direction: template.yDirection ?? "normal"
     },
     colorBinding: adaptColorBinding(source, wells, colorScalars),
     columns: {
@@ -631,6 +633,14 @@ function cloneTemplateOverlays(
     return undefined;
   }
   return overlays.map((overlay) => {
+    if (overlay.kind === "axis") {
+      return {
+        ...overlay,
+        domain: { ...overlay.domain },
+        ticks: overlay.ticks.map((tick) => ({ ...tick })),
+        points: overlay.points.map((point) => ({ ...point }))
+      };
+    }
     if (overlay.kind === "text") {
       return { ...overlay };
     }
@@ -655,6 +665,27 @@ function normalizeTemplateOverlays(
     return undefined;
   }
   return overlays.map((overlay) => {
+    if (overlay.kind === "axis") {
+      return {
+        kind: "axis",
+        id: overlay.id,
+        label: overlay.label,
+        color: overlay.color,
+        domain: { min: overlay.domain.min, max: overlay.domain.max },
+        ticks: overlay.ticks.map((tick) => ({
+          value: tick.value,
+          label: tick.label ?? undefined,
+          lengthPx: tick.lengthPx ?? undefined
+        })),
+        points: overlay.points.map((point) => ({ x: point.x, y: point.y })),
+        width: overlay.width ?? undefined,
+        tickLengthPx: overlay.tickLengthPx ?? undefined,
+        tickLabelOffsetPx: overlay.tickLabelOffsetPx ?? undefined,
+        labelValue: overlay.labelValue ?? undefined,
+        labelOffsetPx: overlay.labelOffsetPx ?? undefined,
+        side: overlay.side ?? undefined
+      };
+    }
     if (overlay.kind === "text") {
       const rotationDeg = "rotation_deg" in overlay ? overlay.rotation_deg : overlay.rotationDeg;
       return {
@@ -724,7 +755,7 @@ function toTemplateLines(overlays: readonly RockPhysicsTemplateOverlay[] | null 
     return undefined;
   }
   const lines = overlays.flatMap((overlay) =>
-    overlay.kind === "polyline"
+    overlay.kind === "polyline" || overlay.kind === "axis"
       ? [{
           id: overlay.id,
           label: overlay.label ?? overlay.id,

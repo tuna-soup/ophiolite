@@ -1,10 +1,15 @@
 use crate::project_assets::{
-    data_filename, depth_reference_for_kind, drilling_extent, drilling_metadata,
-    parse_drilling_csv, parse_pressure_csv, parse_tops_csv, parse_trajectory_csv, pressure_extent,
+    WellMarkerHorizonResidualRow, data_filename, depth_reference_for_kind, drilling_extent,
+    drilling_metadata, inferred_reference_metadata_for_top_rows,
+    inferred_reference_metadata_for_well_marker_rows, parse_drilling_csv, parse_pressure_csv,
+    parse_tops_csv, parse_trajectory_csv, parse_well_markers_csv, pressure_extent,
     pressure_metadata, read_drilling_rows, read_pressure_rows, read_tops_rows,
-    read_trajectory_rows, tops_extent, tops_metadata, trajectory_extent, trajectory_metadata,
-    vertical_datum_for_kind, write_drilling_package, write_pressure_package, write_tops_package,
-    write_trajectory_package,
+    read_trajectory_rows, read_well_marker_horizon_residual_rows, read_well_marker_rows,
+    tops_extent, tops_metadata, trajectory_extent, trajectory_metadata, vertical_datum_for_kind,
+    well_marker_extent, well_marker_horizon_residual_extent, well_marker_horizon_residual_metadata,
+    well_marker_metadata, write_drilling_package, write_pressure_package, write_tops_package,
+    write_trajectory_package, write_well_marker_horizon_residuals_package,
+    write_well_markers_package,
 };
 use crate::project_contracts::{
     CoordinateReferenceBindingDto, CoordinateReferenceDto, CoordinateReferenceSourceDto,
@@ -12,8 +17,9 @@ use crate::project_contracts::{
     ROCK_PHYSICS_CROSSPLOT_CONTRACT_VERSION, ResolveSectionWellOverlaysResponse,
     ResolvedRockPhysicsCrossplotSourceDto, ResolvedSectionWellOverlayDto,
     ResolvedSurveyMapHorizonDto, ResolvedSurveyMapSourceDto, ResolvedSurveyMapSurveyDto,
-    ResolvedSurveyMapWellDto, ResolvedWellPanelSourceDto, ResolvedWellPanelWellDto,
-    RockPhysicsAxisDto, RockPhysicsCategoricalColorBindingDto, RockPhysicsCategoricalSemanticDto,
+    ResolvedSurveyMapWellDto, ResolvedWellMarkerHorizonResidualSourceDto,
+    ResolvedWellPanelSourceDto, ResolvedWellPanelWellDto, RockPhysicsAxisDto,
+    RockPhysicsCategoricalColorBindingDto, RockPhysicsCategoricalSemanticDto,
     RockPhysicsCategoryDto, RockPhysicsColorRequestDto, RockPhysicsContinuousColorBindingDto,
     RockPhysicsCrossplotRequestDto, RockPhysicsCurveSemanticDto,
     RockPhysicsInteractionThresholdsDto, RockPhysicsSampleDto, RockPhysicsSourceBindingDto,
@@ -23,26 +29,29 @@ use crate::project_contracts::{
     SurveyIndexGridDto, SurveyMapGridTransformDto, SurveyMapScalarFieldDto,
     SurveyMapSpatialAvailabilityDto, SurveyMapSpatialDescriptorDto, SurveyMapTrajectoryDto,
     SurveyMapTrajectoryStationDto, SurveyMapTransformDiagnosticsDto, SurveyMapTransformPolicyDto,
-    SurveyMapTransformStatusDto, WELL_PANEL_CONTRACT_VERSION, WellPanelDepthSampleDto,
-    WellPanelDrillingObservationDto, WellPanelDrillingSetDto, WellPanelLogCurveDto,
-    WellPanelPressureObservationDto, WellPanelPressureSetDto, WellPanelRequestDto,
-    WellPanelTopRowDto, WellPanelTopSetDto, WellPanelTrajectoryDto, WellPanelTrajectoryRowDto,
+    SurveyMapTransformStatusDto, WELL_MARKER_HORIZON_RESIDUAL_CONTRACT_VERSION,
+    WELL_PANEL_CONTRACT_VERSION, WellMarkerHorizonResidualRequestDto,
+    WellMarkerHorizonResidualRowDto, WellPanelDepthSampleDto, WellPanelDrillingObservationDto,
+    WellPanelDrillingSetDto, WellPanelLogCurveDto, WellPanelPressureObservationDto,
+    WellPanelPressureSetDto, WellPanelRequestDto, WellPanelTopRowDto, WellPanelTopSetDto,
+    WellPanelTrajectoryDto, WellPanelTrajectoryRowDto,
 };
 use crate::{
     AssetBindingInput, AssetTableMetadata, DepthRangeQuery, DrillingObservationRow, IndexKind,
     IngestIssue, LasError, LasFile, PressureObservationRow, Provenance, Result, TopRow,
-    TrajectoryRow, WellInfo, package_metadata_for, read_path, revision_token_for_bytes,
-    write_package_overwrite,
+    TrajectoryRow, WellInfo, WellMarkerRow, package_metadata_for, read_path,
+    revision_token_for_bytes, write_package_overwrite,
 };
 use ophiolite_compute::{
-    AssetSemanticFamily, BUILTIN_OPERATOR_PACKAGE_NAME, ComputeCatalog, ComputeCatalogEntry,
-    ComputeExecutionManifest, ComputeInputBinding, ComputeParameterValue, ComputeRegistry,
-    CurveSemanticDescriptor, CurveSemanticSource, CurveSemanticType, DrillingObservationDataRow,
-    ExternalOperatorRequest, ExternalOperatorRequestPayload, ExternalOperatorResponse,
-    ExternalOperatorResponsePayload, LogCurveData, OperatorManifest, OperatorPackageManifest,
-    OperatorRuntimeKind, PressureObservationDataRow, TopDataRow, TrajectoryDataRow,
-    catalog_entry_for_operator_manifest, classify_curve_semantic, load_operator_package_manifest,
-    resolve_log_input_bindings, validate_compute_parameters,
+    AssetSemanticFamily, BUILTIN_OPERATOR_PACKAGE_NAME, ComputeAvailability, ComputeCatalog,
+    ComputeCatalogEntry, ComputeExecutionManifest, ComputeInputBinding, ComputeInputSpec,
+    ComputeParameterDefinition, ComputeParameterValue, ComputeRegistry, CurveSemanticDescriptor,
+    CurveSemanticSource, CurveSemanticType, DrillingObservationDataRow, ExternalOperatorRequest,
+    ExternalOperatorRequestPayload, ExternalOperatorResponse, ExternalOperatorResponsePayload,
+    LogCurveData, OperatorManifest, OperatorPackageManifest, OperatorRuntimeKind,
+    PressureObservationDataRow, TopDataRow, TrajectoryDataRow, catalog_entry_for_operator_manifest,
+    classify_curve_semantic, load_operator_package_manifest, resolve_log_input_bindings,
+    validate_compute_parameters,
 };
 use ophiolite_core::{CurveItem, LasValue, SectionItems, derive_canonical_alias};
 use ophiolite_package::open_package;
@@ -56,7 +65,10 @@ use ophiolite_seismic::{
     WellTieWavelet, WellTimeDepthAuthoredModel1D, WellTimeDepthModel1D, WellboreGeometry,
 };
 use ophiolite_seismic_runtime::{
-    ImportedHorizonGrid, TbvolManifest, describe_store, load_horizon_grids, open_store,
+    HorizonSourceImportCanonicalDraft, ImportedHorizonDescriptor, ImportedHorizonGrid,
+    TbvolManifest, describe_store, import_horizon_xyzs_from_draft, ingest_volume,
+    load_horizon_grids, open_store, preview_horizon_source_import,
+    set_any_store_native_coordinate_reference,
 };
 use proj::{Proj, ProjBuilder};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -73,7 +85,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const PROJECT_SCHEMA_VERSION: &str = "0.2.0";
+const PROJECT_SCHEMA_VERSION: &str = "0.6.0";
 const PROJECT_MANIFEST_FILENAME: &str = "ophiolite-project.json";
 const PROJECT_CATALOG_FILENAME: &str = "catalog.sqlite";
 const ASSET_MANIFEST_FILENAME: &str = "asset_manifest.json";
@@ -81,6 +93,14 @@ const PROJECT_REVISION_STORE_DIRNAME: &str = ".ophiolite";
 const PROJECT_ASSET_REVISION_STORE_DIRNAME: &str = "asset-revisions";
 const PROJECT_OPERATOR_PACKAGE_STORE_DIRNAME: &str = "operator-packages";
 const PROJECT_OPERATOR_PACKAGE_PYTHON_ENV_DIRNAME: &str = ".venv";
+const WELL_MARKER_HORIZON_RESIDUAL_FUNCTION_ID: &str = "well_markers:depth_horizon_residuals";
+const WELL_MARKER_HORIZON_RESIDUAL_FUNCTION_VERSION: &str = "1.0.0";
+const WELL_MARKER_HORIZON_RESIDUAL_SURVEY_ASSET_PARAMETER: &str = "survey_asset_id";
+const WELL_MARKER_HORIZON_RESIDUAL_HORIZON_PARAMETER: &str = "horizon_id";
+const WELL_MARKER_HORIZON_RESIDUAL_MARKER_PARAMETER: &str = "marker_name";
+const WELL_MARKER_HORIZON_RESIDUAL_SAMPLING_METHOD: &str = "bilinear";
+const WELL_MARKER_HORIZON_RESIDUAL_DEPTH_REFERENCE: &str = "tvd";
+const WELL_MARKER_HORIZON_RESIDUAL_SIGN_CONVENTION: &str = "marker_minus_horizon";
 const PROJECT_STAGING_DIRNAME: &str = "staging";
 const PROJECT_MAP_TRANSFORM_CACHE_DIRNAME: &str = "map-transform-cache";
 const SURVEY_MAP_TRANSFORM_CACHE_SCHEMA_VERSION: u32 = 1;
@@ -94,6 +114,67 @@ const WELL_TIME_DEPTH_AUTHORED_MODEL_FILENAME: &str = "well_time_depth_authored_
 const WELL_TIME_DEPTH_MODEL_FILENAME: &str = "well_time_depth_model.json";
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectWellTimeDepthPreviewIssueSeverity {
+    Info,
+    Warning,
+    Blocking,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWellTimeDepthPreviewIssue {
+    pub severity: ProjectWellTimeDepthPreviewIssueSeverity,
+    pub code: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWellTimeDepthAssetPreview {
+    pub asset_kind: String,
+    pub json_path: String,
+    pub can_import: bool,
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub wellbore_id: Option<String>,
+    pub depth_reference: Option<String>,
+    pub travel_time_reference: Option<String>,
+    pub sample_count: Option<usize>,
+    pub note_count: Option<usize>,
+    pub source_kind: Option<String>,
+    pub source_binding_count: Option<usize>,
+    pub assumption_interval_count: Option<usize>,
+    pub sampling_step_m: Option<f64>,
+    pub resolved_trajectory_fingerprint: Option<String>,
+    pub source_well_time_depth_model_asset_id: Option<String>,
+    pub tie_window_start_ms: Option<f64>,
+    pub tie_window_end_ms: Option<f64>,
+    pub trace_search_radius_m: Option<f64>,
+    pub bulk_shift_ms: Option<f64>,
+    pub stretch_factor: Option<f64>,
+    pub trace_search_offset_m: Option<f64>,
+    pub correlation: Option<f64>,
+    pub issues: Vec<ProjectWellTimeDepthPreviewIssue>,
+    pub raw_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWellTimeDepthImportCanonicalDraft {
+    pub asset_kind: String,
+    pub json_payload: String,
+    pub collection_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectWellTimeDepthImportPreview {
+    pub parsed: ProjectWellTimeDepthAssetPreview,
+    pub suggested_draft: ProjectWellTimeDepthImportCanonicalDraft,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OphioliteProjectManifest {
@@ -143,6 +224,9 @@ pub struct WellId(pub String);
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WellboreId(pub String);
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct WellMarkerId(pub String);
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AssetCollectionId(pub String);
 
@@ -157,6 +241,8 @@ pub enum AssetKind {
     Log,
     Trajectory,
     TopSet,
+    WellMarkerSet,
+    WellMarkerHorizonResidualSet,
     PressureObservation,
     DrillingObservation,
     CheckshotVspObservationSet,
@@ -164,6 +250,7 @@ pub enum AssetKind {
     WellTieObservationSet,
     WellTimeDepthAuthoredModel,
     WellTimeDepthModel,
+    RawSourceBundle,
     SeismicTraceData,
 }
 
@@ -173,6 +260,8 @@ impl AssetKind {
             Self::Log => "log",
             Self::Trajectory => "trajectory",
             Self::TopSet => "top_set",
+            Self::WellMarkerSet => "well_marker_set",
+            Self::WellMarkerHorizonResidualSet => "well_marker_horizon_residual_set",
             Self::PressureObservation => "pressure_observation",
             Self::DrillingObservation => "drilling_observation",
             Self::CheckshotVspObservationSet => "checkshot_vsp_observation_set",
@@ -180,6 +269,7 @@ impl AssetKind {
             Self::WellTieObservationSet => "well_tie_observation_set",
             Self::WellTimeDepthAuthoredModel => "well_time_depth_authored_model",
             Self::WellTimeDepthModel => "well_time_depth_model",
+            Self::RawSourceBundle => "raw_source_bundle",
             Self::SeismicTraceData => "seismic_trace_data",
         }
     }
@@ -189,6 +279,8 @@ impl AssetKind {
             Self::Log => "logs",
             Self::Trajectory => "trajectory",
             Self::TopSet => "tops",
+            Self::WellMarkerSet => "well-markers",
+            Self::WellMarkerHorizonResidualSet => "well-marker-horizon-residuals",
             Self::PressureObservation => "pressure",
             Self::DrillingObservation => "drilling",
             Self::CheckshotVspObservationSet => "checkshot-vsp-observations",
@@ -196,6 +288,7 @@ impl AssetKind {
             Self::WellTieObservationSet => "well-tie-observations",
             Self::WellTimeDepthAuthoredModel => "well-time-depth-authored-models",
             Self::WellTimeDepthModel => "well-time-depth-models",
+            Self::RawSourceBundle => "raw-source-bundles",
             Self::SeismicTraceData => "seismic-trace-data",
         }
     }
@@ -205,6 +298,8 @@ impl AssetKind {
             "log" => Ok(Self::Log),
             "trajectory" => Ok(Self::Trajectory),
             "top_set" => Ok(Self::TopSet),
+            "well_marker_set" => Ok(Self::WellMarkerSet),
+            "well_marker_horizon_residual_set" => Ok(Self::WellMarkerHorizonResidualSet),
             "pressure_observation" => Ok(Self::PressureObservation),
             "drilling_observation" => Ok(Self::DrillingObservation),
             "checkshot_vsp_observation_set" => Ok(Self::CheckshotVspObservationSet),
@@ -212,6 +307,7 @@ impl AssetKind {
             "well_tie_observation_set" => Ok(Self::WellTieObservationSet),
             "well_time_depth_authored_model" => Ok(Self::WellTimeDepthAuthoredModel),
             "well_time_depth_model" => Ok(Self::WellTimeDepthModel),
+            "raw_source_bundle" => Ok(Self::RawSourceBundle),
             "seismic_trace_data" => Ok(Self::SeismicTraceData),
             _ => Err(LasError::Validation(format!(
                 "unknown asset kind '{value}' in project catalog"
@@ -276,6 +372,7 @@ pub enum DepthReference {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum VerticalDatum {
     KellyBushing,
+    RotaryTable,
     GroundLevel,
     DrillFloor,
     MeanSeaLevel,
@@ -284,8 +381,133 @@ pub enum VerticalDatum {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CoordinateReference {
+    pub id: Option<String>,
     pub name: Option<String>,
     pub geodetic_datum: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct OperatorAssignment {
+    pub organisation_name: Option<String>,
+    pub organisation_id: Option<String>,
+    pub effective_at: Option<String>,
+    pub terminated_at: Option<String>,
+    pub source: Option<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct ExternalReference {
+    pub system: String,
+    pub id: String,
+    pub kind: Option<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LocatedPoint {
+    pub coordinate_reference: Option<CoordinateReferenceDescriptor>,
+    pub point: ProjectedPoint2,
+    pub recorded_at: Option<String>,
+    pub source: Option<String>,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VerticalMeasurementPath {
+    MeasuredDepth,
+    TrueVerticalDepth,
+    TrueVerticalDepthSubsea,
+    Elevation,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct VerticalMeasurement {
+    pub measurement_id: Option<String>,
+    pub value: f64,
+    pub unit: Option<String>,
+    pub path: VerticalMeasurementPath,
+    pub coordinate_reference: Option<CoordinateReferenceDescriptor>,
+    pub reference_measurement_id: Option<String>,
+    pub reference_entity_id: Option<String>,
+    pub source: Option<String>,
+    pub description: Option<String>,
+}
+
+impl Default for VerticalMeasurementPath {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct WellMetadata {
+    pub field_name: Option<String>,
+    pub block_name: Option<String>,
+    pub basin_name: Option<String>,
+    pub country: Option<String>,
+    pub province_state: Option<String>,
+    pub location_text: Option<String>,
+    pub interest_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operator_history: Vec<OperatorAssignment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface_location: Option<LocatedPoint>,
+    pub default_vertical_measurement_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_vertical_coordinate_reference: Option<CoordinateReferenceDescriptor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vertical_measurements: Vec<VerticalMeasurement>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_references: Vec<ExternalReference>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct WellboreMetadata {
+    pub sequence_number: Option<u32>,
+    pub status: Option<String>,
+    pub purpose: Option<String>,
+    pub trajectory_type: Option<String>,
+    pub parent_wellbore_id: Option<String>,
+    pub target_formation: Option<String>,
+    pub primary_material: Option<String>,
+    pub location_text: Option<String>,
+    pub service_company_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operator_history: Vec<OperatorAssignment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom_hole_location: Option<LocatedPoint>,
+    pub default_vertical_measurement_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_vertical_coordinate_reference: Option<CoordinateReferenceDescriptor>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vertical_measurements: Vec<VerticalMeasurement>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_references: Vec<ExternalReference>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WellMarkerRecord {
+    pub id: WellMarkerId,
+    pub wellbore_id: WellboreId,
+    pub source_asset_id: Option<AssetId>,
+    pub name: String,
+    pub sequence_number: Option<u32>,
+    pub marker_kind: Option<String>,
+    pub top_measurement: VerticalMeasurement,
+    pub base_measurement: Option<VerticalMeasurement>,
+    pub depth_reference: Option<String>,
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_references: Vec<ExternalReference>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -355,6 +577,8 @@ pub enum AssetDiffSummary {
     Log(LogAssetDiffSummary),
     Trajectory(StructuredAssetDiffSummary),
     TopSet(StructuredAssetDiffSummary),
+    WellMarkerSet(StructuredAssetDiffSummary),
+    WellMarkerHorizonResidualSet(StructuredAssetDiffSummary),
     PressureObservation(StructuredAssetDiffSummary),
     DrillingObservation(StructuredAssetDiffSummary),
     CheckshotVspObservationSet(DirectoryAssetDiffSummary),
@@ -362,6 +586,7 @@ pub enum AssetDiffSummary {
     WellTieObservationSet(DirectoryAssetDiffSummary),
     WellTimeDepthAuthoredModel(DirectoryAssetDiffSummary),
     WellTimeDepthModel(DirectoryAssetDiffSummary),
+    RawSourceBundle(DirectoryAssetDiffSummary),
     SeismicTraceData(DirectoryAssetDiffSummary),
     MetadataOnly { changed_fields: Vec<String> },
 }
@@ -428,11 +653,12 @@ pub struct AssetManifest {
     pub compute_manifest: Option<ComputeExecutionManifest>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WellRecord {
     pub id: WellId,
     pub name: String,
     pub identifiers: WellIdentifierSet,
+    pub metadata: Option<WellMetadata>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -441,7 +667,11 @@ pub struct WellboreRecord {
     pub well_id: WellId,
     pub name: String,
     pub identifiers: WellIdentifierSet,
+    pub metadata: Option<WellboreMetadata>,
     pub geometry: Option<WellboreGeometry>,
+    pub definitive_trajectory_asset_id: Option<AssetId>,
+    pub definitive_marker_set_asset_id: Option<AssetId>,
+    pub definitive_top_set_asset_id: Option<AssetId>,
     pub active_well_time_depth_model_asset_id: Option<AssetId>,
 }
 
@@ -479,7 +709,7 @@ pub struct ProjectSummary {
     pub asset_count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct WellSummary {
     pub well: WellRecord,
     pub wellbore_count: usize,
@@ -500,6 +730,9 @@ pub struct ProjectSurveyAssetInventoryItem {
     pub collection_id: AssetCollectionId,
     pub name: String,
     pub status: AssetStatus,
+    pub owner_scope: AssetOwnerScope,
+    pub owner_id: String,
+    pub owner_name: String,
     pub well_id: WellId,
     pub well_name: String,
     pub wellbore_id: WellboreId,
@@ -523,6 +756,42 @@ pub struct ProjectWellboreInventoryItem {
 pub struct ProjectWellOverlayInventory {
     pub surveys: Vec<ProjectSurveyAssetInventoryItem>,
     pub wellbores: Vec<ProjectWellboreInventoryItem>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetOwnerScope {
+    Wellbore,
+    Survey,
+    Project,
+}
+
+impl AssetOwnerScope {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Wellbore => "wellbore",
+            Self::Survey => "survey",
+            Self::Project => "project",
+        }
+    }
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "wellbore" => Ok(Self::Wellbore),
+            "survey" => Ok(Self::Survey),
+            "project" => Ok(Self::Project),
+            _ => Err(LasError::Validation(format!(
+                "unsupported asset owner scope '{value}'"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct AssetOwnerBinding {
+    scope: AssetOwnerScope,
+    owner_id: String,
+    display_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -560,6 +829,49 @@ pub type ProjectAssetImportResult = LogAssetImportResult;
 pub type SeismicAssetImportResult = ProjectAssetImportResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct SurveyHorizonImportResult {
+    pub collection: AssetCollectionRecord,
+    pub asset: AssetRecord,
+    pub imported_horizons: Vec<ImportedHorizonDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct RawSourceBundleMetadata {
+    schema_version: String,
+    source_count: usize,
+    source_artifacts: Vec<SourceArtifactRef>,
+}
+
+const PROJECT_ARCHIVE_WELL_NAME: &str = "Ophiolite Project Archive";
+const PROJECT_ARCHIVE_WELLBORE_NAME: &str = "Ophiolite Project Archive";
+const PROJECT_ARCHIVE_NOTE: &str =
+    "System-owned archive container for preserved non-well source bundles.";
+const PROJECT_ARCHIVE_OWNER_ID: &str = "project-archive";
+const PROJECT_ARCHIVE_OWNER_NAME: &str = "Project Archive";
+
+#[derive(Debug, Clone)]
+struct AssetOwnerHandle {
+    well: WellRecord,
+    wellbore: WellboreRecord,
+    identifiers: WellIdentifierSet,
+    created_well: bool,
+    created_wellbore: bool,
+    catalog_owner: Option<AssetOwnerBinding>,
+}
+
+impl AssetOwnerHandle {
+    fn import_resolution(&self) -> ImportResolution {
+        ImportResolution {
+            status: AssetStatus::Bound,
+            well_id: self.well.id.clone(),
+            wellbore_id: self.wellbore.id.clone(),
+            created_well: self.created_well,
+            created_wellbore: self.created_wellbore,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceptedWellTieResult {
     pub observation_result: ProjectAssetImportResult,
     pub authored_result: ProjectAssetImportResult,
@@ -591,6 +903,27 @@ pub struct ProjectComputeRunResult {
     pub execution: ComputeExecutionManifest,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WellMarkerHorizonResidualPointRecord {
+    pub marker_name: String,
+    pub marker_kind: Option<String>,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub horizon_depth: f64,
+    pub residual: f64,
+    pub status: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WellMarkerHorizonResidualResolveRequest {
+    pub source_asset_id: AssetId,
+    pub survey_asset_id: AssetId,
+    pub horizon_id: String,
+    pub marker_name: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProjectOperatorPackageInstallResult {
     pub package_name: String,
@@ -619,6 +952,17 @@ struct SurveyMapTransformCacheArtifact {
     display_spatial: SurveyMapSpatialDescriptorDto,
     transform_status: SurveyMapTransformStatusDto,
     transform_diagnostics: SurveyMapTransformDiagnosticsDto,
+}
+
+#[derive(Debug, Clone)]
+struct ResidualMarkerInput {
+    marker_name: String,
+    marker_kind: Option<String>,
+    source_depth: f64,
+    source_depth_reference: Option<String>,
+    source_depth_domain: Option<String>,
+    source_depth_datum: Option<String>,
+    note: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -954,19 +1298,12 @@ impl OphioliteProject {
     pub fn list_wells(&self) -> Result<Vec<WellRecord>> {
         let mut statement = self
             .connection
-            .prepare("SELECT id, primary_name, identifiers_json FROM wells ORDER BY primary_name")
+            .prepare(
+                "SELECT id, primary_name, identifiers_json, metadata_json FROM wells ORDER BY primary_name",
+            )
             .map_err(sqlite_error)?;
         let rows = statement
-            .query_map([], |row| {
-                Ok(WellRecord {
-                    id: WellId(row.get(0)?),
-                    name: row.get(1)?,
-                    identifiers: serde_json::from_str::<WellIdentifierSet>(
-                        &row.get::<_, String>(2)?,
-                    )
-                    .map_err(sql_json_error)?,
-                })
-            })
+            .query_map([], well_record_from_row)
             .map_err(sqlite_error)?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
@@ -991,31 +1328,76 @@ impl OphioliteProject {
             .collect()
     }
 
+    pub fn set_well_metadata(
+        &self,
+        well_id: &WellId,
+        metadata: Option<WellMetadata>,
+    ) -> Result<WellRecord> {
+        let metadata_json = metadata.as_ref().map(serde_json::to_string).transpose()?;
+        self.connection
+            .execute(
+                "UPDATE wells SET metadata_json = ?2 WHERE id = ?1",
+                params![well_id.0, metadata_json],
+            )
+            .map_err(sqlite_error)?;
+        self.well_by_id(well_id)
+    }
+
     pub fn list_wellbores(&self, well_id: &WellId) -> Result<Vec<WellboreRecord>> {
         let mut statement = self.connection.prepare(
-            "SELECT id, well_id, primary_name, identifiers_json, geometry_json, active_well_time_depth_model_asset_id FROM wellbores WHERE well_id = ?1 ORDER BY primary_name",
+            "SELECT id, well_id, primary_name, identifiers_json, metadata_json, geometry_json, definitive_trajectory_asset_id, definitive_marker_set_asset_id, definitive_top_set_asset_id, active_well_time_depth_model_asset_id FROM wellbores WHERE well_id = ?1 ORDER BY primary_name",
         ).map_err(sqlite_error)?;
         let rows = statement
-            .query_map([&well_id.0], |row| {
-                Ok(WellboreRecord {
-                    id: WellboreId(row.get(0)?),
-                    well_id: WellId(row.get(1)?),
-                    name: row.get(2)?,
-                    identifiers: serde_json::from_str::<WellIdentifierSet>(
-                        &row.get::<_, String>(3)?,
-                    )
-                    .map_err(sql_json_error)?,
-                    geometry: parse_optional_json_column::<WellboreGeometry>(row.get(4)?)
-                        .map_err(sql_json_error)?,
-                    active_well_time_depth_model_asset_id: row
-                        .get::<_, Option<String>>(5)?
-                        .map(AssetId),
-                })
-            })
+            .query_map([&well_id.0], wellbore_record_from_row)
             .map_err(sqlite_error)?;
 
         rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sqlite_error)
+    }
+
+    pub fn list_well_markers(&self, wellbore_id: &WellboreId) -> Result<Vec<WellMarkerRecord>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT marker_json
+                 FROM well_markers
+                 WHERE wellbore_id = ?1
+                 ORDER BY sequence_number ASC, name ASC, id ASC",
+            )
+            .map_err(sqlite_error)?;
+        let rows = statement
+            .query_map([&wellbore_id.0], |row| {
+                let json: String = row.get(0)?;
+                serde_json::from_str::<WellMarkerRecord>(&json).map_err(sql_json_error)
+            })
+            .map_err(sqlite_error)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sqlite_error)
+    }
+
+    pub fn definitive_marker_source_asset_id(
+        &self,
+        wellbore_id: &WellboreId,
+    ) -> Result<Option<AssetId>> {
+        let wellbore = self.wellbore_by_id(wellbore_id)?;
+        Ok(wellbore
+            .definitive_marker_set_asset_id
+            .or(wellbore.definitive_top_set_asset_id))
+    }
+
+    pub fn set_wellbore_metadata(
+        &self,
+        wellbore_id: &WellboreId,
+        metadata: Option<WellboreMetadata>,
+    ) -> Result<WellboreRecord> {
+        let metadata_json = metadata.as_ref().map(serde_json::to_string).transpose()?;
+        self.connection
+            .execute(
+                "UPDATE wellbores SET metadata_json = ?2 WHERE id = ?1",
+                params![wellbore_id.0, metadata_json],
+            )
+            .map_err(sqlite_error)?;
+        self.wellbore_by_id(wellbore_id)
     }
 
     pub fn set_wellbore_geometry(
@@ -1030,6 +1412,105 @@ impl OphioliteProject {
                 params![wellbore_id.0, geometry_json],
             )
             .map_err(sqlite_error)?;
+        self.wellbore_by_id(wellbore_id)
+    }
+
+    pub fn set_definitive_trajectory_asset(
+        &self,
+        wellbore_id: &WellboreId,
+        asset_id: Option<&AssetId>,
+    ) -> Result<WellboreRecord> {
+        if let Some(asset_id) = asset_id {
+            let asset = self.asset_by_id(asset_id)?;
+            require_asset_kind(&asset, AssetKind::Trajectory)?;
+            if asset.wellbore_id != *wellbore_id {
+                return Err(LasError::Validation(format!(
+                    "trajectory asset '{}' does not belong to wellbore '{}'",
+                    asset_id.0, wellbore_id.0
+                )));
+            }
+        }
+        self.connection
+            .execute(
+                "UPDATE wellbores SET definitive_trajectory_asset_id = ?2 WHERE id = ?1",
+                params![wellbore_id.0, asset_id.map(|value| value.0.clone())],
+            )
+            .map_err(sqlite_error)?;
+        self.wellbore_by_id(wellbore_id)
+    }
+
+    pub fn set_definitive_marker_set_asset(
+        &self,
+        wellbore_id: &WellboreId,
+        asset_id: Option<&AssetId>,
+    ) -> Result<WellboreRecord> {
+        if let Some(asset_id) = asset_id {
+            let asset = self.asset_by_id(asset_id)?;
+            require_asset_kind(&asset, AssetKind::WellMarkerSet)?;
+            if asset.wellbore_id != *wellbore_id {
+                return Err(LasError::Validation(format!(
+                    "well marker set asset '{}' does not belong to wellbore '{}'",
+                    asset_id.0, wellbore_id.0
+                )));
+            }
+        }
+        self.connection
+            .execute(
+                "UPDATE wellbores SET definitive_marker_set_asset_id = ?2 WHERE id = ?1",
+                params![wellbore_id.0, asset_id.map(|value| value.0.clone())],
+            )
+            .map_err(sqlite_error)?;
+        match asset_id {
+            Some(asset_id) => {
+                self.sync_well_markers_from_marker_set_asset(wellbore_id, asset_id)?
+            }
+            None => {
+                if let Some(top_set_asset_id) = self
+                    .wellbore_by_id(wellbore_id)?
+                    .definitive_top_set_asset_id
+                {
+                    self.sync_well_markers_from_top_set_asset(wellbore_id, &top_set_asset_id)?;
+                } else {
+                    self.replace_well_markers(wellbore_id, &[])?;
+                }
+            }
+        }
+        self.wellbore_by_id(wellbore_id)
+    }
+
+    pub fn set_definitive_top_set_asset(
+        &self,
+        wellbore_id: &WellboreId,
+        asset_id: Option<&AssetId>,
+    ) -> Result<WellboreRecord> {
+        if let Some(asset_id) = asset_id {
+            let asset = self.asset_by_id(asset_id)?;
+            require_asset_kind(&asset, AssetKind::TopSet)?;
+            if asset.wellbore_id != *wellbore_id {
+                return Err(LasError::Validation(format!(
+                    "top set asset '{}' does not belong to wellbore '{}'",
+                    asset_id.0, wellbore_id.0
+                )));
+            }
+        }
+        self.connection
+            .execute(
+                "UPDATE wellbores SET definitive_top_set_asset_id = ?2 WHERE id = ?1",
+                params![wellbore_id.0, asset_id.map(|value| value.0.clone())],
+            )
+            .map_err(sqlite_error)?;
+        if self
+            .wellbore_by_id(wellbore_id)?
+            .definitive_marker_set_asset_id
+            .is_none()
+        {
+            match asset_id {
+                Some(asset_id) => {
+                    self.sync_well_markers_from_top_set_asset(wellbore_id, asset_id)?
+                }
+                None => self.replace_well_markers(wellbore_id, &[])?,
+            }
+        }
         self.wellbore_by_id(wellbore_id)
     }
 
@@ -1077,14 +1558,10 @@ impl OphioliteProject {
         let mut survey_statement = self
             .connection
             .prepare(
-                "SELECT a.id, a.logical_asset_id, a.collection_id, a.status,
-                        w.id, w.primary_name, wb.id, wb.primary_name, c.name
-                 FROM assets a
-                 JOIN wellbores wb ON wb.id = a.wellbore_id
-                 JOIN wells w ON w.id = a.well_id
-                 JOIN asset_collections c ON c.id = a.collection_id
-                 WHERE a.asset_kind = ?1 AND a.status = ?2
-                 ORDER BY c.name, wb.primary_name, a.id",
+                "SELECT id
+                 FROM assets
+                 WHERE asset_kind = ?1 AND status = ?2
+                 ORDER BY created_at_unix_seconds DESC, id ASC",
             )
             .map_err(sqlite_error)?;
         let survey_rows = survey_statement
@@ -1093,29 +1570,42 @@ impl OphioliteProject {
                     AssetKind::SeismicTraceData.as_str(),
                     AssetStatus::Bound.as_str()
                 ],
-                |row| {
-                    Ok(ProjectSurveyAssetInventoryItem {
-                        asset_id: AssetId(row.get(0)?),
-                        logical_asset_id: AssetId(row.get(1)?),
-                        collection_id: AssetCollectionId(row.get(2)?),
-                        status: AssetStatus::from_str(&row.get::<_, String>(3)?)
-                            .map_err(sql_validation_error)?,
-                        well_id: WellId(row.get(4)?),
-                        well_name: row.get(5)?,
-                        wellbore_id: WellboreId(row.get(6)?),
-                        wellbore_name: row.get(7)?,
-                        name: row.get(8)?,
-                        effective_coordinate_reference_id: None,
-                        effective_coordinate_reference_name: None,
-                    })
-                },
+                |row| row.get::<_, String>(0),
             )
             .map_err(sqlite_error)?;
-        surveys.extend(
-            survey_rows
-                .collect::<std::result::Result<Vec<_>, _>>()
-                .map_err(sqlite_error)?,
-        );
+        for asset_id in survey_rows
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sqlite_error)?
+        {
+            let asset = self.asset_by_id(&AssetId(asset_id))?;
+            let collection = self.collection_by_id(&asset.collection_id)?;
+            let owner = self.collection_owner_binding(&collection.id)?;
+            let well = self.well_by_id(&asset.well_id)?;
+            let wellbore = self.wellbore_by_id(&asset.wellbore_id)?;
+            surveys.push(ProjectSurveyAssetInventoryItem {
+                asset_id: asset.id.clone(),
+                logical_asset_id: asset.logical_asset_id.clone(),
+                collection_id: collection.id.clone(),
+                name: collection.name.clone(),
+                status: asset.status,
+                owner_scope: owner.scope,
+                owner_id: owner.owner_id,
+                owner_name: owner.display_name,
+                well_id: well.id,
+                well_name: well.name,
+                wellbore_id: wellbore.id,
+                wellbore_name: wellbore.name,
+                effective_coordinate_reference_id: None,
+                effective_coordinate_reference_name: None,
+            });
+        }
+        surveys.sort_by(|left, right| {
+            left.owner_name
+                .cmp(&right.owner_name)
+                .then_with(|| left.name.cmp(&right.name))
+                .then_with(|| left.wellbore_name.cmp(&right.wellbore_name))
+                .then_with(|| left.asset_id.0.cmp(&right.asset_id.0))
+        });
         for survey in &mut surveys {
             let asset = self.asset_by_id(&survey.asset_id)?;
             if let Ok(metadata) = read_seismic_asset_metadata(Path::new(&asset.package_path)) {
@@ -1309,10 +1799,21 @@ impl OphioliteProject {
     ) -> Result<LogAssetImportResult> {
         let las_path = las_path.as_ref();
         let file = read_path(las_path, &Default::default())?;
-        let identifiers = identifiers_from_well_info(&file.well_info());
+        let well_info = file.well_info();
+        let identifiers = identifiers_from_well_info(&well_info);
         let (well, created_well) = self.resolve_or_create_well(&identifiers)?;
         let (wellbore, created_wellbore) =
             self.resolve_or_create_wellbore(&well.id, &identifiers)?;
+        if created_well {
+            if let Some(metadata) = well_metadata_from_well_info(&well_info) {
+                self.set_well_metadata(&well.id, Some(metadata))?;
+            }
+        }
+        if created_wellbore {
+            if let Some(metadata) = wellbore_metadata_from_well_info(&well_info) {
+                self.set_wellbore_metadata(&wellbore.id, Some(metadata))?;
+            }
+        }
         let collection_name = collection_name
             .map(str::to_owned)
             .or_else(|| {
@@ -1378,6 +1879,292 @@ impl OphioliteProject {
         })
     }
 
+    pub fn ensure_well_binding(&self, binding: &AssetBindingInput) -> Result<ImportResolution> {
+        Ok(self
+            .resolve_asset_owner_for_binding(binding)?
+            .import_resolution())
+    }
+
+    pub fn import_las_with_binding(
+        &mut self,
+        las_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<LogAssetImportResult> {
+        self.import_las_with_binding_and_supporting_sources(las_path, binding, collection_name, &[])
+    }
+
+    pub fn import_las_with_binding_and_supporting_sources(
+        &mut self,
+        las_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+        supporting_source_paths: &[&Path],
+    ) -> Result<LogAssetImportResult> {
+        let las_path = las_path.as_ref();
+        let file = read_path(las_path, &Default::default())?;
+        self.import_log_file_with_binding_and_supporting_sources(
+            file,
+            binding,
+            collection_name,
+            supporting_source_paths,
+        )
+    }
+
+    pub fn import_log_file_with_binding(
+        &mut self,
+        file: LasFile,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<LogAssetImportResult> {
+        self.import_log_file_with_binding_and_supporting_sources(
+            file,
+            binding,
+            collection_name,
+            &[],
+        )
+    }
+
+    pub fn import_log_file_with_binding_and_supporting_sources(
+        &mut self,
+        file: LasFile,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+        supporting_source_paths: &[&Path],
+    ) -> Result<LogAssetImportResult> {
+        let identifiers = identifiers_from_binding(binding);
+        let (well, created_well) = self.resolve_or_create_well(&identifiers)?;
+        let (wellbore, created_wellbore) =
+            self.resolve_or_create_wellbore_for_binding(&well.id, binding)?;
+        let collection_name = collection_name
+            .map(str::to_owned)
+            .or_else(|| {
+                Path::new(&file.provenance.original_filename)
+                    .file_stem()
+                    .map(|value| value.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| "log".to_string());
+        let collection =
+            self.resolve_or_create_collection(&wellbore.id, AssetKind::Log, &collection_name)?;
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(AssetKind::Log.asset_dir_name())
+            .join(format!("{}.laspkg", storage_asset_id.0));
+        let package_root = self.root.join(&package_rel_path);
+        let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
+        write_package_overwrite(&file, &staged.root)?;
+        let supersedes = self
+            .latest_active_asset_for_collection(&collection.id)?
+            .map(|asset| asset.id);
+        let mut manifest = log_asset_manifest(
+            &file,
+            &well.id,
+            &wellbore.id,
+            &collection.id,
+            &collection.logical_asset_id,
+            &storage_asset_id,
+            supersedes.clone(),
+        );
+        let supporting_source_paths = supporting_source_paths
+            .iter()
+            .copied()
+            .filter(|path| path.to_string_lossy() != file.provenance.source_path)
+            .collect::<Vec<_>>();
+        let supporting_descriptors =
+            copy_supporting_source_artifacts(&staged.root, &supporting_source_paths)?;
+        if !supporting_descriptors.is_empty() {
+            manifest
+                .bulk_data_descriptors
+                .extend(supporting_descriptors);
+            manifest
+                .source_artifacts
+                .extend(source_artifact_refs_for_paths(
+                    &supporting_source_paths,
+                    manifest.imported_at_unix_seconds,
+                )?);
+            manifest
+                .source_artifacts
+                .sort_by(|left, right| left.source_path.cmp(&right.source_path));
+            manifest
+                .source_artifacts
+                .dedup_by(|left, right| left.source_path == right.source_path);
+        }
+        write_asset_manifest(&staged.root, &manifest)?;
+        if let Some(asset_id) = &supersedes {
+            self.mark_asset_superseded(asset_id)?;
+        }
+        let asset = AssetRecord {
+            id: storage_asset_id,
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: well.id.clone(),
+            wellbore_id: wellbore.id.clone(),
+            asset_kind: AssetKind::Log,
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest: manifest.clone(),
+        };
+        let revision = self.build_asset_revision_from_snapshot(
+            &asset,
+            None,
+            AssetDiffSummary::Log(Default::default()),
+            &staged,
+        )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.insert_asset(&asset, &package_rel_path)?;
+        Ok(LogAssetImportResult {
+            resolution: ImportResolution {
+                status: AssetStatus::Bound,
+                well_id: well.id,
+                wellbore_id: wellbore.id,
+                created_well,
+                created_wellbore,
+            },
+            collection,
+            asset,
+        })
+    }
+
+    pub fn import_raw_source_bundle_with_binding(
+        &mut self,
+        source_paths: &[&Path],
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<ProjectAssetImportResult> {
+        let preserved_source_paths = source_paths
+            .iter()
+            .copied()
+            .filter(|path| path.exists())
+            .collect::<Vec<_>>();
+        if preserved_source_paths.is_empty() {
+            return Err(LasError::Validation(
+                "raw source bundle import requires at least one existing source file".to_string(),
+            ));
+        }
+        if let Some(directory) = preserved_source_paths.iter().find(|path| path.is_dir()) {
+            return Err(LasError::Validation(format!(
+                "raw source bundle import only supports files, but '{}' is a directory",
+                directory.display()
+            )));
+        }
+
+        let owner = self.resolve_asset_owner_for_binding(binding)?;
+        self.import_raw_source_bundle_for_owner(&preserved_source_paths, &owner, collection_name)
+    }
+
+    pub fn import_raw_source_bundle_into_project_archive(
+        &mut self,
+        source_paths: &[&Path],
+        collection_name: Option<&str>,
+    ) -> Result<ProjectAssetImportResult> {
+        let preserved_source_paths = source_paths
+            .iter()
+            .copied()
+            .filter(|path| path.exists())
+            .collect::<Vec<_>>();
+        if preserved_source_paths.is_empty() {
+            return Err(LasError::Validation(
+                "raw source bundle import requires at least one existing source file".to_string(),
+            ));
+        }
+        if let Some(directory) = preserved_source_paths.iter().find(|path| path.is_dir()) {
+            return Err(LasError::Validation(format!(
+                "raw source bundle import only supports files, but '{}' is a directory",
+                directory.display()
+            )));
+        }
+
+        let owner = self.resolve_project_archive_asset_owner()?;
+        self.import_raw_source_bundle_for_owner(&preserved_source_paths, &owner, collection_name)
+    }
+
+    fn import_raw_source_bundle_for_owner(
+        &mut self,
+        preserved_source_paths: &[&Path],
+        owner: &AssetOwnerHandle,
+        collection_name: Option<&str>,
+    ) -> Result<ProjectAssetImportResult> {
+        let collection_name = collection_name
+            .map(str::to_owned)
+            .or_else(|| {
+                preserved_source_paths
+                    .first()
+                    .and_then(|path| path.file_stem())
+                    .map(|value| value.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| "raw source bundle".to_string());
+        let collection = self.resolve_or_create_collection(
+            &owner.wellbore.id,
+            AssetKind::RawSourceBundle,
+            &collection_name,
+        )?;
+        let collection_owner = match owner.catalog_owner.as_ref() {
+            Some(binding) => binding.clone(),
+            None => self.infer_wellbore_owner_binding(&owner.wellbore.id)?,
+        };
+        self.bind_collection_owner(&collection.id, &collection_owner)?;
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(AssetKind::RawSourceBundle.asset_dir_name())
+            .join(format!("{}.ophiolite-asset", storage_asset_id.0));
+        let package_root = self.root.join(&package_rel_path);
+        let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
+        let source_artifacts =
+            source_artifact_refs_for_paths(&preserved_source_paths, now_unix_seconds())?;
+        fs::write(
+            staged.root.join("metadata.json"),
+            serde_json::to_vec_pretty(&RawSourceBundleMetadata {
+                schema_version: "0.1.0".to_string(),
+                source_count: source_artifacts.len(),
+                source_artifacts: source_artifacts.clone(),
+            })?,
+        )?;
+        let supersedes = self
+            .latest_active_asset_for_collection(&collection.id)?
+            .map(|asset| asset.id);
+        let manifest = raw_source_bundle_manifest(
+            &preserved_source_paths,
+            source_artifacts,
+            &owner.well.id,
+            &owner.wellbore.id,
+            &collection.id,
+            &collection.logical_asset_id,
+            &storage_asset_id,
+            owner.identifiers.clone(),
+            supersedes.clone(),
+            &staged.root,
+        )?;
+        write_asset_manifest(&staged.root, &manifest)?;
+        if let Some(asset_id) = &supersedes {
+            self.mark_asset_superseded(asset_id)?;
+        }
+        let asset = AssetRecord {
+            id: storage_asset_id,
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: owner.well.id.clone(),
+            wellbore_id: owner.wellbore.id.clone(),
+            asset_kind: AssetKind::RawSourceBundle,
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest,
+        };
+        let revision = self.build_asset_revision_from_snapshot(
+            &asset,
+            None,
+            AssetDiffSummary::RawSourceBundle(DirectoryAssetDiffSummary::default()),
+            &staged,
+        )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.insert_asset(&asset, &package_rel_path)?;
+
+        Ok(ProjectAssetImportResult {
+            resolution: owner.import_resolution(),
+            collection,
+            asset,
+        })
+    }
+
     pub fn import_trajectory_csv(
         &mut self,
         csv_path: impl AsRef<Path>,
@@ -1396,6 +2183,63 @@ impl OphioliteProject {
         )
     }
 
+    pub fn import_trajectory_rows(
+        &mut self,
+        source_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+        rows: &[TrajectoryRow],
+    ) -> Result<ProjectAssetImportResult> {
+        self.import_trajectory_rows_with_supporting_sources(
+            source_path,
+            binding,
+            collection_name,
+            rows,
+            &[],
+        )
+    }
+
+    pub fn import_trajectory_rows_with_supporting_sources(
+        &mut self,
+        source_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+        rows: &[TrajectoryRow],
+        supporting_source_paths: &[&Path],
+    ) -> Result<ProjectAssetImportResult> {
+        self.import_trajectory_rows_with_coordinate_reference_and_supporting_sources(
+            source_path,
+            binding,
+            collection_name,
+            rows,
+            None,
+            supporting_source_paths,
+        )
+    }
+
+    pub(crate) fn import_trajectory_rows_with_coordinate_reference_and_supporting_sources(
+        &mut self,
+        source_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+        rows: &[TrajectoryRow],
+        coordinate_reference: Option<CoordinateReference>,
+        supporting_source_paths: &[&Path],
+    ) -> Result<ProjectAssetImportResult> {
+        self.import_structured_asset_with_supporting_sources(
+            source_path.as_ref(),
+            binding,
+            AssetKind::Trajectory,
+            collection_name,
+            |root| write_trajectory_package(root, rows),
+            trajectory_metadata(rows),
+            structured_asset_extent(AssetKind::Trajectory, trajectory_extent(rows)),
+            coordinate_reference,
+            None,
+            supporting_source_paths,
+        )
+    }
+
     pub fn import_tops_csv(
         &mut self,
         csv_path: impl AsRef<Path>,
@@ -1403,14 +2247,105 @@ impl OphioliteProject {
         collection_name: Option<&str>,
     ) -> Result<ProjectAssetImportResult> {
         let rows = parse_tops_csv(csv_path.as_ref())?;
-        self.import_structured_asset(
-            csv_path.as_ref(),
+        self.import_tops_rows(csv_path, binding, collection_name, &rows)
+    }
+
+    pub fn import_tops_rows(
+        &mut self,
+        source_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+        rows: &[TopRow],
+    ) -> Result<ProjectAssetImportResult> {
+        self.import_tops_rows_with_supporting_sources(
+            source_path,
+            binding,
+            collection_name,
+            rows,
+            &[],
+        )
+    }
+
+    pub fn import_tops_rows_with_supporting_sources(
+        &mut self,
+        source_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+        rows: &[TopRow],
+        supporting_source_paths: &[&Path],
+    ) -> Result<ProjectAssetImportResult> {
+        let mut normalized_rows = rows.to_vec();
+        for row in &mut normalized_rows {
+            crate::project_assets::normalize_top_row_depth_semantics(row);
+        }
+        self.import_structured_asset_with_supporting_sources(
+            source_path.as_ref(),
             binding,
             AssetKind::TopSet,
             collection_name,
-            |root| write_tops_package(root, &rows),
-            tops_metadata(&rows),
-            structured_asset_extent(AssetKind::TopSet, tops_extent(&rows)),
+            |root| write_tops_package(root, &normalized_rows),
+            tops_metadata(&normalized_rows),
+            structured_asset_extent(AssetKind::TopSet, tops_extent(&normalized_rows)),
+            None,
+            Some(inferred_reference_metadata_for_top_rows(&normalized_rows)),
+            supporting_source_paths,
+        )
+    }
+
+    pub fn import_well_markers_csv(
+        &mut self,
+        csv_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+    ) -> Result<ProjectAssetImportResult> {
+        let rows = parse_well_markers_csv(csv_path.as_ref())?;
+        self.import_well_marker_rows(csv_path, binding, collection_name, &rows)
+    }
+
+    pub fn import_well_marker_rows(
+        &mut self,
+        source_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+        rows: &[WellMarkerRow],
+    ) -> Result<ProjectAssetImportResult> {
+        self.import_well_marker_rows_with_supporting_sources(
+            source_path,
+            binding,
+            collection_name,
+            rows,
+            &[],
+        )
+    }
+
+    pub fn import_well_marker_rows_with_supporting_sources(
+        &mut self,
+        source_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+        rows: &[WellMarkerRow],
+        supporting_source_paths: &[&Path],
+    ) -> Result<ProjectAssetImportResult> {
+        let mut normalized_rows = rows.to_vec();
+        for row in &mut normalized_rows {
+            crate::project_assets::normalize_well_marker_row_depth_semantics(row);
+        }
+        self.import_structured_asset_with_supporting_sources(
+            source_path.as_ref(),
+            binding,
+            AssetKind::WellMarkerSet,
+            collection_name,
+            |root| write_well_markers_package(root, &normalized_rows),
+            well_marker_metadata(&normalized_rows),
+            structured_asset_extent(
+                AssetKind::WellMarkerSet,
+                well_marker_extent(&normalized_rows),
+            ),
+            None,
+            Some(inferred_reference_metadata_for_well_marker_rows(
+                &normalized_rows,
+            )),
+            supporting_source_paths,
         )
     }
 
@@ -1456,7 +2391,9 @@ impl OphioliteProject {
         binding: &AssetBindingInput,
         collection_name: Option<&str>,
     ) -> Result<SeismicAssetImportResult> {
+        let store_root = store_root.as_ref();
         self.import_seismic_store_with_kind(
+            store_root,
             store_root,
             binding,
             AssetKind::SeismicTraceData,
@@ -1465,15 +2402,111 @@ impl OphioliteProject {
         )
     }
 
+    pub fn import_seismic_trace_data_store_with_coordinate_reference(
+        &mut self,
+        store_root: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+        coordinate_reference: Option<&CoordinateReferenceDescriptor>,
+    ) -> Result<SeismicAssetImportResult> {
+        let store_root = store_root.as_ref();
+        let Some(coordinate_reference) = coordinate_reference else {
+            return self.import_seismic_trace_data_store(store_root, binding, collection_name);
+        };
+
+        let temp_root = std::env::temp_dir().join(unique_id("seismic-store-import"));
+        let staged_store_root = temp_root.join(
+            store_root
+                .file_name()
+                .map(|value| value.to_os_string())
+                .unwrap_or_else(|| "store.tbvol".into()),
+        );
+        fs::create_dir_all(&temp_root)?;
+
+        let result = (|| {
+            copy_path(store_root, &staged_store_root)?;
+            set_any_store_native_coordinate_reference(
+                &staged_store_root,
+                coordinate_reference.id.as_deref(),
+                coordinate_reference.name.as_deref(),
+            )
+            .map_err(|error| {
+                LasError::Storage(format!(
+                    "failed to apply coordinate reference to seismic store `{}`: {error}",
+                    store_root.display()
+                ))
+            })?;
+            self.import_seismic_store_with_kind(
+                &staged_store_root,
+                store_root,
+                binding,
+                AssetKind::SeismicTraceData,
+                SeismicAssetFamily::Volume,
+                collection_name,
+            )
+        })();
+
+        let _ = fs::remove_dir_all(&temp_root);
+        result
+    }
+
+    pub fn import_seismic_volume(
+        &mut self,
+        source_path: impl AsRef<Path>,
+        binding: &AssetBindingInput,
+        collection_name: Option<&str>,
+        coordinate_reference: Option<&CoordinateReferenceDescriptor>,
+    ) -> Result<SeismicAssetImportResult> {
+        let source_path = source_path.as_ref();
+        let temp_root = std::env::temp_dir().join(unique_id("seismic-volume-import"));
+        let store_root = temp_root.join("store.tbvol");
+        fs::create_dir_all(&temp_root)?;
+
+        let result = (|| {
+            ingest_volume(source_path, &store_root, Default::default()).map_err(|error| {
+                LasError::Storage(format!(
+                    "failed to ingest seismic volume `{}`: {error}",
+                    source_path.display()
+                ))
+            })?;
+            if let Some(coordinate_reference) = coordinate_reference {
+                set_any_store_native_coordinate_reference(
+                    &store_root,
+                    coordinate_reference.id.as_deref(),
+                    coordinate_reference.name.as_deref(),
+                )
+                .map_err(|error| {
+                    LasError::Storage(format!(
+                        "failed to apply coordinate reference to ingested seismic store `{}`: {error}",
+                        source_path.display()
+                    ))
+                })?;
+            }
+            self.import_seismic_store_with_kind(
+                &store_root,
+                source_path,
+                binding,
+                AssetKind::SeismicTraceData,
+                SeismicAssetFamily::Volume,
+                collection_name,
+            )
+        })();
+
+        let _ = fs::remove_dir_all(&temp_root);
+        result
+    }
+
     fn import_seismic_store_with_kind(
         &mut self,
         store_root: impl AsRef<Path>,
+        source_path: impl AsRef<Path>,
         binding: &AssetBindingInput,
         asset_kind: AssetKind,
         family: SeismicAssetFamily,
         collection_name: Option<&str>,
     ) -> Result<SeismicAssetImportResult> {
         let store_root = store_root.as_ref();
+        let source_path = source_path.as_ref();
         let descriptor = describe_store(store_root).map_err(|error| {
             LasError::Storage(format!("failed to describe seismic store: {error}"))
         })?;
@@ -1486,7 +2519,14 @@ impl OphioliteProject {
             store: handle.manifest,
         };
 
-        self.import_seismic_asset(store_root, binding, asset_kind, collection_name, &metadata)
+        self.import_seismic_asset(
+            store_root,
+            source_path,
+            binding,
+            asset_kind,
+            collection_name,
+            &metadata,
+        )
     }
 
     pub fn read_trajectory_rows(
@@ -1504,12 +2544,6 @@ impl OphioliteProject {
         wellbore_id: &WellboreId,
     ) -> Result<ResolvedTrajectoryGeometry> {
         let wellbore = self.wellbore_by_id(wellbore_id)?;
-        let current_assets = self
-            .asset_summaries(wellbore_id, Some(AssetKind::Trajectory))?
-            .into_iter()
-            .filter(|summary| summary.is_current)
-            .collect::<Vec<_>>();
-
         let anchor = wellbore
             .geometry
             .as_ref()
@@ -1525,22 +2559,42 @@ impl OphioliteProject {
         let mut assumed_metric_depth_units = false;
         let mut assumed_metric_coordinate_units = false;
         let mut multiple_assets_note = false;
+        let trajectory_assets =
+            if let Some(asset_id) = wellbore.definitive_trajectory_asset_id.as_ref() {
+                let asset = self.asset_by_id(asset_id)?;
+                require_asset_kind(&asset, AssetKind::Trajectory)?;
+                if asset.wellbore_id != *wellbore_id {
+                    return Err(LasError::Validation(format!(
+                        "definitive trajectory asset '{}' does not belong to wellbore '{}'",
+                        asset_id.0, wellbore_id.0
+                    )));
+                }
+                notes.push(format!(
+                    "using definitive trajectory asset '{}'",
+                    asset.id.0
+                ));
+                vec![asset]
+            } else {
+                self.asset_summaries(wellbore_id, Some(AssetKind::Trajectory))?
+                    .into_iter()
+                    .filter(|summary| summary.is_current)
+                    .map(|summary| summary.asset)
+                    .collect::<Vec<_>>()
+            };
 
-        if current_assets.is_empty() {
+        if trajectory_assets.is_empty() {
             notes.push(String::from(
                 "no current trajectory assets are available for this wellbore",
             ));
         }
 
-        for summary in current_assets {
+        for asset in trajectory_assets {
             if !multiple_assets_note && !source_asset_ids.is_empty() {
                 notes.push(String::from(
                     "multiple current trajectory assets were merged in measured-depth order",
                 ));
                 multiple_assets_note = true;
             }
-
-            let asset = summary.asset;
             let rows = self.read_trajectory_rows(&asset.id, None)?;
             if rows.is_empty() {
                 notes.push(format!(
@@ -1744,6 +2798,214 @@ impl OphioliteProject {
         read_tops_rows(Path::new(&asset.package_path))
     }
 
+    pub fn read_well_marker_rows(&self, asset_id: &AssetId) -> Result<Vec<WellMarkerRow>> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::WellMarkerSet)?;
+        read_well_marker_rows(Path::new(&asset.package_path))
+    }
+
+    pub fn read_well_marker_horizon_residual_rows(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<Vec<WellMarkerHorizonResidualRow>> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::WellMarkerHorizonResidualSet)?;
+        read_well_marker_horizon_residual_rows(Path::new(&asset.package_path))
+    }
+
+    pub fn read_well_marker_horizon_residual_points(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<Vec<WellMarkerHorizonResidualPointRecord>> {
+        Ok(self
+            .read_well_marker_horizon_residual_rows(asset_id)?
+            .into_iter()
+            .filter_map(well_marker_horizon_residual_point_from_row)
+            .collect())
+    }
+
+    pub fn resolve_well_marker_horizon_residual_source(
+        &self,
+        request: &WellMarkerHorizonResidualRequestDto,
+    ) -> Result<ResolvedWellMarkerHorizonResidualSourceDto> {
+        self.resolve_well_marker_horizon_residual_rows_from_request(
+            &WellMarkerHorizonResidualResolveRequest {
+                source_asset_id: AssetId(request.source_asset_id.clone()),
+                survey_asset_id: AssetId(request.survey_asset_id.clone()),
+                horizon_id: request.horizon_id.clone(),
+                marker_name: request.marker_name.clone(),
+            },
+        )
+    }
+
+    fn resolve_well_marker_horizon_residual_rows_from_request(
+        &self,
+        request: &WellMarkerHorizonResidualResolveRequest,
+    ) -> Result<ResolvedWellMarkerHorizonResidualSourceDto> {
+        let source_asset = self.asset_by_id(&request.source_asset_id)?;
+        let source_markers = residual_marker_inputs_for_asset(self, &source_asset)?;
+        let selected_marker_name = request
+            .marker_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let source_markers = if let Some(selected_marker_name) = selected_marker_name.as_deref() {
+            let filtered = source_markers
+                .into_iter()
+                .filter(|marker| {
+                    marker
+                        .marker_name
+                        .eq_ignore_ascii_case(selected_marker_name)
+                })
+                .collect::<Vec<_>>();
+            if filtered.is_empty() {
+                return Err(LasError::Validation(format!(
+                    "marker '{}' was not found on source asset '{}'",
+                    selected_marker_name, source_asset.id.0
+                )));
+            }
+            filtered
+        } else {
+            source_markers
+        };
+        let survey_asset = self.asset_by_id(&request.survey_asset_id)?;
+        require_asset_kind(&survey_asset, AssetKind::SeismicTraceData)?;
+        let well = self.well_by_id(&source_asset.well_id)?;
+        let wellbore = self.wellbore_by_id(&source_asset.wellbore_id)?;
+        let resolved_trajectory = self.resolve_wellbore_trajectory(&source_asset.wellbore_id)?;
+        let survey_store_root = Path::new(&survey_asset.package_path).join("store");
+        let metadata = read_seismic_asset_metadata(Path::new(&survey_asset.package_path))?;
+        let survey_coordinate_reference = metadata
+            .descriptor
+            .coordinate_reference_binding
+            .as_ref()
+            .and_then(|binding| binding.effective.as_ref())
+            .cloned()
+            .or_else(|| {
+                metadata
+                    .descriptor
+                    .spatial
+                    .as_ref()
+                    .and_then(|spatial| spatial.coordinate_reference.clone())
+            });
+        if let (Some(trajectory_coordinate_reference), Some(survey_coordinate_reference)) = (
+            resolved_trajectory.coordinate_reference.as_ref(),
+            survey_coordinate_reference.as_ref(),
+        ) {
+            if !coordinate_reference_descriptors_compatible(
+                trajectory_coordinate_reference,
+                survey_coordinate_reference,
+            ) {
+                return Err(LasError::Validation(format!(
+                    "wellbore '{}' trajectory coordinates are incompatible with survey '{}'",
+                    wellbore.id.0, survey_asset.id.0
+                )));
+            }
+        }
+        let handle = open_store(&survey_store_root).map_err(|error| {
+            LasError::Storage(format!(
+                "failed to open seismic survey store '{}': {error}",
+                survey_store_root.display()
+            ))
+        })?;
+        let grid_transform = handle
+            .manifest
+            .volume
+            .spatial
+            .as_ref()
+            .and_then(|spatial| spatial.grid_transform.as_ref())
+            .ok_or_else(|| {
+                LasError::Validation(format!(
+                    "survey '{}' has no resolved grid transform for horizon residual sampling",
+                    survey_asset.id.0
+                ))
+            })?;
+        let grid_transform = SurveyMapGridTransformDto {
+            origin: projected_point_dto_from_seismic(&grid_transform.origin),
+            inline_basis: ProjectedVector2Dto {
+                x: grid_transform.inline_basis.x,
+                y: grid_transform.inline_basis.y,
+            },
+            xline_basis: ProjectedVector2Dto {
+                x: grid_transform.xline_basis.x,
+                y: grid_transform.xline_basis.y,
+            },
+        };
+        let horizons = load_horizon_grids(&survey_store_root).map_err(|error| {
+            LasError::Storage(format!(
+                "failed to load horizons from survey '{}': {error}",
+                survey_asset.id.0
+            ))
+        })?;
+        let horizon = horizons
+            .iter()
+            .find(|candidate| candidate.descriptor.id == request.horizon_id)
+            .ok_or_else(|| {
+                LasError::Validation(format!(
+                    "survey '{}' does not contain horizon '{}'",
+                    survey_asset.id.0, request.horizon_id
+                ))
+            })?;
+        if horizon.descriptor.vertical_domain != ophiolite_seismic::TimeDepthDomain::Depth {
+            let vertical_domain = match horizon.descriptor.vertical_domain {
+                ophiolite_seismic::TimeDepthDomain::Time => "time",
+                ophiolite_seismic::TimeDepthDomain::Depth => "depth",
+            };
+            return Err(LasError::Validation(format!(
+                "horizon '{}' is '{}' domain; depth-horizon residuals require a depth-domain horizon",
+                request.horizon_id, vertical_domain
+            )));
+        }
+
+        let mut diagnostics = Vec::new();
+        diagnostics.extend(resolved_trajectory.notes.iter().cloned());
+        diagnostics.push(format!(
+            "residual sign convention is '{}' and sampling method is '{}'",
+            WELL_MARKER_HORIZON_RESIDUAL_SIGN_CONVENTION,
+            WELL_MARKER_HORIZON_RESIDUAL_SAMPLING_METHOD
+        ));
+        if let Some(selected_marker_name) = selected_marker_name {
+            diagnostics.push(format!(
+                "filtered source markers to canonical marker '{}'",
+                selected_marker_name
+            ));
+        }
+        let rows = source_markers
+            .iter()
+            .map(|marker| {
+                resolve_single_well_marker_horizon_residual(
+                    marker,
+                    &resolved_trajectory,
+                    horizon,
+                    &grid_transform,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        Ok(ResolvedWellMarkerHorizonResidualSourceDto {
+            schema_version: WELL_MARKER_HORIZON_RESIDUAL_CONTRACT_VERSION,
+            source_asset_id: source_asset.id.0.clone(),
+            source_asset_kind: source_asset.asset_kind.as_str().to_string(),
+            survey_asset_id: survey_asset.id.0.clone(),
+            horizon_id: horizon.descriptor.id.clone(),
+            horizon_name: horizon.descriptor.name.clone(),
+            well_id: well.id.0.clone(),
+            well_name: well.name,
+            wellbore_id: wellbore.id.0.clone(),
+            wellbore_name: wellbore.name,
+            residual_sign_convention: WELL_MARKER_HORIZON_RESIDUAL_SIGN_CONVENTION.to_string(),
+            sampling_method: WELL_MARKER_HORIZON_RESIDUAL_SAMPLING_METHOD.to_string(),
+            depth_reference_used: WELL_MARKER_HORIZON_RESIDUAL_DEPTH_REFERENCE.to_string(),
+            trajectory_asset_ids: resolved_trajectory.source_asset_ids,
+            rows: rows
+                .into_iter()
+                .map(well_marker_horizon_residual_row_dto)
+                .collect(),
+            diagnostics,
+        })
+    }
+
     pub fn read_pressure_observations(
         &self,
         asset_id: &AssetId,
@@ -1831,6 +3093,25 @@ impl OphioliteProject {
         )
     }
 
+    pub fn create_checkshot_vsp_observation_set(
+        &mut self,
+        source_path: &Path,
+        binding: AssetBindingInput,
+        collection_name: Option<&str>,
+        observation_set: &CheckshotVspObservationSet1D,
+    ) -> Result<ProjectAssetImportResult> {
+        validate_checkshot_vsp_observation_set(observation_set)?;
+        self.import_well_time_depth_json_asset(
+            source_path,
+            binding,
+            collection_name,
+            AssetKind::CheckshotVspObservationSet,
+            observation_set.name.clone(),
+            observation_set,
+            write_checkshot_vsp_observation_set_package,
+        )
+    }
+
     pub fn import_manual_time_depth_pick_set_json(
         &mut self,
         source_path: &Path,
@@ -1852,6 +3133,25 @@ impl OphioliteProject {
             AssetKind::ManualTimeDepthPickSet,
             pick_set.name.clone(),
             &pick_set,
+            write_manual_time_depth_pick_set_package,
+        )
+    }
+
+    pub fn create_manual_time_depth_pick_set(
+        &mut self,
+        source_path: &Path,
+        binding: AssetBindingInput,
+        collection_name: Option<&str>,
+        pick_set: &ManualTimeDepthPickSet1D,
+    ) -> Result<ProjectAssetImportResult> {
+        validate_manual_time_depth_pick_set(pick_set)?;
+        self.import_well_time_depth_json_asset(
+            source_path,
+            binding,
+            collection_name,
+            AssetKind::ManualTimeDepthPickSet,
+            pick_set.name.clone(),
+            pick_set,
             write_manual_time_depth_pick_set_package,
         )
     }
@@ -1892,6 +3192,85 @@ impl OphioliteProject {
             authored_model,
             write_well_time_depth_authored_model_package,
         )
+    }
+
+    pub fn create_well_time_depth_model(
+        &mut self,
+        source_path: &Path,
+        binding: AssetBindingInput,
+        collection_name: Option<&str>,
+        model: &WellTimeDepthModel1D,
+    ) -> Result<ProjectAssetImportResult> {
+        validate_well_time_depth_model(model)?;
+        let identifiers = identifiers_from_binding(&binding);
+        let (well, created_well) = self.resolve_or_create_well(&identifiers)?;
+        let (wellbore, created_wellbore) =
+            self.resolve_or_create_wellbore_for_binding(&well.id, &binding)?;
+        let collection_name = collection_name
+            .map(str::to_owned)
+            .or_else(|| Some(model.name.clone()))
+            .unwrap_or_else(|| AssetKind::WellTimeDepthModel.as_str().to_string());
+        let collection = self.resolve_or_create_collection(
+            &wellbore.id,
+            AssetKind::WellTimeDepthModel,
+            &collection_name,
+        )?;
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(AssetKind::WellTimeDepthModel.asset_dir_name())
+            .join(format!("{}.ophiolite-asset", storage_asset_id.0));
+        let package_root = self.root.join(&package_rel_path);
+        let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
+        write_well_time_depth_model_package(&staged.root, model)?;
+        let supersedes = self
+            .latest_active_asset_for_collection(&collection.id)?
+            .map(|asset| asset.id);
+        let manifest = well_time_depth_model_manifest(
+            source_path,
+            model,
+            &well.id,
+            &wellbore.id,
+            &collection.id,
+            &collection.logical_asset_id,
+            &storage_asset_id,
+            identifiers_from_binding(&binding),
+            supersedes.clone(),
+        )?;
+        write_asset_manifest(&staged.root, &manifest)?;
+        if let Some(asset_id) = &supersedes {
+            self.mark_asset_superseded(asset_id)?;
+        }
+        let asset = AssetRecord {
+            id: storage_asset_id.clone(),
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: well.id.clone(),
+            wellbore_id: wellbore.id.clone(),
+            asset_kind: AssetKind::WellTimeDepthModel,
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest,
+        };
+        let revision = self.build_asset_revision_from_snapshot(
+            &asset,
+            None,
+            AssetDiffSummary::WellTimeDepthModel(DirectoryAssetDiffSummary::default()),
+            &staged,
+        )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.insert_asset(&asset, &package_rel_path)?;
+
+        Ok(ProjectAssetImportResult {
+            resolution: ImportResolution {
+                status: AssetStatus::Bound,
+                well_id: well.id,
+                wellbore_id: wellbore.id,
+                created_well,
+                created_wellbore,
+            },
+            collection,
+            asset,
+        })
     }
 
     pub fn import_well_time_depth_authored_model_json(
@@ -2026,6 +3405,16 @@ impl OphioliteProject {
         let collection_name = collection_name.map(str::to_owned).unwrap_or(default_name);
         let collection =
             self.resolve_or_create_collection(&wellbore.id, asset_kind.clone(), &collection_name)?;
+        if matches!(asset_kind, AssetKind::SeismicTraceData) {
+            self.bind_collection_owner(
+                &collection.id,
+                &AssetOwnerBinding {
+                    scope: AssetOwnerScope::Survey,
+                    owner_id: collection.logical_asset_id.0.clone(),
+                    display_name: collection.name.clone(),
+                },
+            )?;
+        }
         let storage_asset_id = AssetId(unique_id("asset"));
         let package_rel_path = PathBuf::from("assets")
             .join(asset_kind.asset_dir_name())
@@ -2070,6 +3459,22 @@ impl OphioliteProject {
         )?;
         self.commit_asset_revision(&asset, &revision)?;
         self.insert_asset(&asset, &package_rel_path)?;
+        let refreshed_wellbore = self.wellbore_by_id(&wellbore.id)?;
+        if matches!(asset.asset_kind, AssetKind::Trajectory)
+            && refreshed_wellbore.definitive_trajectory_asset_id.is_none()
+        {
+            self.set_definitive_trajectory_asset(&wellbore.id, Some(&asset.id))?;
+        }
+        if matches!(asset.asset_kind, AssetKind::TopSet)
+            && refreshed_wellbore.definitive_top_set_asset_id.is_none()
+        {
+            self.set_definitive_top_set_asset(&wellbore.id, Some(&asset.id))?;
+        }
+        if matches!(asset.asset_kind, AssetKind::WellMarkerSet)
+            && refreshed_wellbore.definitive_marker_set_asset_id.is_none()
+        {
+            self.set_definitive_marker_set_asset(&wellbore.id, Some(&asset.id))?;
+        }
         Ok(ProjectAssetImportResult {
             resolution: ImportResolution {
                 status: AssetStatus::Bound,
@@ -2946,6 +4351,57 @@ impl OphioliteProject {
         )?;
         self.commit_asset_revision(&asset, &revision)?;
         self.update_asset_manifest(&asset)?;
+        if self
+            .wellbore_by_id(&asset.wellbore_id)?
+            .definitive_top_set_asset_id
+            .as_ref()
+            == Some(asset_id)
+        {
+            self.sync_well_markers_from_top_set_asset(&asset.wellbore_id, asset_id)?;
+        }
+        Ok(asset)
+    }
+
+    pub fn overwrite_well_marker_set_asset(
+        &mut self,
+        asset_id: &AssetId,
+        rows: &[WellMarkerRow],
+    ) -> Result<AssetRecord> {
+        let mut asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::WellMarkerSet)?;
+        let previous_rows = self.read_well_marker_rows(asset_id)?;
+        let previous_extent =
+            structured_asset_extent(AssetKind::WellMarkerSet, well_marker_extent(&previous_rows));
+        let parent_revision = self
+            .current_asset_revision(asset_id)?
+            .map(|item| item.revision_id);
+        let staged = stage_project_asset_root(&self.root, &asset.id)?;
+        write_well_markers_package(&staged.root, rows)?;
+        asset.manifest.asset_schema_version = well_marker_metadata(rows).schema_version;
+        asset.manifest.extents =
+            structured_asset_extent(AssetKind::WellMarkerSet, well_marker_extent(rows));
+        write_asset_manifest(&staged.root, &asset.manifest)?;
+        let revision = self.build_asset_revision_from_snapshot(
+            &asset,
+            parent_revision.as_ref(),
+            diff_structured_rows(
+                AssetKind::WellMarkerSet,
+                previous_rows.as_slice(),
+                rows,
+                previous_extent != asset.manifest.extents,
+            ),
+            &staged,
+        )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.update_asset_manifest(&asset)?;
+        if self
+            .wellbore_by_id(&asset.wellbore_id)?
+            .definitive_marker_set_asset_id
+            .as_ref()
+            == Some(asset_id)
+        {
+            self.sync_well_markers_from_marker_set_asset(&asset.wellbore_id, asset_id)?;
+        }
         Ok(asset)
     }
 
@@ -3172,8 +4628,33 @@ impl OphioliteProject {
                     &asset_family,
                     None,
                 ));
+                if built_in_enabled {
+                    catalog
+                        .functions
+                        .push(well_marker_horizon_residual_catalog_entry(
+                            AssetKind::TopSet,
+                        ));
+                }
                 Ok(catalog)
             }
+            AssetKind::WellMarkerSet => {
+                let mut catalog = ComputeCatalog {
+                    asset_family,
+                    functions: Vec::new(),
+                };
+                if built_in_enabled {
+                    catalog
+                        .functions
+                        .push(well_marker_horizon_residual_catalog_entry(
+                            AssetKind::WellMarkerSet,
+                        ));
+                }
+                Ok(catalog)
+            }
+            AssetKind::WellMarkerHorizonResidualSet => Err(LasError::Validation(
+                "compute catalog is not implemented for well marker horizon residual assets"
+                    .to_string(),
+            )),
             AssetKind::PressureObservation => {
                 let mut catalog = if built_in_enabled {
                     registry.catalog_for_pressure_asset()
@@ -3209,7 +4690,8 @@ impl OphioliteProject {
             AssetKind::CheckshotVspObservationSet
             | AssetKind::ManualTimeDepthPickSet
             | AssetKind::WellTieObservationSet
-            | AssetKind::WellTimeDepthAuthoredModel => Err(LasError::Validation(
+            | AssetKind::WellTimeDepthAuthoredModel
+            | AssetKind::RawSourceBundle => Err(LasError::Validation(
                 "compute catalog is not implemented for well time-depth observation/model assets"
                     .to_string(),
             )),
@@ -3228,6 +4710,13 @@ impl OphioliteProject {
     ) -> Result<ProjectComputeRunResult> {
         let source_asset = self.asset_by_id(&request.source_asset_id)?;
         let source_collection = self.collection_by_id(&source_asset.collection_id)?;
+        if request.function_id == WELL_MARKER_HORIZON_RESIDUAL_FUNCTION_ID {
+            return self.run_well_marker_horizon_residual_compute(
+                &source_asset,
+                &source_collection,
+                request,
+            );
+        }
         let (resolved_entry, resolved_package, resolved_operator) =
             self.resolved_operator_entry(&request.function_id)?;
         if resolved_package.package_name != BUILTIN_OPERATOR_PACKAGE_NAME {
@@ -3302,6 +4791,17 @@ impl OphioliteProject {
                     AssetKind::TopSet,
                 )?
             }
+            AssetKind::WellMarkerSet => {
+                return Err(LasError::Validation(
+                    "compute execution is not implemented for well marker set assets".to_string(),
+                ));
+            }
+            AssetKind::WellMarkerHorizonResidualSet => {
+                return Err(LasError::Validation(
+                    "compute execution is not implemented for well marker horizon residual assets"
+                        .to_string(),
+                ));
+            }
             AssetKind::PressureObservation => {
                 let rows = self.read_pressure_observations(&source_asset.id, None)?;
                 let compute_rows = pressure_rows_for_compute(&rows);
@@ -3339,7 +4839,8 @@ impl OphioliteProject {
             AssetKind::CheckshotVspObservationSet
             | AssetKind::ManualTimeDepthPickSet
             | AssetKind::WellTieObservationSet
-            | AssetKind::WellTimeDepthAuthoredModel => {
+            | AssetKind::WellTimeDepthAuthoredModel
+            | AssetKind::RawSourceBundle => {
                 return Err(LasError::Validation(
                     "compute execution is not implemented for well time-depth observation/model assets"
                         .to_string(),
@@ -3510,6 +5011,17 @@ impl OphioliteProject {
                     AssetKind::TopSet,
                 )?
             }
+            AssetKind::WellMarkerSet => {
+                return Err(LasError::Validation(
+                    "compute execution is not implemented for well marker set assets".to_string(),
+                ));
+            }
+            AssetKind::WellMarkerHorizonResidualSet => {
+                return Err(LasError::Validation(
+                    "compute execution is not implemented for well marker horizon residual assets"
+                        .to_string(),
+                ));
+            }
             AssetKind::PressureObservation => {
                 let rows = self.read_pressure_observations(&source_asset.id, None)?;
                 let compute_rows = pressure_rows_for_compute(&rows);
@@ -3601,7 +5113,8 @@ impl OphioliteProject {
             AssetKind::CheckshotVspObservationSet
             | AssetKind::ManualTimeDepthPickSet
             | AssetKind::WellTieObservationSet
-            | AssetKind::WellTimeDepthAuthoredModel => {
+            | AssetKind::WellTimeDepthAuthoredModel
+            | AssetKind::RawSourceBundle => {
                 return Err(LasError::Validation(
                     "compute execution is not implemented for well time-depth observation/model assets"
                         .to_string(),
@@ -3625,6 +5138,160 @@ impl OphioliteProject {
             asset,
             execution,
         })
+    }
+
+    fn run_well_marker_horizon_residual_compute(
+        &mut self,
+        source_asset: &AssetRecord,
+        source_collection: &AssetCollectionRecord,
+        request: &ProjectComputeRunRequest,
+    ) -> Result<ProjectComputeRunResult> {
+        match source_asset.asset_kind {
+            AssetKind::TopSet | AssetKind::WellMarkerSet => {}
+            _ => {
+                return Err(LasError::Validation(
+                    "depth-horizon residuals are only available for top-set and well-marker-set assets"
+                        .to_string(),
+                ));
+            }
+        }
+
+        let catalog_entry =
+            well_marker_horizon_residual_catalog_entry(source_asset.asset_kind.clone());
+        validate_compute_parameters(&catalog_entry.parameters, &request.parameters)?;
+        let survey_asset_id = AssetId(required_string_compute_parameter(
+            &request.parameters,
+            WELL_MARKER_HORIZON_RESIDUAL_SURVEY_ASSET_PARAMETER,
+        )?);
+        let horizon_id = required_string_compute_parameter(
+            &request.parameters,
+            WELL_MARKER_HORIZON_RESIDUAL_HORIZON_PARAMETER,
+        )?;
+        let marker_name = optional_string_compute_parameter(
+            &request.parameters,
+            WELL_MARKER_HORIZON_RESIDUAL_MARKER_PARAMETER,
+        );
+        let resolved = self.resolve_well_marker_horizon_residual_rows_from_request(
+            &WellMarkerHorizonResidualResolveRequest {
+                source_asset_id: source_asset.id.clone(),
+                survey_asset_id: survey_asset_id.clone(),
+                horizon_id: horizon_id.clone(),
+                marker_name,
+            },
+        )?;
+
+        let source_binding = match source_asset.asset_kind {
+            AssetKind::TopSet => structured_compute_input_binding("tops_rows", "tops"),
+            AssetKind::WellMarkerSet => {
+                structured_compute_input_binding("well_marker_rows", "well_markers")
+            }
+            _ => unreachable!(),
+        };
+        let horizon_binding = structured_compute_input_binding(
+            "survey_horizon",
+            &format!("{}::{}", survey_asset_id.0, horizon_id),
+        );
+        let execution = builtin_structured_execution_manifest(
+            WELL_MARKER_HORIZON_RESIDUAL_FUNCTION_ID,
+            "well_markers",
+            "Compute Depth-Horizon Residuals",
+            vec![source_binding, horizon_binding],
+            &request.parameters,
+            "well_marker_horizon_residuals",
+        );
+        let rows = resolved
+            .rows
+            .iter()
+            .map(well_marker_horizon_residual_row_from_dto)
+            .collect::<Vec<_>>();
+        let (collection, asset, execution) = self
+            .persist_well_marker_horizon_residual_compute_result(
+                source_asset,
+                source_collection,
+                request,
+                execution,
+                &rows,
+            )?;
+        Ok(ProjectComputeRunResult {
+            collection,
+            asset,
+            execution,
+        })
+    }
+
+    fn persist_well_marker_horizon_residual_compute_result(
+        &mut self,
+        source_asset: &AssetRecord,
+        source_collection: &AssetCollectionRecord,
+        request: &ProjectComputeRunRequest,
+        mut execution: ComputeExecutionManifest,
+        rows: &[WellMarkerHorizonResidualRow],
+    ) -> Result<(AssetCollectionRecord, AssetRecord, ComputeExecutionManifest)> {
+        execution.source_asset_id = source_asset.id.0.clone();
+        execution.source_logical_asset_id = source_asset.logical_asset_id.0.clone();
+        execution.executed_at_unix_seconds = now_unix_seconds();
+
+        let collection_name = request.output_collection_name.clone().unwrap_or_else(|| {
+            format!(
+                "{} / Derived / {}",
+                source_collection.name, execution.function_name
+            )
+        });
+        let collection = self.resolve_or_create_collection(
+            &source_asset.wellbore_id,
+            AssetKind::WellMarkerHorizonResidualSet,
+            &collection_name,
+        )?;
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(AssetKind::WellMarkerHorizonResidualSet.asset_dir_name())
+            .join(format!("{}.ophiolite-asset", storage_asset_id.0));
+        let package_root = self.root.join(&package_rel_path);
+        let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
+        let supersedes = self
+            .latest_active_asset_for_collection(&collection.id)?
+            .map(|asset| asset.id);
+        write_well_marker_horizon_residuals_package(&staged.root, rows)?;
+        let mut manifest = derived_structured_asset_manifest(
+            source_asset,
+            &collection,
+            &storage_asset_id,
+            supersedes.clone(),
+            &execution,
+            AssetKind::WellMarkerHorizonResidualSet,
+            well_marker_horizon_residual_metadata(rows),
+            structured_asset_extent(
+                AssetKind::WellMarkerHorizonResidualSet,
+                well_marker_horizon_residual_extent(rows),
+            ),
+        )?;
+        manifest.reference_metadata.depth_reference = DepthReference::Unknown;
+        manifest.reference_metadata.vertical_datum = None;
+        manifest.reference_metadata.unit_system.depth_unit = Some("m".to_string());
+        write_asset_manifest(&staged.root, &manifest)?;
+        if let Some(asset_id) = &supersedes {
+            self.mark_asset_superseded(asset_id)?;
+        }
+        let asset = AssetRecord {
+            id: storage_asset_id,
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: source_asset.well_id.clone(),
+            wellbore_id: source_asset.wellbore_id.clone(),
+            asset_kind: AssetKind::WellMarkerHorizonResidualSet,
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest,
+        };
+        let revision = self.build_asset_revision_from_snapshot(
+            &asset,
+            None,
+            default_asset_diff_summary(&asset.asset_kind),
+            &staged,
+        )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.insert_asset(&asset, &package_rel_path)?;
+        Ok((collection, asset, execution))
     }
 
     fn invoke_external_python_operator(
@@ -3789,6 +5456,22 @@ impl OphioliteProject {
         )?;
         self.commit_asset_revision(&asset, &revision)?;
         self.insert_asset(&asset, &package_rel_path)?;
+        let refreshed_wellbore = self.wellbore_by_id(&asset.wellbore_id)?;
+        if matches!(asset.asset_kind, AssetKind::Trajectory)
+            && refreshed_wellbore.definitive_trajectory_asset_id.is_none()
+        {
+            self.set_definitive_trajectory_asset(&asset.wellbore_id, Some(&asset.id))?;
+        }
+        if matches!(asset.asset_kind, AssetKind::TopSet)
+            && refreshed_wellbore.definitive_top_set_asset_id.is_none()
+        {
+            self.set_definitive_top_set_asset(&asset.wellbore_id, Some(&asset.id))?;
+        }
+        if matches!(asset.asset_kind, AssetKind::WellMarkerSet)
+            && refreshed_wellbore.definitive_marker_set_asset_id.is_none()
+        {
+            self.set_definitive_marker_set_asset(&asset.wellbore_id, Some(&asset.id))?;
+        }
         Ok((collection, asset, execution))
     }
 
@@ -3922,6 +5605,7 @@ impl OphioliteProject {
                             original_mnemonic: filtered.original_mnemonic,
                             unit: filtered.unit,
                             semantic_type: format!("{:?}", filtered.semantic_type),
+                            log_type: filtered.semantic_type.log_type_name().to_string(),
                             depths: filtered.depths,
                             values: filtered.values,
                         });
@@ -3966,6 +5650,7 @@ impl OphioliteProject {
                         asset_id: asset.id.0.clone(),
                         logical_asset_id: asset.logical_asset_id.0.clone(),
                         asset_name: collection.name.clone(),
+                        set_kind: "top_set".to_string(),
                         rows: rows
                             .into_iter()
                             .map(|row| WellPanelTopRowDto {
@@ -3973,11 +5658,43 @@ impl OphioliteProject {
                                 top_depth: row.top_depth,
                                 base_depth: row.base_depth,
                                 source: row.source,
-                                depth_reference: row.depth_reference,
+                                source_depth_reference: row.source_depth_reference,
+                                depth_domain: row.depth_domain,
+                                depth_datum: row.depth_datum,
                             })
                             .collect(),
                     });
                 }
+                AssetKind::WellMarkerSet => {
+                    let rows = filter_well_marker_rows_for_depth_range(
+                        self.read_well_marker_rows(&asset.id)?,
+                        depth_min,
+                        depth_max,
+                    );
+                    if rows.is_empty() {
+                        continue;
+                    }
+                    depth_samples.extend(rows.iter().map(|row| row.top_depth));
+                    top_sets.push(WellPanelTopSetDto {
+                        asset_id: asset.id.0.clone(),
+                        logical_asset_id: asset.logical_asset_id.0.clone(),
+                        asset_name: collection.name.clone(),
+                        set_kind: "well_marker_set".to_string(),
+                        rows: rows
+                            .into_iter()
+                            .map(|row| WellPanelTopRowDto {
+                                name: row.name,
+                                top_depth: row.top_depth,
+                                base_depth: row.base_depth,
+                                source: row.source,
+                                source_depth_reference: row.source_depth_reference,
+                                depth_domain: row.depth_domain,
+                                depth_datum: row.depth_datum,
+                            })
+                            .collect(),
+                    });
+                }
+                AssetKind::WellMarkerHorizonResidualSet => {}
                 AssetKind::PressureObservation => {
                     let range = depth_query(depth_min, depth_max);
                     let rows = self.read_pressure_observations(&asset.id, range.as_ref())?;
@@ -4030,6 +5747,7 @@ impl OphioliteProject {
                 AssetKind::WellTieObservationSet => {}
                 AssetKind::WellTimeDepthAuthoredModel => {}
                 AssetKind::WellTimeDepthModel => {}
+                AssetKind::RawSourceBundle => {}
                 AssetKind::SeismicTraceData => {}
             }
         }
@@ -4593,6 +6311,145 @@ impl OphioliteProject {
         Ok(None)
     }
 
+    pub(crate) fn preview_horizon_source_import_for_survey_asset(
+        &self,
+        survey_asset_id: &AssetId,
+        draft: Option<&HorizonSourceImportCanonicalDraft>,
+    ) -> Result<ophiolite_seismic_runtime::HorizonSourceImportPreview> {
+        let survey_asset = self.asset_by_id(survey_asset_id)?;
+        require_asset_kind(&survey_asset, AssetKind::SeismicTraceData)?;
+        let store_root = Path::new(&survey_asset.package_path).join("store");
+        let source_paths = draft
+            .map(|value| {
+                value
+                    .selected_source_paths
+                    .iter()
+                    .map(PathBuf::from)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        preview_horizon_source_import(&store_root, source_paths.as_slice(), draft).map_err(
+            |error| {
+                LasError::Storage(format!(
+                    "failed to preview survey-horizon import for asset '{}': {error}",
+                    survey_asset_id.0
+                ))
+            },
+        )
+    }
+
+    pub(crate) fn import_horizon_source_into_survey_asset(
+        &mut self,
+        survey_asset_id: &AssetId,
+        draft: &HorizonSourceImportCanonicalDraft,
+        supporting_source_paths: &[PathBuf],
+    ) -> Result<SurveyHorizonImportResult> {
+        if draft.selected_source_paths.is_empty() {
+            return Err(LasError::Validation(
+                "survey-horizon import requires at least one source path".to_string(),
+            ));
+        }
+
+        let mut asset = self.asset_by_id(survey_asset_id)?;
+        require_asset_kind(&asset, AssetKind::SeismicTraceData)?;
+        let collection = self.collection_by_id(&asset.collection_id)?;
+        if self.collection_owner_binding(&collection.id)?.scope != AssetOwnerScope::Survey {
+            self.bind_collection_owner(
+                &collection.id,
+                &AssetOwnerBinding {
+                    scope: AssetOwnerScope::Survey,
+                    owner_id: collection.logical_asset_id.0.clone(),
+                    display_name: collection.name.clone(),
+                },
+            )?;
+        }
+
+        let parent_revision = self
+            .current_asset_revision(survey_asset_id)?
+            .map(|item| item.revision_id);
+        let staged = stage_existing_asset_root(&self.root, &asset)?;
+        let staged_store_root = staged.root.join("store");
+        let imported_horizons =
+            import_horizon_xyzs_from_draft(&staged_store_root, draft).map_err(|error| {
+                LasError::Storage(format!(
+                    "failed to import horizons into survey asset '{}': {error}",
+                    survey_asset_id.0
+                ))
+            })?;
+
+        let import_source_paths = draft
+            .selected_source_paths
+            .iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        let source_paths = if supporting_source_paths.is_empty() {
+            import_source_paths
+        } else {
+            supporting_source_paths.to_vec()
+        };
+        let source_path_refs = source_paths
+            .iter()
+            .map(PathBuf::as_path)
+            .collect::<Vec<_>>();
+        let supporting_descriptors =
+            copy_supporting_source_artifacts(&staged.root, source_path_refs.as_slice())?;
+        if !supporting_descriptors.is_empty() {
+            asset
+                .manifest
+                .bulk_data_descriptors
+                .extend(supporting_descriptors);
+            asset.manifest.bulk_data_descriptors.sort_by(|left, right| {
+                left.relative_path
+                    .cmp(&right.relative_path)
+                    .then_with(|| left.role.cmp(&right.role))
+            });
+            asset
+                .manifest
+                .bulk_data_descriptors
+                .dedup_by(|left, right| {
+                    left.relative_path == right.relative_path && left.role == right.role
+                });
+        }
+
+        let imported_at_unix_seconds = now_unix_seconds();
+        asset.manifest.imported_at_unix_seconds = imported_at_unix_seconds;
+        asset
+            .manifest
+            .source_artifacts
+            .extend(source_artifact_refs_for_paths(
+                source_path_refs.as_slice(),
+                imported_at_unix_seconds,
+            )?);
+        asset.manifest.source_artifacts.sort_by(|left, right| {
+            left.source_path
+                .cmp(&right.source_path)
+                .then_with(|| left.original_filename.cmp(&right.original_filename))
+        });
+        asset
+            .manifest
+            .source_artifacts
+            .dedup_by(|left, right| left.source_path == right.source_path);
+
+        write_asset_manifest(&staged.root, &asset.manifest)?;
+        let revision = self.build_asset_revision_from_snapshot(
+            &asset,
+            parent_revision.as_ref(),
+            AssetDiffSummary::SeismicTraceData(DirectoryAssetDiffSummary {
+                entry_count_changed: true,
+                changed_path_count: imported_horizons.len().max(1),
+            }),
+            &staged,
+        )?;
+        self.commit_asset_revision(&asset, &revision)?;
+        self.update_asset_manifest(&asset)?;
+
+        Ok(SurveyHorizonImportResult {
+            collection,
+            asset,
+            imported_horizons,
+        })
+    }
+
     fn import_structured_asset<F>(
         &mut self,
         source_path: &Path,
@@ -4602,6 +6459,36 @@ impl OphioliteProject {
         writer: F,
         metadata: AssetTableMetadata,
         extent: AssetExtent,
+    ) -> Result<ProjectAssetImportResult>
+    where
+        F: FnOnce(&Path) -> Result<()>,
+    {
+        self.import_structured_asset_with_supporting_sources(
+            source_path,
+            binding,
+            asset_kind,
+            collection_name,
+            writer,
+            metadata,
+            extent,
+            None,
+            None,
+            &[],
+        )
+    }
+
+    fn import_structured_asset_with_supporting_sources<F>(
+        &mut self,
+        source_path: &Path,
+        binding: &AssetBindingInput,
+        asset_kind: AssetKind,
+        collection_name: Option<&str>,
+        writer: F,
+        metadata: AssetTableMetadata,
+        extent: AssetExtent,
+        coordinate_reference: Option<CoordinateReference>,
+        reference_metadata_override: Option<(DepthReference, Option<VerticalDatum>)>,
+        supporting_source_paths: &[&Path],
     ) -> Result<ProjectAssetImportResult>
     where
         F: FnOnce(&Path) -> Result<()>,
@@ -4630,7 +6517,7 @@ impl OphioliteProject {
         let supersedes = self
             .latest_active_asset_for_collection(&collection.id)?
             .map(|asset| asset.id);
-        let manifest = structured_asset_manifest(
+        let mut manifest = structured_asset_manifest(
             source_path,
             &metadata,
             &well.id,
@@ -4641,8 +6528,26 @@ impl OphioliteProject {
             asset_kind.clone(),
             extent,
             identifiers.clone(),
+            coordinate_reference,
             supersedes.clone(),
         )?;
+        if let Some((depth_reference, vertical_datum)) = reference_metadata_override {
+            manifest.reference_metadata.depth_reference = depth_reference;
+            manifest.reference_metadata.vertical_datum = vertical_datum;
+        }
+        let supporting_descriptors =
+            copy_supporting_source_artifacts(&staged.root, supporting_source_paths)?;
+        if !supporting_descriptors.is_empty() {
+            manifest
+                .bulk_data_descriptors
+                .extend(supporting_descriptors);
+            manifest
+                .source_artifacts
+                .extend(source_artifact_refs_for_paths(
+                    supporting_source_paths,
+                    manifest.imported_at_unix_seconds,
+                )?);
+        }
         write_asset_manifest(&staged.root, &manifest)?;
         if let Some(asset_id) = &supersedes {
             self.mark_asset_superseded(asset_id)?;
@@ -4666,6 +6571,22 @@ impl OphioliteProject {
         )?;
         self.commit_asset_revision(&asset, &revision)?;
         self.insert_asset(&asset, &package_rel_path)?;
+        let refreshed_wellbore = self.wellbore_by_id(&wellbore.id)?;
+        if matches!(asset.asset_kind, AssetKind::Trajectory)
+            && refreshed_wellbore.definitive_trajectory_asset_id.is_none()
+        {
+            self.set_definitive_trajectory_asset(&wellbore.id, Some(&asset.id))?;
+        }
+        if matches!(asset.asset_kind, AssetKind::TopSet)
+            && refreshed_wellbore.definitive_top_set_asset_id.is_none()
+        {
+            self.set_definitive_top_set_asset(&wellbore.id, Some(&asset.id))?;
+        }
+        if matches!(asset.asset_kind, AssetKind::WellMarkerSet)
+            && refreshed_wellbore.definitive_marker_set_asset_id.is_none()
+        {
+            self.set_definitive_marker_set_asset(&wellbore.id, Some(&asset.id))?;
+        }
         Ok(ProjectAssetImportResult {
             resolution: ImportResolution {
                 status: AssetStatus::Bound,
@@ -4681,7 +6602,8 @@ impl OphioliteProject {
 
     fn import_seismic_asset(
         &mut self,
-        source_root: &Path,
+        store_root: &Path,
+        source_path: &Path,
         binding: &AssetBindingInput,
         asset_kind: AssetKind,
         collection_name: Option<&str>,
@@ -4694,7 +6616,7 @@ impl OphioliteProject {
         let collection_name = collection_name
             .map(str::to_owned)
             .or_else(|| {
-                source_root
+                source_path
                     .file_stem()
                     .map(|value| value.to_string_lossy().into_owned())
             })
@@ -4707,7 +6629,7 @@ impl OphioliteProject {
             .join(format!("{}.ophiolite-asset", storage_asset_id.0));
         let package_root = self.root.join(&package_rel_path);
         let staged = stage_project_asset_root(&self.root, &storage_asset_id)?;
-        copy_path(source_root, &staged.root.join("store"))?;
+        copy_path(store_root, &staged.root.join("store"))?;
         fs::write(
             staged.root.join("metadata.json"),
             serde_json::to_vec_pretty(metadata)?,
@@ -4717,7 +6639,7 @@ impl OphioliteProject {
             .latest_active_asset_for_collection(&collection.id)?
             .map(|asset| asset.id);
         let manifest = seismic_asset_manifest(
-            source_root,
+            source_path,
             metadata,
             &well.id,
             &wellbore.id,
@@ -4765,7 +6687,7 @@ impl OphioliteProject {
         })
     }
 
-    fn asset_by_id(&self, asset_id: &AssetId) -> Result<AssetRecord> {
+    pub fn asset_by_id(&self, asset_id: &AssetId) -> Result<AssetRecord> {
         self.connection
             .query_row(
                 "SELECT id, logical_asset_id, collection_id, well_id, wellbore_id, asset_kind, status, package_rel_path, manifest_json
@@ -4820,31 +6742,95 @@ impl OphioliteProject {
             .map_err(sqlite_error)
     }
 
+    fn well_by_id(&self, well_id: &WellId) -> Result<WellRecord> {
+        self.connection
+            .query_row(
+                "SELECT id, primary_name, identifiers_json, metadata_json
+                 FROM wells
+                 WHERE id = ?1",
+                params![well_id.0],
+                well_record_from_row,
+            )
+            .map_err(sqlite_error)
+    }
+
     fn wellbore_by_id(&self, wellbore_id: &WellboreId) -> Result<WellboreRecord> {
         self.connection
             .query_row(
-                "SELECT id, well_id, primary_name, identifiers_json, geometry_json, active_well_time_depth_model_asset_id
+                "SELECT id, well_id, primary_name, identifiers_json, metadata_json, geometry_json, definitive_trajectory_asset_id, definitive_marker_set_asset_id, definitive_top_set_asset_id, active_well_time_depth_model_asset_id
                  FROM wellbores
                  WHERE id = ?1",
                 params![wellbore_id.0],
-                |row| {
-                    Ok(WellboreRecord {
-                        id: WellboreId(row.get(0)?),
-                        well_id: WellId(row.get(1)?),
-                        name: row.get(2)?,
-                        identifiers: serde_json::from_str::<WellIdentifierSet>(
-                            &row.get::<_, String>(3)?,
-                        )
-                        .map_err(sql_json_error)?,
-                        geometry: parse_optional_json_column::<WellboreGeometry>(row.get(4)?)
-                            .map_err(sql_json_error)?,
-                        active_well_time_depth_model_asset_id: row
-                            .get::<_, Option<String>>(5)?
-                            .map(AssetId),
-                    })
-                },
+                wellbore_record_from_row,
             )
             .map_err(sqlite_error)
+    }
+
+    fn replace_well_markers(
+        &self,
+        wellbore_id: &WellboreId,
+        markers: &[WellMarkerRecord],
+    ) -> Result<()> {
+        self.connection
+            .execute(
+                "DELETE FROM well_markers WHERE wellbore_id = ?1",
+                params![wellbore_id.0],
+            )
+            .map_err(sqlite_error)?;
+        for marker in markers {
+            self.connection
+                .execute(
+                    "INSERT INTO well_markers (id, wellbore_id, source_asset_id, sequence_number, name, marker_json, created_at_unix_seconds)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        marker.id.0.clone(),
+                        marker.wellbore_id.0.clone(),
+                        marker.source_asset_id.as_ref().map(|value| value.0.clone()),
+                        marker.sequence_number.map(i64::from),
+                        marker.name.clone(),
+                        serde_json::to_string(marker)?,
+                        now_unix_seconds() as i64,
+                    ],
+                )
+                .map_err(sqlite_error)?;
+        }
+        Ok(())
+    }
+
+    fn sync_well_markers_from_top_set_asset(
+        &self,
+        wellbore_id: &WellboreId,
+        asset_id: &AssetId,
+    ) -> Result<()> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::TopSet)?;
+        if asset.wellbore_id != *wellbore_id {
+            return Err(LasError::Validation(format!(
+                "top set asset '{}' does not belong to wellbore '{}'",
+                asset_id.0, wellbore_id.0
+            )));
+        }
+        let rows = self.read_tops(asset_id)?;
+        let markers = canonical_markers_from_top_rows(wellbore_id, asset_id, &rows);
+        self.replace_well_markers(wellbore_id, &markers)
+    }
+
+    fn sync_well_markers_from_marker_set_asset(
+        &self,
+        wellbore_id: &WellboreId,
+        asset_id: &AssetId,
+    ) -> Result<()> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::WellMarkerSet)?;
+        if asset.wellbore_id != *wellbore_id {
+            return Err(LasError::Validation(format!(
+                "well marker set asset '{}' does not belong to wellbore '{}'",
+                asset_id.0, wellbore_id.0
+            )));
+        }
+        let rows = self.read_well_marker_rows(asset_id)?;
+        let markers = canonical_markers_from_well_marker_rows(wellbore_id, asset_id, &rows);
+        self.replace_well_markers(wellbore_id, &markers)
     }
 
     fn resolve_or_create_well(
@@ -4862,10 +6848,11 @@ impl OphioliteProject {
                 .clone()
                 .unwrap_or_else(|| "Unknown Well".to_string()),
             identifiers: identifiers.clone(),
+            metadata: None,
         };
         self.connection.execute(
-            "INSERT INTO wells (id, primary_name, normalized_name, uwi, api, identifiers_json, created_at_unix_seconds)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO wells (id, primary_name, normalized_name, uwi, api, identifiers_json, metadata_json, created_at_unix_seconds)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 well.id.0,
                 well.name,
@@ -4873,6 +6860,7 @@ impl OphioliteProject {
                 optional_db_text(&well.identifiers.uwi),
                 optional_db_text(&well.identifiers.api),
                 serde_json::to_string(&well.identifiers)?,
+                Option::<String>::None,
                 now_unix_seconds() as i64,
             ],
         ).map_err(sqlite_error)?;
@@ -4892,26 +6880,11 @@ impl OphioliteProject {
         let existing = self
             .connection
             .query_row(
-                "SELECT id, well_id, primary_name, identifiers_json, geometry_json, active_well_time_depth_model_asset_id
+                "SELECT id, well_id, primary_name, identifiers_json, metadata_json, geometry_json, definitive_trajectory_asset_id, definitive_marker_set_asset_id, definitive_top_set_asset_id, active_well_time_depth_model_asset_id
                  FROM wellbores
                  WHERE well_id = ?1 AND normalized_name = ?2",
                 params![well_id.0, normalized],
-                |row| {
-                    Ok(WellboreRecord {
-                        id: WellboreId(row.get(0)?),
-                        well_id: WellId(row.get(1)?),
-                        name: row.get(2)?,
-                        identifiers: serde_json::from_str::<WellIdentifierSet>(
-                            &row.get::<_, String>(3)?,
-                        )
-                        .map_err(sql_json_error)?,
-                        geometry: parse_optional_json_column::<WellboreGeometry>(row.get(4)?)
-                            .map_err(sql_json_error)?,
-                        active_well_time_depth_model_asset_id: row
-                            .get::<_, Option<String>>(5)?
-                            .map(AssetId),
-                    })
-                },
+                wellbore_record_from_row,
             )
             .optional()
             .map_err(sqlite_error)?;
@@ -4924,18 +6897,26 @@ impl OphioliteProject {
             well_id: well_id.clone(),
             name: wellbore_name,
             identifiers: identifiers.clone(),
+            metadata: None,
             geometry: None,
+            definitive_trajectory_asset_id: None,
+            definitive_marker_set_asset_id: None,
+            definitive_top_set_asset_id: None,
             active_well_time_depth_model_asset_id: None,
         };
         self.connection.execute(
-            "INSERT INTO wellbores (id, well_id, primary_name, normalized_name, identifiers_json, geometry_json, active_well_time_depth_model_asset_id, created_at_unix_seconds)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO wellbores (id, well_id, primary_name, normalized_name, identifiers_json, metadata_json, geometry_json, definitive_trajectory_asset_id, definitive_marker_set_asset_id, definitive_top_set_asset_id, active_well_time_depth_model_asset_id, created_at_unix_seconds)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 wellbore.id.0,
                 wellbore.well_id.0,
                 wellbore.name,
                 normalized_text(&wellbore.name),
                 serde_json::to_string(&wellbore.identifiers)?,
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<String>::None,
+                Option::<String>::None,
                 Option::<String>::None,
                 Option::<String>::None,
                 now_unix_seconds() as i64,
@@ -4956,6 +6937,169 @@ impl OphioliteProject {
             operator_aliases: binding.operator_aliases.clone(),
         };
         self.resolve_or_create_wellbore(well_id, &identifiers)
+    }
+
+    fn resolve_or_create_project_archive_wellbore(
+        &self,
+    ) -> Result<(WellRecord, WellboreRecord, bool, bool)> {
+        let archive_identifiers = WellIdentifierSet {
+            primary_name: Some(String::from(PROJECT_ARCHIVE_WELL_NAME)),
+            uwi: None,
+            api: None,
+            operator_aliases: Vec::new(),
+        };
+        let (well, created_well) = self.resolve_or_create_well(&archive_identifiers)?;
+        if created_well || well.metadata.is_none() {
+            self.set_well_metadata(
+                &well.id,
+                Some(WellMetadata {
+                    notes: vec![String::from(PROJECT_ARCHIVE_NOTE)],
+                    ..Default::default()
+                }),
+            )?;
+        }
+
+        let archive_wellbore_identifiers = WellIdentifierSet {
+            primary_name: Some(String::from(PROJECT_ARCHIVE_WELLBORE_NAME)),
+            uwi: None,
+            api: None,
+            operator_aliases: Vec::new(),
+        };
+        let (wellbore, created_wellbore) =
+            self.resolve_or_create_wellbore(&well.id, &archive_wellbore_identifiers)?;
+        if created_wellbore || wellbore.metadata.is_none() {
+            self.set_wellbore_metadata(
+                &wellbore.id,
+                Some(WellboreMetadata {
+                    purpose: Some(String::from("archive")),
+                    notes: vec![String::from(PROJECT_ARCHIVE_NOTE)],
+                    ..Default::default()
+                }),
+            )?;
+        }
+
+        Ok((
+            self.well_by_id(&well.id)?,
+            self.wellbore_by_id(&wellbore.id)?,
+            created_well,
+            created_wellbore,
+        ))
+    }
+
+    fn resolve_asset_owner_for_binding(
+        &self,
+        binding: &AssetBindingInput,
+    ) -> Result<AssetOwnerHandle> {
+        let identifiers = identifiers_from_binding(binding);
+        let (well, created_well) = self.resolve_or_create_well(&identifiers)?;
+        let (wellbore, created_wellbore) =
+            self.resolve_or_create_wellbore_for_binding(&well.id, binding)?;
+        Ok(AssetOwnerHandle {
+            well,
+            wellbore,
+            identifiers,
+            created_well,
+            created_wellbore,
+            catalog_owner: None,
+        })
+    }
+
+    fn resolve_project_archive_asset_owner(&self) -> Result<AssetOwnerHandle> {
+        let (well, wellbore, created_well, created_wellbore) =
+            self.resolve_or_create_project_archive_wellbore()?;
+        Ok(AssetOwnerHandle {
+            identifiers: well.identifiers.clone(),
+            well,
+            wellbore,
+            created_well,
+            created_wellbore,
+            catalog_owner: Some(AssetOwnerBinding {
+                scope: AssetOwnerScope::Project,
+                owner_id: String::from(PROJECT_ARCHIVE_OWNER_ID),
+                display_name: String::from(PROJECT_ARCHIVE_OWNER_NAME),
+            }),
+        })
+    }
+
+    fn infer_wellbore_owner_binding(&self, wellbore_id: &WellboreId) -> Result<AssetOwnerBinding> {
+        let wellbore = self.wellbore_by_id(wellbore_id)?;
+        Ok(AssetOwnerBinding {
+            scope: AssetOwnerScope::Wellbore,
+            owner_id: wellbore.id.0.clone(),
+            display_name: wellbore.name,
+        })
+    }
+
+    fn upsert_asset_owner(&self, owner: &AssetOwnerBinding) -> Result<()> {
+        self.connection
+            .execute(
+                "INSERT INTO asset_owners (scope, owner_id, display_name, metadata_json, created_at_unix_seconds)
+                 VALUES (?1, ?2, ?3, NULL, ?4)
+                 ON CONFLICT(scope, owner_id) DO UPDATE SET display_name = excluded.display_name",
+                params![
+                    owner.scope.as_str(),
+                    owner.owner_id,
+                    owner.display_name,
+                    now_unix_seconds() as i64,
+                ],
+            )
+            .map_err(sqlite_error)?;
+        Ok(())
+    }
+
+    fn bind_collection_owner(
+        &self,
+        collection_id: &AssetCollectionId,
+        owner: &AssetOwnerBinding,
+    ) -> Result<()> {
+        self.upsert_asset_owner(owner)?;
+        self.connection
+            .execute(
+                "INSERT INTO asset_collection_owners (collection_id, owner_scope, owner_id, created_at_unix_seconds)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(collection_id) DO UPDATE SET owner_scope = excluded.owner_scope, owner_id = excluded.owner_id",
+                params![
+                    collection_id.0,
+                    owner.scope.as_str(),
+                    owner.owner_id,
+                    now_unix_seconds() as i64,
+                ],
+            )
+            .map_err(sqlite_error)?;
+        Ok(())
+    }
+
+    fn collection_owner_binding(
+        &self,
+        collection_id: &AssetCollectionId,
+    ) -> Result<AssetOwnerBinding> {
+        let owner = self
+            .connection
+            .query_row(
+                "SELECT o.scope, o.owner_id, o.display_name
+                 FROM asset_collection_owners c
+                 JOIN asset_owners o
+                   ON o.scope = c.owner_scope AND o.owner_id = c.owner_id
+                 WHERE c.collection_id = ?1",
+                params![collection_id.0],
+                |row| {
+                    let scope = AssetOwnerScope::from_str(&row.get::<_, String>(0)?)
+                        .map_err(sql_validation_error)?;
+                    Ok(AssetOwnerBinding {
+                        scope,
+                        owner_id: row.get(1)?,
+                        display_name: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(sqlite_error)?;
+        if let Some(owner) = owner {
+            return Ok(owner);
+        }
+
+        let collection = self.collection_by_id(collection_id)?;
+        self.infer_wellbore_owner_binding(&collection.wellbore_id)
     }
 
     fn resolve_or_create_collection(
@@ -5117,18 +7261,9 @@ impl OphioliteProject {
             if let Some(well) = self
                 .connection
                 .query_row(
-                    "SELECT id, primary_name, identifiers_json FROM wells WHERE uwi = ?1",
+                    "SELECT id, primary_name, identifiers_json, metadata_json FROM wells WHERE uwi = ?1",
                     params![uwi],
-                    |row| {
-                        Ok(WellRecord {
-                            id: WellId(row.get(0)?),
-                            name: row.get(1)?,
-                            identifiers: serde_json::from_str::<WellIdentifierSet>(
-                                &row.get::<_, String>(2)?,
-                            )
-                            .map_err(sql_json_error)?,
-                        })
-                    },
+                    well_record_from_row,
                 )
                 .optional()
                 .map_err(sqlite_error)?
@@ -5141,18 +7276,9 @@ impl OphioliteProject {
             if let Some(well) = self
                 .connection
                 .query_row(
-                    "SELECT id, primary_name, identifiers_json FROM wells WHERE api = ?1",
+                    "SELECT id, primary_name, identifiers_json, metadata_json FROM wells WHERE api = ?1",
                     params![api],
-                    |row| {
-                        Ok(WellRecord {
-                            id: WellId(row.get(0)?),
-                            name: row.get(1)?,
-                            identifiers: serde_json::from_str::<WellIdentifierSet>(
-                                &row.get::<_, String>(2)?,
-                            )
-                            .map_err(sql_json_error)?,
-                        })
-                    },
+                    well_record_from_row,
                 )
                 .optional()
                 .map_err(sqlite_error)?
@@ -5165,18 +7291,9 @@ impl OphioliteProject {
             if let Some(well) = self
                 .connection
                 .query_row(
-                    "SELECT id, primary_name, identifiers_json FROM wells WHERE normalized_name = ?1",
+                    "SELECT id, primary_name, identifiers_json, metadata_json FROM wells WHERE normalized_name = ?1",
                     params![normalized_text(name)],
-                    |row| {
-                        Ok(WellRecord {
-                            id: WellId(row.get(0)?),
-                            name: row.get(1)?,
-                            identifiers: serde_json::from_str::<WellIdentifierSet>(
-                                &row.get::<_, String>(2)?,
-                            )
-                            .map_err(sql_json_error)?,
-                        })
-                    },
+                    well_record_from_row,
                 )
                 .optional()
                 .map_err(sqlite_error)?
@@ -6163,6 +8280,12 @@ fn default_asset_diff_summary(asset_kind: &AssetKind) -> AssetDiffSummary {
             AssetDiffSummary::Trajectory(StructuredAssetDiffSummary::default())
         }
         AssetKind::TopSet => AssetDiffSummary::TopSet(StructuredAssetDiffSummary::default()),
+        AssetKind::WellMarkerSet => {
+            AssetDiffSummary::WellMarkerSet(StructuredAssetDiffSummary::default())
+        }
+        AssetKind::WellMarkerHorizonResidualSet => {
+            AssetDiffSummary::WellMarkerHorizonResidualSet(StructuredAssetDiffSummary::default())
+        }
         AssetKind::PressureObservation => {
             AssetDiffSummary::PressureObservation(StructuredAssetDiffSummary::default())
         }
@@ -6183,6 +8306,9 @@ fn default_asset_diff_summary(asset_kind: &AssetKind) -> AssetDiffSummary {
         }
         AssetKind::WellTimeDepthModel => {
             AssetDiffSummary::WellTimeDepthModel(DirectoryAssetDiffSummary::default())
+        }
+        AssetKind::RawSourceBundle => {
+            AssetDiffSummary::RawSourceBundle(DirectoryAssetDiffSummary::default())
         }
         AssetKind::SeismicTraceData => {
             AssetDiffSummary::SeismicTraceData(DirectoryAssetDiffSummary::default())
@@ -6210,6 +8336,10 @@ fn diff_structured_rows<T: PartialEq>(
     match asset_kind {
         AssetKind::Trajectory => AssetDiffSummary::Trajectory(summary),
         AssetKind::TopSet => AssetDiffSummary::TopSet(summary),
+        AssetKind::WellMarkerSet => AssetDiffSummary::WellMarkerSet(summary),
+        AssetKind::WellMarkerHorizonResidualSet => {
+            AssetDiffSummary::WellMarkerHorizonResidualSet(summary)
+        }
         AssetKind::PressureObservation => AssetDiffSummary::PressureObservation(summary),
         AssetKind::DrillingObservation => AssetDiffSummary::DrillingObservation(summary),
         AssetKind::Log => AssetDiffSummary::Log(LogAssetDiffSummary::default()),
@@ -6227,6 +8357,9 @@ fn diff_structured_rows<T: PartialEq>(
         }
         AssetKind::WellTimeDepthModel => {
             AssetDiffSummary::WellTimeDepthModel(DirectoryAssetDiffSummary::default())
+        }
+        AssetKind::RawSourceBundle => {
+            AssetDiffSummary::RawSourceBundle(DirectoryAssetDiffSummary::default())
         }
         AssetKind::SeismicTraceData => {
             AssetDiffSummary::SeismicTraceData(DirectoryAssetDiffSummary::default())
@@ -6329,6 +8462,12 @@ fn summarize_asset_diff(asset_kind: &AssetKind, diff: &AssetDiffSummary) -> Stri
             summarize_structured_asset_diff("trajectory", summary)
         }
         AssetDiffSummary::TopSet(summary) => summarize_structured_asset_diff("tops", summary),
+        AssetDiffSummary::WellMarkerSet(summary) => {
+            summarize_structured_asset_diff("well markers", summary)
+        }
+        AssetDiffSummary::WellMarkerHorizonResidualSet(summary) => {
+            summarize_structured_asset_diff("well marker horizon residuals", summary)
+        }
         AssetDiffSummary::PressureObservation(summary) => {
             summarize_structured_asset_diff("pressure observations", summary)
         }
@@ -6349,6 +8488,9 @@ fn summarize_asset_diff(asset_kind: &AssetKind, diff: &AssetDiffSummary) -> Stri
         }
         AssetDiffSummary::WellTimeDepthModel(summary) => {
             summarize_directory_asset_diff("well time-depth model", summary)
+        }
+        AssetDiffSummary::RawSourceBundle(summary) => {
+            summarize_directory_asset_diff("raw source bundle", summary)
         }
         AssetDiffSummary::SeismicTraceData(summary) => {
             summarize_directory_asset_diff("seismic trace data", summary)
@@ -6455,6 +8597,7 @@ fn initialize_project_schema(connection: &Connection) -> Result<()> {
             uwi TEXT,
             api TEXT,
             identifiers_json TEXT NOT NULL,
+            metadata_json TEXT,
             created_at_unix_seconds INTEGER NOT NULL
         );
         CREATE TABLE IF NOT EXISTS wellbores (
@@ -6463,8 +8606,21 @@ fn initialize_project_schema(connection: &Connection) -> Result<()> {
             primary_name TEXT NOT NULL,
             normalized_name TEXT NOT NULL,
             identifiers_json TEXT NOT NULL,
+            metadata_json TEXT,
             geometry_json TEXT,
+            definitive_trajectory_asset_id TEXT,
+            definitive_marker_set_asset_id TEXT,
+            definitive_top_set_asset_id TEXT,
             active_well_time_depth_model_asset_id TEXT,
+            created_at_unix_seconds INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS well_markers (
+            id TEXT PRIMARY KEY,
+            wellbore_id TEXT NOT NULL,
+            source_asset_id TEXT,
+            sequence_number INTEGER,
+            name TEXT NOT NULL,
+            marker_json TEXT NOT NULL,
             created_at_unix_seconds INTEGER NOT NULL
         );
         CREATE TABLE IF NOT EXISTS asset_collections (
@@ -6491,6 +8647,20 @@ fn initialize_project_schema(connection: &Connection) -> Result<()> {
             source_path TEXT,
             source_fingerprint TEXT
         );
+        CREATE TABLE IF NOT EXISTS asset_owners (
+            scope TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            metadata_json TEXT,
+            created_at_unix_seconds INTEGER NOT NULL,
+            PRIMARY KEY (scope, owner_id)
+        );
+        CREATE TABLE IF NOT EXISTS asset_collection_owners (
+            collection_id TEXT PRIMARY KEY,
+            owner_scope TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            created_at_unix_seconds INTEGER NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS asset_revisions (
             id TEXT PRIMARY KEY,
             asset_id TEXT NOT NULL,
@@ -6509,7 +8679,12 @@ fn initialize_project_schema(connection: &Connection) -> Result<()> {
             params![PROJECT_SCHEMA_VERSION],
         )
         .map_err(sqlite_error)?;
+    ensure_optional_text_column(connection, "wells", "metadata_json")?;
+    ensure_optional_text_column(connection, "wellbores", "metadata_json")?;
     ensure_optional_text_column(connection, "wellbores", "geometry_json")?;
+    ensure_optional_text_column(connection, "wellbores", "definitive_trajectory_asset_id")?;
+    ensure_optional_text_column(connection, "wellbores", "definitive_marker_set_asset_id")?;
+    ensure_optional_text_column(connection, "wellbores", "definitive_top_set_asset_id")?;
     ensure_optional_text_column(
         connection,
         "wellbores",
@@ -6543,6 +8718,35 @@ where
     value
         .map(|json| serde_json::from_str::<T>(&json))
         .transpose()
+}
+
+fn well_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WellRecord> {
+    Ok(WellRecord {
+        id: WellId(row.get(0)?),
+        name: row.get(1)?,
+        identifiers: serde_json::from_str::<WellIdentifierSet>(&row.get::<_, String>(2)?)
+            .map_err(sql_json_error)?,
+        metadata: parse_optional_json_column::<WellMetadata>(row.get(3)?)
+            .map_err(sql_json_error)?,
+    })
+}
+
+fn wellbore_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<WellboreRecord> {
+    Ok(WellboreRecord {
+        id: WellboreId(row.get(0)?),
+        well_id: WellId(row.get(1)?),
+        name: row.get(2)?,
+        identifiers: serde_json::from_str::<WellIdentifierSet>(&row.get::<_, String>(3)?)
+            .map_err(sql_json_error)?,
+        metadata: parse_optional_json_column::<WellboreMetadata>(row.get(4)?)
+            .map_err(sql_json_error)?,
+        geometry: parse_optional_json_column::<WellboreGeometry>(row.get(5)?)
+            .map_err(sql_json_error)?,
+        definitive_trajectory_asset_id: row.get::<_, Option<String>>(6)?.map(AssetId),
+        definitive_marker_set_asset_id: row.get::<_, Option<String>>(7)?.map(AssetId),
+        definitive_top_set_asset_id: row.get::<_, Option<String>>(8)?.map(AssetId),
+        active_well_time_depth_model_asset_id: row.get::<_, Option<String>>(9)?.map(AssetId),
+    })
 }
 
 fn classify_log_curves_from_file(file: &LasFile) -> Vec<CurveSemanticDescriptor> {
@@ -6660,6 +8864,16 @@ fn filter_top_rows_for_depth_range(
         .collect()
 }
 
+fn filter_well_marker_rows_for_depth_range(
+    rows: Vec<WellMarkerRow>,
+    depth_min: Option<f64>,
+    depth_max: Option<f64>,
+) -> Vec<WellMarkerRow> {
+    rows.into_iter()
+        .filter(|row| depth_in_range(row.top_depth, depth_min, depth_max))
+        .collect()
+}
+
 fn identity_panel_depth_mapping(depths: Vec<f64>) -> Vec<WellPanelDepthSampleDto> {
     let mut unique = depths
         .into_iter()
@@ -6699,6 +8913,372 @@ fn depth_query(depth_min: Option<f64>, depth_max: Option<f64>) -> Option<DepthRa
             depth_max,
         })
     }
+}
+
+fn residual_marker_inputs_for_asset(
+    project: &OphioliteProject,
+    asset: &AssetRecord,
+) -> Result<Vec<ResidualMarkerInput>> {
+    match asset.asset_kind {
+        AssetKind::TopSet => Ok(project
+            .read_tops(&asset.id)?
+            .into_iter()
+            .map(|row| ResidualMarkerInput {
+                marker_name: row.name,
+                marker_kind: Some("top".to_string()),
+                source_depth: row.top_depth,
+                source_depth_reference: row.source_depth_reference,
+                source_depth_domain: row.depth_domain,
+                source_depth_datum: row.depth_datum,
+                note: row.source,
+            })
+            .collect()),
+        AssetKind::WellMarkerSet => Ok(project
+            .read_well_marker_rows(&asset.id)?
+            .into_iter()
+            .map(|row| ResidualMarkerInput {
+                marker_name: row.name,
+                marker_kind: row.marker_kind,
+                source_depth: row.top_depth,
+                source_depth_reference: row.source_depth_reference,
+                source_depth_domain: row.depth_domain,
+                source_depth_datum: row.depth_datum,
+                note: row.note.or(row.source),
+            })
+            .collect()),
+        _ => Err(LasError::Validation(format!(
+            "asset '{}' is {}, not a top-set or well-marker-set source",
+            asset.id.0,
+            asset.asset_kind.as_str()
+        ))),
+    }
+}
+
+fn well_marker_horizon_residual_row_dto(
+    row: WellMarkerHorizonResidualRow,
+) -> WellMarkerHorizonResidualRowDto {
+    WellMarkerHorizonResidualRowDto {
+        marker_name: row.marker_name,
+        marker_kind: row.marker_kind,
+        source_depth: row.source_depth,
+        source_depth_reference: row.source_depth_reference,
+        source_depth_domain: row.source_depth_domain,
+        source_depth_datum: row.source_depth_datum,
+        measured_depth: row.measured_depth,
+        true_vertical_depth: row.true_vertical_depth,
+        true_vertical_depth_subsea: row.true_vertical_depth_subsea,
+        x: row.x,
+        y: row.y,
+        horizon_depth: row.horizon_depth,
+        residual: row.residual,
+        horizon_inline_ordinal: row.horizon_inline_ordinal,
+        horizon_xline_ordinal: row.horizon_xline_ordinal,
+        status: row.status,
+        note: row.note,
+    }
+}
+
+fn well_marker_horizon_residual_row_from_dto(
+    row: &WellMarkerHorizonResidualRowDto,
+) -> WellMarkerHorizonResidualRow {
+    WellMarkerHorizonResidualRow {
+        marker_name: row.marker_name.clone(),
+        marker_kind: row.marker_kind.clone(),
+        source_depth: row.source_depth,
+        source_depth_reference: row.source_depth_reference.clone(),
+        source_depth_domain: row.source_depth_domain.clone(),
+        source_depth_datum: row.source_depth_datum.clone(),
+        measured_depth: row.measured_depth,
+        true_vertical_depth: row.true_vertical_depth,
+        true_vertical_depth_subsea: row.true_vertical_depth_subsea,
+        x: row.x,
+        y: row.y,
+        horizon_depth: row.horizon_depth,
+        residual: row.residual,
+        horizon_inline_ordinal: row.horizon_inline_ordinal,
+        horizon_xline_ordinal: row.horizon_xline_ordinal,
+        status: row.status.clone(),
+        note: row.note.clone(),
+    }
+}
+
+fn well_marker_horizon_residual_point_from_row(
+    row: WellMarkerHorizonResidualRow,
+) -> Option<WellMarkerHorizonResidualPointRecord> {
+    if row.status != "ok" && row.status != "resolved" {
+        return None;
+    }
+    Some(WellMarkerHorizonResidualPointRecord {
+        marker_name: row.marker_name,
+        marker_kind: row.marker_kind,
+        x: row.x?,
+        y: row.y?,
+        z: row.true_vertical_depth?,
+        horizon_depth: row.horizon_depth?,
+        residual: row.residual?,
+        status: row.status,
+        note: row.note,
+    })
+}
+
+fn resolve_single_well_marker_horizon_residual(
+    marker: &ResidualMarkerInput,
+    trajectory: &ResolvedTrajectoryGeometry,
+    horizon: &ImportedHorizonGrid,
+    grid_transform: &SurveyMapGridTransformDto,
+) -> WellMarkerHorizonResidualRow {
+    let mut row = WellMarkerHorizonResidualRow {
+        marker_name: marker.marker_name.clone(),
+        marker_kind: marker.marker_kind.clone(),
+        source_depth: marker.source_depth,
+        source_depth_reference: marker.source_depth_reference.clone(),
+        source_depth_domain: marker.source_depth_domain.clone(),
+        source_depth_datum: marker.source_depth_datum.clone(),
+        measured_depth: None,
+        true_vertical_depth: None,
+        true_vertical_depth_subsea: None,
+        x: None,
+        y: None,
+        horizon_depth: None,
+        residual: None,
+        horizon_inline_ordinal: None,
+        horizon_xline_ordinal: None,
+        status: "unresolved".to_string(),
+        note: marker.note.clone(),
+    };
+
+    let Some(marker_station) = resolve_marker_station(
+        trajectory,
+        marker.source_depth_domain.as_deref(),
+        marker.source_depth,
+    ) else {
+        row.status = "marker_not_resolved_on_trajectory".to_string();
+        row.note = merge_optional_notes(
+            row.note.take(),
+            Some("marker depth could not be located on the definitive trajectory".to_string()),
+        );
+        return row;
+    };
+    row.measured_depth = Some(marker_station.measured_depth_m);
+    row.true_vertical_depth = marker_station.true_vertical_depth_m;
+    row.true_vertical_depth_subsea = marker_station.true_vertical_depth_subsea_m;
+    row.x = marker_station.absolute_xy.as_ref().map(|point| point.x);
+    row.y = marker_station.absolute_xy.as_ref().map(|point| point.y);
+
+    if normalized_marker_depth_domain(marker.source_depth_domain.as_deref()) == Some("tvdss") {
+        row.status = "unsupported_depth_reference_for_horizon".to_string();
+        row.note = merge_optional_notes(
+            row.note.take(),
+            Some(
+                "marker uses TVDSS but imported horizons do not yet carry an explicit vertical datum relation".to_string(),
+            ),
+        );
+        return row;
+    }
+
+    let Some(marker_tvd) = marker_station.true_vertical_depth_m else {
+        row.status = "marker_missing_tvd".to_string();
+        row.note = merge_optional_notes(
+            row.note.take(),
+            Some("resolved marker station does not contain TVD in meters".to_string()),
+        );
+        return row;
+    };
+    let Some(absolute_xy) = marker_station.absolute_xy.as_ref() else {
+        row.status = "marker_missing_xy".to_string();
+        row.note = merge_optional_notes(
+            row.note.take(),
+            Some("resolved marker station has no absolute XY coordinates".to_string()),
+        );
+        return row;
+    };
+
+    let Some((inline_ordinal, xline_ordinal)) =
+        invert_survey_grid_transform(grid_transform, absolute_xy.x, absolute_xy.y)
+    else {
+        row.status = "survey_grid_transform_unavailable".to_string();
+        row.note = merge_optional_notes(
+            row.note.take(),
+            Some("marker XY could not be inverted into survey grid coordinates".to_string()),
+        );
+        return row;
+    };
+    row.horizon_inline_ordinal = Some(inline_ordinal);
+    row.horizon_xline_ordinal = Some(xline_ordinal);
+
+    let Some(horizon_depth) = bilinear_sample_horizon_depth(horizon, inline_ordinal, xline_ordinal)
+    else {
+        row.status = "horizon_sample_unavailable".to_string();
+        row.note = merge_optional_notes(
+            row.note.take(),
+            Some(
+                "marker lies outside the horizon grid or adjacent cells are invalid for bilinear sampling".to_string(),
+            ),
+        );
+        return row;
+    };
+    row.horizon_depth = Some(f64::from(horizon_depth));
+    row.residual = Some(marker_tvd - f64::from(horizon_depth));
+    row.status = "ok".to_string();
+    row
+}
+
+fn resolve_marker_station(
+    trajectory: &ResolvedTrajectoryGeometry,
+    depth_domain: Option<&str>,
+    depth_value: f64,
+) -> Option<ResolvedTrajectoryStation> {
+    let normalized = normalized_marker_depth_domain(depth_domain).unwrap_or("md");
+    let depth_reference = match normalized {
+        "md" => DepthReferenceKind::MeasuredDepth,
+        "tvd" => DepthReferenceKind::TrueVerticalDepth,
+        "tvdss" => DepthReferenceKind::TrueVerticalDepthSubsea,
+        _ => return None,
+    };
+    interpolate_trajectory_station_by_depth(&trajectory.stations, depth_reference, depth_value)
+}
+
+fn normalized_marker_depth_domain(depth_domain: Option<&str>) -> Option<&'static str> {
+    match depth_domain
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("md") | Some("measured_depth") | Some("measured depth") => Some("md"),
+        Some("tvd") | Some("true_vertical_depth") | Some("true vertical depth") => Some("tvd"),
+        Some("tvdss")
+        | Some("tvdss_m")
+        | Some("true_vertical_depth_subsea")
+        | Some("true vertical depth subsea") => Some("tvdss"),
+        Some("elevation") | Some("elev") => Some("elevation"),
+        Some(_) | None => None,
+    }
+}
+
+fn interpolate_trajectory_station_by_depth(
+    stations: &[ResolvedTrajectoryStation],
+    depth_reference: DepthReferenceKind,
+    depth_value: f64,
+) -> Option<ResolvedTrajectoryStation> {
+    let first = stations.first()?;
+    let first_depth = depth_for_model(first, depth_reference)?;
+    if (first_depth - depth_value).abs() <= 1e-6 {
+        return Some(first.clone());
+    }
+
+    for window in stations.windows(2) {
+        let start = &window[0];
+        let end = &window[1];
+        let start_depth = depth_for_model(start, depth_reference)?;
+        let end_depth = depth_for_model(end, depth_reference)?;
+        if (end_depth - depth_value).abs() <= 1e-6 {
+            return Some(end.clone());
+        }
+        if !depth_brackets_value(start_depth, end_depth, depth_value) {
+            continue;
+        }
+        let denominator = end_depth - start_depth;
+        let fraction = if denominator.abs() <= f64::EPSILON {
+            0.0
+        } else {
+            (depth_value - start_depth) / denominator
+        };
+        return Some(interpolate_resolved_trajectory_station(
+            start, end, fraction,
+        ));
+    }
+
+    None
+}
+
+fn depth_brackets_value(start: f64, end: f64, value: f64) -> bool {
+    (value >= start && value <= end) || (value >= end && value <= start)
+}
+
+fn bilinear_sample_horizon_depth(
+    horizon: &ImportedHorizonGrid,
+    inline_ordinal: f64,
+    xline_ordinal: f64,
+) -> Option<f32> {
+    if !inline_ordinal.is_finite() || !xline_ordinal.is_finite() {
+        return None;
+    }
+    if inline_ordinal < 0.0
+        || xline_ordinal < 0.0
+        || inline_ordinal > (horizon.inline_count.saturating_sub(1)) as f64
+        || xline_ordinal > (horizon.xline_count.saturating_sub(1)) as f64
+    {
+        return None;
+    }
+
+    let inline0 = inline_ordinal.floor() as usize;
+    let xline0 = xline_ordinal.floor() as usize;
+    let inline1 = inline_ordinal.ceil() as usize;
+    let xline1 = xline_ordinal.ceil() as usize;
+
+    let q00 = horizon_cell_value(horizon, inline0, xline0)?;
+    if inline0 == inline1 && xline0 == xline1 {
+        return Some(q00);
+    }
+
+    let q10 = horizon_cell_value(horizon, inline1, xline0)?;
+    let q01 = horizon_cell_value(horizon, inline0, xline1)?;
+    let q11 = horizon_cell_value(horizon, inline1, xline1)?;
+
+    let tx = (inline_ordinal - inline0 as f64) as f32;
+    let ty = (xline_ordinal - xline0 as f64) as f32;
+    let top = q00 + (q10 - q00) * tx;
+    let bottom = q01 + (q11 - q01) * tx;
+    Some(top + (bottom - top) * ty)
+}
+
+fn horizon_cell_value(
+    horizon: &ImportedHorizonGrid,
+    inline_index: usize,
+    xline_index: usize,
+) -> Option<f32> {
+    let offset = inline_index.checked_mul(horizon.xline_count)? + xline_index;
+    (offset < horizon.values.len()
+        && offset < horizon.validity.len()
+        && horizon.validity[offset] != 0)
+        .then_some(horizon.values[offset])
+}
+
+fn merge_optional_notes(existing: Option<String>, extra: Option<String>) -> Option<String> {
+    match (existing, extra) {
+        (Some(existing), Some(extra)) if !existing.trim().is_empty() => {
+            Some(format!("{existing}; {extra}"))
+        }
+        (Some(existing), _) => Some(existing),
+        (None, Some(extra)) => Some(extra),
+        (None, None) => None,
+    }
+}
+
+fn required_string_compute_parameter(
+    parameters: &BTreeMap<String, ComputeParameterValue>,
+    name: &str,
+) -> Result<String> {
+    parameters
+        .get(name)
+        .and_then(ComputeParameterValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| LasError::Validation(format!("parameter '{}' is required", name)))
+}
+
+fn optional_string_compute_parameter(
+    parameters: &BTreeMap<String, ComputeParameterValue>,
+    name: &str,
+) -> Option<String> {
+    parameters
+        .get(name)
+        .and_then(ComputeParameterValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 enum StructuredComputedRows {
@@ -6747,7 +9327,9 @@ fn top_rows_for_compute(rows: &[TopRow]) -> Vec<TopDataRow> {
             top_depth: row.top_depth,
             base_depth: row.base_depth,
             source: row.source,
-            depth_reference: row.depth_reference,
+            source_depth_reference: row.source_depth_reference,
+            depth_domain: row.depth_domain,
+            depth_datum: row.depth_datum,
         })
         .collect()
 }
@@ -6761,7 +9343,9 @@ fn top_rows_from_compute(rows: &[TopDataRow]) -> StructuredComputedRows {
                 top_depth: row.top_depth,
                 base_depth: row.base_depth,
                 source: row.source,
-                depth_reference: row.depth_reference,
+                source_depth_reference: row.source_depth_reference,
+                depth_domain: row.depth_domain,
+                depth_datum: row.depth_datum,
             })
             .collect(),
     )
@@ -6951,6 +9535,7 @@ fn structured_asset_manifest(
     asset_kind: AssetKind,
     extent: AssetExtent,
     identifiers: WellIdentifierSet,
+    coordinate_reference: Option<CoordinateReference>,
     supersedes: Option<AssetId>,
 ) -> Result<AssetManifest> {
     let imported_at = now_unix_seconds();
@@ -6987,7 +9572,7 @@ fn structured_asset_manifest(
         ],
         reference_metadata: AssetReferenceMetadata {
             identifiers,
-            coordinate_reference: None,
+            coordinate_reference,
             vertical_datum: vertical_datum_for_kind(&asset_kind),
             depth_reference: depth_reference_for_kind(&asset_kind),
             unit_system: UnitSystem {
@@ -7003,6 +9588,153 @@ fn structured_asset_manifest(
         curve_semantics: Vec::new(),
         compute_manifest: None,
     })
+}
+
+fn raw_source_bundle_manifest(
+    source_paths: &[&Path],
+    source_artifacts: Vec<SourceArtifactRef>,
+    well_id: &WellId,
+    wellbore_id: &WellboreId,
+    collection_id: &AssetCollectionId,
+    logical_asset_id: &AssetId,
+    storage_asset_id: &AssetId,
+    identifiers: WellIdentifierSet,
+    supersedes: Option<AssetId>,
+    package_root: &Path,
+) -> Result<AssetManifest> {
+    let primary_source = source_paths.first().copied().ok_or_else(|| {
+        LasError::Validation(
+            "raw source bundle import requires at least one source file".to_string(),
+        )
+    })?;
+    let imported_at = now_unix_seconds();
+    let source_bytes = fs::read(primary_source)?;
+    let provenance = Provenance::from_path(
+        primary_source,
+        source_fingerprint(&source_bytes),
+        imported_at,
+    );
+    let mut bulk_data_descriptors = vec![BulkDataDescriptor {
+        relative_path: "metadata.json".to_string(),
+        media_type: "application/json".to_string(),
+        role: "metadata".to_string(),
+    }];
+    bulk_data_descriptors.extend(copy_supporting_source_artifacts(
+        package_root,
+        source_paths,
+    )?);
+    Ok(AssetManifest {
+        asset_kind: AssetKind::RawSourceBundle,
+        asset_schema_version: "0.1.0".to_string(),
+        logical_asset_id: logical_asset_id.clone(),
+        storage_asset_id: storage_asset_id.clone(),
+        well_id: well_id.clone(),
+        wellbore_id: wellbore_id.clone(),
+        asset_collection_id: collection_id.clone(),
+        source_artifacts,
+        provenance,
+        diagnostics: Vec::new(),
+        extents: AssetExtent {
+            index_kind: None,
+            start: None,
+            stop: None,
+            row_count: None,
+        },
+        bulk_data_descriptors,
+        reference_metadata: AssetReferenceMetadata {
+            identifiers,
+            coordinate_reference: None,
+            vertical_datum: None,
+            depth_reference: DepthReference::Unknown,
+            unit_system: UnitSystem {
+                depth_unit: None,
+                coordinate_unit: None,
+                pressure_unit: None,
+            },
+        },
+        created_at_unix_seconds: imported_at,
+        imported_at_unix_seconds: imported_at,
+        supersedes,
+        derived_from: None,
+        curve_semantics: Vec::new(),
+        compute_manifest: None,
+    })
+}
+
+fn source_artifact_refs_for_paths(
+    source_paths: &[&Path],
+    imported_at_unix_seconds: u64,
+) -> Result<Vec<SourceArtifactRef>> {
+    let mut refs = Vec::new();
+    for path in source_paths {
+        if !path.exists() {
+            continue;
+        }
+        let bytes = fs::read(path)?;
+        refs.push(SourceArtifactRef {
+            source_path: path.to_string_lossy().into_owned(),
+            original_filename: path
+                .file_name()
+                .map(|value| value.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "source".to_string()),
+            source_fingerprint: source_fingerprint(&bytes),
+        });
+    }
+    refs.sort_by(|left, right| left.source_path.cmp(&right.source_path));
+    refs.dedup_by(|left, right| left.source_path == right.source_path);
+    let _ = imported_at_unix_seconds;
+    Ok(refs)
+}
+
+fn copy_supporting_source_artifacts(
+    package_root: &Path,
+    source_paths: &[&Path],
+) -> Result<Vec<BulkDataDescriptor>> {
+    let mut descriptors = Vec::new();
+    let mut used_relative_paths = BTreeMap::<String, usize>::new();
+    for path in source_paths {
+        if !path.exists() {
+            continue;
+        }
+        let original_name = path
+            .file_name()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "source".to_string());
+        let duplicate_count = used_relative_paths
+            .entry(original_name.clone())
+            .and_modify(|count| *count += 1)
+            .or_insert(0);
+        let relative_path = if *duplicate_count == 0 {
+            format!("sources/{original_name}")
+        } else {
+            format!("sources/{}-{}", duplicate_count, original_name)
+        };
+        copy_path(path, &package_root.join(&relative_path))?;
+        descriptors.push(BulkDataDescriptor {
+            relative_path,
+            media_type: supporting_source_media_type(path).to_string(),
+            role: "source_artifact".to_string(),
+        });
+    }
+    Ok(descriptors)
+}
+
+fn supporting_source_media_type(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("txt") => "text/plain",
+        Some("asc") => "text/plain",
+        Some("csv") => "text/csv",
+        Some("json") => "application/json",
+        Some("las") => "application/x-las",
+        Some("nlog") => "text/plain",
+        Some("dlis") => "application/octet-stream",
+        _ => "application/octet-stream",
+    }
 }
 
 fn well_time_depth_model_manifest(
@@ -7632,6 +10364,96 @@ fn structured_compute_input_binding(parameter_name: &str, curve_name: &str) -> C
     }
 }
 
+fn well_marker_horizon_residual_catalog_entry(asset_kind: AssetKind) -> ComputeCatalogEntry {
+    let (input_specs, provider, tags) = match asset_kind {
+        AssetKind::TopSet => (
+            vec![ComputeInputSpec::TopSet],
+            "tops",
+            vec![
+                "tops".to_string(),
+                "horizon".to_string(),
+                "residual".to_string(),
+            ],
+        ),
+        AssetKind::WellMarkerSet => (
+            vec![ComputeInputSpec::WellMarkerSet],
+            "well_markers",
+            vec![
+                "well-markers".to_string(),
+                "horizon".to_string(),
+                "residual".to_string(),
+            ],
+        ),
+        _ => (Vec::new(), "well_markers", vec!["residual".to_string()]),
+    };
+    ComputeCatalogEntry {
+        metadata: ophiolite_compute::ComputeFunctionMetadata {
+            id: WELL_MARKER_HORIZON_RESIDUAL_FUNCTION_ID.to_string(),
+            provider: provider.to_string(),
+            name: "Compute Depth-Horizon Residuals".to_string(),
+            category: "Interpretation".to_string(),
+            description: "Sample a depth-domain horizon at each marker XY and compute residual = marker TVD - horizon depth.".to_string(),
+            default_output_mnemonic: "marker_horizon_residuals".to_string(),
+            output_curve_type: CurveSemanticType::Computed,
+            tags,
+        },
+        input_specs,
+        parameters: vec![
+            ComputeParameterDefinition::String {
+                name: WELL_MARKER_HORIZON_RESIDUAL_SURVEY_ASSET_PARAMETER.to_string(),
+                label: "Survey Asset Id".to_string(),
+                description: "Seismic survey asset that owns the imported depth horizon."
+                    .to_string(),
+                default: None,
+            },
+            ComputeParameterDefinition::String {
+                name: WELL_MARKER_HORIZON_RESIDUAL_HORIZON_PARAMETER.to_string(),
+                label: "Horizon Id".to_string(),
+                description: "Imported horizon identifier inside the selected survey asset."
+                    .to_string(),
+                default: None,
+            },
+            ComputeParameterDefinition::String {
+                name: WELL_MARKER_HORIZON_RESIDUAL_MARKER_PARAMETER.to_string(),
+                label: "Marker Name".to_string(),
+                description:
+                    "Optional canonical marker name to filter before computing residuals."
+                        .to_string(),
+                default: None,
+            },
+        ],
+        binding_candidates: Vec::new(),
+        availability: ComputeAvailability::Available,
+    }
+}
+
+fn builtin_structured_execution_manifest(
+    function_id: &str,
+    provider: &str,
+    function_name: &str,
+    inputs: Vec<ComputeInputBinding>,
+    parameters: &BTreeMap<String, ComputeParameterValue>,
+    output_curve_name: &str,
+) -> ComputeExecutionManifest {
+    ComputeExecutionManifest {
+        function_id: function_id.to_string(),
+        provider: provider.to_string(),
+        function_name: function_name.to_string(),
+        function_version: WELL_MARKER_HORIZON_RESIDUAL_FUNCTION_VERSION.to_string(),
+        operator_package: Some(BUILTIN_OPERATOR_PACKAGE_NAME.to_string()),
+        operator_package_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        operator_runtime: Some(OperatorRuntimeKind::Rust),
+        deterministic: true,
+        source_asset_id: String::new(),
+        source_logical_asset_id: String::new(),
+        inputs,
+        parameters: parameters.clone(),
+        output_curve_name: output_curve_name.to_string(),
+        output_curve_type: CurveSemanticType::Computed,
+        executed_at_unix_seconds: 0,
+    }
+}
+
 fn external_execution_manifest(
     package: &OperatorPackageManifest,
     operator: &OperatorManifest,
@@ -7660,7 +10482,40 @@ fn external_execution_manifest(
 }
 
 fn external_python_bin() -> String {
-    std::env::var("OPHIOLITE_PYTHON_BIN").unwrap_or_else(|_| "python".to_string())
+    if let Ok(bin) = std::env::var("OPHIOLITE_PYTHON_BIN") {
+        return bin;
+    }
+    let candidates: &[&str] = if cfg!(windows) {
+        &["python.exe", "python3.exe", "python", "python3"]
+    } else {
+        &["python", "python3"]
+    };
+    for candidate in candidates {
+        if executable_exists_in_path(candidate) {
+            return (*candidate).to_string();
+        }
+    }
+    if cfg!(windows) {
+        "python.exe".to_string()
+    } else {
+        "python".to_string()
+    }
+}
+
+fn executable_exists_in_path(candidate: &str) -> bool {
+    let path = Path::new(candidate);
+    if path.components().count() > 1 {
+        return path.exists();
+    }
+    let Some(path_env) = std::env::var_os("PATH") else {
+        return false;
+    };
+    for directory in std::env::split_paths(&path_env) {
+        if directory.join(candidate).is_file() {
+            return true;
+        }
+    }
+    false
 }
 
 fn python_runtime_for_operator_manifest_dir(manifest_dir: &Path) -> PathBuf {
@@ -7736,12 +10591,18 @@ fn asset_semantic_family(asset_kind: &AssetKind) -> Result<AssetSemanticFamily> 
         AssetKind::Log => Ok(AssetSemanticFamily::Log),
         AssetKind::Trajectory => Ok(AssetSemanticFamily::Trajectory),
         AssetKind::TopSet => Ok(AssetSemanticFamily::TopSet),
+        AssetKind::WellMarkerSet => Ok(AssetSemanticFamily::WellMarkerSet),
+        AssetKind::WellMarkerHorizonResidualSet => Err(LasError::Validation(
+            "compute catalog is not implemented for well marker horizon residual assets"
+                .to_string(),
+        )),
         AssetKind::PressureObservation => Ok(AssetSemanticFamily::PressureObservation),
         AssetKind::DrillingObservation => Ok(AssetSemanticFamily::DrillingObservation),
         AssetKind::CheckshotVspObservationSet
         | AssetKind::ManualTimeDepthPickSet
         | AssetKind::WellTieObservationSet
-        | AssetKind::WellTimeDepthAuthoredModel => Err(LasError::Validation(
+        | AssetKind::WellTimeDepthAuthoredModel
+        | AssetKind::RawSourceBundle => Err(LasError::Validation(
             "compute catalog is not implemented for well time-depth observation/model assets"
                 .to_string(),
         )),
@@ -7786,6 +10647,216 @@ fn identifiers_from_well_info(info: &WellInfo) -> WellIdentifierSet {
     }
 }
 
+fn operator_history_from_name(name: Option<String>, source: &str) -> Vec<OperatorAssignment> {
+    name.into_iter()
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| OperatorAssignment {
+            organisation_name: Some(value),
+            organisation_id: None,
+            effective_at: None,
+            terminated_at: None,
+            source: Some(source.to_string()),
+            note: None,
+        })
+        .collect()
+}
+
+fn well_metadata_from_well_info(info: &WellInfo) -> Option<WellMetadata> {
+    let metadata = WellMetadata {
+        field_name: info.field.clone(),
+        block_name: None,
+        basin_name: None,
+        country: None,
+        province_state: info.province.clone(),
+        location_text: info.location.clone(),
+        interest_type: None,
+        operator_history: operator_history_from_name(info.company.clone(), "las_header"),
+        surface_location: None,
+        default_vertical_measurement_id: None,
+        default_vertical_coordinate_reference: None,
+        vertical_measurements: Vec::new(),
+        external_references: Vec::new(),
+        notes: Vec::new(),
+    };
+    if metadata.field_name.is_none()
+        && metadata.province_state.is_none()
+        && metadata.location_text.is_none()
+        && metadata.operator_history.is_empty()
+    {
+        None
+    } else {
+        Some(metadata)
+    }
+}
+
+fn wellbore_metadata_from_well_info(info: &WellInfo) -> Option<WellboreMetadata> {
+    let metadata = WellboreMetadata {
+        sequence_number: None,
+        status: None,
+        purpose: None,
+        trajectory_type: None,
+        parent_wellbore_id: None,
+        target_formation: None,
+        primary_material: None,
+        location_text: info.location.clone(),
+        service_company_name: info.service_company.clone(),
+        operator_history: operator_history_from_name(info.company.clone(), "las_header"),
+        bottom_hole_location: None,
+        default_vertical_measurement_id: None,
+        default_vertical_coordinate_reference: None,
+        vertical_measurements: Vec::new(),
+        external_references: Vec::new(),
+        notes: Vec::new(),
+    };
+    if metadata.location_text.is_none()
+        && metadata.service_company_name.is_none()
+        && metadata.operator_history.is_empty()
+    {
+        None
+    } else {
+        Some(metadata)
+    }
+}
+
+fn vertical_measurement_path_from_depth_domain(
+    depth_domain: Option<&str>,
+) -> VerticalMeasurementPath {
+    match normalized_marker_depth_domain(depth_domain) {
+        Some("md") => VerticalMeasurementPath::MeasuredDepth,
+        Some("tvd") => VerticalMeasurementPath::TrueVerticalDepth,
+        Some("tvdss") => VerticalMeasurementPath::TrueVerticalDepthSubsea,
+        Some("elevation") => VerticalMeasurementPath::Elevation,
+        Some(_) | None => VerticalMeasurementPath::Unknown,
+    }
+}
+
+fn canonical_markers_from_top_rows(
+    wellbore_id: &WellboreId,
+    source_asset_id: &AssetId,
+    rows: &[TopRow],
+) -> Vec<WellMarkerRecord> {
+    rows.iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let sequence_number = u32::try_from(index + 1).ok();
+            let marker_id = WellMarkerId(
+                revision_token_for_bytes(
+                    "well-marker",
+                    &format!(
+                        "{}:{}:{}:{}:{}",
+                        wellbore_id.0, source_asset_id.0, index, row.name, row.top_depth
+                    ),
+                )
+                .0,
+            );
+            let measurement_path =
+                vertical_measurement_path_from_depth_domain(row.depth_domain.as_deref());
+            WellMarkerRecord {
+                id: marker_id.clone(),
+                wellbore_id: wellbore_id.clone(),
+                source_asset_id: Some(source_asset_id.clone()),
+                name: row.name.clone(),
+                sequence_number,
+                marker_kind: Some("top".to_string()),
+                top_measurement: VerticalMeasurement {
+                    measurement_id: Some(format!("{}:top", marker_id.0.clone())),
+                    value: row.top_depth,
+                    unit: None,
+                    path: measurement_path.clone(),
+                    coordinate_reference: None,
+                    reference_measurement_id: None,
+                    reference_entity_id: None,
+                    source: row.source.clone(),
+                    description: row.source_depth_reference.clone(),
+                },
+                base_measurement: row.base_depth.map(|value| VerticalMeasurement {
+                    measurement_id: Some(format!("{}:base", marker_id.0.clone())),
+                    value,
+                    unit: None,
+                    path: measurement_path,
+                    coordinate_reference: None,
+                    reference_measurement_id: None,
+                    reference_entity_id: None,
+                    source: row.source.clone(),
+                    description: row.source_depth_reference.clone(),
+                }),
+                depth_reference: row.source_depth_reference.clone(),
+                source: row.source.clone(),
+                external_references: Vec::new(),
+                notes: Vec::new(),
+            }
+        })
+        .collect()
+}
+
+fn canonical_markers_from_well_marker_rows(
+    wellbore_id: &WellboreId,
+    source_asset_id: &AssetId,
+    rows: &[WellMarkerRow],
+) -> Vec<WellMarkerRecord> {
+    rows.iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let sequence_number = u32::try_from(index + 1).ok();
+            let marker_id = WellMarkerId(
+                revision_token_for_bytes(
+                    "well-marker",
+                    &format!(
+                        "{}:{}:{}:{}:{}:{}",
+                        wellbore_id.0,
+                        source_asset_id.0,
+                        index,
+                        row.name,
+                        row.marker_kind.as_deref().unwrap_or(""),
+                        row.top_depth
+                    ),
+                )
+                .0,
+            );
+            let measurement_path =
+                vertical_measurement_path_from_depth_domain(row.depth_domain.as_deref());
+            let mut notes = Vec::new();
+            if let Some(note) = row.note.as_ref().filter(|value| !value.trim().is_empty()) {
+                notes.push(note.clone());
+            }
+            WellMarkerRecord {
+                id: marker_id.clone(),
+                wellbore_id: wellbore_id.clone(),
+                source_asset_id: Some(source_asset_id.clone()),
+                name: row.name.clone(),
+                sequence_number,
+                marker_kind: row.marker_kind.clone(),
+                top_measurement: VerticalMeasurement {
+                    measurement_id: Some(format!("{}:top", marker_id.0.clone())),
+                    value: row.top_depth,
+                    unit: None,
+                    path: measurement_path.clone(),
+                    coordinate_reference: None,
+                    reference_measurement_id: None,
+                    reference_entity_id: None,
+                    source: row.source.clone(),
+                    description: row.source_depth_reference.clone(),
+                },
+                base_measurement: row.base_depth.map(|value| VerticalMeasurement {
+                    measurement_id: Some(format!("{}:base", marker_id.0.clone())),
+                    value,
+                    unit: None,
+                    path: measurement_path,
+                    coordinate_reference: None,
+                    reference_measurement_id: None,
+                    reference_entity_id: None,
+                    source: row.source.clone(),
+                    description: row.source_depth_reference.clone(),
+                }),
+                depth_reference: row.source_depth_reference.clone(),
+                source: row.source.clone(),
+                external_references: Vec::new(),
+                notes,
+            }
+        })
+        .collect()
+}
+
 fn identifiers_from_binding(binding: &AssetBindingInput) -> WellIdentifierSet {
     WellIdentifierSet {
         primary_name: Some(binding.well_name.clone()),
@@ -7803,6 +10874,8 @@ fn structured_asset_extent(
         index_kind: match asset_kind {
             AssetKind::Trajectory
             | AssetKind::TopSet
+            | AssetKind::WellMarkerSet
+            | AssetKind::WellMarkerHorizonResidualSet
             | AssetKind::PressureObservation
             | AssetKind::DrillingObservation
             | AssetKind::CheckshotVspObservationSet
@@ -7811,6 +10884,7 @@ fn structured_asset_extent(
             | AssetKind::WellTimeDepthAuthoredModel
             | AssetKind::WellTimeDepthModel => Some(IndexKind::Depth),
             AssetKind::Log => Some(IndexKind::Depth),
+            AssetKind::RawSourceBundle => None,
             AssetKind::SeismicTraceData => Some(IndexKind::Time),
         },
         start: extent.0,
@@ -7896,6 +10970,403 @@ fn write_well_time_depth_authored_model_package(
 ) -> Result<()> {
     validate_well_time_depth_authored_model(model)?;
     write_well_time_depth_json_package(package_root, WELL_TIME_DEPTH_AUTHORED_MODEL_FILENAME, model)
+}
+
+pub fn preview_well_time_depth_json_asset(
+    source_path: &Path,
+    asset_kind: AssetKind,
+) -> Result<ProjectWellTimeDepthAssetPreview> {
+    preview_well_time_depth_json_asset_bytes(source_path, &fs::read(source_path)?, asset_kind)
+}
+
+pub fn preview_well_time_depth_json_payload(
+    source_path: &Path,
+    json_payload: &str,
+    asset_kind: AssetKind,
+) -> Result<ProjectWellTimeDepthAssetPreview> {
+    preview_well_time_depth_json_asset_bytes(source_path, json_payload.as_bytes(), asset_kind)
+}
+
+pub fn preview_well_time_depth_import_draft(
+    source_path: &Path,
+    json_payload: Option<&str>,
+    asset_kind: AssetKind,
+    collection_name: Option<&str>,
+) -> Result<ProjectWellTimeDepthImportPreview> {
+    let parsed = if let Some(json_payload) = json_payload {
+        preview_well_time_depth_json_payload(source_path, json_payload, asset_kind.clone())?
+    } else {
+        preview_well_time_depth_json_asset(source_path, asset_kind.clone())?
+    };
+    Ok(ProjectWellTimeDepthImportPreview {
+        suggested_draft: ProjectWellTimeDepthImportCanonicalDraft {
+            asset_kind: asset_kind.as_str().to_string(),
+            json_payload: parsed.raw_json.clone(),
+            collection_name: collection_name
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned),
+        },
+        parsed,
+    })
+}
+
+fn preview_well_time_depth_json_asset_bytes(
+    source_path: &Path,
+    raw_bytes: &[u8],
+    asset_kind: AssetKind,
+) -> Result<ProjectWellTimeDepthAssetPreview> {
+    let raw_value: serde_json::Value = serde_json::from_slice(raw_bytes).map_err(|error| {
+        LasError::Parse(format!(
+            "failed to parse well time-depth json '{}': {error}",
+            source_path.display()
+        ))
+    })?;
+    let raw_json = serde_json::to_string_pretty(&raw_value)
+        .unwrap_or_else(|_| String::from_utf8_lossy(raw_bytes).into_owned());
+    let mut preview =
+        build_well_time_depth_asset_preview(source_path, &asset_kind, &raw_value, raw_json);
+    preview
+        .issues
+        .extend(required_well_time_depth_preview_issues(
+            &raw_value,
+            &asset_kind,
+        ));
+    preview.can_import = match asset_kind {
+        AssetKind::CheckshotVspObservationSet => {
+            preview_checkshot_vsp_asset(&raw_value, source_path, &mut preview)
+        }
+        AssetKind::ManualTimeDepthPickSet => {
+            preview_manual_time_depth_pick_asset(&raw_value, source_path, &mut preview)
+        }
+        AssetKind::WellTieObservationSet => {
+            preview_well_tie_observation_asset(&raw_value, source_path, &mut preview)
+        }
+        AssetKind::WellTimeDepthAuthoredModel => {
+            preview_well_time_depth_authored_asset(&raw_value, source_path, &mut preview)
+        }
+        AssetKind::WellTimeDepthModel => {
+            preview_well_time_depth_model_asset(&raw_value, source_path, &mut preview)
+        }
+        other => {
+            preview.issues.push(project_well_time_depth_preview_issue(
+                ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+                "unsupported_asset_kind",
+                format!(
+                    "asset kind '{}' is not supported by the well time-depth preview",
+                    other.as_str()
+                ),
+            ));
+            false
+        }
+    };
+    Ok(preview)
+}
+
+fn build_well_time_depth_asset_preview(
+    source_path: &Path,
+    asset_kind: &AssetKind,
+    raw_value: &serde_json::Value,
+    raw_json: String,
+) -> ProjectWellTimeDepthAssetPreview {
+    ProjectWellTimeDepthAssetPreview {
+        asset_kind: asset_kind.as_str().to_string(),
+        json_path: source_path.to_string_lossy().into_owned(),
+        can_import: false,
+        id: preview_string_field(raw_value, "id"),
+        name: preview_string_field(raw_value, "name"),
+        wellbore_id: preview_string_field(raw_value, "wellbore_id"),
+        depth_reference: preview_string_field(raw_value, "depth_reference"),
+        travel_time_reference: preview_string_field(raw_value, "travel_time_reference"),
+        sample_count: preview_array_len_field(raw_value, "samples"),
+        note_count: preview_array_len_field(raw_value, "notes"),
+        source_kind: preview_string_field(raw_value, "source_kind"),
+        source_binding_count: preview_array_len_field(raw_value, "source_bindings"),
+        assumption_interval_count: preview_array_len_field(raw_value, "assumption_intervals"),
+        sampling_step_m: preview_number_field(raw_value, "sampling_step_m"),
+        resolved_trajectory_fingerprint: preview_string_field(
+            raw_value,
+            "resolved_trajectory_fingerprint",
+        ),
+        source_well_time_depth_model_asset_id: preview_string_field(
+            raw_value,
+            "source_well_time_depth_model_asset_id",
+        ),
+        tie_window_start_ms: preview_number_field(raw_value, "tie_window_start_ms"),
+        tie_window_end_ms: preview_number_field(raw_value, "tie_window_end_ms"),
+        trace_search_radius_m: preview_number_field(raw_value, "trace_search_radius_m"),
+        bulk_shift_ms: preview_number_field(raw_value, "bulk_shift_ms"),
+        stretch_factor: preview_number_field(raw_value, "stretch_factor"),
+        trace_search_offset_m: preview_number_field(raw_value, "trace_search_offset_m"),
+        correlation: preview_number_field(raw_value, "correlation"),
+        issues: Vec::new(),
+        raw_json,
+    }
+}
+
+fn required_well_time_depth_preview_issues(
+    raw_value: &serde_json::Value,
+    asset_kind: &AssetKind,
+) -> Vec<ProjectWellTimeDepthPreviewIssue> {
+    let Some(object) = raw_value.as_object() else {
+        return vec![project_well_time_depth_preview_issue(
+            ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+            "invalid_root",
+            "well time-depth json must contain a top-level object",
+        )];
+    };
+    let required_fields: &[&str] = match asset_kind {
+        AssetKind::CheckshotVspObservationSet
+        | AssetKind::ManualTimeDepthPickSet
+        | AssetKind::WellTieObservationSet => &[
+            "id",
+            "name",
+            "depth_reference",
+            "travel_time_reference",
+            "samples",
+        ],
+        AssetKind::WellTimeDepthAuthoredModel => &[
+            "id",
+            "name",
+            "wellbore_id",
+            "resolved_trajectory_fingerprint",
+            "depth_reference",
+            "travel_time_reference",
+            "source_bindings",
+            "assumption_intervals",
+        ],
+        AssetKind::WellTimeDepthModel => &[
+            "id",
+            "name",
+            "source_kind",
+            "depth_reference",
+            "travel_time_reference",
+            "samples",
+        ],
+        _ => &[],
+    };
+    let mut issues = Vec::new();
+    for field in required_fields.iter().copied() {
+        if object.get(field).is_none() {
+            issues.push(project_well_time_depth_preview_issue(
+                ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+                format!("missing_{}", field),
+                format!(
+                    "required field '{}' is missing from the json payload",
+                    field
+                ),
+            ));
+        }
+    }
+    issues
+}
+
+fn preview_checkshot_vsp_asset(
+    raw_value: &serde_json::Value,
+    source_path: &Path,
+    preview: &mut ProjectWellTimeDepthAssetPreview,
+) -> bool {
+    match serde_json::from_value::<CheckshotVspObservationSet1D>(raw_value.clone()) {
+        Ok(observation_set) => match validate_checkshot_vsp_observation_set(&observation_set) {
+            Ok(()) => true,
+            Err(error) => {
+                preview.issues.push(project_well_time_depth_preview_issue(
+                    ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+                    "validation_failed",
+                    format!(
+                        "checkshot/VSP observation set cannot be imported yet: {}",
+                        error
+                    ),
+                ));
+                false
+            }
+        },
+        Err(error) => {
+            preview.issues.push(project_well_time_depth_preview_issue(
+                ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+                "parse_failed",
+                format!(
+                    "failed to decode checkshot/VSP observation set '{}': {}",
+                    source_path.display(),
+                    error
+                ),
+            ));
+            false
+        }
+    }
+}
+
+fn preview_manual_time_depth_pick_asset(
+    raw_value: &serde_json::Value,
+    source_path: &Path,
+    preview: &mut ProjectWellTimeDepthAssetPreview,
+) -> bool {
+    match serde_json::from_value::<ManualTimeDepthPickSet1D>(raw_value.clone()) {
+        Ok(pick_set) => match validate_manual_time_depth_pick_set(&pick_set) {
+            Ok(()) => true,
+            Err(error) => {
+                preview.issues.push(project_well_time_depth_preview_issue(
+                    ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+                    "validation_failed",
+                    format!(
+                        "manual time-depth pick set cannot be imported yet: {}",
+                        error
+                    ),
+                ));
+                false
+            }
+        },
+        Err(error) => {
+            preview.issues.push(project_well_time_depth_preview_issue(
+                ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+                "parse_failed",
+                format!(
+                    "failed to decode manual time-depth pick set '{}': {}",
+                    source_path.display(),
+                    error
+                ),
+            ));
+            false
+        }
+    }
+}
+
+fn preview_well_tie_observation_asset(
+    raw_value: &serde_json::Value,
+    source_path: &Path,
+    preview: &mut ProjectWellTimeDepthAssetPreview,
+) -> bool {
+    match serde_json::from_value::<WellTieObservationSet1D>(raw_value.clone()) {
+        Ok(observation_set) => match validate_well_tie_observation_set(&observation_set) {
+            Ok(()) => true,
+            Err(error) => {
+                preview.issues.push(project_well_time_depth_preview_issue(
+                    ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+                    "validation_failed",
+                    format!("well tie observation set cannot be imported yet: {}", error),
+                ));
+                false
+            }
+        },
+        Err(error) => {
+            preview.issues.push(project_well_time_depth_preview_issue(
+                ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+                "parse_failed",
+                format!(
+                    "failed to decode well tie observation set '{}': {}",
+                    source_path.display(),
+                    error
+                ),
+            ));
+            false
+        }
+    }
+}
+
+fn preview_well_time_depth_authored_asset(
+    raw_value: &serde_json::Value,
+    source_path: &Path,
+    preview: &mut ProjectWellTimeDepthAssetPreview,
+) -> bool {
+    match serde_json::from_value::<WellTimeDepthAuthoredModel1D>(raw_value.clone()) {
+        Ok(model) => match validate_well_time_depth_authored_model(&model) {
+            Ok(()) => true,
+            Err(error) => {
+                preview.issues.push(project_well_time_depth_preview_issue(
+                    ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+                    "validation_failed",
+                    format!(
+                        "well time-depth authored model cannot be imported yet: {}",
+                        error
+                    ),
+                ));
+                false
+            }
+        },
+        Err(error) => {
+            preview.issues.push(project_well_time_depth_preview_issue(
+                ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+                "parse_failed",
+                format!(
+                    "failed to decode well time-depth authored model '{}': {}",
+                    source_path.display(),
+                    error
+                ),
+            ));
+            false
+        }
+    }
+}
+
+fn preview_well_time_depth_model_asset(
+    raw_value: &serde_json::Value,
+    source_path: &Path,
+    preview: &mut ProjectWellTimeDepthAssetPreview,
+) -> bool {
+    match serde_json::from_value::<WellTimeDepthModel1D>(raw_value.clone()) {
+        Ok(model) => match validate_well_time_depth_model(&model) {
+            Ok(()) => true,
+            Err(error) => {
+                preview.issues.push(project_well_time_depth_preview_issue(
+                    ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+                    "validation_failed",
+                    format!("well time-depth model cannot be imported yet: {}", error),
+                ));
+                false
+            }
+        },
+        Err(error) => {
+            preview.issues.push(project_well_time_depth_preview_issue(
+                ProjectWellTimeDepthPreviewIssueSeverity::Blocking,
+                "parse_failed",
+                format!(
+                    "failed to decode well time-depth model '{}': {}",
+                    source_path.display(),
+                    error
+                ),
+            ));
+            false
+        }
+    }
+}
+
+fn preview_string_field(raw_value: &serde_json::Value, field_name: &str) -> Option<String> {
+    raw_value
+        .as_object()
+        .and_then(|object| object.get(field_name))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+}
+
+fn preview_array_len_field(raw_value: &serde_json::Value, field_name: &str) -> Option<usize> {
+    raw_value
+        .as_object()
+        .and_then(|object| object.get(field_name))
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+}
+
+fn preview_number_field(raw_value: &serde_json::Value, field_name: &str) -> Option<f64> {
+    raw_value
+        .as_object()
+        .and_then(|object| object.get(field_name))
+        .and_then(|value| match value {
+            serde_json::Value::Number(number) => number.as_f64(),
+            serde_json::Value::String(text) => text.parse::<f64>().ok(),
+            _ => None,
+        })
+}
+
+fn project_well_time_depth_preview_issue(
+    severity: ProjectWellTimeDepthPreviewIssueSeverity,
+    code: impl Into<String>,
+    message: impl Into<String>,
+) -> ProjectWellTimeDepthPreviewIssue {
+    ProjectWellTimeDepthPreviewIssue {
+        severity,
+        code: code.into(),
+        message: message.into(),
+    }
 }
 
 fn read_well_time_depth_model_package(package_root: &Path) -> Result<WellTimeDepthModel1D> {
@@ -8000,7 +11471,7 @@ fn coordinate_reference_dto(
     unit: Option<&str>,
 ) -> Option<CoordinateReferenceDto> {
     reference.map(|reference| CoordinateReferenceDto {
-        id: None,
+        id: reference.id.clone(),
         name: reference.name.clone(),
         geodetic_datum: reference.geodetic_datum.clone(),
         unit: unit.map(str::to_owned),
@@ -9613,11 +13084,10 @@ fn rock_physics_has_direct_binding(
         RockPhysicsCurveSemanticDto::ElasticImpedance => {
             direct_rock_physics_source(prepared, CurveSemanticType::ElasticImpedance).is_some()
         }
-        RockPhysicsCurveSemanticDto::ExtendedElasticImpedance => direct_rock_physics_source(
-            prepared,
-            CurveSemanticType::ExtendedElasticImpedance,
-        )
-        .is_some(),
+        RockPhysicsCurveSemanticDto::ExtendedElasticImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ExtendedElasticImpedance)
+                .is_some()
+        }
         RockPhysicsCurveSemanticDto::ShearImpedance => {
             direct_rock_physics_source(prepared, CurveSemanticType::ShearImpedance).is_some()
         }
@@ -9698,11 +13168,10 @@ fn rock_physics_semantic_is_available(
         RockPhysicsCurveSemanticDto::ElasticImpedance => {
             direct_rock_physics_source(prepared, CurveSemanticType::ElasticImpedance).is_some()
         }
-        RockPhysicsCurveSemanticDto::ExtendedElasticImpedance => direct_rock_physics_source(
-            prepared,
-            CurveSemanticType::ExtendedElasticImpedance,
-        )
-        .is_some(),
+        RockPhysicsCurveSemanticDto::ExtendedElasticImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ExtendedElasticImpedance)
+                .is_some()
+        }
         RockPhysicsCurveSemanticDto::ShearImpedance => {
             direct_rock_physics_source(prepared, CurveSemanticType::ShearImpedance).is_some()
                 || (rock_physics_semantic_is_available(
@@ -9857,11 +13326,10 @@ fn rock_physics_value_at_depth(
             direct_rock_physics_source(prepared, CurveSemanticType::ElasticImpedance)
                 .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
         }
-        RockPhysicsCurveSemanticDto::ExtendedElasticImpedance => direct_rock_physics_source(
-            prepared,
-            CurveSemanticType::ExtendedElasticImpedance,
-        )
-        .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m)),
+        RockPhysicsCurveSemanticDto::ExtendedElasticImpedance => {
+            direct_rock_physics_source(prepared, CurveSemanticType::ExtendedElasticImpedance)
+                .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
+        }
         RockPhysicsCurveSemanticDto::ShearImpedance => {
             direct_rock_physics_source(prepared, CurveSemanticType::ShearImpedance)
                 .and_then(|source| interpolate_prepared_curve(&source.prepared, depth_m))
@@ -10999,7 +14467,7 @@ fn coordinate_reference_descriptor_from_project(
     unit: Option<&str>,
 ) -> Option<CoordinateReferenceDescriptor> {
     reference.map(|value| CoordinateReferenceDescriptor {
-        id: None,
+        id: value.id.clone(),
         name: value.name.clone(),
         geodetic_datum: value.geodetic_datum.clone(),
         unit: unit.map(str::to_string),
@@ -11168,9 +14636,13 @@ fn source_fingerprint(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
     use ophiolite_seismic::{
-        CoordinateReferenceDescriptor, WellAzimuthReferenceKind, WellboreAnchorKind,
-        WellboreAnchorReference,
+        AxisSummaryF32, AxisSummaryI32, CoordinateReferenceBinding, CoordinateReferenceDescriptor,
+        CoordinateReferenceSource, DatasetId, GeometryDescriptor, GeometryProvenanceSummary,
+        GeometrySummary, ProjectedPoint2, ProjectedPolygon2, ProjectedVector2, SampleDataFidelity,
+        SurveyGridTransform, SurveySpatialAvailability, SurveySpatialDescriptor, TimeDepthDomain,
+        VolumeDescriptor, WellAzimuthReferenceKind, WellboreAnchorKind, WellboreAnchorReference,
     };
+    use std::path::PathBuf;
 
     #[test]
     fn resolve_wellbore_trajectory_projects_offsets_from_anchor() {
@@ -11591,6 +15063,57 @@ mod tests {
     }
 
     #[test]
+    fn preview_well_time_depth_import_draft_preserves_partial_payload() {
+        let root =
+            temp_project_root("preview_well_time_depth_import_draft_preserves_partial_payload");
+        fs::create_dir_all(&root).unwrap();
+        let model_path = root.join("partial-well-model.json");
+        fs::write(
+            &model_path,
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "id": "partial-model",
+                "depth_reference": "true_vertical_depth",
+                "travel_time_reference": "two_way",
+                "samples": [
+                    { "depth": 0.0, "time_ms": 0.0 }
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let preview = preview_well_time_depth_import_draft(
+            &model_path,
+            None,
+            AssetKind::WellTimeDepthModel,
+            Some("draft collection"),
+        )
+        .unwrap();
+
+        assert_eq!(preview.suggested_draft.asset_kind, "well_time_depth_model");
+        assert_eq!(
+            preview.suggested_draft.collection_name.as_deref(),
+            Some("draft collection")
+        );
+        assert!(
+            preview
+                .suggested_draft
+                .json_payload
+                .contains("\"partial-model\"")
+        );
+        assert!(!preview.parsed.can_import);
+        assert!(
+            preview
+                .parsed
+                .issues
+                .iter()
+                .any(|issue| issue.code == "missing_name")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn analyze_well_tie_from_model_builds_log_derived_payload() {
         let root = temp_project_root("analyze_well_tie_from_model_builds_log_derived_payload");
         fs::create_dir_all(&root).unwrap();
@@ -11728,7 +15251,7 @@ mod tests {
         let entrypoint_path = package_root.join("acme_ops.py");
         fs::write(
             &entrypoint_path,
-            r#"from ophiolite_sdk import OperatorRegistry, computed_curve
+            r#"from ophiolite_sdk.operators import OperatorRegistry, computed_curve
 import sys
 
 registry = OperatorRegistry()
@@ -11867,6 +15390,253 @@ def double_curve(request):
         assert_eq!(derived_values.first().copied(), Some(246.9));
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn import_raw_source_bundle_into_project_archive_registers_project_owner() {
+        let root = temp_project_root(
+            "import_raw_source_bundle_into_project_archive_registers_project_owner",
+        );
+        fs::create_dir_all(&root).unwrap();
+        let source_path = root.join("fault.txt");
+        fs::write(&source_path, "fault export").unwrap();
+
+        let mut project = OphioliteProject::create(&root).unwrap();
+        let result = project
+            .import_raw_source_bundle_into_project_archive(
+                &[source_path.as_path()],
+                Some("Fault Export"),
+            )
+            .unwrap();
+        let owner = project
+            .collection_owner_binding(&result.collection.id)
+            .unwrap();
+
+        assert_eq!(owner.scope, AssetOwnerScope::Project);
+        assert_eq!(owner.owner_id, PROJECT_ARCHIVE_OWNER_ID);
+        assert_eq!(owner.display_name, PROJECT_ARCHIVE_OWNER_NAME);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn project_well_overlay_inventory_reports_survey_owned_seismic_assets() {
+        let root =
+            temp_project_root("project_well_overlay_inventory_reports_survey_owned_seismic_assets");
+        fs::create_dir_all(&root).unwrap();
+
+        let project = OphioliteProject::create(&root).unwrap();
+        let binding = AssetBindingInput {
+            well_name: "Survey Anchor".to_string(),
+            wellbore_name: "Survey Anchor".to_string(),
+            uwi: None,
+            api: None,
+            operator_aliases: Vec::new(),
+        };
+        let resolution = project.ensure_well_binding(&binding).unwrap();
+        let collection = project
+            .resolve_or_create_collection(
+                &resolution.wellbore_id,
+                AssetKind::SeismicTraceData,
+                "F3 Survey",
+            )
+            .unwrap();
+        project
+            .bind_collection_owner(
+                &collection.id,
+                &AssetOwnerBinding {
+                    scope: AssetOwnerScope::Survey,
+                    owner_id: collection.logical_asset_id.0.clone(),
+                    display_name: "F3 Survey".to_string(),
+                },
+            )
+            .unwrap();
+
+        let metadata = test_seismic_asset_metadata("F3 Survey");
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(AssetKind::SeismicTraceData.asset_dir_name())
+            .join(format!("{}.ophiolite-asset", storage_asset_id.0));
+        let package_root = root.join(&package_rel_path);
+        fs::create_dir_all(&package_root).unwrap();
+        fs::write(
+            package_root.join("metadata.json"),
+            serde_json::to_vec_pretty(&metadata).unwrap(),
+        )
+        .unwrap();
+        let manifest = seismic_asset_manifest(
+            &package_root,
+            &metadata,
+            &resolution.well_id,
+            &resolution.wellbore_id,
+            &collection.id,
+            &collection.logical_asset_id,
+            &storage_asset_id,
+            AssetKind::SeismicTraceData,
+            WellIdentifierSet {
+                primary_name: Some("Survey Anchor".to_string()),
+                uwi: None,
+                api: None,
+                operator_aliases: Vec::new(),
+            },
+            None,
+        )
+        .unwrap();
+        let asset = AssetRecord {
+            id: storage_asset_id,
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: resolution.well_id.clone(),
+            wellbore_id: resolution.wellbore_id.clone(),
+            asset_kind: AssetKind::SeismicTraceData,
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest,
+        };
+        project.insert_asset(&asset, &package_rel_path).unwrap();
+
+        let inventory = project.project_well_overlay_inventory().unwrap();
+        assert_eq!(inventory.surveys.len(), 1);
+        assert_eq!(inventory.surveys[0].name, "F3 Survey");
+        assert_eq!(inventory.surveys[0].owner_scope, AssetOwnerScope::Survey);
+        assert_eq!(inventory.surveys[0].owner_id, collection.logical_asset_id.0);
+        assert_eq!(inventory.surveys[0].owner_name, "F3 Survey");
+        assert_eq!(inventory.surveys[0].well_name, "Survey Anchor");
+        assert_eq!(inventory.surveys[0].wellbore_name, "Survey Anchor");
+        assert_eq!(
+            inventory.surveys[0]
+                .effective_coordinate_reference_id
+                .as_deref(),
+            Some("EPSG:23031")
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    fn test_seismic_asset_metadata(label: &str) -> SeismicAssetMetadata {
+        let coordinate_reference = CoordinateReferenceDescriptor {
+            id: Some("EPSG:23031".to_string()),
+            name: Some("ED50 / UTM zone 31N".to_string()),
+            geodetic_datum: Some("ED50".to_string()),
+            unit: Some("m".to_string()),
+        };
+        let coordinate_reference_binding = CoordinateReferenceBinding {
+            detected: Some(coordinate_reference.clone()),
+            effective: Some(coordinate_reference.clone()),
+            source: CoordinateReferenceSource::ImportManifest,
+            notes: Vec::new(),
+        };
+        let descriptor = VolumeDescriptor {
+            id: DatasetId(format!("dataset:{label}")),
+            store_id: format!("store:{label}"),
+            label: label.to_string(),
+            shape: [2, 2, 2],
+            chunk_shape: [2, 2, 2],
+            sample_interval_ms: 4.0,
+            sample_data_fidelity: SampleDataFidelity::default(),
+            geometry: GeometryDescriptor {
+                compare_family: "poststack_3d".to_string(),
+                fingerprint: format!("fingerprint:{label}"),
+                summary: GeometrySummary {
+                    inline_axis: AxisSummaryI32 {
+                        count: 2,
+                        first: 100,
+                        last: 101,
+                        step: Some(1),
+                        regular: true,
+                    },
+                    xline_axis: AxisSummaryI32 {
+                        count: 2,
+                        first: 200,
+                        last: 201,
+                        step: Some(1),
+                        regular: true,
+                    },
+                    sample_axis: AxisSummaryF32 {
+                        count: 2,
+                        first: 0.0,
+                        last: 4.0,
+                        step: Some(4.0),
+                        regular: true,
+                        units: Some("ms".to_string()),
+                    },
+                    layout: Some(ophiolite_seismic::SeismicLayout::PostStack3D),
+                    gather_axis_kind: None,
+                    gather_axis: None,
+                    provenance: GeometryProvenanceSummary::Source,
+                },
+            },
+            coordinate_reference_binding: Some(coordinate_reference_binding.clone()),
+            spatial: Some(SurveySpatialDescriptor {
+                coordinate_reference: Some(coordinate_reference.clone()),
+                grid_transform: Some(SurveyGridTransform {
+                    origin: ProjectedPoint2 { x: 0.0, y: 0.0 },
+                    inline_basis: ProjectedVector2 { x: 25.0, y: 0.0 },
+                    xline_basis: ProjectedVector2 { x: 0.0, y: 25.0 },
+                }),
+                footprint: Some(ProjectedPolygon2 {
+                    exterior: vec![
+                        ProjectedPoint2 { x: 0.0, y: 0.0 },
+                        ProjectedPoint2 { x: 50.0, y: 0.0 },
+                        ProjectedPoint2 { x: 50.0, y: 50.0 },
+                        ProjectedPoint2 { x: 0.0, y: 50.0 },
+                    ],
+                }),
+                availability: SurveySpatialAvailability::Available,
+                notes: Vec::new(),
+            }),
+            processing_lineage_summary: None,
+        };
+        let volume = ophiolite_seismic_runtime::VolumeMetadata {
+            kind: ophiolite_seismic_runtime::DatasetKind::Source,
+            store_id: descriptor.store_id.clone(),
+            source: ophiolite_seismic_runtime::SourceIdentity {
+                source_path: PathBuf::from(format!("/tmp/{label}.segy")),
+                file_size: 1,
+                trace_count: 4,
+                samples_per_trace: 2,
+                sample_interval_us: 4000,
+                sample_format_code: 5,
+                sample_data_fidelity: SampleDataFidelity::default(),
+                endianness: "little".to_string(),
+                revision_raw: 0,
+                fixed_length_trace_flag_raw: 1,
+                extended_textual_headers: 0,
+                geometry: ophiolite_seismic_runtime::GeometryProvenance {
+                    inline_field: ophiolite_seismic_runtime::HeaderFieldSpec {
+                        name: "INLINE_3D".to_string(),
+                        start_byte: 189,
+                        value_type: "i32".to_string(),
+                    },
+                    crossline_field: ophiolite_seismic_runtime::HeaderFieldSpec {
+                        name: "CROSSLINE_3D".to_string(),
+                        start_byte: 193,
+                        value_type: "i32".to_string(),
+                    },
+                    third_axis_field: None,
+                },
+                regularization: None,
+            },
+            shape: [2, 2, 2],
+            axes: ophiolite_seismic_runtime::VolumeAxes::with_vertical_axis(
+                vec![100.0, 101.0],
+                vec![200.0, 201.0],
+                TimeDepthDomain::Time,
+                "ms".to_string(),
+                vec![0.0, 4.0],
+            ),
+            segy_export: None,
+            coordinate_reference_binding: Some(coordinate_reference_binding),
+            spatial: descriptor.spatial.clone(),
+            created_by: "test".to_string(),
+            processing_lineage: None,
+        };
+        SeismicAssetMetadata {
+            family: SeismicAssetFamily::Volume,
+            trace_data_descriptor: SeismicTraceDataDescriptor::from(&descriptor),
+            descriptor,
+            store: TbvolManifest::new(volume, [2, 2, 2], false),
+        }
     }
 
     fn temp_project_root(test_name: &str) -> PathBuf {

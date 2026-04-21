@@ -1,4 +1,15 @@
-export type ToolbarIconName = "pointer" | "crosshair" | "pan" | "orbit" | "fitToData" | "settings";
+export type ToolbarIconName =
+  | "pointer"
+  | "crosshair"
+  | "pan"
+  | "orbit"
+  | "sliceDrag"
+  | "fitToData"
+  | "topView"
+  | "sideView"
+  | "resetView"
+  | "centerSelection"
+  | "settings";
 
 export interface ChartToolbarToolItem<TTool extends string = string> {
   id: TTool;

@@ -3748,6 +3748,7 @@
         "asset_name",
         "curve_name",
         "depths",
+        "log_type",
         "logical_asset_id",
         "original_mnemonic",
         "semantic_type",
@@ -3769,6 +3770,9 @@
             "type": "number",
             "format": "double"
           }
+        },
+        "log_type": {
+          "type": "string"
         },
         "logical_asset_id": {
           "type": "string"
@@ -3953,7 +3957,13 @@
           ],
           "format": "double"
         },
-        "depth_reference": {
+        "depth_datum": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "depth_domain": {
           "type": [
             "string",
             "null"
@@ -3963,6 +3973,12 @@
           "type": "string"
         },
         "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_depth_reference": {
           "type": [
             "string",
             "null"
@@ -3999,6 +4015,10 @@
           "items": {
             "$ref": "#/definitions/WellPanelTopRowDto"
           }
+        },
+        "set_kind": {
+          "default": "top_set",
+          "type": "string"
         }
       },
       "definitions": {
@@ -4016,7 +4036,13 @@
               ],
               "format": "double"
             },
-            "depth_reference": {
+            "depth_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "depth_domain": {
               "type": [
                 "string",
                 "null"
@@ -4026,6 +4052,12 @@
               "type": "string"
             },
             "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_depth_reference": {
               "type": [
                 "string",
                 "null"
@@ -4423,6 +4455,7 @@
             "asset_name",
             "curve_name",
             "depths",
+            "log_type",
             "logical_asset_id",
             "original_mnemonic",
             "semantic_type",
@@ -4444,6 +4477,9 @@
                 "type": "number",
                 "format": "double"
               }
+            },
+            "log_type": {
+              "type": "string"
             },
             "logical_asset_id": {
               "type": "string"
@@ -4549,7 +4585,13 @@
               ],
               "format": "double"
             },
-            "depth_reference": {
+            "depth_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "depth_domain": {
               "type": [
                 "string",
                 "null"
@@ -4559,6 +4601,12 @@
               "type": "string"
             },
             "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_depth_reference": {
               "type": [
                 "string",
                 "null"
@@ -4593,6 +4641,10 @@
               "items": {
                 "$ref": "#/definitions/WellPanelTopRowDto"
               }
+            },
+            "set_kind": {
+              "default": "top_set",
+              "type": "string"
             }
           }
         },
@@ -4866,6 +4918,7 @@
             "asset_name",
             "curve_name",
             "depths",
+            "log_type",
             "logical_asset_id",
             "original_mnemonic",
             "semantic_type",
@@ -4887,6 +4940,9 @@
                 "type": "number",
                 "format": "double"
               }
+            },
+            "log_type": {
+              "type": "string"
             },
             "logical_asset_id": {
               "type": "string"
@@ -4992,7 +5048,13 @@
               ],
               "format": "double"
             },
-            "depth_reference": {
+            "depth_datum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "depth_domain": {
               "type": [
                 "string",
                 "null"
@@ -5002,6 +5064,12 @@
               "type": "string"
             },
             "source": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_depth_reference": {
               "type": [
                 "string",
                 "null"
@@ -5036,6 +5104,10 @@
               "items": {
                 "$ref": "#/definitions/WellPanelTopRowDto"
               }
+            },
+            "set_kind": {
+              "default": "top_set",
+              "type": "string"
             }
           }
         },

@@ -20,3 +20,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
 ts-rs = { workspace = true }
+ndarray = "0.17"
+
+[dev-dependencies]

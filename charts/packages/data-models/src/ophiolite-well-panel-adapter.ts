@@ -236,7 +236,7 @@ function adaptTopSetAsset(
       metadata: {
         baseDepth: normalizeOptionalNumber(row.base_depth) ?? null,
         source: row.source ?? null,
-        depthReference: row.depth_reference ?? null
+        depthReference: row.source_depth_reference ?? null
       }
     } satisfies WellPanelTop))
   };

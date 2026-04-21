@@ -1,0 +1,23 @@
+{
+  "name": "@ophiolite/charts-jupyter-host",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ophiolite/charts": "workspace:*",
+    "@ophiolite/charts-data-models": "workspace:*",
+    "svelte": "^5.0.0"
+  },
+  "scripts": {
+    "build": "bun ./build.mjs",
+    "typecheck": "svelte-check --tsconfig tsconfig.json"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "svelte-check": "^4.3.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.10"
+  }
+}

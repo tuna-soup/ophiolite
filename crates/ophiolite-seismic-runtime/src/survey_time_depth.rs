@@ -580,6 +580,7 @@ pub fn build_survey_property_field(
         &request.model,
         &request.control_profile_sets,
         Some(request.preferred_velocity_kind),
+        false,
         &request.property_name,
         &request.property_unit,
         request.output_id.clone(),
@@ -621,6 +622,7 @@ pub fn build_survey_time_depth_transform(
         &request.model,
         &request.control_profile_sets,
         request.preferred_velocity_kind,
+        true,
         "velocity",
         "m/s",
         request.output_id.clone(),
@@ -890,6 +892,7 @@ fn compile_velocity_field_payload(
     model: &ophiolite_seismic::LayeredVelocityModel,
     control_profile_sets: &[VelocityControlProfileSet],
     preferred_velocity_kind: Option<VelocityQuantityKind>,
+    allow_rms: bool,
     property_name: &str,
     property_unit: &str,
     output_id: Option<String>,
@@ -929,7 +932,7 @@ fn compile_velocity_field_payload(
     let intervals = resolve_supported_intervals_from_model(model)?;
     let preferred_velocity_kind =
         resolve_model_preferred_velocity_kind(preferred_velocity_kind, &intervals)?;
-    if preferred_velocity_kind == VelocityQuantityKind::Rms {
+    if !allow_rms && preferred_velocity_kind == VelocityQuantityKind::Rms {
         return Err(SeismicStoreError::Message(
             "survey property builders do not support RMS velocity yet; normalize to interval or average velocity first"
                 .to_string(),
@@ -2754,11 +2757,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [2, 2, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0],
-                    xlines: vec![200.0, 201.0],
-                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {
@@ -2897,11 +2900,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [2, 2, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0],
-                    xlines: vec![200.0, 201.0],
-                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {
@@ -3065,11 +3068,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [2, 2, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0],
-                    xlines: vec![200.0, 201.0],
-                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {
@@ -3239,11 +3242,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [1, 1, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0],
-                    xlines: vec![200.0],
-                    sample_axis_ms: vec![4.0, 8.0, 12.0, 16.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0],
+                    vec![200.0],
+                    vec![4.0, 8.0, 12.0, 16.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {
@@ -3392,11 +3395,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [2, 2, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0],
-                    xlines: vec![200.0, 201.0],
-                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {
@@ -3566,11 +3569,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [2, 2, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0],
-                    xlines: vec![200.0, 201.0],
-                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {

@@ -14,7 +14,12 @@ use seis_runtime::{
 use tempfile::tempdir;
 
 fn fixture_path(relative: &str) -> PathBuf {
-    find_monorepo_root().join("test-data").join(relative)
+    let root = find_monorepo_root();
+    if root.join("test-data").is_dir() {
+        root.join("test-data").join(relative)
+    } else {
+        root.join("test_data").join(relative)
+    }
 }
 
 fn find_monorepo_root() -> PathBuf {
@@ -22,7 +27,9 @@ fn find_monorepo_root() -> PathBuf {
         .canonicalize()
         .unwrap();
     for ancestor in start.ancestors() {
-        if ancestor.join("test-data").is_dir() && ancestor.join("io").is_dir() {
+        if ancestor.join("Cargo.lock").is_file()
+            && (ancestor.join("test-data").is_dir() || ancestor.join("test_data").is_dir())
+        {
             return ancestor.to_path_buf();
         }
     }
@@ -47,6 +54,21 @@ fn relocate_small_geometry_headers(path: &Path) {
         bytes[crossline_dst..crossline_dst + 4].copy_from_slice(&crossline);
         bytes[inline_src..inline_src + 4].fill(0);
         bytes[crossline_src..crossline_src + 4].fill(0);
+    }
+
+    fs::write(path, bytes).unwrap();
+}
+
+fn populate_small_offset_headers(path: &Path) {
+    let mut bytes = fs::read(path).unwrap();
+    let first_trace_offset = 3600usize;
+    let trace_size = 240 + (50 * 4);
+
+    for trace_index in 0..25 {
+        let trace_offset = first_trace_offset + trace_index * trace_size;
+        let offset_dst = trace_offset + 36;
+        let offset = i32::try_from(trace_index + 1).unwrap().to_be_bytes();
+        bytes[offset_dst..offset_dst + 4].copy_from_slice(&offset);
     }
 
     fs::write(path, bytes).unwrap();
@@ -207,6 +229,34 @@ fn ingest_accepts_explicit_header_mapping_for_nonstandard_dense_file() {
     assert_eq!(volume.data.shape(), &[5, 5, 50]);
     assert_eq!(volume.source.geometry.inline_field.start_byte, 17);
     assert_eq!(volume.source.geometry.crossline_field.start_byte, 25);
+}
+
+#[test]
+fn ingest_ignores_varying_offset_header_for_poststack_dense_file() {
+    let source_fixture = fixture_path("small.sgy");
+    if !source_fixture.exists() {
+        return;
+    }
+
+    let temp = tempdir().unwrap();
+    let segy_path = temp.path().join("small-offset-poststack.sgy");
+    let store_root = temp.path().join("small-offset-poststack.tbvol");
+    fs::copy(&source_fixture, &segy_path).unwrap();
+    populate_small_offset_headers(&segy_path);
+
+    let preflight = preflight_segy(&segy_path, &IngestOptions::default()).unwrap();
+    assert_eq!(
+        preflight.recommended_action,
+        PreflightAction::DirectDenseIngest
+    );
+
+    let expected =
+        load_source_volume_with_options(&source_fixture, &IngestOptions::default()).unwrap();
+    let handle = ingest_segy(&segy_path, &store_root, IngestOptions::default()).unwrap();
+    let actual = load_array(&handle).unwrap();
+
+    assert_eq!(actual.shape(), expected.data.shape());
+    assert_arrays_close(&actual, &expected.data);
 }
 
 #[test]

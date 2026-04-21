@@ -57,6 +57,11 @@ Regenerate the TypeScript artifact from the repo root with:
 .\scripts\generate-ts-contracts.ps1
 ```
 
+That script now runs both generators:
+
+- `cargo run -p contracts-export`
+- `cargo run -p traceboost-contracts-export`
+
 The generated output currently lives under:
 
 - `ts/seis-contracts/src/generated/`

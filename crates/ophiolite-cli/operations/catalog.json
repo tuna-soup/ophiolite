@@ -125,7 +125,7 @@
       "stability": "beta",
       "surfaces": ["rust-api", "rust-cli"],
       "bindings": {
-        "rust_function": "ophiolite::OphioliteProject::list_wells",
+        "rust_function": "ophiolite::OphioliteProject::well_summaries",
         "rust_cli": "list-project-wells"
       }
     },
@@ -137,8 +137,20 @@
       "stability": "beta",
       "surfaces": ["rust-api", "rust-cli"],
       "bindings": {
-        "rust_function": "ophiolite::OphioliteProject::list_wellbores",
+        "rust_function": "ophiolite::OphioliteProject::wellbore_summaries",
         "rust_cli": "list-project-wellbores"
+      }
+    },
+    {
+      "id": "ophiolite.list_project_surveys",
+      "summary": "List survey-backed seismic assets in a local Ophiolite project.",
+      "owner": "ophiolite",
+      "domain": "project",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::project_well_overlay_inventory",
+        "rust_cli": "list-project-surveys"
       }
     },
     {
@@ -178,6 +190,150 @@
       }
     },
     {
+      "id": "ophiolite.preview_well_folder_import",
+      "summary": "Inspect a well-folder import root and summarize discovered source families before commit.",
+      "owner": "ophiolite",
+      "domain": "well-import",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::preview_well_folder_import",
+        "rust_cli": "preview-well-folder-import"
+      }
+    },
+    {
+      "id": "ophiolite.preview_well_source_import",
+      "summary": "Preview selected well-source files against a source root before building a canonical import draft.",
+      "owner": "ophiolite",
+      "domain": "well-import",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::preview_well_source_import_sources",
+        "rust_cli": "preview-well-source-import"
+      }
+    },
+    {
+      "id": "ophiolite.scan_vendor_project",
+      "summary": "Scan a vendor project folder and return a schema-versioned inventory of import candidates.",
+      "owner": "ophiolite",
+      "domain": "vendor-import",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::scan_vendor_project",
+        "rust_cli": "vendor-scan"
+      }
+    },
+    {
+      "id": "ophiolite.plan_vendor_project_import",
+      "summary": "Freeze selected vendor objects into a vendor-import plan with warnings and blocking issues.",
+      "owner": "ophiolite",
+      "domain": "vendor-import",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::plan_vendor_project_import",
+        "rust_cli": "vendor-plan"
+      }
+    },
+    {
+      "id": "ophiolite.commit_vendor_project_import",
+      "summary": "Validate or execute a frozen vendor-import plan.",
+      "owner": "ophiolite",
+      "domain": "vendor-import",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::commit_vendor_project_import",
+        "rust_cli": "vendor-commit"
+      }
+    },
+    {
+      "id": "ophiolite.vendor_runtime_probe",
+      "summary": "Probe an external vendor runtime and capture structured visibility and open-status diagnostics.",
+      "owner": "ophiolite",
+      "domain": "vendor-import",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::probe_vendor_project_runtime",
+        "rust_cli": "vendor-runtime-probe"
+      }
+    },
+    {
+      "id": "ophiolite.vendor_connector_contract",
+      "summary": "Return the declared connector contract for a vendor import surface, including phases and provenance guarantees.",
+      "owner": "ophiolite",
+      "domain": "vendor-import",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::vendor_project_connector_contract",
+        "rust_cli": "vendor-connector-contract"
+      }
+    },
+    {
+      "id": "ophiolite.vendor_bridge_capabilities",
+      "summary": "Return the registered bridge capabilities for a vendor import connector.",
+      "owner": "ophiolite",
+      "domain": "vendor-import",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::vendor_project_bridge_capabilities",
+        "rust_cli": "vendor-bridge-capabilities"
+      }
+    },
+    {
+      "id": "ophiolite.vendor_bridge_run",
+      "summary": "Prepare or execute a bridge artifact for a selected vendor object.",
+      "owner": "ophiolite",
+      "domain": "vendor-import",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::run_vendor_project_bridge",
+        "rust_cli": "vendor-bridge-run"
+      }
+    },
+    {
+      "id": "ophiolite.vendor_bridge_commit",
+      "summary": "Run bridge preparation and then validate or execute canonical commit for a bridged vendor object.",
+      "owner": "ophiolite",
+      "domain": "vendor-import",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::bridge_commit_vendor_project_object",
+        "rust_cli": "vendor-bridge-commit"
+      }
+    },
+    {
+      "id": "ophiolite.inspect_horizon_xyz",
+      "summary": "Inspect horizon XYZ files and report parsed point counts, ranges, and parse issues.",
+      "owner": "ophiolite",
+      "domain": "seismic",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::inspect_horizon_xyz_files",
+        "rust_cli": "inspect-horizon-xyz"
+      }
+    },
+    {
+      "id": "ophiolite.preview_horizon_source_import",
+      "summary": "Preview canonical horizon import into a survey store using selected source files.",
+      "owner": "ophiolite",
+      "domain": "seismic",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::preview_horizon_source_import",
+        "rust_cli": "preview-horizon-source-import"
+      }
+    },
+    {
       "id": "ophiolite.list_asset_collections",
       "summary": "List asset collections grouped under a project wellbore.",
       "owner": "ophiolite",
@@ -205,9 +361,34 @@
       "owner": "ophiolite",
       "domain": "ingest",
       "stability": "beta",
-      "surfaces": ["rust-api"],
+      "surfaces": ["rust-api", "rust-cli"],
       "bindings": {
-        "rust_function": "ophiolite::OphioliteProject::import_las"
+        "rust_function": "ophiolite::OphioliteProject::import_las",
+        "rust_cli": "import-las-asset"
+      }
+    },
+    {
+      "id": "ophiolite.import_las_asset_with_binding",
+      "summary": "Import LAS into a project and bind it explicitly to a canonical wellbore.",
+      "owner": "ophiolite",
+      "domain": "ingest",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::import_las_with_binding",
+        "rust_cli": "import-las-asset-with-binding"
+      }
+    },
+    {
+      "id": "ophiolite.import_tops_source_with_binding",
+      "summary": "Import a supported tops text source into a project and bind it explicitly to a canonical wellbore.",
+      "owner": "ophiolite",
+      "domain": "ingest",
+      "stability": "beta",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::import_tops_source",
+        "rust_cli": "import-tops-source-with-binding"
       }
     },
     {
@@ -216,9 +397,10 @@
       "owner": "ophiolite",
       "domain": "view",
       "stability": "beta",
-      "surfaces": ["rust-api"],
+      "surfaces": ["rust-api", "rust-cli"],
       "bindings": {
-        "rust_function": "ophiolite::OphioliteProject::resolve_well_panel_source"
+        "rust_function": "ophiolite::OphioliteProject::resolve_well_panel_source",
+        "rust_cli": "resolve-well-panel-source"
       }
     },
     {
@@ -227,9 +409,10 @@
       "owner": "ophiolite",
       "domain": "map",
       "stability": "beta",
-      "surfaces": ["rust-api"],
+      "surfaces": ["rust-api", "rust-cli"],
       "bindings": {
-        "rust_function": "ophiolite::OphioliteProject::resolve_survey_map_source"
+        "rust_function": "ophiolite::OphioliteProject::resolve_survey_map_source",
+        "rust_cli": "resolve-survey-map-source"
       }
     },
     {
@@ -238,9 +421,10 @@
       "owner": "ophiolite",
       "domain": "geometry",
       "stability": "beta",
-      "surfaces": ["rust-api"],
+      "surfaces": ["rust-api", "rust-cli"],
       "bindings": {
-        "rust_function": "ophiolite::OphioliteProject::resolve_wellbore_trajectory"
+        "rust_function": "ophiolite::OphioliteProject::resolve_wellbore_trajectory",
+        "rust_cli": "resolve-wellbore-trajectory"
       }
     },
     {
@@ -249,9 +433,10 @@
       "owner": "ophiolite",
       "domain": "geometry",
       "stability": "beta",
-      "surfaces": ["rust-api"],
+      "surfaces": ["rust-api", "rust-cli"],
       "bindings": {
-        "rust_function": "ophiolite::OphioliteProject::resolve_section_well_overlays"
+        "rust_function": "ophiolite::OphioliteProject::resolve_section_well_overlays",
+        "rust_cli": "resolve-section-well-overlays"
       }
     },
     {

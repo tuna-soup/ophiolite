@@ -20,10 +20,10 @@ export interface SurveyMapViewMetrics {
 }
 
 export const SURVEY_MAP_MARGIN = {
-  top: 18,
-  right: 58,
-  bottom: 34,
-  left: 48
+  top: 56,
+  right: 104,
+  bottom: 68,
+  left: 88
 } as const;
 
 export function getSurveyMapPlotRect(width: number, height: number): SurveyMapRect {

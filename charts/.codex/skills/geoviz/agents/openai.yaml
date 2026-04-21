@@ -1,4 +1,0 @@
-interface:
-  display_name: "Geoviz"
-  short_description: "Build geoviz charts and wrappers without breaking SDK boundaries"
-  default_prompt: "Use $geoviz when adding or changing geoviz charts, overlay APIs, intrinsic sizing, or embedder-facing wrapper behavior."

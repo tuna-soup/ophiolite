@@ -24,3 +24,15 @@ Public surfaces should be policy-driven, not random.
 - keep CLI strong for automation
 - keep Rust as the deepest exact surface
 - expose operators as a first-class extension model
+- keep the top-level Python package centered on stable domain nouns and typed workflow helpers
+- keep transport, platform-admin, and extension plumbing in explicit advanced namespaces
+
+## Python-specific rule
+
+For the Python surface:
+
+- built-in runtime capabilities should prefer typed workflow entrypoints
+- external operator authoring should stay under `ophiolite_sdk.operators`
+- charts, widgets, and app wrappers should not define the main public SDK identity
+
+See [Python SDK compatibility](/docs/advanced/python-sdk-compatibility/) for the current compatibility and deprecation expectations.

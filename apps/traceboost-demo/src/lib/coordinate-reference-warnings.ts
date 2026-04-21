@@ -11,6 +11,7 @@ export interface WorkspaceCoordinateReferenceWarningsInput {
   selectedProjectWellboreCanResolveProjectMap: boolean | null;
   selectedProjectWellboreReason: string | null;
   hasActiveDataset: boolean;
+  activeStoreAcceptedInNativeEngineering: boolean;
   displayCoordinateReferenceId: string | null;
   activeEffectiveNativeCoordinateReferenceId: string | null;
   activeSurveyMapTransformStatus: string | null;
@@ -76,18 +77,22 @@ export function buildWorkspaceCoordinateReferenceWarnings(
     return warnings;
   }
 
+  if (input.activeStoreAcceptedInNativeEngineering) {
+    pushUniqueWarning(warnings, input.surveyMapError);
+    for (const warning of input.surveyMapWellTransformWarnings) {
+      pushUniqueWarning(warnings, warning);
+    }
+    return warnings;
+  }
+
   if (input.displayCoordinateReferenceId && !input.activeEffectiveNativeCoordinateReferenceId) {
     pushUniqueWarning(
       warnings,
-      `Display CRS ${input.displayCoordinateReferenceId} is set, but the active survey has no effective native CRS. Assign a native CRS override before relying on cross-survey map alignment.`
-    );
-  } else if (!input.activeEffectiveNativeCoordinateReferenceId) {
-    pushUniqueWarning(
-      warnings,
-      "Active survey native CRS is unknown. Assign an override before relying on cross-survey map alignment."
+      `Display CRS ${input.displayCoordinateReferenceId} is set, but the active survey has no effective native CRS. To clear this alert, assign a matching survey CRS or switch display mode to native engineering coordinates.`
     );
   } else if (
     input.displayCoordinateReferenceId &&
+    input.activeEffectiveNativeCoordinateReferenceId &&
     input.displayCoordinateReferenceId.toLowerCase() !==
       input.activeEffectiveNativeCoordinateReferenceId.toLowerCase()
   ) {
@@ -95,17 +100,17 @@ export function buildWorkspaceCoordinateReferenceWarnings(
     if (transformStatus === "display_unavailable") {
       pushUniqueWarning(
         warnings,
-        `Display CRS ${input.displayCoordinateReferenceId} differs from active survey native CRS ${input.activeEffectiveNativeCoordinateReferenceId}, but no display transform is currently available.`
+        `Display CRS ${input.displayCoordinateReferenceId} differs from active survey native CRS ${input.activeEffectiveNativeCoordinateReferenceId}, but no display transform is currently available. To clear this alert, assign survey CRS ${input.displayCoordinateReferenceId}, switch display mode to native engineering coordinates, or choose a display CRS that matches ${input.activeEffectiveNativeCoordinateReferenceId}.`
       );
     } else if (transformStatus === "display_degraded") {
       pushUniqueWarning(
         warnings,
-        `Display CRS ${input.displayCoordinateReferenceId} differs from active survey native CRS ${input.activeEffectiveNativeCoordinateReferenceId}. The current map preview uses a degraded transform.`
+        `Display CRS ${input.displayCoordinateReferenceId} differs from active survey native CRS ${input.activeEffectiveNativeCoordinateReferenceId}. The current map preview uses a degraded transform. To clear this alert, assign survey CRS ${input.displayCoordinateReferenceId}, switch display mode to native engineering coordinates, or choose a display CRS that matches ${input.activeEffectiveNativeCoordinateReferenceId}.`
       );
     } else if (transformStatus === "native_only") {
       pushUniqueWarning(
         warnings,
-        `Display CRS ${input.displayCoordinateReferenceId} differs from active survey native CRS ${input.activeEffectiveNativeCoordinateReferenceId}. The current map preview is still in native coordinates.`
+        `Display CRS ${input.displayCoordinateReferenceId} differs from active survey native CRS ${input.activeEffectiveNativeCoordinateReferenceId}. The current map preview is still in native coordinates. To clear this alert, assign survey CRS ${input.displayCoordinateReferenceId}, switch display mode to native engineering coordinates, or choose a display CRS that matches ${input.activeEffectiveNativeCoordinateReferenceId}.`
       );
     }
   }

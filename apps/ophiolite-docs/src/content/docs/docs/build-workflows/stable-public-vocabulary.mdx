@@ -1,0 +1,79 @@
+---
+title: Stable Public Vocabulary
+description: The durable nouns and typed workflow terms that should define the Ophiolite Python story.
+draft: false
+---
+
+**Audience:** Python builders and API evaluators  
+**Status:** Preview
+
+Ophiolite should teach stable nouns before internal modules, transport DTOs, or app-specific wrappers.
+
+This is the current public vocabulary to optimize for.
+
+## Core nouns
+
+These are the main builder nouns that should remain easy to recognize:
+
+- `Project`
+- `Survey`
+- `Well`
+- `Wellbore`
+- `WellboreBinding`
+
+These describe the canonical local object graph. They should stay more durable than any one ingest path, app shell, or transport detail.
+
+## Typed workflow terms
+
+These are the public terms that expose built-in workflow composition:
+
+### Log and AVO
+
+- `ElasticChannelBindings`
+- `LayeringSpec`
+- `AngleSampling`
+- `AvoExperiment`
+- `AvoResult.response_source(...)`
+- `AvoResult.crossplot_source(...)`
+
+### Seismic processing
+
+- `TraceBoostApp`
+- `SeismicDataset`
+- `SectionSelection`
+- `TraceProcessingPipeline`
+- `BandpassFilter`
+- `RmsAgc`
+
+These are not generic request wrappers. They are public workflow terms that should read like actual subsurface work.
+
+## Advanced namespaces
+
+These namespaces are public, but they should not define the first-contact story:
+
+- `ophiolite_sdk.analysis`
+- `ophiolite_sdk.avo`
+- `ophiolite_sdk.operators`
+- `ophiolite_sdk.platform`
+- `ophiolite_sdk.interop`
+
+Use them when you need lower-level control, extension hooks, or compatibility-facing access.
+
+## What should stay out of the main vocabulary
+
+These should not become the public identity of the SDK:
+
+- raw request and response DTOs as the main learning path
+- storage internals
+- app-local wrappers
+- charts and notebook widget hosts
+
+Those surfaces can be useful, but they are secondary integration layers.
+
+## Practical rule
+
+If a builder can describe the workflow using domain nouns and typed operators, prefer that API shape.
+
+If the surface mainly exists to mirror transport, admin, or extension plumbing, keep it in an advanced namespace.
+
+Next: [Built-in operator workflows](/docs/build-workflows/built-in-operator-workflows/)

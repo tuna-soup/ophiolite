@@ -3,4 +3,4 @@ import type { DatasetRegistryStatus } from "./DatasetRegistryStatus";
 import type { DatasetSummary } from "./DatasetSummary";
 import type { WorkspacePipelineEntry } from "./WorkspacePipelineEntry";
 
-export type DatasetRegistryEntry = { entry_id: string, display_name: string, source_path: string | null, preferred_store_path: string | null, imported_store_path: string | null, last_dataset: DatasetSummary | null, session_pipelines: Array<WorkspacePipelineEntry>, active_session_pipeline_id: string | null, status: DatasetRegistryStatus, last_opened_at_unix_s: number | null, last_imported_at_unix_s: number | null, updated_at_unix_s: number, };
+export type DatasetRegistryEntry = { entry_id: string, display_name: string, source_path: string | null, preferred_store_path: string | null, imported_store_path: string | null, last_dataset: DatasetSummary | null, session_pipelines: Array<WorkspacePipelineEntry>, active_session_pipeline_id: string | null, status: DatasetRegistryStatus, last_opened_at_unix_s: bigint | null, last_imported_at_unix_s: bigint | null, updated_at_unix_s: bigint, };

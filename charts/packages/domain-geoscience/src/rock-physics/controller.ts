@@ -4,10 +4,12 @@ import {
   getRockPhysicsCrossplotPlotRect,
   rockPhysicsScreenToValue,
   valueToRockPhysicsScreenX,
-  valueToRockPhysicsScreenY
+  valueToRockPhysicsScreenY,
+  cloneCartesianAxisOverrides
 } from "@ophiolite/charts-core";
 import { InteractionManager } from "@ophiolite/charts-core";
 import type {
+  CartesianAxisOverrides,
   InteractionCapabilities,
   InteractionEvent,
   RockPhysicsCrossplotModel,
@@ -22,6 +24,7 @@ const ROCK_PHYSICS_INTERACTION_CAPABILITIES: InteractionCapabilities = {
 };
 
 const POINT_HIT_RADIUS_PX = 10;
+const MIN_ZOOM_RECT_SCREEN_PX = 4;
 
 export class RockPhysicsCrossplotController {
   private container: HTMLElement | null = null;
@@ -33,6 +36,7 @@ export class RockPhysicsCrossplotController {
     model: null,
     viewport: null,
     probe: null,
+    axisOverrides: {},
     interactions: this.interactions.getState()
   };
 
@@ -57,6 +61,8 @@ export class RockPhysicsCrossplotController {
     this.state.model = model;
     this.state.viewport = fitRockPhysicsViewport(model);
     this.state.probe = null;
+    this.state.axisOverrides = {};
+    this.interactions.cancelSession();
     this.interactions.setHoverTarget(null);
     this.render();
   }
@@ -68,6 +74,11 @@ export class RockPhysicsCrossplotController {
 
   setViewport(viewport: RockPhysicsCrossplotViewport | null): void {
     this.state.viewport = clampRockPhysicsViewport(this.state.model, viewport);
+    this.render();
+  }
+
+  setAxisOverrides(axisOverrides: CartesianAxisOverrides | null | undefined): void {
+    this.state.axisOverrides = cloneCartesianAxisOverrides(axisOverrides);
     this.render();
   }
 
@@ -116,6 +127,7 @@ export class RockPhysicsCrossplotController {
 
   blur(): void {
     this.interactions.setFocused(false);
+    this.interactions.cancelSession();
     this.clearPointer();
   }
 
@@ -134,6 +146,17 @@ export class RockPhysicsCrossplotController {
     }
 
     const plotRect = getRockPhysicsCrossplotPlotRect(width, height);
+    const interactionState = this.interactions.getState();
+    if (interactionState.session?.kind === "zoomRect") {
+      this.state.probe = null;
+      this.interactions.setHoverTarget(null);
+      this.interactions.updateSession({
+        kind: "zoomRect",
+        origin: interactionState.session.origin,
+        current: clampPointToPlot(x, y, plotRect)
+      });
+      return;
+    }
     if (!pointInRect(x, y, plotRect)) {
       this.state.probe = null;
       this.interactions.setHoverTarget(null);
@@ -165,11 +188,52 @@ export class RockPhysicsCrossplotController {
     this.render();
   }
 
+  beginZoomRect(x: number, y: number, width: number, height: number): boolean {
+    this.focus();
+    if (!this.state.model || !this.state.viewport) {
+      return false;
+    }
+    const plotRect = getRockPhysicsCrossplotPlotRect(width, height);
+    if (!pointInRect(x, y, plotRect)) {
+      return false;
+    }
+    const origin = clampPointToPlot(x, y, plotRect);
+    this.interactions.beginSession({
+      kind: "zoomRect",
+      origin,
+      current: origin
+    });
+    return true;
+  }
+
+  commitZoomRect(width: number, height: number): boolean {
+    if (!this.state.model || !this.state.viewport) {
+      return false;
+    }
+    const session = this.interactions.getState().session;
+    if (session?.kind !== "zoomRect") {
+      return false;
+    }
+    const plotRect = getRockPhysicsCrossplotPlotRect(width, height);
+    const nextViewport = viewportFromZoomRect(this.state.model, this.state.viewport, plotRect, session.origin, session.current);
+    const changed = Boolean(nextViewport);
+    if (nextViewport) {
+      this.state.viewport = nextViewport;
+    }
+    this.interactions.commitSession();
+    return changed;
+  }
+
+  cancelInteractionSession(): void {
+    this.interactions.cancelSession();
+  }
+
   getState(): RockPhysicsCrossplotViewState {
     return {
       model: this.state.model,
       viewport: this.state.viewport ? { ...this.state.viewport } : null,
       probe: this.state.probe ? { ...this.state.probe } : null,
+      axisOverrides: cloneCartesianAxisOverrides(this.state.axisOverrides),
       interactions: this.interactions.getState()
     };
   }
@@ -203,11 +267,52 @@ export class RockPhysicsCrossplotController {
     }
 
     const state = this.getState();
-    this.renderer.render({ state });
+    try {
+      this.renderer.render({ state });
+    } catch (error) {
+      console.error("RockPhysicsCrossplotController render failed.", error);
+    }
     for (const listener of this.listeners) {
       listener(state);
     }
   }
+}
+
+function clampPointToPlot(
+  x: number,
+  y: number,
+  plotRect: ReturnType<typeof getRockPhysicsCrossplotPlotRect>
+): { x: number; y: number } {
+  return {
+    x: Math.min(Math.max(x, plotRect.x), plotRect.x + plotRect.width),
+    y: Math.min(Math.max(y, plotRect.y), plotRect.y + plotRect.height)
+  };
+}
+
+function viewportFromZoomRect(
+  model: RockPhysicsCrossplotModel,
+  viewport: RockPhysicsCrossplotViewport,
+  plotRect: ReturnType<typeof getRockPhysicsCrossplotPlotRect>,
+  origin: { x: number; y: number },
+  current: { x: number; y: number }
+): RockPhysicsCrossplotViewport | null {
+  const left = Math.min(origin.x, current.x);
+  const right = Math.max(origin.x, current.x);
+  const top = Math.min(origin.y, current.y);
+  const bottom = Math.max(origin.y, current.y);
+  if (right - left < MIN_ZOOM_RECT_SCREEN_PX || bottom - top < MIN_ZOOM_RECT_SCREEN_PX) {
+    return null;
+  }
+
+  const yDirection = model.yAxis.direction ?? "normal";
+  const topLeft = rockPhysicsScreenToValue(left, top, viewport, plotRect, yDirection);
+  const bottomRight = rockPhysicsScreenToValue(right, bottom, viewport, plotRect, yDirection);
+  return clampRockPhysicsViewport(model, {
+    xMin: topLeft.x,
+    xMax: bottomRight.x,
+    yMin: yDirection === "reversed" ? topLeft.y : bottomRight.y,
+    yMax: yDirection === "reversed" ? bottomRight.y : topLeft.y
+  });
 }
 
 function findNearestPoint(
@@ -225,7 +330,12 @@ function findNearestPoint(
 
   for (let index = 0; index < model.pointCount; index += stride) {
     const pointX = valueToRockPhysicsScreenX(model.columns.x[index] ?? 0, viewport, plotRect);
-    const pointY = valueToRockPhysicsScreenY(model.columns.y[index] ?? 0, viewport, plotRect);
+    const pointY = valueToRockPhysicsScreenY(
+      model.columns.y[index] ?? 0,
+      viewport,
+      plotRect,
+      model.yAxis.direction
+    );
     const distance = Math.hypot(pointX - screenX, pointY - screenY);
     if (distance <= bestDistance) {
       bestDistance = distance;

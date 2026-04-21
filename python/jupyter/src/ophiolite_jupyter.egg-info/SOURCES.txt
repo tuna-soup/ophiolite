@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+src/ophiolite_jupyter/__init__.py
+src/ophiolite_jupyter/widgets.py
+src/ophiolite_jupyter.egg-info/PKG-INFO
+src/ophiolite_jupyter.egg-info/SOURCES.txt
+src/ophiolite_jupyter.egg-info/dependency_links.txt
+src/ophiolite_jupyter.egg-info/requires.txt
+src/ophiolite_jupyter.egg-info/top_level.txt
+src/ophiolite_jupyter/static/widget-avo-crossplot.js
+src/ophiolite_jupyter/static/widget-avo-response.js
+src/ophiolite_jupyter/static/widget.css
+src/ophiolite_jupyter/static/assets/baseRenderWorker-C6kLCGPk.js
+src/ophiolite_jupyter/static/assets/index-BHeri4OJ.js
+tests/test_avo_widgets.py

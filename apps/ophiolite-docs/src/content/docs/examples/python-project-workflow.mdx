@@ -9,12 +9,141 @@ from ophiolite_sdk import Project
 
 project = Project.create("demo-project")
 summary = project.summary()
-catalog = Project.platform_catalog()
+wells = project.wells()
+surveys = project.surveys()
 
 print(summary.root)
-print(summary.asset_count)
-print(catalog.product)
-print(len(catalog.operations))
+print(summary.well_count)
+print(len(wells))
+print(len(surveys))
+if wells:
+    well = wells[0]
+    print(well.name)
+    print(len(well.wellbores()))
+    print(len(well.surveys()))
 ```
 
-This example is intentionally small. It proves the local project surface and shared operation catalog without hiding the fact that some richer workflow APIs are still widening.
+This example is intentionally small. It proves the local project surface, well-to-wellbore navigation, and survey-backed seismic discovery without dropping back to raw ids.
+
+## Log-to-AVO workflow
+
+The same object-first flow can stay asset-native for well logs.
+
+```python
+from ophiolite_sdk import Project
+from ophiolite_sdk.avo import (
+    AngleSampling,
+    AvoExperiment,
+    ElasticChannelBindings,
+    LayeringSpec,
+)
+
+project = Project.create("demo-log-project")
+project.import_las("a5_main_log_dsi.las", collection_name="dsi-logs")
+
+wellbore = project.wells()[0].wellbores()[0]
+project.import_las(
+    "a5_density_lwd.las",
+    binding=wellbore.binding(),
+    collection_name="density-logs",
+)
+
+elastic = wellbore.elastic_log_set(
+    bindings=ElasticChannelBindings(
+        vp="Dt",
+        vs="Dts",
+        density="Rho",
+    )
+)
+
+top_set = wellbore.top_set("lithostrat-tops") or wellbore.top_set()
+layering = (
+    top_set.layering(selectors=top_set.interval_selectors[:2])
+    if top_set is not None and len(top_set.interval_selectors) >= 2
+    else LayeringSpec.fixed_interval(20, unit="ft")
+)
+
+result = elastic.run_avo(
+    layering=layering,
+    experiment=AvoExperiment.zoeppritz(
+        angles=AngleSampling.range(0, 40, 10)
+    ),
+)
+
+response_source = result.response_source()
+
+print(len(wellbore.log_curves()))
+print(len(result.layers))
+print(len(response_source["series"]))
+print(response_source["series"][0]["values"])
+```
+
+The layer stage can come from different interval definitions:
+
+```python
+from ophiolite_sdk.avo import LayeringSpec
+
+# Fixed bins
+layering = LayeringSpec.fixed_interval(20, unit="ft")
+
+# Explicit user edges
+layering = LayeringSpec.from_edges(
+    [1881.25, 1900.0, 1912.5, 1935.0],
+    labels=["Zone 1", "Zone 2", "Zone 3"],
+)
+
+# Named intervals from a top set with base depths
+layering = LayeringSpec.from_top_set(
+    asset_name="synthetic-tops",
+    labels=["Sand A", "Sand B"],
+)
+
+# Or stay object-first and select exact intervals from the top set itself
+top_set = wellbore.top_set("synthetic-tops")
+layering = top_set.layering(selectors=top_set.interval_selectors[:2])
+```
+
+`Wellbore.elastic_log_set(bindings=...)` resolves elastic inputs by semantic intent:
+
+- prefer direct `PVelocity` and `SVelocity`
+- fall back to `Sonic -> Vp` and `ShearSonic -> Vs`
+- keep `BulkDensity` direct
+
+Multiple vendor mnemonics can map into the same canonical log type, so `DTCO`, `DTC`, and `DT` can all land as compressional slowness, while `RHOB`, `RHO`, `DEN`, and `BDCX` can land as bulk density.
+
+When imported top sets contain repeated labels, `WellTopSet.interval_selectors` provides stable selectors such as `NLLFC#1` and `CKEK#1` so the layering choice stays precise without dropping into raw row indexing.
+
+That keeps LAS ingest separate from later interpretation and compute choices. A workflow can stay virtual and provenance-aware, or materialize derived direct curves later with `elastic.materialize_missing_channels(...)`.
+
+## Seismic processing workflow
+
+Built-in seismic operators are also exposed through typed workflow objects rather than generic JSON requests:
+
+```python
+from ophiolite_sdk import SectionSelection, TraceBoostApp, TraceProcessingPipeline
+
+app = TraceBoostApp()
+dataset = app.open_dataset("input.tbvol")
+selection = SectionSelection.inline(120)
+
+pipeline = (
+    TraceProcessingPipeline.named(
+        "Bandpass + RMS AGC",
+        description="Trace-local seismic golden path.",
+    )
+    .bandpass(8.0, 12.0, 45.0, 60.0)
+    .agc_rms(40.0)
+)
+
+preview = dataset.preview_processing(selection, pipeline)
+processed = dataset.run_processing(
+    pipeline,
+    output_store_path="input_bandpass_agc.tbvol",
+)
+
+print(preview.processing_label)
+print(processed.descriptor.label)
+print(pipeline.operator_ids())
+```
+
+For external Python operator authoring, keep that boundary separate and use `ophiolite_sdk.operators`. The dedicated walkthrough remains [Custom Python operator](/examples/custom-python-operator/).

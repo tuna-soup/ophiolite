@@ -565,11 +565,7 @@ mod tests {
             },
             shape: [23, 18, 75],
             chunk_shape: [16, 16, 64],
-            axes: VolumeAxes {
-                ilines: Vec::new(),
-                xlines: Vec::new(),
-                sample_axis_ms: Vec::new(),
-            },
+            axes: VolumeAxes::from_time_axis(Vec::new(), Vec::new(), Vec::new()),
             segy_export: None,
             coordinate_reference_binding: None,
             spatial: None,

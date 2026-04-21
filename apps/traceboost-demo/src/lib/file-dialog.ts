@@ -45,16 +45,17 @@ export async function pickRuntimeStoreFile(): Promise<string | null> {
 
 export async function pickImportSeismicFile(): Promise<string | null> {
   if (!isTauriEnvironment()) {
-    return normalizeDialogPath(prompt("Enter import path (.segy, .sgy, .zarr):"));
+    return normalizeDialogPath(prompt("Enter import path (.segy, .sgy, .zarr, .mdio):"));
   }
 
   const { open } = await import("@tauri-apps/plugin-dialog");
   const result = await open({
     title: "Import Seismic Volume",
     filters: [
-      { name: "SEG-Y / Zarr", extensions: ["sgy", "segy", "zarr"] },
+      { name: "SEG-Y / Zarr / MDIO", extensions: ["sgy", "segy", "zarr", "mdio"] },
       { name: "SEG-Y Files", extensions: ["sgy", "segy"] },
       { name: "Zarr Stores", extensions: ["zarr"] },
+      { name: "MDIO Stores", extensions: ["mdio"] },
       { name: "All Files", extensions: ["*"] }
     ],
     multiple: false,
@@ -124,6 +125,61 @@ export async function pickProjectFolder(): Promise<string | null> {
   });
 
   return normalizeDialogPath(result);
+}
+
+export async function pickVendorProjectFolder(title = "Select Vendor Project Root"): Promise<string | null> {
+  if (!isTauriEnvironment()) {
+    return normalizeDialogPath(prompt("Enter vendor project root:"));
+  }
+
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const result = await open({
+    title,
+    multiple: false,
+    directory: true
+  });
+
+  return normalizeDialogPath(result);
+}
+
+export async function pickWellFolder(): Promise<string | null> {
+  if (!isTauriEnvironment()) {
+    return normalizeDialogPath(prompt("Enter well folder path:"));
+  }
+
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const result = await open({
+    title: "Select Well Folder",
+    multiple: false,
+    directory: true
+  });
+
+  return normalizeDialogPath(result);
+}
+
+export async function pickWellImportFiles(): Promise<string[]> {
+  if (!isTauriEnvironment()) {
+    const result = prompt("Enter well import source paths separated by commas:");
+    return normalizeDialogPaths(
+      result
+        ?.split(",")
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0) ?? null
+    );
+  }
+
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const result = await open({
+    title: "Import Well Files",
+    filters: [
+      { name: "Well Import Sources", extensions: ["las", "asc", "txt", "csv", "dlis"] },
+      { name: "All Files", extensions: ["*"] }
+    ],
+    multiple: true,
+    directory: false
+  });
+
+  return normalizeDialogPaths(result);
 }
 
 export async function pickWellTimeDepthJsonFile(title = "Import Well Time-Depth JSON"): Promise<string | null> {

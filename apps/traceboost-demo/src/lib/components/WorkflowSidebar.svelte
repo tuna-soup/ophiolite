@@ -125,6 +125,22 @@
     return parts.join(" | ");
   }
 
+  function residualSubtitle(
+    asset: (typeof viewerModel.projectResidualAssets)[number]
+  ): string {
+    const parts: string[] = [];
+    if (asset.markerName) {
+      parts.push(asset.markerName);
+    } else if (asset.markerNames.length) {
+      parts.push(asset.markerNames.join(", "));
+    }
+    if (asset.horizonId) {
+      parts.push(asset.horizonId);
+    }
+    parts.push(pluralize(asset.pointCount, "point"));
+    return parts.join(" | ");
+  }
+
   function closeVolumeContextMenu(): void {
     volumeContextMenu = null;
   }
@@ -200,8 +216,15 @@
   }
 
   const importedHorizons = $derived(viewerModel.availableHorizonAssets);
+  const projectHorizons = $derived(viewerModel.projectSurveyHorizonAssets);
+  const horizonInventory = $derived(projectHorizons.length ? projectHorizons : importedHorizons);
   const activePreviewHorizonId = $derived(viewerModel.surveyMapSource?.scalar_field_horizon_id ?? null);
   const activeWellboreId = $derived(viewerModel.selectedProjectWellboreInventoryItem?.wellboreId ?? null);
+  const activeSelectedHorizonId = $derived(
+    viewerModel.selectedProjectHorizonAsset?.id ?? activePreviewHorizonId
+  );
+  const activeSelectedMarkerName = $derived(viewerModel.selectedProjectWellMarker?.name ?? null);
+  const activeResidualAssetId = $derived(viewerModel.selectedProjectResidualAsset?.assetId ?? null);
 </script>
 
 <svelte:window onclick={closeVolumeContextMenu} />
@@ -237,15 +260,16 @@
   </div>
 
   <div class="tree-shell" role="tree" tabindex="0" onkeydown={handleVolumeListKeyDown}>
-    <section class="tree-section">
-      <button class="section-header" type="button" onclick={() => toggleSection("seismic")} aria-expanded={expandedSections.seismic}>
-        <span class="section-arrow">{expandedSections.seismic ? "▾" : "▸"}</span>
-        <span class="section-title">Seismic</span>
-        <span class="section-count">{viewerModel.workspaceEntries.length}</span>
+    <!-- Seismic Volumes -->
+    <div class="tree-branch">
+      <button class="tree-root" type="button" onclick={() => toggleSection("seismic")} aria-expanded={expandedSections.seismic}>
+        <span class="disclosure">{expandedSections.seismic ? "\u25BE" : "\u25B8"}</span>
+        <span class="root-label">Seismic Volumes</span>
+        <span class="root-count">{viewerModel.workspaceEntries.length}</span>
       </button>
 
       {#if expandedSections.seismic}
-        <div class="section-body">
+        <div class="tree-children">
           {#if viewerModel.workspaceEntries.length}
             {#each viewerModel.workspaceEntries as entry (entry.entry_id)}
               {@const visibleLabel = datasetLabel(
@@ -253,10 +277,10 @@
                 entry.source_path ?? entry.imported_store_path ?? entry.preferred_store_path,
                 entry.entry_id
               )}
-              <div class="tree-row">
+              <div class="tree-leaf-row">
                 <button
-                  class:active={viewerModel.activeEntryId === entry.entry_id}
-                  class="tree-item"
+                  class="tree-leaf"
+                  class:is-active={viewerModel.activeEntryId === entry.entry_id}
                   type="button"
                   onclick={() => void viewerModel.activateDatasetEntry(entry.entry_id)}
                   oncontextmenu={(event) =>
@@ -269,82 +293,74 @@
                   disabled={viewerModel.loading}
                   title={visibleLabel}
                 >
-                  <span class="item-icon">▦</span>
-                  <span class="item-copy">
-                    <span class="item-label">{visibleLabel}</span>
-                    <span class="item-subtitle">
-                      {entry.source_path ? "Imported source" : "Runtime store"} | {entryStorePath(entry) || "No store path"}
-                    </span>
+                  <span class="leaf-label">{visibleLabel}</span>
+                  <span class="leaf-meta">
+                    {entry.source_path ? "Imported" : "Runtime"} | {entryStorePath(entry) || "No store path"}
                   </span>
                 </button>
                 <button
-                  class="item-remove"
+                  class="leaf-remove"
                   type="button"
                   onclick={() => void viewerModel.removeWorkspaceEntry(entry.entry_id)}
                   disabled={viewerModel.loading}
                   aria-label={`Remove ${visibleLabel}`}
                   title={`Remove ${visibleLabel}`}
                 >
-                  X
+                  &times;
                 </button>
               </div>
             {/each}
           {:else}
-            <div class="section-empty">
-              <p>No seismic volumes loaded.</p>
-              <p>Use <strong>File &gt; Open Volume...</strong> or <strong>File &gt; Import</strong>.</p>
-            </div>
+            <p class="tree-empty">No seismic volumes loaded.</p>
           {/if}
         </div>
       {/if}
-    </section>
+    </div>
 
-    <section class="tree-section">
-      <button class="section-header" type="button" onclick={() => toggleSection("horizons")} aria-expanded={expandedSections.horizons}>
-        <span class="section-arrow">{expandedSections.horizons ? "▾" : "▸"}</span>
-        <span class="section-title">Horizons</span>
-        <span class="section-count">{importedHorizons.length}</span>
+    <!-- Horizons -->
+    <div class="tree-branch">
+      <button class="tree-root" type="button" onclick={() => toggleSection("horizons")} aria-expanded={expandedSections.horizons}>
+        <span class="disclosure">{expandedSections.horizons ? "\u25BE" : "\u25B8"}</span>
+        <span class="root-label">Horizons</span>
+        <span class="root-count">{horizonInventory.length}</span>
       </button>
 
       {#if expandedSections.horizons}
-        <div class="section-body">
-          {#if importedHorizons.length}
-            {#each importedHorizons as horizon (horizon.id)}
-              <div class:active={activePreviewHorizonId === horizon.id} class="tree-item static">
-                <span class="item-icon">◌</span>
-                <span class="item-copy">
-                  <span class="item-label">{horizon.name}</span>
-                  <span class="item-subtitle">{activePreviewHorizonId === horizon.id ? "Preview surface" : "Imported horizon"}</span>
+        <div class="tree-children">
+          {#if horizonInventory.length}
+            {#each horizonInventory as horizon (horizon.id)}
+              <button
+                class="tree-leaf"
+                class:is-active={activeSelectedHorizonId === horizon.id}
+                type="button"
+                onclick={() => viewerModel.setSelectedProjectHorizonId(horizon.id)}
+                title={horizon.name}
+              >
+                <span class="leaf-label">{horizon.name}</span>
+                <span class="leaf-meta">
+                  {horizon.vertical_domain === "depth" ? "Depth" : "TWT"} | {activePreviewHorizonId === horizon.id ? "Preview surface" : "Imported"}
                 </span>
-              </div>
+              </button>
             {/each}
           {:else if viewerModel.activeStorePath}
-            <div class="section-empty">
-              <p>No imported horizons for the active volume.</p>
-            </div>
+            <p class="tree-empty">No imported horizons for the active volume.</p>
           {:else}
-            <div class="section-empty">
-              <p>Open a seismic volume to inspect imported horizons.</p>
-            </div>
+            <p class="tree-empty">Open a seismic volume to inspect horizons.</p>
           {/if}
         </div>
       {/if}
-    </section>
+    </div>
 
-    <section class="tree-section">
-      <button
-        class="section-header"
-        type="button"
-        onclick={() => toggleSection("velocityModels")}
-        aria-expanded={expandedSections.velocityModels}
-      >
-        <span class="section-arrow">{expandedSections.velocityModels ? "▾" : "▸"}</span>
-        <span class="section-title">Velocity Models</span>
-        <span class="section-count">{viewerModel.availableVelocityModels.length + 1}</span>
+    <!-- Velocity Models -->
+    <div class="tree-branch">
+      <button class="tree-root" type="button" onclick={() => toggleSection("velocityModels")} aria-expanded={expandedSections.velocityModels}>
+        <span class="disclosure">{expandedSections.velocityModels ? "\u25BE" : "\u25B8"}</span>
+        <span class="root-label">Velocity Models</span>
+        <span class="root-count">{viewerModel.availableVelocityModels.length + 1}</span>
       </button>
 
       {#if expandedSections.velocityModels}
-        <div class="section-body">
+        <div class="tree-children">
           <div class="section-actions">
             <button class="section-action" type="button" onclick={openVelocityModelWorkbench}>
               Velocity Model...
@@ -360,135 +376,161 @@
           </div>
 
           <button
-            class:active={!viewerModel.activeVelocityModelAssetId}
-            class="tree-item"
+            class="tree-leaf"
+            class:is-active={!viewerModel.activeVelocityModelAssetId}
             type="button"
             disabled={!viewerModel.activeStorePath || viewerModel.loading}
             onclick={() => void viewerModel.activateVelocityModel(null)}
           >
-            <span class="item-icon">△</span>
-            <span class="item-copy">
-              <span class="item-label">Global 1D fallback</span>
-              <span class="item-subtitle">Constant or 1D velocity function</span>
-            </span>
+            <span class="leaf-label">Global 1D fallback</span>
+            <span class="leaf-meta">Constant or 1D velocity function</span>
           </button>
 
           {#if viewerModel.velocityModelsError}
-            <p class="status error">{viewerModel.velocityModelsError}</p>
+            <p class="tree-status error">{viewerModel.velocityModelsError}</p>
           {:else if viewerModel.velocityModelsLoading}
-            <p class="status">Loading velocity models...</p>
+            <p class="tree-status">Loading velocity models...</p>
           {:else if viewerModel.availableVelocityModels.length}
             {#each viewerModel.availableVelocityModels as model (model.id)}
               <button
-                class:active={viewerModel.activeVelocityModelAssetId === model.id}
-                class="tree-item"
+                class="tree-leaf"
+                class:is-active={viewerModel.activeVelocityModelAssetId === model.id}
                 type="button"
                 disabled={viewerModel.loading}
                 onclick={() => void viewerModel.activateVelocityModel(model.id)}
                 title={model.name}
               >
-                <span class="item-icon">△</span>
-                <span class="item-copy">
-                  <span class="item-label">{model.name}</span>
-                  <span class="item-subtitle">
-                    {velocitySourceKindLabel(model.source_kind)} | {model.coverage.relationship}
-                  </span>
+                <span class="leaf-label">{model.name}</span>
+                <span class="leaf-meta">
+                  {velocitySourceKindLabel(model.source_kind)} | {model.coverage.relationship}
                 </span>
               </button>
             {/each}
           {:else if viewerModel.activeStorePath}
-            <div class="section-empty">
-              <p>No survey velocity models registered for the active volume.</p>
-            </div>
+            <p class="tree-empty">No velocity models for the active volume.</p>
           {:else}
-            <div class="section-empty">
-              <p>Open a seismic volume to inspect velocity models.</p>
-            </div>
+            <p class="tree-empty">Open a seismic volume to inspect velocity models.</p>
           {/if}
         </div>
       {/if}
-    </section>
+    </div>
 
-    <section class="tree-section">
-      <button class="section-header" type="button" onclick={() => toggleSection("wells")} aria-expanded={expandedSections.wells}>
-        <span class="section-arrow">{expandedSections.wells ? "▾" : "▸"}</span>
-        <span class="section-title">Wells</span>
-        <span class="section-count">{viewerModel.projectWellboreInventory.length}</span>
+    <!-- Wells -->
+    <div class="tree-branch">
+      <button class="tree-root" type="button" onclick={() => toggleSection("wells")} aria-expanded={expandedSections.wells}>
+        <span class="disclosure">{expandedSections.wells ? "\u25BE" : "\u25B8"}</span>
+        <span class="root-label">Wells</span>
+        <span class="root-count">{viewerModel.projectWellboreInventory.length}</span>
       </button>
 
       {#if expandedSections.wells}
-        <div class="section-body">
+        <div class="tree-children">
           {#if viewerModel.projectWellOverlayInventoryError}
-            <p class="status error">{viewerModel.projectWellOverlayInventoryError}</p>
+            <p class="tree-status error">{viewerModel.projectWellOverlayInventoryError}</p>
           {:else if viewerModel.projectWellOverlayInventoryLoading}
-            <p class="status">Loading project inventory...</p>
+            <p class="tree-status">Loading project inventory...</p>
           {:else if viewerModel.projectWellboreInventory.length}
             {#if viewerModel.selectedProjectSurveyAsset}
-              <p class="status">
+              <p class="tree-status">
                 Survey {viewerModel.selectedProjectSurveyAsset.name} | {viewerModel.selectedProjectSurveyAsset.wellboreName}
               </p>
             {/if}
             {#if viewerModel.projectWellboreDisplayCompatibilitySummaryLine}
-              <p class="status">{viewerModel.projectWellboreDisplayCompatibilitySummaryLine}</p>
+              <p class="tree-status">{viewerModel.projectWellboreDisplayCompatibilitySummaryLine}</p>
             {/if}
 
             {#if viewerModel.projectSectionWellOverlayResolveBlocker}
-              <p class="status error">{viewerModel.projectSectionWellOverlayResolveBlocker}</p>
+              <p class="tree-status error">{viewerModel.projectSectionWellOverlayResolveBlocker}</p>
             {/if}
 
             {#each viewerModel.projectWellboreSelectionGroups as group (group.label)}
               {#if viewerModel.projectWellboreSelectionGroups.length > 1}
-                <div class="inventory-group-label">
+                <div class="tree-group-header">
                   <span>{group.label}</span>
-                  <span>{group.wellbores.length}</span>
+                  <span class="root-count">{group.wellbores.length}</span>
                 </div>
               {/if}
 
               {#each group.wellbores as wellbore (wellbore.wellboreId)}
                 <button
-                  class:active={activeWellboreId === wellbore.wellboreId}
-                  class="tree-item"
+                  class="tree-leaf"
+                  class:is-active={activeWellboreId === wellbore.wellboreId}
                   type="button"
                   onclick={() => viewerModel.setProjectWellboreId(wellbore.wellboreId)}
                   title={viewerModel.projectWellboreOptionLabel(wellbore)}
                 >
-                  <span class="item-icon">◫</span>
-                  <span class="item-copy">
-                    <span class="item-label">{wellbore.wellName} | {wellbore.wellboreName}</span>
-                    <span class="item-subtitle">{viewerModel.projectWellboreStatusLabel(wellbore)}</span>
-                  </span>
+                  <span class="leaf-label">{wellbore.wellName} | {wellbore.wellboreName}</span>
+                  <span class="leaf-meta">{viewerModel.projectWellboreStatusLabel(wellbore)}</span>
                 </button>
 
                 {#if activeWellboreId === wellbore.wellboreId}
-                  <div class="child-list">
+                  <div class="tree-nested">
+                    {#if viewerModel.projectWellMarkers.length}
+                      <div class="tree-sub-branch">
+                        <div class="tree-sub-header">
+                          <span>Markers</span>
+                          <span class="root-count">{viewerModel.projectWellMarkers.length}</span>
+                        </div>
+                        {#each viewerModel.projectWellMarkers as marker (marker.name)}
+                          <button
+                            class="tree-leaf depth-2"
+                            class:is-active={activeSelectedMarkerName === marker.name}
+                            type="button"
+                            onclick={() => viewerModel.setSelectedProjectWellMarkerName(marker.name)}
+                            title={marker.name}
+                          >
+                            <span class="leaf-label">{marker.name}</span>
+                            <span class="leaf-meta">
+                              {marker.markerKind ?? "marker"} | {marker.topDepth.toFixed(2)}{marker.depthReference ? ` ${marker.depthReference}` : ""}
+                            </span>
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+
+                    {#if viewerModel.projectResidualAssets.length}
+                      <div class="tree-sub-branch">
+                        <div class="tree-sub-header">
+                          <span>Residuals</span>
+                          <span class="root-count">{viewerModel.projectResidualAssets.length}</span>
+                        </div>
+                        {#each viewerModel.projectResidualAssets as residualAsset (residualAsset.assetId)}
+                          <button
+                            class="tree-leaf depth-2"
+                            class:is-active={activeResidualAssetId === residualAsset.assetId}
+                            type="button"
+                            onclick={() => viewerModel.setSelectedProjectResidualAssetId(residualAsset.assetId)}
+                            title={residualAsset.name}
+                          >
+                            <span class="leaf-label">{residualAsset.name}</span>
+                            <span class="leaf-meta">{residualSubtitle(residualAsset)}</span>
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+
                     {#if viewerModel.projectWellTimeDepthObservationSets.length}
-                      <div class="tree-group">
-                        <div class="tree-group-label">
-                          Observation Sets
-                          <span>{viewerModel.projectWellTimeDepthObservationSets.length}</span>
+                      <div class="tree-sub-branch">
+                        <div class="tree-sub-header">
+                          <span>Observation Sets</span>
+                          <span class="root-count">{viewerModel.projectWellTimeDepthObservationSets.length}</span>
                         </div>
                         {#each viewerModel.projectWellTimeDepthObservationSets as asset (asset.assetId)}
                           {#if asset.assetKind === "well_tie_observation_set"}
                             <button
-                              class:active={viewerModel.selectedProjectWellTieObservationAssetId === asset.assetId}
-                              class="tree-item child"
+                              class="tree-leaf depth-2"
+                              class:is-active={viewerModel.selectedProjectWellTieObservationAssetId === asset.assetId}
                               type="button"
                               onclick={() => viewerModel.resumeWellTieWorkbenchFromObservation(asset.assetId)}
                               title={`Resume ${asset.name}`}
                             >
-                              <span class="item-icon">·</span>
-                              <span class="item-copy">
-                                <span class="item-label">{asset.name}</span>
-                                <span class="item-subtitle">{wellTimeDepthObservationSubtitle(asset)}</span>
-                              </span>
+                              <span class="leaf-label">{asset.name}</span>
+                              <span class="leaf-meta">{wellTimeDepthObservationSubtitle(asset)}</span>
                             </button>
                           {:else}
-                            <div class="tree-item static child">
-                              <span class="item-icon">·</span>
-                              <span class="item-copy">
-                                <span class="item-label">{asset.name}</span>
-                                <span class="item-subtitle">{wellTimeDepthObservationSubtitle(asset)}</span>
-                              </span>
+                            <div class="tree-leaf static depth-2">
+                              <span class="leaf-label">{asset.name}</span>
+                              <span class="leaf-meta">{wellTimeDepthObservationSubtitle(asset)}</span>
                             </div>
                           {/if}
                         {/each}
@@ -496,19 +538,16 @@
                     {/if}
 
                     {#if viewerModel.projectWellTimeDepthAuthoredModels.length}
-                      <div class="tree-group">
-                        <div class="tree-group-label">
-                          Authored Models
-                          <span>{viewerModel.projectWellTimeDepthAuthoredModels.length}</span>
+                      <div class="tree-sub-branch">
+                        <div class="tree-sub-header">
+                          <span>Authored Models</span>
+                          <span class="root-count">{viewerModel.projectWellTimeDepthAuthoredModels.length}</span>
                         </div>
                         {#each viewerModel.projectWellTimeDepthAuthoredModels as model (model.assetId)}
-                          <div class="tree-item static child">
-                            <span class="item-icon">·</span>
-                            <span class="item-copy">
-                              <span class="item-label">{model.name}</span>
-                              <span class="item-subtitle">
-                                {pluralize(model.sourceBindingCount, "source binding")} | {pluralize(model.assumptionIntervalCount, "interval assumption")}
-                              </span>
+                          <div class="tree-leaf static depth-2">
+                            <span class="leaf-label">{model.name}</span>
+                            <span class="leaf-meta">
+                              {pluralize(model.sourceBindingCount, "source binding")} | {pluralize(model.assumptionIntervalCount, "interval assumption")}
                             </span>
                           </div>
                         {/each}
@@ -516,25 +555,22 @@
                     {/if}
 
                     {#if viewerModel.projectWellTimeDepthModels.length}
-                      <div class="tree-group">
-                        <div class="tree-group-label">
-                          Compiled Models
-                          <span>{viewerModel.projectWellTimeDepthModels.length}</span>
+                      <div class="tree-sub-branch">
+                        <div class="tree-sub-header">
+                          <span>Compiled Models</span>
+                          <span class="root-count">{viewerModel.projectWellTimeDepthModels.length}</span>
                         </div>
                         {#each viewerModel.projectWellTimeDepthModels as model (model.assetId)}
                           <button
-                            class:active={viewerModel.selectedProjectWellTimeDepthModelAssetId === model.assetId}
-                            class="tree-item child"
+                            class="tree-leaf depth-2"
+                            class:is-active={viewerModel.selectedProjectWellTimeDepthModelAssetId === model.assetId}
                             type="button"
                             onclick={() => viewerModel.setSelectedProjectWellTimeDepthModelAssetId(model.assetId)}
                             title={model.name}
                           >
-                            <span class="item-icon">·</span>
-                            <span class="item-copy">
-                              <span class="item-label">{model.name}</span>
-                              <span class="item-subtitle">
-                                {velocitySourceKindLabel(model.sourceKind)} | {pluralize(model.sampleCount, "sample")}{model.isActiveProjectModel ? " | project active" : ""}
-                              </span>
+                            <span class="leaf-label">{model.name}</span>
+                            <span class="leaf-meta">
+                              {velocitySourceKindLabel(model.sourceKind)} | {pluralize(model.sampleCount, "sample")}{model.isActiveProjectModel ? " | project active" : ""}
                             </span>
                           </button>
                         {/each}
@@ -545,14 +581,11 @@
               {/each}
             {/each}
           {:else}
-            <div class="section-empty">
-              <p>No project well inventory loaded.</p>
-              <p>Configure the project root and wellbore in <strong>TraceBoost &gt; Settings...</strong>.</p>
-            </div>
+            <p class="tree-empty">No project well inventory loaded.</p>
           {/if}
         </div>
       {/if}
-    </section>
+    </div>
   </div>
 </aside>
 
@@ -650,69 +683,257 @@
     cursor: pointer;
   }
 
+  /* ── Tree shell ── */
+
   .tree-shell {
     min-height: 0;
     overflow: auto;
-    padding: var(--sidebar-shell-padding);
-    display: grid;
-    gap: var(--ui-space-2);
-    align-content: start;
+    padding: 6px 4px;
+    display: flex;
+    flex-direction: column;
     outline: none;
+    font-size: 12px;
+    line-height: 1.35;
   }
 
-  .tree-section {
-    display: grid;
-    gap: var(--sidebar-section-gap);
+  /* ── Root branch toggle ── */
+
+  .tree-branch {
+    display: flex;
+    flex-direction: column;
   }
 
-  .section-header {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
+  .tree-branch + .tree-branch {
+    margin-top: 2px;
+  }
+
+  .tree-root {
+    display: flex;
     align-items: center;
-    gap: var(--ui-space-1);
+    gap: 2px;
     width: 100%;
-    min-height: var(--sidebar-section-header-height);
-    padding: 0 var(--ui-space-2);
-    border: 1px solid var(--app-border);
-    border-radius: var(--ui-radius-sm);
-    background: var(--surface-bg);
+    padding: 3px 6px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
     color: var(--text-primary);
     text-align: left;
     cursor: pointer;
-    line-height: 1;
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.35;
   }
 
-  .section-arrow,
-  .section-count {
+  .tree-root:hover {
+    background: var(--surface-bg);
+  }
+
+  .disclosure {
+    flex-shrink: 0;
+    width: 12px;
+    font-size: 10px;
+    color: var(--text-muted);
+    text-align: center;
+  }
+
+  .root-label {
+    font-weight: 650;
+  }
+
+  .root-count {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+
+  /* ── Children container (depth 1) ── */
+
+  .tree-children {
+    display: flex;
+    flex-direction: column;
+    padding-left: 14px;
+  }
+
+  /* ── Leaf items ── */
+
+  .tree-leaf {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+    padding: 2px 6px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-primary);
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .tree-leaf.static {
+    cursor: default;
+  }
+
+  .tree-leaf:hover:not(:disabled):not(.static) {
+    background: var(--surface-bg);
+  }
+
+  .tree-leaf.is-active {
+    background: var(--surface-bg);
+  }
+
+  .tree-leaf.is-active .leaf-label {
+    font-weight: 650;
+  }
+
+  .tree-leaf:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  .leaf-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .leaf-meta {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1.3;
+  }
+
+  /* ── Leaf row with remove button ── */
+
+  .tree-leaf-row {
+    display: flex;
+    align-items: start;
+  }
+
+  .tree-leaf-row .tree-leaf {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .leaf-remove {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    margin-top: 2px;
+    border: none;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    text-align: center;
+    opacity: 0;
+    transition: opacity 0.1s;
+  }
+
+  .tree-leaf-row:hover .leaf-remove {
+    opacity: 1;
+  }
+
+  .leaf-remove:hover {
+    background: var(--surface-bg);
+    color: var(--text-primary);
+  }
+
+  /* ── Nested well children (depth 2) ── */
+
+  .tree-nested {
+    display: flex;
+    flex-direction: column;
+    padding-left: 14px;
+  }
+
+  .tree-sub-branch {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .tree-sub-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px 1px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .tree-sub-header .root-count {
+    font-weight: 400;
+  }
+
+  .tree-leaf.depth-2 {
+    padding-left: 12px;
+  }
+
+  /* ── Group header (multi-group wells) ── */
+
+  .tree-group-header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px 1px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  /* ── Empty / status text ── */
+
+  .tree-empty {
+    margin: 0;
+    padding: 2px 6px;
+    font-size: 11px;
+    font-style: italic;
     color: var(--text-muted);
   }
 
-  .section-title {
+  .tree-status {
+    margin: 0;
+    padding: 2px 6px;
     font-size: 11px;
-    font-weight: 650;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    line-height: 1;
+    color: var(--text-muted);
   }
 
-  .section-body {
-    display: grid;
-    gap: var(--ui-space-1);
+  .tree-status.error {
+    color: #a74646;
   }
+
+  /* ── Action buttons (velocity workbench) ── */
 
   .section-actions {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--ui-space-1);
+    gap: 4px;
+    padding: 2px 0 4px;
   }
 
   .section-action {
     border: 1px solid var(--app-border);
-    border-radius: var(--ui-radius-sm);
+    border-radius: 3px;
     background: var(--surface-bg);
     color: var(--text-primary);
-    min-height: var(--sidebar-item-min-height);
-    padding: 0 var(--ui-space-2);
+    padding: 3px 6px;
+    font-size: 11px;
     text-align: center;
     cursor: pointer;
   }
@@ -722,156 +943,7 @@
     cursor: default;
   }
 
-  .section-empty {
-    min-height: var(--sidebar-section-empty-min-height);
-    padding: var(--ui-space-2) var(--ui-space-3);
-    border: 1px dashed var(--app-border-strong);
-    border-radius: var(--ui-radius-sm);
-    background: #fff;
-    color: var(--text-muted);
-    align-content: center;
-  }
-
-  .section-empty p,
-  .status {
-    margin: 0;
-  }
-
-  .section-empty p + p {
-    margin-top: 4px;
-  }
-
-  .status {
-    padding: var(--ui-space-1) var(--ui-space-2);
-    color: var(--text-muted);
-  }
-
-  .status.error {
-    color: #a74646;
-  }
-
-  .tree-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--ui-space-1);
-  }
-
-  .tree-item {
-    min-width: 0;
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: var(--ui-space-1);
-    align-items: center;
-    min-height: var(--sidebar-item-min-height);
-    padding: var(--ui-space-1) var(--ui-space-2);
-    border: 1px solid var(--app-border);
-    border-radius: var(--ui-radius-sm);
-    background: #fff;
-    color: var(--text-primary);
-    text-align: left;
-    cursor: pointer;
-  }
-
-  .tree-item.static {
-    cursor: default;
-  }
-
-  .tree-item:hover:not(:disabled):not(.static) {
-    border-color: var(--app-border-strong);
-    background: var(--surface-bg);
-  }
-
-  .tree-item.active {
-    border-color: #b0d4ee;
-    background: #e8f3fb;
-  }
-
-  .tree-item.child {
-    margin-left: var(--sidebar-item-indent);
-  }
-
-  .item-icon {
-    color: #3a8cc2;
-    line-height: 1.2;
-  }
-
-  .item-copy {
-    min-width: 0;
-    display: grid;
-    gap: 2px;
-    align-content: center;
-  }
-
-  .item-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    line-height: 1.2;
-  }
-
-  .item-subtitle {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-muted);
-    font-size: 10px;
-    line-height: 1.2;
-  }
-
-  .item-remove {
-    width: 22px;
-    height: 22px;
-    border: 1px solid var(--app-border);
-    border-radius: var(--ui-radius-sm);
-    background: var(--surface-subtle);
-    color: var(--text-muted);
-    cursor: pointer;
-    font-size: 10px;
-  }
-
-  .child-list {
-    display: grid;
-    gap: var(--ui-space-1);
-  }
-
-  .tree-group {
-    display: grid;
-    gap: var(--ui-space-1);
-  }
-
-  .tree-group-label {
-    margin: 2px 0 0 18px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--ui-space-3);
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-  }
-
-  .tree-group-label span {
-    color: var(--text-muted);
-  }
-
-  .inventory-group-label {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--ui-space-3);
-    padding: 0 var(--ui-space-1);
-    font-size: 10px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-  }
-
-  .inventory-group-label span:last-child {
-    color: var(--text-muted);
-  }
+  /* ── Context menu (unchanged) ── */
 
   .volume-context-menu {
     position: fixed;

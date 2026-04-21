@@ -1,0 +1,585 @@
+{
+  "package": {
+    "package_version": 1,
+    "metadata_schema_version": "0.2.0"
+  },
+  "document": {
+    "summary": {
+      "source_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/f02a05_20030103-1-06_a5_main_log_dsi_030lup.las",
+      "original_filename": "f02a05_20030103-1-06_a5_main_log_dsi_030lup.las",
+      "source_fingerprint": "04af530e8da8c012",
+      "las_version": "2",
+      "wrap_mode": "NO",
+      "delimiter": "SPACE",
+      "row_count": 5451,
+      "curve_count": 4,
+      "issue_count": 0
+    },
+    "provenance": {
+      "source_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/f02a05_20030103-1-06_a5_main_log_dsi_030lup.las",
+      "original_filename": "f02a05_20030103-1-06_a5_main_log_dsi_030lup.las",
+      "source_fingerprint": "04af530e8da8c012",
+      "imported_at_unix_seconds": 1776695951
+    },
+    "encoding": "utf-8"
+  },
+  "canonical": {
+    "version": {
+      "vers": "2",
+      "wrap": "NO",
+      "delimiter": "SPACE"
+    },
+    "well": {
+      "well": "F2-A5",
+      "company": "Veba Oil and Gas Nederland B.V.",
+      "field": "Hanze",
+      "location": "Dutch North Sea",
+      "province": null,
+      "service_company": "Schlumberger",
+      "date": "04-Jun-2001",
+      "uwi": null,
+      "api": null,
+      "start": 2702.3568,
+      "stop": 1871.7768,
+      "step": -0.1524,
+      "null_value": -999.25
+    },
+    "index": {
+      "name": "DEPT",
+      "original_mnemonic": "DEPT",
+      "canonical_name": "index",
+      "unit": "M",
+      "kind": "Depth",
+      "row_count": 5451,
+      "nullable": false,
+      "storage_kind": "Numeric",
+      "alias": {
+        "mnemonic": "depth",
+        "unit_hint": "m"
+      }
+    },
+    "curves": [
+      {
+        "name": "DEPT",
+        "original_mnemonic": "DEPT",
+        "canonical_name": "DEPT",
+        "unit": "M",
+        "description": "DEPTH (BOREHOLE) {F10.4}",
+        "header_value": null,
+        "nullable": false,
+        "storage_kind": "Numeric",
+        "row_count": 5451,
+        "alias": {
+          "mnemonic": "depth",
+          "unit_hint": "m"
+        }
+      },
+      {
+        "name": "DTCO",
+        "original_mnemonic": "DTCO",
+        "canonical_name": "DTCO",
+        "unit": "US/F",
+        "description": "Delta-T Compressional {F12.3}",
+        "header_value": null,
+        "nullable": true,
+        "storage_kind": "Numeric",
+        "row_count": 5451,
+        "alias": {
+          "mnemonic": "sonic",
+          "unit_hint": "us/f"
+        }
+      },
+      {
+        "name": "DTSM",
+        "original_mnemonic": "DTSM",
+        "canonical_name": "DTSM",
+        "unit": "US/F",
+        "description": "Delta-T Shear {F12.3}",
+        "header_value": null,
+        "nullable": false,
+        "storage_kind": "Numeric",
+        "row_count": 5451,
+        "alias": {
+          "mnemonic": "shear_sonic",
+          "unit_hint": "us/f"
+        }
+      },
+      {
+        "name": "GR",
+        "original_mnemonic": "GR",
+        "canonical_name": "GR",
+        "unit": "GAPI",
+        "description": "Gamma Ray {F12.3}",
+        "header_value": null,
+        "nullable": false,
+        "storage_kind": "Numeric",
+        "row_count": 5451,
+        "alias": {
+          "mnemonic": "gamma_ray",
+          "unit_hint": "gapi"
+        }
+      }
+    ],
+    "parameters": [
+      {
+        "name": "RUN",
+        "original_mnemonic": "RUN",
+        "unit": null,
+        "value": "1.1",
+        "description": "RUN NUMBER"
+      },
+      {
+        "name": "PDAT",
+        "original_mnemonic": "PDAT",
+        "unit": null,
+        "value": "M.S.L.",
+        "description": "Permanent Datum"
+      },
+      {
+        "name": "EPD",
+        "original_mnemonic": "EPD",
+        "unit": "F",
+        "value": "0",
+        "description": "Elevation of Permanent Datum above Mean Sea Level"
+      },
+      {
+        "name": "LMF",
+        "original_mnemonic": "LMF",
+        "unit": null,
+        "value": "K.B.",
+        "description": "Logging Measured From (Name of Logging Elevation Reference)"
+      },
+      {
+        "name": "APD",
+        "original_mnemonic": "APD",
+        "unit": "F",
+        "value": "180.610229",
+        "description": "Elevation of Depth Reference (LMF) above Permanent Datum"
+      }
+    ],
+    "other": null,
+    "issue_count": 0
+  },
+  "storage": {
+    "index": {
+      "curve_id": "DEPT",
+      "raw_mnemonic": "DEPT",
+      "unit": "M",
+      "kind": "Depth"
+    },
+    "index_unit": "M",
+    "curve_columns": [
+      {
+        "name": "DEPT",
+        "canonical_name": "index",
+        "original_mnemonic": "DEPT",
+        "unit": "M",
+        "header_value": "Empty",
+        "description": "DEPTH (BOREHOLE) {F10.4}",
+        "storage_kind": "Numeric",
+        "row_count": 5451,
+        "nullable": false,
+        "alias": {
+          "mnemonic": "depth",
+          "unit_hint": "m"
+        },
+        "is_index": true
+      },
+      {
+        "name": "DTCO",
+        "canonical_name": "DTCO",
+        "original_mnemonic": "DTCO",
+        "unit": "US/F",
+        "header_value": "Empty",
+        "description": "Delta-T Compressional {F12.3}",
+        "storage_kind": "Numeric",
+        "row_count": 5451,
+        "nullable": true,
+        "alias": {
+          "mnemonic": "sonic",
+          "unit_hint": "us/f"
+        },
+        "is_index": false
+      },
+      {
+        "name": "DTSM",
+        "canonical_name": "DTSM",
+        "original_mnemonic": "DTSM",
+        "unit": "US/F",
+        "header_value": "Empty",
+        "description": "Delta-T Shear {F12.3}",
+        "storage_kind": "Numeric",
+        "row_count": 5451,
+        "nullable": false,
+        "alias": {
+          "mnemonic": "shear_sonic",
+          "unit_hint": "us/f"
+        },
+        "is_index": false
+      },
+      {
+        "name": "GR",
+        "canonical_name": "GR",
+        "original_mnemonic": "GR",
+        "unit": "GAPI",
+        "header_value": "Empty",
+        "description": "Gamma Ray {F12.3}",
+        "storage_kind": "Numeric",
+        "row_count": 5451,
+        "nullable": false,
+        "alias": {
+          "mnemonic": "gamma_ray",
+          "unit_hint": "gapi"
+        },
+        "is_index": false
+      }
+    ]
+  },
+  "raw": {
+    "version": {
+      "items": [
+        {
+          "mnemonic": "VERS",
+          "original_mnemonic": "VERS",
+          "unit": "",
+          "value": {
+            "Number": 2.0
+          },
+          "description": "CWLS Log ASCII Standard - VERSION 2.0",
+          "line_number": 2,
+          "raw_line": "VERS.           2.0   :CWLS Log ASCII Standard - VERSION 2.0"
+        },
+        {
+          "mnemonic": "WRAP",
+          "original_mnemonic": "WRAP",
+          "unit": "",
+          "value": {
+            "Text": "NO"
+          },
+          "description": "One Line per depth step",
+          "line_number": 3,
+          "raw_line": "WRAP.           NO    :One Line per depth step"
+        },
+        {
+          "mnemonic": "PROD",
+          "original_mnemonic": "PROD",
+          "unit": "",
+          "value": {
+            "Text": "Schlumberger"
+          },
+          "description": "LAS Producer",
+          "line_number": 4,
+          "raw_line": "PROD.  Schlumberger   :LAS Producer"
+        },
+        {
+          "mnemonic": "PROG",
+          "original_mnemonic": "PROG",
+          "unit": "",
+          "value": {
+            "Text": "DLIS to ASCII 9C2-303"
+          },
+          "description": "LAS Program name and version",
+          "line_number": 5,
+          "raw_line": "PROG.  DLIS to ASCII 9C2-303                           :LAS Program name and version"
+        },
+        {
+          "mnemonic": "CREA",
+          "original_mnemonic": "CREA",
+          "unit": "",
+          "value": {
+            "Text": "2001/06/05 11:25                          :LAS Creation date {YYYY/MM/DD hh"
+          },
+          "description": "mm}",
+          "line_number": 6,
+          "raw_line": "CREA.        2001/06/05 11:25                          :LAS Creation date {YYYY/MM/DD hh:mm}"
+        },
+        {
+          "mnemonic": "SOURCE",
+          "original_mnemonic": "SOURCE",
+          "unit": "",
+          "value": {
+            "Text": "Main_Log_FMI_DSI_030LUP.DLIS"
+          },
+          "description": "DLIS File Name",
+          "line_number": 7,
+          "raw_line": "SOURCE.     Main_Log_FMI_DSI_030LUP.DLIS               :DLIS File Name"
+        },
+        {
+          "mnemonic": "FILE-ID",
+          "original_mnemonic": "FILE-ID",
+          "unit": "",
+          "value": {
+            "Text": "030"
+          },
+          "description": "File Identification Number",
+          "line_number": 8,
+          "raw_line": "FILE-ID.     030                                       :File Identification Number"
+        }
+      ],
+      "mnemonic_case": "Preserve"
+    },
+    "well": {
+      "items": [
+        {
+          "mnemonic": "STRT",
+          "original_mnemonic": "STRT",
+          "unit": "M",
+          "value": {
+            "Number": 2702.3568
+          },
+          "description": "START DEPTH",
+          "line_number": 13,
+          "raw_line": "STRT .M      2702.3568       :START DEPTH     "
+        },
+        {
+          "mnemonic": "STOP",
+          "original_mnemonic": "STOP",
+          "unit": "M",
+          "value": {
+            "Number": 1871.7768
+          },
+          "description": "STOP DEPTH",
+          "line_number": 14,
+          "raw_line": "STOP .M      1871.7768       :STOP DEPTH     "
+        },
+        {
+          "mnemonic": "STEP",
+          "original_mnemonic": "STEP",
+          "unit": "M",
+          "value": {
+            "Number": -0.1524
+          },
+          "description": "STEP",
+          "line_number": 15,
+          "raw_line": "STEP .M        -0.1524       :STEP     "
+        },
+        {
+          "mnemonic": "NULL",
+          "original_mnemonic": "NULL",
+          "unit": "",
+          "value": {
+            "Number": -999.25
+          },
+          "description": "NULL VALUE",
+          "line_number": 16,
+          "raw_line": "NULL .          -999.25      :NULL VALUE"
+        },
+        {
+          "mnemonic": "COMP",
+          "original_mnemonic": "COMP",
+          "unit": "",
+          "value": {
+            "Text": "Veba Oil and Gas Nederland B.V."
+          },
+          "description": "COMPANY",
+          "line_number": 17,
+          "raw_line": "COMP .        Veba Oil and Gas Nederland B.V.          :COMPANY"
+        },
+        {
+          "mnemonic": "WELL",
+          "original_mnemonic": "WELL",
+          "unit": "",
+          "value": {
+            "Text": "F2-A5"
+          },
+          "description": "WELL",
+          "line_number": 18,
+          "raw_line": "WELL .        F2-A5                                    :WELL"
+        },
+        {
+          "mnemonic": "FLD",
+          "original_mnemonic": "FLD",
+          "unit": "",
+          "value": {
+            "Text": "Hanze"
+          },
+          "description": "FIELD",
+          "line_number": 19,
+          "raw_line": "FLD  .        Hanze                                    :FIELD"
+        },
+        {
+          "mnemonic": "LOC",
+          "original_mnemonic": "LOC",
+          "unit": "",
+          "value": {
+            "Text": "Dutch North Sea"
+          },
+          "description": "LOCATION",
+          "line_number": 20,
+          "raw_line": "LOC  .        Dutch North Sea                          :LOCATION"
+        },
+        {
+          "mnemonic": "CNTY",
+          "original_mnemonic": "CNTY",
+          "unit": "",
+          "value": {
+            "Text": "Ensco 100"
+          },
+          "description": "COUNTY",
+          "line_number": 21,
+          "raw_line": "CNTY .        Ensco 100                                :COUNTY"
+        },
+        {
+          "mnemonic": "STAT",
+          "original_mnemonic": "STAT",
+          "unit": "",
+          "value": {
+            "Text": "Netherlands"
+          },
+          "description": "STATE",
+          "line_number": 22,
+          "raw_line": "STAT .        Netherlands                              :STATE"
+        },
+        {
+          "mnemonic": "CTRY",
+          "original_mnemonic": "CTRY",
+          "unit": "",
+          "value": {
+            "Text": "Netherlands"
+          },
+          "description": "COUNTRY",
+          "line_number": 23,
+          "raw_line": "CTRY .        Netherlands                              :COUNTRY"
+        },
+        {
+          "mnemonic": "API",
+          "original_mnemonic": "API",
+          "unit": "",
+          "value": "Empty",
+          "description": "API NUMBER",
+          "line_number": 24,
+          "raw_line": "API  .                                                 :API NUMBER"
+        },
+        {
+          "mnemonic": "UWI",
+          "original_mnemonic": "UWI",
+          "unit": "",
+          "value": "Empty",
+          "description": "UNIQUE WELL ID",
+          "line_number": 25,
+          "raw_line": "UWI  .                                                 :UNIQUE WELL ID"
+        },
+        {
+          "mnemonic": "DATE",
+          "original_mnemonic": "DATE",
+          "unit": "",
+          "value": {
+            "Text": "04-Jun-2001"
+          },
+          "description": "LOG DATE {DD-MMM-YYYY}",
+          "line_number": 26,
+          "raw_line": "DATE .        04-Jun-2001                              :LOG DATE {DD-MMM-YYYY}"
+        },
+        {
+          "mnemonic": "SRVC",
+          "original_mnemonic": "SRVC",
+          "unit": "",
+          "value": {
+            "Text": "Schlumberger"
+          },
+          "description": "SERVICE COMPANY",
+          "line_number": 27,
+          "raw_line": "SRVC .        Schlumberger                             :SERVICE COMPANY"
+        },
+        {
+          "mnemonic": "LATI",
+          "original_mnemonic": "LATI",
+          "unit": "DEG",
+          "value": {
+            "Text": "04* 34' 24.747\""
+          },
+          "description": "LATITUDE",
+          "line_number": 28,
+          "raw_line": "LATI .DEG     04* 34' 24.747\"                          :LATITUDE"
+        },
+        {
+          "mnemonic": "LONG",
+          "original_mnemonic": "LONG",
+          "unit": "DEG",
+          "value": {
+            "Text": "54* 56' 43.773\""
+          },
+          "description": "LONGITUDE",
+          "line_number": 29,
+          "raw_line": "LONG .DEG     54* 56' 43.773\"                          :LONGITUDE"
+        },
+        {
+          "mnemonic": "GDAT",
+          "original_mnemonic": "GDAT",
+          "unit": "",
+          "value": "Empty",
+          "description": "GeoDetic Datum",
+          "line_number": 30,
+          "raw_line": "GDAT .                                                 :GeoDetic Datum"
+        }
+      ],
+      "mnemonic_case": "Preserve"
+    },
+    "params": {
+      "items": [
+        {
+          "mnemonic": "RUN",
+          "original_mnemonic": "RUN",
+          "unit": "",
+          "value": {
+            "Number": 1.1
+          },
+          "description": "RUN NUMBER",
+          "line_number": 35,
+          "raw_line": "RUN  .          1.1                      :RUN NUMBER"
+        },
+        {
+          "mnemonic": "PDAT",
+          "original_mnemonic": "PDAT",
+          "unit": "",
+          "value": {
+            "Text": "M.S.L."
+          },
+          "description": "Permanent Datum",
+          "line_number": 36,
+          "raw_line": "PDAT .        M.S.L.                     :Permanent Datum"
+        },
+        {
+          "mnemonic": "EPD",
+          "original_mnemonic": "EPD",
+          "unit": "F",
+          "value": {
+            "Number": 0.0
+          },
+          "description": "Elevation of Permanent Datum above Mean Sea Level",
+          "line_number": 37,
+          "raw_line": "EPD  .F           0.000000               :Elevation of Permanent Datum above Mean Sea Level"
+        },
+        {
+          "mnemonic": "LMF",
+          "original_mnemonic": "LMF",
+          "unit": "",
+          "value": {
+            "Text": "K.B."
+          },
+          "description": "Logging Measured From (Name of Logging Elevation Reference)",
+          "line_number": 38,
+          "raw_line": "LMF  .          K.B.                     :Logging Measured From (Name of Logging Elevation Reference)"
+        },
+        {
+          "mnemonic": "APD",
+          "original_mnemonic": "APD",
+          "unit": "F",
+          "value": {
+            "Number": 180.610229
+          },
+          "description": "Elevation of Depth Reference (LMF) above Permanent Datum",
+          "line_number": 39,
+          "raw_line": "APD  .F         180.610229               :Elevation of Depth Reference (LMF) above Permanent Datum"
+        }
+      ],
+      "mnemonic_case": "Preserve"
+    },
+    "other": "",
+    "extra_sections": {},
+    "curve_mnemonic_case": "Preserve"
+  },
+  "diagnostics": {
+    "issues": []
+  }
+}

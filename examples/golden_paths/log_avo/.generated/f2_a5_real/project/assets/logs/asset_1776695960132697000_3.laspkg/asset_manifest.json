@@ -1,0 +1,127 @@
+{
+  "asset_kind": "Log",
+  "asset_schema_version": "0.1.0",
+  "logical_asset_id": "logical_1776695960131622000_2",
+  "storage_asset_id": "asset_1776695960132697000_3",
+  "well_id": "well_1776695956082653000_1",
+  "wellbore_id": "wellbore_1776695956085761000_2",
+  "asset_collection_id": "collection_1776695960131615000_1",
+  "source_artifacts": [
+    {
+      "source_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/f02a05_20030103-1-06_lwd2259a5rt.las",
+      "original_filename": "f02a05_20030103-1-06_lwd2259a5rt.las",
+      "source_fingerprint": "0ef73a7f0985c8f0"
+    }
+  ],
+  "provenance": {
+    "source_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/f02a05_20030103-1-06_lwd2259a5rt.las",
+    "original_filename": "f02a05_20030103-1-06_lwd2259a5rt.las",
+    "source_fingerprint": "0ef73a7f0985c8f0",
+    "imported_at_unix_seconds": 1776695956
+  },
+  "diagnostics": [],
+  "extents": {
+    "index_kind": "Depth",
+    "start": 1880.0,
+    "stop": 2259.0,
+    "row_count": 1517
+  },
+  "bulk_data_descriptors": [
+    {
+      "relative_path": "metadata.json",
+      "media_type": "application/json",
+      "role": "metadata"
+    },
+    {
+      "relative_path": "curves.parquet",
+      "media_type": "application/vnd.apache.parquet",
+      "role": "curve_samples"
+    }
+  ],
+  "reference_metadata": {
+    "identifiers": {
+      "primary_name": null,
+      "uwi": null,
+      "api": null,
+      "operator_aliases": []
+    },
+    "coordinate_reference": null,
+    "vertical_datum": null,
+    "depth_reference": "MeasuredDepth",
+    "unit_system": {
+      "depth_unit": "M",
+      "coordinate_unit": null,
+      "pressure_unit": null
+    }
+  },
+  "created_at_unix_seconds": 1776695960,
+  "imported_at_unix_seconds": 1776695960,
+  "supersedes": null,
+  "derived_from": null,
+  "curve_semantics": [
+    {
+      "curve_name": "DEPT",
+      "original_mnemonic": "DEPT",
+      "unit": "M",
+      "semantic_type": "Depth",
+      "source": "Derived"
+    },
+    {
+      "curve_name": "BDCX",
+      "original_mnemonic": "BDCX",
+      "unit": "g/cc",
+      "semantic_type": "BulkDensity",
+      "source": "Derived"
+    },
+    {
+      "curve_name": "DRHX",
+      "original_mnemonic": "DRHX",
+      "unit": "g/cc",
+      "semantic_type": "Unknown",
+      "source": "Derived"
+    },
+    {
+      "curve_name": "GR1AX",
+      "original_mnemonic": "GR1AX",
+      "unit": "MWD-API",
+      "semantic_type": "GammaRay",
+      "source": "Derived"
+    },
+    {
+      "curve_name": "NPLX",
+      "original_mnemonic": "NPLX",
+      "unit": "pu",
+      "semantic_type": "NeutronPorosity",
+      "source": "Derived"
+    },
+    {
+      "curve_name": "RACLX",
+      "original_mnemonic": "RACLX",
+      "unit": "ohmm",
+      "semantic_type": "Unknown",
+      "source": "Derived"
+    },
+    {
+      "curve_name": "RPCHX",
+      "original_mnemonic": "RPCHX",
+      "unit": "ohmm",
+      "semantic_type": "Unknown",
+      "source": "Derived"
+    },
+    {
+      "curve_name": "TCDX",
+      "original_mnemonic": "TCDX",
+      "unit": "deg",
+      "semantic_type": "Unknown",
+      "source": "Derived"
+    },
+    {
+      "curve_name": "TVD",
+      "original_mnemonic": "TVD",
+      "unit": "meters",
+      "semantic_type": "Unknown",
+      "source": "Derived"
+    }
+  ],
+  "compute_manifest": null
+}

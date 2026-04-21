@@ -4,6 +4,7 @@ mod error;
 mod gather_processing;
 mod horizons;
 mod ingest;
+mod mdio;
 mod metadata;
 mod openvds;
 mod preflight;
@@ -39,14 +40,22 @@ pub use gather_processing::{
     validate_gather_processing_pipeline, validate_gather_processing_pipeline_for_layout,
 };
 pub use horizons::{
-    ImportedHorizonGrid, convert_horizon_vertical_domain_with_transform, import_horizon_xyzs,
-    import_horizon_xyzs_with_vertical_domain, load_horizon_grids, section_horizon_overlays,
+    HorizonImportPreview, HorizonImportPreviewFile, HorizonSourceImportCanonicalDraft,
+    HorizonSourceImportPreview, HorizonXyzFilePreview, ImportedHorizonGrid,
+    build_suggested_horizon_source_import_draft, convert_horizon_vertical_domain_with_transform,
+    import_horizon_xyzs, import_horizon_xyzs_from_draft, import_horizon_xyzs_with_vertical_domain,
+    inspect_horizon_xyz_files, load_horizon_grids, preview_horizon_source_import,
+    preview_horizon_xyzs, preview_horizon_xyzs_with_vertical_domain, section_horizon_overlays,
 };
 pub use ingest::{
     IngestOptions, SeisGeometryOptions, SourceVolume, SparseSurveyPolicy, VolumeImportFormat,
     detect_volume_import_format, ingest_prestack_offset_segy, ingest_segy, ingest_volume,
     ingest_zarr_store, load_source_volume, load_source_volume_with_options,
     normalize_volume_import_path, recommended_chunk_shape,
+};
+pub use mdio::{
+    MdioTbvolStorageEstimate, VolumeSubset, estimate_mdio_tbvol_storage, ingest_mdio_store,
+    looks_like_mdio_path,
 };
 pub use metadata::{
     CompressionKind, DatasetKind, GeometryProvenance, HeaderFieldSpec, InterpMethod,
@@ -68,9 +77,9 @@ pub use ophiolite_seismic::{
     GeometryProvenanceSummary, GeometrySummary, GetProcessingJobRequest, GetProcessingJobResponse,
     ImportHorizonXyzRequest, ImportHorizonXyzResponse, ImportedHorizonDescriptor,
     InterpretationPoint, ListPipelinePresetsResponse, LoadSectionHorizonsRequest,
-    LoadSectionHorizonsResponse, PreviewGatherProcessingRequest,
-    PreviewGatherProcessingResponse, PreviewProcessingRequest, PreviewProcessingResponse,
-    PreviewResponse, PreviewSubvolumeProcessingRequest, PreviewSubvolumeProcessingResponse,
+    LoadSectionHorizonsResponse, PreviewGatherProcessingRequest, PreviewGatherProcessingResponse,
+    PreviewProcessingRequest, PreviewProcessingResponse, PreviewResponse,
+    PreviewSubvolumeProcessingRequest, PreviewSubvolumeProcessingResponse,
     PreviewTraceLocalProcessingRequest, PreviewTraceLocalProcessingResponse, PreviewView,
     ProcessingArtifactRole, ProcessingJobProgress, ProcessingJobState, ProcessingJobStatus,
     ProcessingLayoutCompatibility, ProcessingOperation, ProcessingOperatorDependencyProfile,
@@ -92,7 +101,6 @@ pub use ophiolite_seismic::{
     VelocityFunctionSource, VelocityPickStrategy, VelocityQuantityKind, VelocityScanRequest,
     VelocityScanResponse, VolumeDescriptor,
 };
-pub use rock_physics::{avo_intercept_gradient_attribute, rock_physics_attribute};
 pub use preflight::{PreflightAction, PreflightGeometry, SurveyPreflight, preflight_segy};
 pub use prestack_analysis::velocity_scan;
 pub use prestack_store::{
@@ -104,6 +112,7 @@ pub use prestack_store::{
     set_prestack_store_native_coordinate_reference,
 };
 pub use render::{render_section_csv, render_section_csv_for_request};
+pub use rock_physics::{avo_intercept_gradient_attribute, rock_physics_attribute};
 pub use segy_export::{
     attach_store_segy_export, copy_store_segy_export, crop_store_segy_export, export_store_to_segy,
 };
@@ -113,8 +122,9 @@ pub use storage::tbvol::{
     recommended_tbvol_tile_shape,
 };
 pub use storage::tbvolc::{
-    TbvolcAmplitudeEncoding, TbvolcManifest, TbvolcReader, TbvolcWriter, transcode_tbvol_to_tbvolc,
-    transcode_tbvolc_to_tbvol,
+    TbvolArchiveSiblingStatus, TbvolcAmplitudeEncoding, TbvolcManifest, TbvolcReader, TbvolcWriter,
+    describe_tbvol_archive_sibling, suggested_tbvol_restore_path, suggested_tbvolc_archive_path,
+    transcode_tbvol_to_tbvolc, transcode_tbvolc_to_tbvol,
 };
 pub use storage::tile_geometry::{TileCoord, TileGeometry};
 pub use storage::volume_store::{
@@ -122,8 +132,9 @@ pub use storage::volume_store::{
 };
 pub use storage::zarr::{ZarrVolumeStoreReader, ZarrVolumeStoreWriter};
 pub use store::{
-    SectionPlane, StoreHandle, create_tbvol_store, describe_store, load_array, load_occupancy,
-    open_store, read_section_plane, section_view, set_store_native_coordinate_reference,
+    SectionPlane, SectionTileView, StoreHandle, create_tbvol_store, describe_store, load_array,
+    load_occupancy, open_store, read_section_plane, section_tile_view, section_view,
+    set_store_native_coordinate_reference, set_store_vertical_axis,
 };
 pub use survey_time_depth::{
     SectionSurveyTimeDepthTransformSlice, StoredSurveyPropertyField,

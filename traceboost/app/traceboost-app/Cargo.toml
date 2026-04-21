@@ -5,7 +5,9 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
+blake3 = "1.5"
 clap = { version = "4.6.0", features = ["derive"] }
+libc = "0.2"
 ophiolite = { path = "../../.." }
 seis_contracts_operations = { package = "seis-contracts-operations", path = "../../contracts/seis-contracts-operations" }
 seis_runtime = { package = "seis-runtime", path = "../../runtime" }
@@ -16,3 +18,4 @@ seis_io = { package = "seis-io", path = "../../io" }
 [dev-dependencies]
 ndarray = "0.17.2"
 tempfile = "3.15"
+zarrs = { version = "0.22.5", default-features = true }

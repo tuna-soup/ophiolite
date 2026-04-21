@@ -18,8 +18,8 @@ pub use ophiolite_seismic::{
     TraceLocalProcessingStep, TraceLocalVolumeArithmeticOperator, VelocityAutopickParameters,
     VelocityControlProfile, VelocityControlProfileSample, VelocityControlProfileSet,
     VelocityFunctionEstimate, VelocityFunctionSource, VelocityIntervalTrend, VelocityPickStrategy,
-    VelocityQuantityKind, VelocityScanRequest, VelocityScanResponse, VerticalInterpolationMethod,
-    VolumeDescriptor,
+    VelocityQuantityKind, VelocityScanRequest, VelocityScanResponse, VelocitySource3D,
+    VerticalInterpolationMethod, VolumeDescriptor,
 };
 
 pub mod domain {

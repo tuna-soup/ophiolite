@@ -15,6 +15,7 @@ use crate::error::SeismicStoreError;
 use crate::gather_processing::{GatherPlane, apply_gather_processing_pipeline};
 use crate::metadata::{
     DatasetKind, ProcessingLineage, VolumeMetadata, generate_store_id, normalize_source_identity,
+    normalize_volume_axes, validate_vertical_axis,
 };
 use crate::store::apply_native_coordinate_reference_override;
 
@@ -106,7 +107,14 @@ impl TbgathReader {
         let root = root.as_ref();
         let manifest_path = root.join(MANIFEST_FILE);
         let mut manifest = serde_json::from_slice::<TbgathManifest>(&fs::read(&manifest_path)?)?;
+        let mut changed = false;
         if normalize_source_identity(&mut manifest.volume.source) {
+            changed = true;
+        }
+        if normalize_volume_axes(&mut manifest.volume.axes) {
+            changed = true;
+        }
+        if changed {
             fs::write(&manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
         }
         validate_manifest(&manifest)?;
@@ -321,7 +329,10 @@ impl PrestackStoreHandle {
             summary: GeometrySummary {
                 inline_axis: summarize_i32_axis(&self.manifest.volume.axes.ilines),
                 xline_axis: summarize_i32_axis(&self.manifest.volume.axes.xlines),
-                sample_axis: summarize_f32_axis(&self.manifest.volume.axes.sample_axis_ms),
+                sample_axis: summarize_f32_axis(
+                    &self.manifest.volume.axes.sample_axis_ms,
+                    Some(self.manifest.volume.axes.sample_axis_unit.clone()),
+                ),
                 layout: Some(self.manifest.layout),
                 gather_axis_kind: Some(self.manifest.gather_axis_kind),
                 gather_axis: Some(summarize_f64_axis_as_f32(
@@ -661,13 +672,12 @@ fn validate_manifest(manifest: &TbgathManifest) -> Result<(), SeismicStoreError>
             manifest.volume.axes.xlines.len()
         )));
     }
-    if manifest.volume.axes.sample_axis_ms.len() != manifest.volume.shape[2] {
-        return Err(SeismicStoreError::Message(format!(
-            "sample axis length mismatch: expected {}, found {}",
-            manifest.volume.shape[2],
-            manifest.volume.axes.sample_axis_ms.len()
-        )));
-    }
+    validate_vertical_axis(
+        &manifest.volume.axes.sample_axis_ms,
+        manifest.volume.shape[2],
+        "sample axis",
+    )
+    .map_err(SeismicStoreError::Message)?;
     if manifest.gather_axis_values.is_empty() {
         return Err(SeismicStoreError::Message(
             "prestack gather axis must contain at least one offset".to_string(),
@@ -720,7 +730,7 @@ fn summarize_i32_axis(values: &[f64]) -> AxisSummaryI32 {
     }
 }
 
-fn summarize_f32_axis(values: &[f32]) -> AxisSummaryF32 {
+fn summarize_f32_axis(values: &[f32], units: Option<String>) -> AxisSummaryF32 {
     let first = values.first().copied().unwrap_or_default();
     let last = values.last().copied().unwrap_or_default();
     let step = if values.len() < 2 {
@@ -738,7 +748,7 @@ fn summarize_f32_axis(values: &[f32]) -> AxisSummaryF32 {
         last,
         step,
         regular: step.is_some(),
-        units: Some("ms".to_string()),
+        units,
     }
 }
 
@@ -989,11 +999,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [2, 2, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0],
-                    xlines: vec![200.0, 201.0],
-                    sample_axis_ms: vec![0.0, 2.0, 4.0, 6.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0],
+                    vec![0.0, 2.0, 4.0, 6.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: None,
                 spatial: None,

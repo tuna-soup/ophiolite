@@ -1,9 +1,13 @@
 use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet},
+    ffi::CString,
     fs,
     path::{Path, PathBuf},
 };
+
+#[cfg(unix)]
+use std::os::unix::ffi::OsStrExt;
 
 use ophiolite::resolve_dataset_summary_survey_map_source;
 use seis_contracts_operations::datasets::{
@@ -12,9 +16,17 @@ use seis_contracts_operations::datasets::{
 use seis_contracts_operations::import_ops::{
     ExportSegyRequest, ExportSegyResponse, ImportDatasetRequest, ImportDatasetResponse,
     ImportHorizonXyzRequest, ImportHorizonXyzResponse, ImportPrestackOffsetDatasetRequest,
-    ImportPrestackOffsetDatasetResponse, LoadSectionHorizonsRequest, LoadSectionHorizonsResponse,
-    PrestackThirdAxisField, SegyGeometryCandidate, SegyGeometryOverride, SegyHeaderField,
-    SegyHeaderValueType, SuggestedImportAction, SurveyPreflightRequest, SurveyPreflightResponse,
+    ImportPrestackOffsetDatasetResponse, ImportSegyWithPlanRequest,
+    ImportSegyWithPlanResponse, LoadSectionHorizonsRequest, LoadSectionHorizonsResponse,
+    PrestackThirdAxisField, ScanSegyImportRequest, SegyGeometryCandidate,
+    SegyGeometryOverride, SegyHeaderField, SegyHeaderValueType, SegyImportCandidatePlan,
+    SegyImportFieldObservation, SegyImportIssue, SegyImportIssueSection,
+    SegyImportIssueSeverity, SegyImportPlan, SegyImportPlanSource, SegyImportPolicy,
+    SegyImportProvenance, SegyImportResolvedDataset, SegyImportResolvedSpatial,
+    SegyImportRiskSummary, SegyImportScanResponse, SegyImportSparseHandling,
+    SegyImportSpatialPlan, SegyImportValidationResponse, SegyImportWizardStage,
+    SuggestedImportAction, SurveyPreflightRequest, SurveyPreflightResponse,
+    ValidateSegyImportPlanRequest,
 };
 use seis_contracts_operations::processing_ops::{
     AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, GatherProcessingPipeline, GatherRequest,
@@ -29,35 +41,42 @@ use seis_contracts_operations::resolve::{
     ResolveSurveyMapRequest, ResolveSurveyMapResponse, SetDatasetNativeCoordinateReferenceRequest,
     SetDatasetNativeCoordinateReferenceResponse,
 };
-use seis_contracts_operations::workspace::LoadVelocityModelsResponse;
+use seis_contracts_operations::workspace::{
+    DescribeVelocityVolumeRequest, DescribeVelocityVolumeResponse, IngestVelocityVolumeRequest,
+    IngestVelocityVolumeResponse, LoadVelocityModelsResponse,
+};
 use seis_io::HeaderField;
 use seis_runtime::{
     BuildSurveyTimeDepthTransformRequest, DepthReferenceKind, GatherInterpolationMode,
-    ImportedHorizonDescriptor, IngestOptions, LateralInterpolationMethod, LayeredVelocityInterval,
-    LayeredVelocityModel, MaterializeOptions, PreviewView, ProjectedPoint2,
-    ResolvedSectionDisplayView, SeisGeometryOptions, SparseSurveyPolicy,
-    SpatialCoverageRelationship, SpatialCoverageSummary, StratigraphicBoundaryReference,
-    SurveyTimeDepthTransform3D, TimeDepthDomain, TimeDepthTransformSourceKind,
-    TraceLocalProcessingPipeline, TravelTimeReference, VelocityControlProfile,
-    VelocityControlProfileSample, VelocityControlProfileSet, VelocityIntervalTrend,
-    VelocityQuantityKind, VerticalAxisDescriptor, VerticalInterpolationMethod,
-    amplitude_spectrum_from_store, build_survey_time_depth_transform,
-    build_survey_time_depth_transform_from_horizon_pairs,
+    HorizonImportPreview, ImportedHorizonDescriptor, IngestOptions, LateralInterpolationMethod,
+    LayeredVelocityInterval, LayeredVelocityModel, MaterializeOptions, PreflightAction,
+    PreviewView, ProjectedPoint2, ResolvedSectionDisplayView, SeisGeometryOptions,
+    SparseSurveyPolicy, SpatialCoverageRelationship, SpatialCoverageSummary,
+    StratigraphicBoundaryReference, SurveyTimeDepthTransform3D, TileGeometry, TimeDepthDomain,
+    TimeDepthTransformSourceKind, TraceLocalProcessingPipeline, TravelTimeReference,
+    VelocityControlProfile, VelocityControlProfileSample, VelocityControlProfileSet,
+    VelocityIntervalTrend, VelocityQuantityKind, VelocitySource3D, VerticalAxisDescriptor,
+    VerticalInterpolationMethod, VolumeImportFormat, amplitude_spectrum_from_store,
+    build_survey_time_depth_transform, build_survey_time_depth_transform_from_horizon_pairs,
     convert_horizon_vertical_domain_with_transform, depth_converted_section_view,
-    describe_prestack_store, describe_store, export_store_to_segy, export_store_to_zarr,
+    describe_prestack_store, describe_store, detect_volume_import_format,
+    estimate_mdio_tbvol_storage, export_store_to_segy, export_store_to_zarr,
     import_horizon_xyzs_with_vertical_domain, ingest_prestack_offset_segy, ingest_volume,
     load_horizon_grids, load_survey_time_depth_transforms, materialize_gather_processing_store,
     materialize_processing_volume, materialize_subvolume_processing_volume, open_prestack_store,
     open_store, preflight_segy, prestack_gather_view, preview_gather_processing_view,
-    preview_processing_section_view, preview_subvolume_processing_section_view,
-    resolved_section_display_view, section_horizon_overlays,
-    set_any_store_native_coordinate_reference, store_survey_time_depth_transform, velocity_scan,
+    preview_horizon_xyzs_with_vertical_domain, preview_processing_section_view,
+    preview_subvolume_processing_section_view, recommended_default_tbvol_tile_target_mib,
+    recommended_tbvol_tile_shape, resolved_section_display_view, section_horizon_overlays,
+    set_any_store_native_coordinate_reference, set_store_vertical_axis,
+    store_survey_time_depth_transform, velocity_scan,
 };
 use serde::Serialize;
 
 const DEFAULT_SPARSE_FILL_VALUE: f32 = 0.0;
 const DEMO_SURVEY_TIME_DEPTH_TRANSFORM_ID: &str = "demo-survey-3d-transform";
 const DEMO_SURVEY_TIME_DEPTH_TRANSFORM_NAME: &str = "Synthetic Survey 3D Time-Depth Transform";
+const IMPORT_FREE_SPACE_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
 
 #[derive(Debug, Clone, Default)]
 pub struct TraceBoostWorkflowService;
@@ -103,6 +122,30 @@ struct ParsedVelocityProfileRow {
     x: f64,
     y: f64,
     sample: VelocityControlProfileSample,
+}
+
+#[derive(Debug, Clone)]
+struct VelocityVolumeDescriptorOptions {
+    vertical_domain: TimeDepthDomain,
+    vertical_unit: String,
+    vertical_start: Option<f32>,
+    vertical_step: Option<f32>,
+}
+
+impl Default for VelocityVolumeDescriptorOptions {
+    fn default() -> Self {
+        Self {
+            vertical_domain: TimeDepthDomain::Time,
+            vertical_unit: "ms".to_string(),
+            vertical_start: None,
+            vertical_step: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct VelocityNavigationIndex {
+    points_by_line: HashMap<String, HashMap<i32, ProjectedPoint2>>,
 }
 
 #[derive(Debug, Clone)]
@@ -175,6 +218,27 @@ impl TraceBoostWorkflowService {
         import_dataset(request)
     }
 
+    pub fn scan_segy_import(
+        &self,
+        request: ScanSegyImportRequest,
+    ) -> Result<SegyImportScanResponse, Box<dyn std::error::Error>> {
+        scan_segy_import(request)
+    }
+
+    pub fn validate_segy_import_plan(
+        &self,
+        request: ValidateSegyImportPlanRequest,
+    ) -> Result<SegyImportValidationResponse, Box<dyn std::error::Error>> {
+        validate_segy_import_plan(request)
+    }
+
+    pub fn import_segy_with_plan(
+        &self,
+        request: ImportSegyWithPlanRequest,
+    ) -> Result<ImportSegyWithPlanResponse, Box<dyn std::error::Error>> {
+        import_segy_with_plan(request)
+    }
+
     pub fn import_prestack_offset_dataset(
         &self,
         request: ImportPrestackOffsetDatasetRequest,
@@ -226,6 +290,13 @@ impl TraceBoostWorkflowService {
         import_horizon_xyz(request)
     }
 
+    pub fn preview_horizon_xyz_import(
+        &self,
+        request: ImportHorizonXyzRequest,
+    ) -> Result<HorizonImportPreview, Box<dyn std::error::Error>> {
+        preview_horizon_xyz_import(request)
+    }
+
     pub fn load_section_horizons(
         &self,
         request: LoadSectionHorizonsRequest,
@@ -238,6 +309,68 @@ impl TraceBoostWorkflowService {
         store_path: String,
     ) -> Result<LoadVelocityModelsResponse, Box<dyn std::error::Error>> {
         load_velocity_models(store_path)
+    }
+
+    pub fn describe_velocity_volume_store(
+        &self,
+        store_path: String,
+        velocity_kind: VelocityQuantityKind,
+        vertical_domain: TimeDepthDomain,
+        vertical_unit: Option<String>,
+        vertical_start: Option<f32>,
+        vertical_step: Option<f32>,
+    ) -> Result<VelocitySource3D, Box<dyn std::error::Error>> {
+        describe_velocity_volume_store_with_options(
+            store_path,
+            velocity_kind,
+            VelocityVolumeDescriptorOptions {
+                vertical_domain,
+                vertical_unit: vertical_unit
+                    .unwrap_or_else(|| default_vertical_axis_unit(vertical_domain)),
+                vertical_start,
+                vertical_step,
+            },
+        )
+    }
+
+    pub fn describe_velocity_volume(
+        &self,
+        request: DescribeVelocityVolumeRequest,
+    ) -> Result<DescribeVelocityVolumeResponse, Box<dyn std::error::Error>> {
+        describe_velocity_volume(request)
+    }
+
+    pub fn ingest_velocity_volume(
+        &self,
+        input_path: String,
+        output_store_path: String,
+        velocity_kind: VelocityQuantityKind,
+        vertical_domain: TimeDepthDomain,
+        vertical_unit: Option<String>,
+        vertical_start: Option<f32>,
+        vertical_step: Option<f32>,
+        overwrite_existing: bool,
+        delete_input_on_success: bool,
+    ) -> Result<IngestVelocityVolumeResponse, Box<dyn std::error::Error>> {
+        ingest_velocity_volume_with_options(
+            input_path,
+            output_store_path,
+            velocity_kind,
+            vertical_domain,
+            vertical_unit,
+            vertical_start,
+            vertical_step,
+            overwrite_existing,
+            delete_input_on_success,
+            None,
+        )
+    }
+
+    pub fn ingest_velocity_volume_request(
+        &self,
+        request: IngestVelocityVolumeRequest,
+    ) -> Result<IngestVelocityVolumeResponse, Box<dyn std::error::Error>> {
+        ingest_velocity_volume(request)
     }
 
     pub fn ensure_demo_survey_time_depth_transform(
@@ -351,11 +484,181 @@ pub fn preflight_dataset(
     ))
 }
 
+pub fn scan_segy_import(
+    request: ScanSegyImportRequest,
+) -> Result<SegyImportScanResponse, Box<dyn std::error::Error>> {
+    let input_path = request.input_path.trim().to_string();
+    let source_fingerprint = source_fingerprint_for_input(&input_path)?;
+    let output_store_path = default_tbvol_output_path(&input_path);
+    let preflight = preflight_segy(&input_path, &IngestOptions::default())?;
+    let geometry_candidates = if matches!(
+        preflight.recommended_action,
+        PreflightAction::ReviewGeometryMapping
+    ) {
+        discover_geometry_candidates(&input_path, &preflight)
+    } else {
+        Vec::new()
+    };
+    let default_plan = build_segy_import_plan(
+        &input_path,
+        &source_fingerprint,
+        &output_store_path,
+        geometry_override_from_preflight(&preflight),
+        SegyImportPlanSource::ScanDefault,
+        None,
+        None,
+        None,
+    );
+    let default_validation = validate_segy_import_plan(ValidateSegyImportPlanRequest {
+        schema_version: request.schema_version,
+        plan: default_plan.clone(),
+    })?;
+
+    let candidate_plans = geometry_candidates
+        .into_iter()
+        .enumerate()
+        .map(|(index, candidate)| {
+            let candidate_id = format!("candidate-{:02}", index + 1);
+            let plan = build_segy_import_plan(
+                &input_path,
+                &source_fingerprint,
+                &output_store_path,
+                candidate.geometry.clone(),
+                SegyImportPlanSource::Candidate,
+                Some(candidate_id.clone()),
+                None,
+                None,
+            );
+            let validation = validate_segy_import_plan(ValidateSegyImportPlanRequest {
+                schema_version: request.schema_version,
+                plan: plan.clone(),
+            })?;
+            Ok::<SegyImportCandidatePlan, Box<dyn std::error::Error>>(SegyImportCandidatePlan {
+                candidate_id,
+                label: candidate.label,
+                plan_patch: plan,
+                resolved_dataset: validation.resolved_dataset,
+                risk_summary: validation.risk_summary,
+                issues: validation.issues,
+                auto_selectable: candidate.auto_selectable,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(SegyImportScanResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        input_path,
+        source_fingerprint,
+        file_size: preflight.inspection.file_size,
+        trace_count: preflight.inspection.trace_count,
+        samples_per_trace: preflight.inspection.samples_per_trace as usize,
+        sample_interval_us: preflight.inspection.sample_interval_us,
+        sample_format_code: preflight.inspection.sample_format_code,
+        endianness: preflight.inspection.endianness.clone(),
+        default_plan,
+        candidate_plans,
+        field_observations: field_observations_from_preflight(&preflight),
+        risk_summary: default_validation.risk_summary,
+        issues: default_validation.issues,
+        recommended_next_stage: default_validation.recommended_next_stage,
+    })
+}
+
+pub fn validate_segy_import_plan(
+    request: ValidateSegyImportPlanRequest,
+) -> Result<SegyImportValidationResponse, Box<dyn std::error::Error>> {
+    let validated_plan = normalize_segy_import_plan(request.plan);
+    let preflight = preflight_segy(
+        &validated_plan.input_path,
+        &ingest_options_from_geometry_override(Some(&validated_plan.header_mapping)),
+    )?;
+    let issues = validate_segy_plan_issues(&validated_plan, &preflight);
+    let requires_acknowledgement = issues
+        .iter()
+        .any(|issue| issue.severity == SegyImportIssueSeverity::Warning);
+    let can_import = !issues
+        .iter()
+        .any(|issue| issue.severity == SegyImportIssueSeverity::Blocking)
+        && (!requires_acknowledgement || validated_plan.policy.acknowledge_warnings);
+    let recommended_next_stage = if issues.iter().any(|issue| {
+        issue.severity == SegyImportIssueSeverity::Blocking
+            && matches!(
+                issue.section,
+                SegyImportIssueSection::Structure | SegyImportIssueSection::Scan
+            )
+    }) {
+        SegyImportWizardStage::Structure
+    } else if issues.iter().any(|issue| {
+        issue.severity == SegyImportIssueSeverity::Blocking
+            && issue.section == SegyImportIssueSection::Spatial
+    }) {
+        SegyImportWizardStage::Spatial
+    } else if can_import {
+        SegyImportWizardStage::Import
+    } else {
+        SegyImportWizardStage::Review
+    };
+
+    Ok(SegyImportValidationResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        validation_fingerprint: validation_fingerprint_for_plan(&validated_plan)?,
+        resolved_dataset: resolved_dataset_from_preflight(&preflight),
+        resolved_spatial: resolved_spatial_from_plan(&validated_plan),
+        risk_summary: risk_summary_for_preflight(
+            &validated_plan.input_path,
+            &validated_plan.header_mapping,
+            &preflight,
+        )?,
+        issues,
+        can_import,
+        requires_acknowledgement,
+        recommended_next_stage,
+        validated_plan,
+    })
+}
+
+pub fn import_segy_with_plan(
+    request: ImportSegyWithPlanRequest,
+) -> Result<ImportSegyWithPlanResponse, Box<dyn std::error::Error>> {
+    let validation = validate_segy_import_plan(ValidateSegyImportPlanRequest {
+        schema_version: request.schema_version,
+        plan: request.plan,
+    })?;
+    if validation.validation_fingerprint != request.validation_fingerprint {
+        return Err(
+            "The import plan changed. Validate again before importing.".to_string().into(),
+        );
+    }
+    if !validation.can_import {
+        return Err("SEG-Y import plan is not ready to import.".to_string().into());
+    }
+
+    let response = import_dataset(ImportDatasetRequest {
+        schema_version: request.schema_version,
+        input_path: validation.validated_plan.input_path.clone(),
+        output_store_path: validation.validated_plan.policy.output_store_path.clone(),
+        geometry_override: Some(validation.validated_plan.header_mapping.clone()),
+        overwrite_existing: validation.validated_plan.policy.overwrite_existing,
+    })?;
+
+    Ok(ImportSegyWithPlanResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        dataset: response.dataset,
+    })
+}
+
 pub fn import_dataset(
     request: ImportDatasetRequest,
 ) -> Result<ImportDatasetResponse, Box<dyn std::error::Error>> {
     let input = PathBuf::from(&request.input_path);
     let output = PathBuf::from(&request.output_store_path);
+    ensure_import_capacity(
+        &input,
+        &output,
+        [0, 0, 0],
+        request.overwrite_existing,
+        request.geometry_override.as_ref(),
+    )?;
     prepare_output_store(&input, &output, request.overwrite_existing)?;
     let handle = ingest_volume(
         &input,
@@ -372,6 +675,525 @@ pub fn import_dataset(
         schema_version: IPC_SCHEMA_VERSION,
         dataset: dataset_summary_for_path(&handle.root)?,
     })
+}
+
+fn build_segy_import_plan(
+    input_path: &str,
+    source_fingerprint: &str,
+    output_store_path: &str,
+    header_mapping: SegyGeometryOverride,
+    plan_source: SegyImportPlanSource,
+    selected_candidate_id: Option<String>,
+    recipe_id: Option<String>,
+    recipe_name: Option<String>,
+) -> SegyImportPlan {
+    SegyImportPlan {
+        input_path: input_path.to_string(),
+        source_fingerprint: source_fingerprint.to_string(),
+        header_mapping,
+        spatial: SegyImportSpatialPlan {
+            x_field: None,
+            y_field: None,
+            coordinate_scalar_field: None,
+            coordinate_units: None,
+            coordinate_reference_id: None,
+            coordinate_reference_name: None,
+        },
+        policy: SegyImportPolicy {
+            sparse_handling: SegyImportSparseHandling::BlockImport,
+            output_store_path: output_store_path.to_string(),
+            overwrite_existing: false,
+            acknowledge_warnings: false,
+        },
+        provenance: SegyImportProvenance {
+            plan_source,
+            selected_candidate_id,
+            recipe_id,
+            recipe_name,
+        },
+    }
+}
+
+fn normalize_segy_import_plan(mut plan: SegyImportPlan) -> SegyImportPlan {
+    plan.input_path = plan.input_path.trim().to_string();
+    plan.source_fingerprint = plan.source_fingerprint.trim().to_string();
+    plan.policy.output_store_path = plan.policy.output_store_path.trim().to_string();
+    plan.spatial.coordinate_units = normalized_optional_string(plan.spatial.coordinate_units.take());
+    plan.spatial.coordinate_reference_id =
+        normalized_optional_string(plan.spatial.coordinate_reference_id.take());
+    plan.spatial.coordinate_reference_name =
+        normalized_optional_string(plan.spatial.coordinate_reference_name.take());
+    plan.provenance.selected_candidate_id =
+        normalized_optional_string(plan.provenance.selected_candidate_id.take());
+    plan.provenance.recipe_id = normalized_optional_string(plan.provenance.recipe_id.take());
+    plan.provenance.recipe_name = normalized_optional_string(plan.provenance.recipe_name.take());
+    plan
+}
+
+fn normalized_optional_string(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
+}
+
+fn validate_segy_plan_issues(
+    plan: &SegyImportPlan,
+    preflight: &seis_runtime::SurveyPreflight,
+) -> Vec<SegyImportIssue> {
+    let mut issues = Vec::new();
+
+    if plan.input_path.is_empty() {
+        issues.push(import_issue(
+            SegyImportIssueSeverity::Blocking,
+            "input_path_required",
+            "Choose a SEG-Y file before continuing.",
+            SegyImportIssueSection::Scan,
+        ));
+    }
+    if plan.policy.output_store_path.is_empty() {
+        issues.push(import_issue(
+            SegyImportIssueSeverity::Blocking,
+            "output_store_path_required",
+            "Choose a runtime store output path before importing.",
+            SegyImportIssueSection::Import,
+        ));
+    }
+    if plan.header_mapping.inline_3d.is_none() || plan.header_mapping.crossline_3d.is_none() {
+        issues.push(import_issue(
+            SegyImportIssueSeverity::Blocking,
+            "header_mapping_incomplete",
+            "Inline and crossline header mappings are required before import.",
+            SegyImportIssueSection::Structure,
+        ));
+    }
+
+    match preflight.recommended_action {
+        PreflightAction::DirectDenseIngest => {}
+        PreflightAction::RegularizeSparseSurvey => {
+            if plan.policy.sparse_handling != SegyImportSparseHandling::RegularizeToDense {
+                issues.push(SegyImportIssue {
+                    severity: SegyImportIssueSeverity::Blocking,
+                    code: "sparse_policy_required".to_string(),
+                    message: "This mapping expands the survey into a very large dense grid. Review structure before import.".to_string(),
+                    field_path: Some("policy.sparse_handling".to_string()),
+                    section: SegyImportIssueSection::Structure,
+                    source_path: Some(plan.input_path.clone()),
+                    suggested_fix: Some("Set sparse handling to regularize to dense after reviewing the footprint estimate.".to_string()),
+                });
+            } else {
+                issues.push(SegyImportIssue {
+                    severity: SegyImportIssueSeverity::Warning,
+                    code: "sparse_regularization".to_string(),
+                    message: "This mapping expands the survey into a very large dense grid. Review structure before import.".to_string(),
+                    field_path: Some("policy.sparse_handling".to_string()),
+                    section: SegyImportIssueSection::Structure,
+                    source_path: Some(plan.input_path.clone()),
+                    suggested_fix: Some("Confirm the grid shape and storage estimate, then acknowledge the remaining warnings before importing.".to_string()),
+                });
+            }
+        }
+        PreflightAction::ReviewGeometryMapping => issues.push(SegyImportIssue {
+            severity: SegyImportIssueSeverity::Blocking,
+            code: "review_geometry_mapping".to_string(),
+            message: "The current header mapping still produces duplicate or ambiguous bins. Adjust the structure mapping before importing.".to_string(),
+            field_path: Some("header_mapping".to_string()),
+            section: SegyImportIssueSection::Structure,
+            source_path: Some(plan.input_path.clone()),
+            suggested_fix: Some("Choose a candidate mapping or enter different inline and crossline header bytes.".to_string()),
+        }),
+        PreflightAction::UnsupportedInV1 => issues.push(SegyImportIssue {
+            severity: SegyImportIssueSeverity::Blocking,
+            code: "unsupported_in_v1".to_string(),
+            message: "This SEG-Y layout is not supported by the current import path.".to_string(),
+            field_path: Some("header_mapping".to_string()),
+            section: SegyImportIssueSection::Structure,
+            source_path: Some(plan.input_path.clone()),
+            suggested_fix: Some("Inspect the raw trace layout or repair the source survey before retrying.".to_string()),
+        }),
+    }
+
+    if preflight.geometry.duplicate_coordinate_count > 0 {
+        issues.push(SegyImportIssue {
+            severity: SegyImportIssueSeverity::Info,
+            code: "duplicate_coordinates_observed".to_string(),
+            message: format!(
+                "{} duplicate coordinate tuples were observed while scanning the current mapping.",
+                preflight.geometry.duplicate_coordinate_count
+            ),
+            field_path: Some("header_mapping".to_string()),
+            section: SegyImportIssueSection::Structure,
+            source_path: Some(plan.input_path.clone()),
+            suggested_fix: None,
+        });
+    }
+    if preflight.geometry.missing_bin_count > 0 {
+        issues.push(SegyImportIssue {
+            severity: SegyImportIssueSeverity::Info,
+            code: "missing_bins_observed".to_string(),
+            message: format!(
+                "{} dense-grid bins would be empty under the current mapping.",
+                preflight.geometry.missing_bin_count
+            ),
+            field_path: Some("header_mapping".to_string()),
+            section: SegyImportIssueSection::Structure,
+            source_path: Some(plan.input_path.clone()),
+            suggested_fix: None,
+        });
+    }
+
+    for warning in &preflight.inspection.warnings {
+        issues.push(SegyImportIssue {
+            severity: SegyImportIssueSeverity::Info,
+            code: "inspection_warning".to_string(),
+            message: warning.clone(),
+            field_path: None,
+            section: SegyImportIssueSection::Scan,
+            source_path: Some(plan.input_path.clone()),
+            suggested_fix: None,
+        });
+    }
+
+    issues
+}
+
+fn import_issue(
+    severity: SegyImportIssueSeverity,
+    code: &str,
+    message: &str,
+    section: SegyImportIssueSection,
+) -> SegyImportIssue {
+    SegyImportIssue {
+        severity,
+        code: code.to_string(),
+        message: message.to_string(),
+        field_path: None,
+        section,
+        source_path: None,
+        suggested_fix: None,
+    }
+}
+
+fn resolved_dataset_from_preflight(
+    preflight: &seis_runtime::SurveyPreflight,
+) -> SegyImportResolvedDataset {
+    SegyImportResolvedDataset {
+        classification: preflight.geometry.classification.clone(),
+        stacking_state: preflight.geometry.stacking_state.clone(),
+        organization: preflight.geometry.organization.clone(),
+        layout: preflight.geometry.layout.clone(),
+        gather_axis_kind: preflight.geometry.gather_axis_kind.clone(),
+        inline_count: preflight.geometry.inline_count,
+        crossline_count: preflight.geometry.crossline_count,
+        third_axis_count: preflight.geometry.third_axis_count,
+        trace_count: preflight.inspection.trace_count,
+        samples_per_trace: preflight.inspection.samples_per_trace as usize,
+        sample_data_fidelity: preflight.sample_data_fidelity.clone(),
+    }
+}
+
+fn resolved_spatial_from_plan(plan: &SegyImportPlan) -> SegyImportResolvedSpatial {
+    let mut notes = Vec::new();
+    if plan.spatial.coordinate_reference_id.is_some() || plan.spatial.coordinate_reference_name.is_some()
+    {
+        notes.push("Import will retain the supplied coordinate reference metadata for later survey map setup.".to_string());
+    }
+    SegyImportResolvedSpatial {
+        x_field: plan.spatial.x_field.clone(),
+        y_field: plan.spatial.y_field.clone(),
+        coordinate_scalar_field: plan.spatial.coordinate_scalar_field.clone(),
+        coordinate_units: plan.spatial.coordinate_units.clone(),
+        coordinate_reference_id: plan.spatial.coordinate_reference_id.clone(),
+        coordinate_reference_name: plan.spatial.coordinate_reference_name.clone(),
+        notes,
+    }
+}
+
+fn risk_summary_for_preflight(
+    input_path: &str,
+    geometry_override: &SegyGeometryOverride,
+    preflight: &seis_runtime::SurveyPreflight,
+) -> Result<SegyImportRiskSummary, Box<dyn std::error::Error>> {
+    let estimate =
+        estimate_sparse_segy_tbvol_storage(Path::new(input_path), [0, 0, 0], Some(geometry_override))?;
+    let observed_trace_count = preflight.geometry.observed_trace_count as u64;
+    let expected_trace_count = preflight.geometry.expected_trace_count as u64;
+    let blowup_ratio = if observed_trace_count > 0 {
+        expected_trace_count as f64 / observed_trace_count as f64
+    } else {
+        0.0
+    };
+    Ok(SegyImportRiskSummary {
+        observed_trace_count,
+        expected_trace_count,
+        completeness_ratio: preflight.geometry.completeness_ratio,
+        blowup_ratio,
+        estimated_amplitude_bytes: estimate.as_ref().map_or(0, |value| value.amplitude_bytes),
+        estimated_occupancy_bytes: estimate.as_ref().map_or(0, |value| value.occupancy_bytes),
+        estimated_total_bytes: estimate.as_ref().map_or(0, |value| value.total_bytes),
+        classification: preflight.geometry.classification.clone(),
+        suggested_action: suggested_action(preflight.recommended_action),
+    })
+}
+
+fn field_observations_from_preflight(
+    preflight: &seis_runtime::SurveyPreflight,
+) -> Vec<SegyImportFieldObservation> {
+    let mut fields = Vec::new();
+    fields.push(SegyImportFieldObservation {
+        field: contract_header_field_from_spec(&preflight.geometry.inline_field),
+        label: "Resolved inline".to_string(),
+        unique_count: preflight.geometry.inline_count,
+        min_value: None,
+        max_value: None,
+        zero_count: 0,
+        nonzero_count: preflight.geometry.observed_trace_count,
+    });
+    fields.push(SegyImportFieldObservation {
+        field: contract_header_field_from_spec(&preflight.geometry.crossline_field),
+        label: "Resolved crossline".to_string(),
+        unique_count: preflight.geometry.crossline_count,
+        min_value: None,
+        max_value: None,
+        zero_count: 0,
+        nonzero_count: preflight.geometry.observed_trace_count,
+    });
+    if let Some(field) = preflight.geometry.third_axis_field.as_ref() {
+        fields.push(SegyImportFieldObservation {
+            field: contract_header_field_from_spec(field),
+            label: "Resolved third axis".to_string(),
+            unique_count: preflight.geometry.third_axis_count,
+            min_value: None,
+            max_value: None,
+            zero_count: 0,
+            nonzero_count: preflight.geometry.observed_trace_count,
+        });
+    }
+    fields
+}
+
+fn source_fingerprint_for_input(input_path: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let path = Path::new(input_path);
+    let metadata = fs::metadata(path)?;
+    let canonical_path = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    let modified_s = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |value| value.as_secs());
+    Ok(format!(
+        "segy:{}:{}:{}",
+        canonical_path,
+        metadata.len(),
+        modified_s
+    ))
+}
+
+fn validation_fingerprint_for_plan(
+    plan: &SegyImportPlan,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let bytes = serde_json::to_vec(plan)?;
+    Ok(blake3::hash(&bytes).to_hex().to_string())
+}
+
+fn default_tbvol_output_path(input_path: &str) -> String {
+    let path = Path::new(input_path);
+    path.with_extension("tbvol").to_string_lossy().into_owned()
+}
+
+fn ensure_import_capacity(
+    input_path: &Path,
+    output_path: &Path,
+    chunk_shape: [usize; 3],
+    overwrite_existing: bool,
+    geometry_override: Option<&SegyGeometryOverride>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match detect_volume_import_format(input_path)? {
+        VolumeImportFormat::MdioStore => {}
+        VolumeImportFormat::Segy => {
+            let Some(estimate) =
+                estimate_sparse_segy_tbvol_storage(input_path, chunk_shape, geometry_override)?
+            else {
+                return Ok(());
+            };
+
+            let probe_path = filesystem_probe_path(output_path.parent().unwrap_or(output_path));
+            let Some(available_bytes) = filesystem_available_space_bytes(&probe_path)? else {
+                return Ok(());
+            };
+            let effective_available_bytes =
+                effective_available_import_bytes(available_bytes, output_path, overwrite_existing)?;
+            let required_free_bytes = estimate
+                .total_bytes
+                .saturating_add(IMPORT_FREE_SPACE_RESERVE_BYTES);
+            if effective_available_bytes >= required_free_bytes {
+                return Ok(());
+            }
+
+            return Err(sparse_segy_import_capacity_error(
+                &estimate,
+                effective_available_bytes,
+                &probe_path,
+                input_path,
+                output_path,
+            )
+            .into());
+        }
+        _ => return Ok(()),
+    }
+
+    let estimate = estimate_mdio_tbvol_storage(input_path, chunk_shape, None)?;
+    let probe_path = filesystem_probe_path(output_path.parent().unwrap_or(output_path));
+    let Some(available_bytes) = filesystem_available_space_bytes(&probe_path)? else {
+        return Ok(());
+    };
+    let effective_available_bytes =
+        effective_available_import_bytes(available_bytes, output_path, overwrite_existing)?;
+    let required_free_bytes = estimate
+        .total_bytes
+        .saturating_add(IMPORT_FREE_SPACE_RESERVE_BYTES);
+    if effective_available_bytes >= required_free_bytes {
+        return Ok(());
+    }
+
+    Err(mdio_import_capacity_error(
+        &estimate,
+        effective_available_bytes,
+        &probe_path,
+        input_path,
+        output_path,
+    )
+    .into())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SegyRegularizedTbvolStorageEstimate {
+    shape: [usize; 3],
+    tile_shape: [usize; 3],
+    observed_trace_count: usize,
+    expected_trace_count: usize,
+    completeness_ratio: f64,
+    amplitude_bytes: u64,
+    occupancy_bytes: u64,
+    total_bytes: u64,
+}
+
+fn estimate_sparse_segy_tbvol_storage(
+    input_path: &Path,
+    chunk_shape: [usize; 3],
+    geometry_override: Option<&SegyGeometryOverride>,
+) -> Result<Option<SegyRegularizedTbvolStorageEstimate>, Box<dyn std::error::Error>> {
+    let preflight = preflight_segy(
+        input_path,
+        &IngestOptions {
+            geometry: geometry_override_to_seis_options(geometry_override),
+            ..IngestOptions::default()
+        },
+    )?;
+    if preflight.recommended_action != PreflightAction::RegularizeSparseSurvey
+        || preflight.geometry.layout != "post_stack_3d"
+        || preflight.geometry.third_axis_count > 1
+    {
+        return Ok(None);
+    }
+
+    let shape = [
+        preflight.geometry.inline_count,
+        preflight.geometry.crossline_count,
+        preflight.inspection.samples_per_trace as usize,
+    ];
+    let tile_shape = resolve_import_chunk_shape(chunk_shape, shape);
+    let geometry = TileGeometry::new(shape, tile_shape);
+    let tile_count = geometry.tile_count() as u64;
+    let amplitude_bytes = tile_count.saturating_mul(geometry.amplitude_tile_bytes());
+    let occupancy_bytes = tile_count.saturating_mul(geometry.occupancy_tile_bytes());
+
+    Ok(Some(SegyRegularizedTbvolStorageEstimate {
+        shape,
+        tile_shape,
+        observed_trace_count: preflight.geometry.observed_trace_count,
+        expected_trace_count: preflight.geometry.expected_trace_count,
+        completeness_ratio: preflight.geometry.completeness_ratio,
+        amplitude_bytes,
+        occupancy_bytes,
+        total_bytes: amplitude_bytes.saturating_add(occupancy_bytes),
+    }))
+}
+
+fn effective_available_import_bytes(
+    available_bytes: u64,
+    output_path: &Path,
+    overwrite_existing: bool,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    let reclaimable_output_bytes = if overwrite_existing && output_path.exists() {
+        path_size_bytes(output_path)?
+    } else {
+        0
+    };
+    let stale_temp_path = output_path.with_extension("tbvol.tmp");
+    let reclaimable_temp_bytes = if stale_temp_path.exists() {
+        path_size_bytes(&stale_temp_path)?
+    } else {
+        0
+    };
+    Ok(available_bytes
+        .saturating_add(reclaimable_output_bytes)
+        .saturating_add(reclaimable_temp_bytes))
+}
+
+fn mdio_import_capacity_error(
+    estimate: &seis_runtime::MdioTbvolStorageEstimate,
+    available_bytes: u64,
+    probe_path: &Path,
+    input_path: &Path,
+    output_path: &Path,
+) -> String {
+    let occupancy_label = if estimate.has_occupancy {
+        "with occupancy"
+    } else {
+        "without occupancy"
+    };
+    format!(
+        "Importing MDIO store '{}' to '{}' needs about {} free for the TBVOL output ({:?} samples, tile {:?}, {}) plus a {} safety reserve, but only {} is available on '{}'. Use a smaller ROI/subset import or free disk space before retrying.",
+        input_path.display(),
+        output_path.display(),
+        format_bytes(estimate.total_bytes),
+        estimate.shape,
+        estimate.tile_shape,
+        occupancy_label,
+        format_bytes(IMPORT_FREE_SPACE_RESERVE_BYTES),
+        format_bytes(available_bytes),
+        probe_path.display()
+    )
+}
+
+fn sparse_segy_import_capacity_error(
+    estimate: &SegyRegularizedTbvolStorageEstimate,
+    available_bytes: u64,
+    probe_path: &Path,
+    input_path: &Path,
+    output_path: &Path,
+) -> String {
+    format!(
+        "Importing SEG-Y '{}' to '{}' would regularize {} observed traces into a dense {:?} TBVOL grid ({}, tile {:?}, amplitudes {}, occupancy {}) with completeness {:.4}% and needs about {} free plus a {} safety reserve, but only {} is available on '{}'. Review the inline/crossline mapping or choose a smaller survey before retrying.",
+        input_path.display(),
+        output_path.display(),
+        estimate.observed_trace_count,
+        estimate.shape,
+        estimate.expected_trace_count,
+        estimate.tile_shape,
+        format_bytes(estimate.amplitude_bytes),
+        format_bytes(estimate.occupancy_bytes),
+        estimate.completeness_ratio * 100.0,
+        format_bytes(estimate.total_bytes),
+        format_bytes(IMPORT_FREE_SPACE_RESERVE_BYTES),
+        format_bytes(available_bytes),
+        probe_path.display()
+    )
 }
 
 pub fn import_prestack_offset_dataset(
@@ -397,6 +1219,92 @@ pub fn import_prestack_offset_dataset(
     })
 }
 
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut value = bytes as f64;
+    let mut unit_index = 0usize;
+    while value >= 1024.0 && unit_index < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit_index += 1;
+    }
+    if unit_index == 0 {
+        format!("{bytes} {}", UNITS[unit_index])
+    } else {
+        format!("{value:.1} {}", UNITS[unit_index])
+    }
+}
+
+fn resolve_import_chunk_shape(chunk_shape: [usize; 3], shape: [usize; 3]) -> [usize; 3] {
+    if chunk_shape.iter().all(|value| *value == 0) {
+        return recommended_tbvol_tile_shape(
+            shape,
+            recommended_default_tbvol_tile_target_mib(shape),
+        );
+    }
+
+    [
+        chunk_shape[0].max(1).min(shape[0].max(1)),
+        chunk_shape[1].max(1).min(shape[1].max(1)),
+        chunk_shape[2].max(1).min(shape[2].max(1)),
+    ]
+}
+
+fn filesystem_probe_path(path: &Path) -> PathBuf {
+    let mut candidate = if path.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        path.to_path_buf()
+    };
+    while !candidate.exists() {
+        let Some(parent) = candidate.parent() else {
+            return PathBuf::from(".");
+        };
+        candidate = parent.to_path_buf();
+    }
+    candidate
+}
+
+fn path_size_bytes(path: &Path) -> Result<u64, Box<dyn std::error::Error>> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_dir() {
+        return Ok(metadata.len());
+    }
+
+    let mut total = 0_u64;
+    for entry in fs::read_dir(path)? {
+        let entry = entry?;
+        total = total.saturating_add(path_size_bytes(&entry.path())?);
+    }
+    Ok(total)
+}
+
+#[cfg(unix)]
+fn filesystem_available_space_bytes(
+    path: &Path,
+) -> Result<Option<u64>, Box<dyn std::error::Error>> {
+    let probe_path = filesystem_probe_path(path);
+    let c_path = CString::new(probe_path.as_os_str().as_bytes())?;
+    let mut stats = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    let result = unsafe { libc::statfs(c_path.as_ptr(), stats.as_mut_ptr()) };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    let stats = unsafe { stats.assume_init() };
+    let block_size = stats.f_bsize as u128;
+    let available_blocks = stats.f_bavail as u128;
+    let available_bytes = block_size
+        .saturating_mul(available_blocks)
+        .min(u64::MAX as u128) as u64;
+    Ok(Some(available_bytes))
+}
+
+#[cfg(not(unix))]
+fn filesystem_available_space_bytes(
+    _path: &Path,
+) -> Result<Option<u64>, Box<dyn std::error::Error>> {
+    Ok(None)
+}
+
 fn prepare_output_store(
     input_path: &Path,
     output_path: &Path,
@@ -414,7 +1322,7 @@ fn prepare_output_store(
         .unwrap_or_else(|_| output_path.to_path_buf());
 
     if input_path == output_path {
-        return Err("Output store path cannot overwrite the input SEG-Y file.".into());
+        return Err("Output store path cannot overwrite the input dataset path.".into());
     }
 
     let metadata = fs::symlink_metadata(&output_path)?;
@@ -425,6 +1333,36 @@ fn prepare_output_store(
     }
 
     Ok(())
+}
+
+fn delete_input_path_after_success(
+    input_path: &Path,
+    output_path: &Path,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let canonical_input = input_path
+        .canonicalize()
+        .unwrap_or_else(|_| input_path.to_path_buf());
+    let canonical_output = output_path
+        .canonicalize()
+        .unwrap_or_else(|_| output_path.to_path_buf());
+
+    if canonical_input == canonical_output || canonical_output.starts_with(&canonical_input) {
+        return Err(format!(
+            "Refusing to delete '{}' because it resolves to or contains the output store '{}'.",
+            input_path.display(),
+            output_path.display()
+        )
+        .into());
+    }
+
+    let metadata = fs::symlink_metadata(input_path)?;
+    if metadata.file_type().is_dir() {
+        fs::remove_dir_all(input_path)?;
+    } else {
+        fs::remove_file(input_path)?;
+    }
+
+    Ok(true)
 }
 
 pub fn open_dataset_summary(
@@ -535,6 +1473,25 @@ pub fn import_horizon_xyz(
         schema_version: IPC_SCHEMA_VERSION,
         imported,
     })
+}
+
+pub fn preview_horizon_xyz_import(
+    request: ImportHorizonXyzRequest,
+) -> Result<HorizonImportPreview, Box<dyn std::error::Error>> {
+    preview_horizon_xyzs_with_vertical_domain(
+        &request.store_path,
+        &request
+            .input_paths
+            .iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>(),
+        request.vertical_domain.unwrap_or(TimeDepthDomain::Time),
+        request.vertical_unit.as_deref(),
+        request.source_coordinate_reference_id.as_deref(),
+        request.source_coordinate_reference_name.as_deref(),
+        request.assume_same_as_survey,
+    )
+    .map_err(Into::into)
 }
 
 pub fn load_section_horizons(
@@ -746,6 +1703,274 @@ pub fn load_velocity_models(
     })
 }
 
+pub fn describe_velocity_volume_store(
+    store_path: String,
+    velocity_kind: VelocityQuantityKind,
+) -> Result<VelocitySource3D, Box<dyn std::error::Error>> {
+    let handle = open_store(&store_path)?;
+    let options = native_velocity_volume_descriptor_options_for_axes(&handle.manifest.volume.axes);
+    describe_velocity_volume_store_handle_with_options(handle, velocity_kind, options)
+}
+
+pub fn describe_velocity_volume(
+    request: DescribeVelocityVolumeRequest,
+) -> Result<DescribeVelocityVolumeResponse, Box<dyn std::error::Error>> {
+    let handle = open_store(&request.store_path)?;
+    let native = native_velocity_volume_descriptor_options_for_axes(&handle.manifest.volume.axes);
+    let vertical_domain = request.vertical_domain.unwrap_or(native.vertical_domain);
+    let volume = describe_velocity_volume_store_handle_with_options(
+        handle,
+        request.velocity_kind,
+        VelocityVolumeDescriptorOptions {
+            vertical_domain,
+            vertical_unit: request.vertical_unit.unwrap_or_else(|| {
+                if vertical_domain == native.vertical_domain {
+                    native.vertical_unit.clone()
+                } else {
+                    default_vertical_axis_unit(vertical_domain)
+                }
+            }),
+            vertical_start: request.vertical_start,
+            vertical_step: request.vertical_step,
+        },
+    )?;
+
+    Ok(DescribeVelocityVolumeResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        volume,
+    })
+}
+
+fn describe_velocity_volume_store_with_options(
+    store_path: String,
+    velocity_kind: VelocityQuantityKind,
+    options: VelocityVolumeDescriptorOptions,
+) -> Result<VelocitySource3D, Box<dyn std::error::Error>> {
+    let handle = open_store(&store_path)?;
+    describe_velocity_volume_store_handle_with_options(handle, velocity_kind, options)
+}
+
+fn describe_velocity_volume_store_handle_with_options(
+    handle: seis_runtime::StoreHandle,
+    velocity_kind: VelocityQuantityKind,
+    options: VelocityVolumeDescriptorOptions,
+) -> Result<VelocitySource3D, Box<dyn std::error::Error>> {
+    let label = handle.volume_descriptor().label;
+    let coordinate_reference = handle
+        .manifest
+        .volume
+        .coordinate_reference_binding
+        .as_ref()
+        .and_then(|binding| binding.effective.clone());
+    let grid_transform = handle
+        .manifest
+        .volume
+        .spatial
+        .as_ref()
+        .and_then(|spatial| spatial.grid_transform.clone());
+    let shape = handle.manifest.volume.shape;
+    let sample_axis_ms = &handle.manifest.volume.axes.sample_axis_ms;
+    let (vertical_start, vertical_step, vertical_count) =
+        summarize_vertical_axis(sample_axis_ms, shape[2], &options)?;
+
+    let mut notes = vec![
+        "Canonical dense velocity source derived directly from an imported volume store."
+            .to_string(),
+        format!(
+            "Velocity quantity kind is user-declared as {:?}.",
+            velocity_kind
+        ),
+        format!(
+            "The vertical axis is interpreted for canonical use as {:?} in {}.",
+            options.vertical_domain, options.vertical_unit
+        ),
+    ];
+    if let Some(regularization) = handle.manifest.volume.source.regularization.as_ref() {
+        notes.push(format!(
+            "Regularized sparse source survey: {} missing bins were filled with {}.",
+            regularization.missing_bin_count, regularization.fill_value
+        ));
+    }
+    notes.extend(
+        handle
+            .manifest
+            .volume
+            .source
+            .sample_data_fidelity
+            .notes
+            .iter()
+            .cloned(),
+    );
+    if coordinate_reference.is_none() {
+        notes.push(
+            "Coordinate reference is not resolved on the store; apply a native CRS override if known."
+                .to_string(),
+        );
+    }
+    if grid_transform.is_none() {
+        notes.push(
+            "Grid transform is not resolved on the store; map-space alignment will remain unavailable."
+                .to_string(),
+        );
+    }
+
+    let coverage_relationship = handle
+        .manifest
+        .volume
+        .source
+        .regularization
+        .as_ref()
+        .filter(|regularization| regularization.missing_bin_count > 0)
+        .map(|_| SpatialCoverageRelationship::PartialOverlap)
+        .unwrap_or(SpatialCoverageRelationship::Exact);
+
+    Ok(VelocitySource3D {
+        id: handle.dataset_id().0,
+        name: label,
+        source_kind: TimeDepthTransformSourceKind::VelocityGrid3D,
+        velocity_kind,
+        vertical_domain: options.vertical_domain,
+        velocity_unit: "m/s".to_string(),
+        coordinate_reference: coordinate_reference.clone(),
+        grid_transform,
+        vertical_axis: VerticalAxisDescriptor {
+            domain: options.vertical_domain,
+            unit: options.vertical_unit.clone(),
+            start: vertical_start,
+            step: vertical_step,
+            count: vertical_count,
+        },
+        inline_count: shape[0],
+        xline_count: shape[1],
+        coverage: SpatialCoverageSummary {
+            relationship: coverage_relationship,
+            source_coordinate_reference: coordinate_reference,
+            target_coordinate_reference: None,
+            notes: Vec::new(),
+        },
+        notes,
+    })
+}
+
+fn native_velocity_volume_descriptor_options_for_axes(
+    axes: &seis_runtime::VolumeAxes,
+) -> VelocityVolumeDescriptorOptions {
+    let native_unit = axes.sample_axis_unit.trim();
+    let vertical_domain = axes.sample_axis_domain;
+    let vertical_unit = if native_unit.is_empty() {
+        default_vertical_axis_unit(vertical_domain)
+    } else {
+        native_unit.to_string()
+    };
+    VelocityVolumeDescriptorOptions {
+        vertical_domain,
+        vertical_unit,
+        vertical_start: None,
+        vertical_step: None,
+    }
+}
+
+fn summarize_vertical_axis(
+    sample_axis_ms: &[f32],
+    expected_count: usize,
+    options: &VelocityVolumeDescriptorOptions,
+) -> Result<(f32, f32, usize), Box<dyn std::error::Error>> {
+    if sample_axis_ms.len() != expected_count {
+        return Err(format!(
+            "Volume sample axis length mismatch: expected {expected_count}, found {}",
+            sample_axis_ms.len()
+        )
+        .into());
+    }
+    let inferred_start = sample_axis_ms.first().copied().unwrap_or(0.0);
+    let inferred_step = if sample_axis_ms.len() >= 2 {
+        sample_axis_ms[1] - sample_axis_ms[0]
+    } else {
+        0.0
+    };
+    Ok((
+        options.vertical_start.unwrap_or(inferred_start),
+        options.vertical_step.unwrap_or(inferred_step),
+        sample_axis_ms.len(),
+    ))
+}
+
+pub fn ingest_velocity_volume(
+    request: IngestVelocityVolumeRequest,
+) -> Result<IngestVelocityVolumeResponse, Box<dyn std::error::Error>> {
+    ingest_velocity_volume_with_options(
+        request.input_path,
+        request.output_store_path,
+        request.velocity_kind,
+        request.vertical_domain,
+        request.vertical_unit,
+        request.vertical_start,
+        request.vertical_step,
+        request.overwrite_existing,
+        request.delete_input_on_success,
+        request.geometry_override.as_ref(),
+    )
+}
+
+pub fn ingest_velocity_volume_with_options(
+    input_path: String,
+    output_store_path: String,
+    velocity_kind: VelocityQuantityKind,
+    vertical_domain: TimeDepthDomain,
+    vertical_unit: Option<String>,
+    vertical_start: Option<f32>,
+    vertical_step: Option<f32>,
+    overwrite_existing: bool,
+    delete_input_on_success: bool,
+    geometry_override: Option<&SegyGeometryOverride>,
+) -> Result<IngestVelocityVolumeResponse, Box<dyn std::error::Error>> {
+    let input = PathBuf::from(&input_path);
+    let output = PathBuf::from(&output_store_path);
+    prepare_output_store(&input, &output, overwrite_existing)?;
+    let handle = ingest_volume(
+        &input,
+        &output,
+        IngestOptions {
+            geometry: geometry_override_to_seis_options(geometry_override),
+            sparse_survey_policy: SparseSurveyPolicy::RegularizeToDense {
+                fill_value: DEFAULT_SPARSE_FILL_VALUE,
+            },
+            ..IngestOptions::default()
+        },
+    )?;
+
+    set_store_vertical_axis(
+        &handle.root,
+        vertical_domain,
+        vertical_unit.as_deref(),
+        vertical_start,
+        vertical_step,
+    )?;
+    let descriptor =
+        describe_velocity_volume_store(handle.root.to_string_lossy().into_owned(), velocity_kind)?;
+
+    let deleted_input = if delete_input_on_success {
+        delete_input_path_after_success(&input, &handle.root)?
+    } else {
+        false
+    };
+
+    Ok(IngestVelocityVolumeResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        input_path,
+        store_path: handle.root.to_string_lossy().into_owned(),
+        deleted_input,
+        volume: descriptor,
+    })
+}
+
+fn default_vertical_axis_unit(domain: TimeDepthDomain) -> String {
+    match domain {
+        TimeDepthDomain::Time => "ms".to_string(),
+        TimeDepthDomain::Depth => "m".to_string(),
+    }
+}
+
 pub fn build_velocity_model_transform(
     request: BuildSurveyTimeDepthTransformRequest,
 ) -> Result<SurveyTimeDepthTransform3D, Box<dyn std::error::Error>> {
@@ -798,16 +2023,9 @@ pub fn import_velocity_functions_model(
     input_path: String,
     velocity_kind: VelocityQuantityKind,
 ) -> Result<ImportVelocityFunctionsModelResponse, Box<dyn std::error::Error>> {
-    if matches!(velocity_kind, VelocityQuantityKind::Rms) {
-        return Err(
-            "Velocity_functions.txt import currently supports interval or average velocity, not RMS."
-                .into(),
-        );
-    }
-
-    let parsed = parse_velocity_functions_file(Path::new(&input_path))?;
+    let parsed = parse_velocity_control_profiles_file(Path::new(&input_path), velocity_kind)?;
     if parsed.profiles.is_empty() {
-        return Err("Velocity functions file did not contain any control profiles.".into());
+        return Err("Velocity control profile file did not contain any control profiles.".into());
     }
 
     let handle = open_store(&store_path)?;
@@ -882,9 +2100,7 @@ pub fn import_velocity_functions_model(
             travel_time_reference: TravelTimeReference::TwoWay,
             depth_reference: DepthReferenceKind::TrueVerticalDepth,
             profiles: parsed.profiles.clone(),
-            notes: vec![
-                "Imported from Velocity_functions.txt style sparse profile file.".to_string(),
-            ],
+            notes: vec!["Imported from sparse velocity control profile text file.".to_string()],
         }],
         output_id: Some(format!("{output_slug}-survey-transform")),
         output_name: Some(format!(
@@ -936,17 +2152,35 @@ fn distance_squared(x: f32, y: f32, center_x: f32, center_y: f32) -> f32 {
 fn parse_velocity_functions_file(
     input_path: &Path,
 ) -> Result<ParsedVelocityFunctions, Box<dyn std::error::Error>> {
+    parse_velocity_control_profiles_file(input_path, VelocityQuantityKind::Interval)
+}
+
+fn parse_velocity_control_profiles_file(
+    input_path: &Path,
+    velocity_kind: VelocityQuantityKind,
+) -> Result<ParsedVelocityFunctions, Box<dyn std::error::Error>> {
     let contents = fs::read_to_string(input_path)?;
+    let navigation_index = try_load_velocity_navigation_index(input_path)?;
     let mut rows_by_profile = HashMap::<(u64, u64), Vec<ParsedVelocityProfileRow>>::new();
     let mut sample_count = 0_usize;
+    let mut active_navigation_line = None::<String>;
 
     for (line_index, raw_line) in contents.lines().enumerate() {
         let line = raw_line.trim();
-        if line.is_empty()
-            || line.starts_with('#')
-            || line.starts_with("This data contains")
-            || line.starts_with("CDP-X")
-        {
+        if should_skip_velocity_control_profile_line(line) {
+            continue;
+        }
+
+        if let Some(parsed_row) = try_parse_nlog_fixed_width_velocity_profile_row(
+            raw_line,
+            line_index + 1,
+            velocity_kind,
+        )? {
+            rows_by_profile
+                .entry((parsed_row.x.to_bits(), parsed_row.y.to_bits()))
+                .or_default()
+                .push(parsed_row);
+            sample_count += 1;
             continue;
         }
 
@@ -954,79 +2188,70 @@ fn parse_velocity_functions_file(
             .split(|character: char| character.is_whitespace() || character == ',')
             .filter(|value| !value.is_empty())
             .collect::<Vec<_>>();
-        if columns.len() < 7 {
-            return Err(format!(
-                "Velocity functions row {} is invalid: expected at least 7 columns, found {}.",
-                line_index + 1,
-                columns.len()
-            )
-            .into());
+
+        if let Some(navigation_line_key) =
+            parse_velocity_navigation_section_header(&columns, navigation_index.as_ref())
+        {
+            active_navigation_line = Some(navigation_line_key);
+            continue;
         }
 
-        let x = columns[0].parse::<f64>().map_err(|error| {
-            format!(
-                "Velocity functions row {} has invalid X coordinate '{}': {error}",
-                line_index + 1,
-                columns[0]
-            )
-        })?;
-        let y = columns[1].parse::<f64>().map_err(|error| {
-            format!(
-                "Velocity functions row {} has invalid Y coordinate '{}': {error}",
-                line_index + 1,
-                columns[1]
-            )
-        })?;
-        let time_ms = columns[2].parse::<f32>().map_err(|error| {
-            format!(
-                "Velocity functions row {} has invalid time '{}': {error}",
-                line_index + 1,
-                columns[2]
-            )
-        })?;
-        let vrms_m_per_s = columns[3].parse::<f32>().map_err(|error| {
-            format!(
-                "Velocity functions row {} has invalid Vrms '{}': {error}",
-                line_index + 1,
-                columns[3]
-            )
-        })?;
-        let vint_m_per_s = columns[4].parse::<f32>().map_err(|error| {
-            format!(
-                "Velocity functions row {} has invalid Vint '{}': {error}",
-                line_index + 1,
-                columns[4]
-            )
-        })?;
-        let vavg_m_per_s = columns[5].parse::<f32>().map_err(|error| {
-            format!(
-                "Velocity functions row {} has invalid Vavg '{}': {error}",
-                line_index + 1,
-                columns[5]
-            )
-        })?;
-        let depth_m = columns[6].parse::<f32>().map_err(|error| {
-            format!(
-                "Velocity functions row {} has invalid depth '{}': {error}",
-                line_index + 1,
-                columns[6]
-            )
-        })?;
+        if let Some(parsed_row) = try_parse_navigation_velocity_profile_row(
+            &columns,
+            line_index + 1,
+            velocity_kind,
+            navigation_index.as_ref(),
+            active_navigation_line.as_deref(),
+        )? {
+            rows_by_profile
+                .entry((parsed_row.x.to_bits(), parsed_row.y.to_bits()))
+                .or_default()
+                .push(parsed_row);
+            sample_count += 1;
+            continue;
+        }
+
+        if let Some(parsed_row) =
+            try_parse_nlog_ascii_velocity_profile_row(&columns, line_index + 1, velocity_kind)?
+        {
+            rows_by_profile
+                .entry((parsed_row.x.to_bits(), parsed_row.y.to_bits()))
+                .or_default()
+                .push(parsed_row);
+            sample_count += 1;
+            continue;
+        }
+
+        let Some(numeric_columns) =
+            parse_velocity_control_profile_numeric_columns(&columns, line_index + 1)?
+        else {
+            continue;
+        };
+
+        let parsed_row = match numeric_columns.len() {
+            count if count >= 7 => parse_full_velocity_profile_row(&numeric_columns, line_index + 1)?,
+            4 => parse_single_velocity_profile_row(&numeric_columns, line_index + 1, velocity_kind)?,
+            3 => {
+                return Err(format!(
+                    "Velocity control profile row {} has 3 numeric columns. Headerless 3-column rows need line/navigation mapping before import; expected X Y Time Velocity for direct import.",
+                    line_index + 1
+                )
+                .into())
+            }
+            count => {
+                return Err(format!(
+                    "Velocity control profile row {} is invalid: unsupported numeric layout with {} columns.",
+                    line_index + 1,
+                    count
+                )
+                .into())
+            }
+        };
 
         rows_by_profile
-            .entry((x.to_bits(), y.to_bits()))
+            .entry((parsed_row.x.to_bits(), parsed_row.y.to_bits()))
             .or_default()
-            .push(ParsedVelocityProfileRow {
-                x,
-                y,
-                sample: VelocityControlProfileSample {
-                    time_ms,
-                    depth_m: Some(depth_m),
-                    vrms_m_per_s: Some(vrms_m_per_s),
-                    vint_m_per_s: Some(vint_m_per_s),
-                    vavg_m_per_s: Some(vavg_m_per_s),
-                },
-            });
+            .push(parsed_row);
         sample_count += 1;
     }
 
@@ -1062,6 +2287,634 @@ fn parse_velocity_functions_file(
         profiles,
         sample_count,
     })
+}
+
+fn should_skip_velocity_control_profile_line(line: &str) -> bool {
+    line.is_empty()
+        || line.starts_with('#')
+        || line.starts_with("This data contains")
+        || line.starts_with("CDP-X")
+        || line
+            == "0        1         2         3         4         5         6         7         8"
+        || line
+            == "12345678901234567890123456789012345678901234567890123456789012345678901234567890"
+}
+
+fn parse_velocity_control_profile_numeric_columns(
+    columns: &[&str],
+    line_number: usize,
+) -> Result<Option<Vec<f64>>, Box<dyn std::error::Error>> {
+    let mut numeric_columns = Vec::with_capacity(columns.len());
+    let mut saw_non_numeric = false;
+
+    for column in columns {
+        match column.parse::<f64>() {
+            Ok(value) => numeric_columns.push(value),
+            Err(_) => saw_non_numeric = true,
+        }
+    }
+
+    if saw_non_numeric {
+        if numeric_columns.is_empty() {
+            return Ok(None);
+        }
+        if numeric_columns.len() < 3 {
+            return Ok(None);
+        }
+        return Err(format!(
+            "Velocity control profile row {} mixes numeric and non-numeric fields. Line/CDP keyed files need navigation mapping before import.",
+            line_number
+        )
+        .into());
+    }
+
+    Ok(Some(numeric_columns))
+}
+
+fn try_load_velocity_navigation_index(
+    input_path: &Path,
+) -> Result<Option<VelocityNavigationIndex>, Box<dyn std::error::Error>> {
+    for candidate in velocity_navigation_candidate_paths(input_path)? {
+        let index = parse_velocity_navigation_index(&candidate)?;
+        if !index.points_by_line.is_empty() {
+            return Ok(Some(index));
+        }
+    }
+    Ok(None)
+}
+
+fn velocity_navigation_candidate_paths(
+    input_path: &Path,
+) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    let mut candidates = Vec::<PathBuf>::new();
+    let mut seen = HashSet::<PathBuf>::new();
+    let Some(parent) = input_path.parent() else {
+        return Ok(candidates);
+    };
+
+    collect_velocity_navigation_candidates(parent, &mut candidates, &mut seen)?;
+    collect_velocity_navigation_candidates(&parent.join("navigation"), &mut candidates, &mut seen)?;
+    Ok(candidates)
+}
+
+fn collect_velocity_navigation_candidates(
+    directory: &Path,
+    candidates: &mut Vec<PathBuf>,
+    seen: &mut HashSet<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !directory.exists() {
+        return Ok(());
+    }
+
+    let mut entries = fs::read_dir(directory)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|value| value.to_str())
+                .map(|value| value.ends_with(".hdr.sgn"))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+    entries.sort();
+
+    for entry in entries {
+        if seen.insert(entry.clone()) {
+            candidates.push(entry);
+        }
+    }
+    Ok(())
+}
+
+fn parse_velocity_navigation_index(
+    input_path: &Path,
+) -> Result<VelocityNavigationIndex, Box<dyn std::error::Error>> {
+    let contents = fs::read_to_string(input_path)?;
+    let mut index = VelocityNavigationIndex::default();
+
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let columns = line.split_whitespace().collect::<Vec<_>>();
+        if columns.len() < 4 {
+            continue;
+        }
+
+        let raw_qc_line_key = columns[0];
+        if !raw_qc_line_key.starts_with('Q') {
+            continue;
+        }
+        let raw_cdp_and_latitude = columns[1];
+        if raw_cdp_and_latitude.len() <= 10 {
+            continue;
+        }
+        let raw_xy = columns[columns.len() - 2];
+        if raw_xy.len() <= 9 {
+            continue;
+        }
+        let raw_original_line_key = columns[columns.len() - 1];
+
+        let cdp = raw_cdp_and_latitude[..raw_cdp_and_latitude.len() - 10]
+            .parse::<i32>()
+            .map_err(|error| {
+                format!(
+                    "Navigation row in '{}' has invalid CDP token '{}': {error}",
+                    input_path.display(),
+                    raw_cdp_and_latitude
+                )
+            })?;
+        let x = raw_xy[..raw_xy.len() - 9].parse::<f64>().map_err(|error| {
+            format!(
+                "Navigation row in '{}' has invalid X token '{}': {error}",
+                input_path.display(),
+                raw_xy
+            )
+        })?;
+        let y = raw_xy[raw_xy.len() - 9..].parse::<f64>().map_err(|error| {
+            format!(
+                "Navigation row in '{}' has invalid Y token '{}': {error}",
+                input_path.display(),
+                raw_xy
+            )
+        })?;
+
+        let point = ProjectedPoint2 { x, y };
+        index.insert(raw_qc_line_key, cdp, point.clone());
+        index.insert(raw_qc_line_key.trim_start_matches('Q'), cdp, point.clone());
+        index.insert(raw_original_line_key, cdp, point);
+    }
+
+    Ok(index)
+}
+
+fn parse_velocity_navigation_section_header(
+    columns: &[&str],
+    navigation_index: Option<&VelocityNavigationIndex>,
+) -> Option<String> {
+    let navigation_index = navigation_index?;
+    if columns.len() != 1 || !columns[0].ends_with(':') {
+        return None;
+    }
+
+    let line_key = normalize_velocity_navigation_line_key(columns[0]);
+    navigation_index
+        .contains_line(&line_key)
+        .then_some(line_key)
+}
+
+fn try_parse_navigation_velocity_profile_row(
+    columns: &[&str],
+    line_number: usize,
+    velocity_kind: VelocityQuantityKind,
+    navigation_index: Option<&VelocityNavigationIndex>,
+    active_navigation_line: Option<&str>,
+) -> Result<Option<ParsedVelocityProfileRow>, Box<dyn std::error::Error>> {
+    let Some(navigation_index) = navigation_index else {
+        return Ok(None);
+    };
+
+    if columns.len() == 4 && !token_is_numeric(columns[0]) {
+        return Ok(Some(parse_navigation_velocity_profile_row(
+            columns[0],
+            columns[1],
+            columns[2],
+            columns[3],
+            line_number,
+            velocity_kind,
+            navigation_index,
+        )?));
+    }
+
+    if columns.len() == 4
+        && navigation_index.contains_line(columns[0])
+        && token_is_integer_like(columns[1])?
+    {
+        return Ok(Some(parse_navigation_velocity_profile_row(
+            columns[0],
+            columns[1],
+            columns[2],
+            columns[3],
+            line_number,
+            velocity_kind,
+            navigation_index,
+        )?));
+    }
+
+    if columns.len() == 3
+        && active_navigation_line.is_some()
+        && columns.iter().all(|column| token_is_numeric(column))
+    {
+        return Ok(Some(parse_navigation_velocity_profile_row(
+            active_navigation_line.expect("checked above"),
+            columns[0],
+            columns[1],
+            columns[2],
+            line_number,
+            velocity_kind,
+            navigation_index,
+        )?));
+    }
+
+    Ok(None)
+}
+
+fn try_parse_nlog_ascii_velocity_profile_row(
+    columns: &[&str],
+    line_number: usize,
+    velocity_kind: VelocityQuantityKind,
+) -> Result<Option<ParsedVelocityProfileRow>, Box<dyn std::error::Error>> {
+    if columns.len() < 8 || !columns[0].eq_ignore_ascii_case("V2") {
+        return Ok(None);
+    }
+    if token_is_numeric(columns[1]) || !token_is_integer_like(columns[2])? {
+        return Ok(None);
+    }
+
+    let numeric_tail = columns[columns.len() - 5..]
+        .iter()
+        .map(|value| {
+            value.parse::<f64>().map_err(|error| {
+                format!(
+                    "Velocity control profile row {} has invalid NLOG ASCII field '{}': {error}",
+                    line_number, value
+                )
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if numeric_tail.len() != 5 {
+        return Ok(None);
+    }
+
+    let time_ms = numeric_tail[0] as f32;
+    let velocity_m_per_s = numeric_tail[2] as f32;
+    let x = numeric_tail[3];
+    let y = numeric_tail[4];
+
+    validate_velocity_control_profile_coordinate(x, "X", line_number)?;
+    validate_velocity_control_profile_coordinate(y, "Y", line_number)?;
+    validate_velocity_control_profile_time(time_ms, line_number)?;
+    validate_velocity_control_profile_value(
+        velocity_m_per_s,
+        velocity_quantity_kind_label(velocity_kind),
+        line_number,
+    )?;
+
+    let mut sample = VelocityControlProfileSample {
+        time_ms,
+        depth_m: None,
+        vrms_m_per_s: None,
+        vint_m_per_s: None,
+        vavg_m_per_s: None,
+    };
+    match velocity_kind {
+        VelocityQuantityKind::Interval => sample.vint_m_per_s = Some(velocity_m_per_s),
+        VelocityQuantityKind::Rms => sample.vrms_m_per_s = Some(velocity_m_per_s),
+        VelocityQuantityKind::Average => sample.vavg_m_per_s = Some(velocity_m_per_s),
+    }
+
+    Ok(Some(ParsedVelocityProfileRow { x, y, sample }))
+}
+
+fn try_parse_nlog_fixed_width_velocity_profile_row(
+    raw_line: &str,
+    line_number: usize,
+    velocity_kind: VelocityQuantityKind,
+) -> Result<Option<ParsedVelocityProfileRow>, Box<dyn std::error::Error>> {
+    let line = raw_line.trim_end();
+    if !line.starts_with("V2") || line.len() < 76 {
+        return Ok(None);
+    }
+
+    let profile_key_a = line
+        .get(2..7)
+        .ok_or_else(|| format!("Velocity control profile row {} is too short.", line_number))?
+        .trim();
+    let profile_key_b = line
+        .get(7..15)
+        .ok_or_else(|| format!("Velocity control profile row {} is too short.", line_number))?
+        .trim();
+    let profile_key_c = line
+        .get(15..21)
+        .ok_or_else(|| format!("Velocity control profile row {} is too short.", line_number))?
+        .trim();
+    if profile_key_a.is_empty()
+        || profile_key_b.is_empty()
+        || profile_key_c.is_empty()
+        || !profile_key_a
+            .chars()
+            .all(|character| character.is_ascii_digit())
+        || !profile_key_b
+            .chars()
+            .all(|character| character.is_ascii_digit())
+        || !profile_key_c
+            .chars()
+            .all(|character| character.is_ascii_digit())
+    {
+        return Ok(None);
+    }
+
+    let time_ms = line[35..40].trim().parse::<f32>().map_err(|error| {
+        format!(
+            "Velocity control profile row {} has invalid fixed-width time '{}': {error}",
+            line_number,
+            line[35..40].trim()
+        )
+    })?;
+    let velocity_m_per_s = line[57..61].trim().parse::<f32>().map_err(|error| {
+        format!(
+            "Velocity control profile row {} has invalid fixed-width velocity '{}': {error}",
+            line_number,
+            line[57..61].trim()
+        )
+    })?;
+    let first_tail_coordinate = line[62..69].trim().parse::<f64>().map_err(|error| {
+        format!(
+            "Velocity control profile row {} has invalid fixed-width coordinate '{}': {error}",
+            line_number,
+            line[62..69].trim()
+        )
+    })?;
+    let second_tail_coordinate = line[70..76].trim().parse::<f64>().map_err(|error| {
+        format!(
+            "Velocity control profile row {} has invalid fixed-width coordinate '{}': {error}",
+            line_number,
+            line[70..76].trim()
+        )
+    })?;
+
+    // NLOG's fixed-width 3D V2/ESSOV2XY rows store projected coordinates as northing then easting.
+    let x = second_tail_coordinate;
+    let y = first_tail_coordinate;
+
+    validate_velocity_control_profile_coordinate(x, "X", line_number)?;
+    validate_velocity_control_profile_coordinate(y, "Y", line_number)?;
+    validate_velocity_control_profile_time(time_ms, line_number)?;
+    validate_velocity_control_profile_value(
+        velocity_m_per_s,
+        velocity_quantity_kind_label(velocity_kind),
+        line_number,
+    )?;
+
+    let mut sample = VelocityControlProfileSample {
+        time_ms,
+        depth_m: None,
+        vrms_m_per_s: None,
+        vint_m_per_s: None,
+        vavg_m_per_s: None,
+    };
+    match velocity_kind {
+        VelocityQuantityKind::Interval => sample.vint_m_per_s = Some(velocity_m_per_s),
+        VelocityQuantityKind::Rms => sample.vrms_m_per_s = Some(velocity_m_per_s),
+        VelocityQuantityKind::Average => sample.vavg_m_per_s = Some(velocity_m_per_s),
+    }
+
+    Ok(Some(ParsedVelocityProfileRow { x, y, sample }))
+}
+
+fn parse_navigation_velocity_profile_row(
+    line_key: &str,
+    cdp_token: &str,
+    time_token: &str,
+    velocity_token: &str,
+    line_number: usize,
+    velocity_kind: VelocityQuantityKind,
+    navigation_index: &VelocityNavigationIndex,
+) -> Result<ParsedVelocityProfileRow, Box<dyn std::error::Error>> {
+    let cdp = parse_velocity_navigation_cdp(cdp_token, line_number)?;
+    let point = navigation_index.lookup(line_key, cdp).ok_or_else(|| {
+        format!(
+            "Velocity control profile row {} references line '{}' CDP {}, but the navigation sidecar does not contain that location.",
+            line_number, line_key, cdp
+        )
+    })?;
+    let time_ms = time_token.parse::<f32>().map_err(|error| {
+        format!(
+            "Velocity control profile row {} has invalid time '{}': {error}",
+            line_number, time_token
+        )
+    })?;
+    let velocity_m_per_s = velocity_token.parse::<f32>().map_err(|error| {
+        format!(
+            "Velocity control profile row {} has invalid velocity '{}': {error}",
+            line_number, velocity_token
+        )
+    })?;
+
+    validate_velocity_control_profile_coordinate(point.x, "X", line_number)?;
+    validate_velocity_control_profile_coordinate(point.y, "Y", line_number)?;
+    validate_velocity_control_profile_time(time_ms, line_number)?;
+    validate_velocity_control_profile_value(
+        velocity_m_per_s,
+        velocity_quantity_kind_label(velocity_kind),
+        line_number,
+    )?;
+
+    let mut sample = VelocityControlProfileSample {
+        time_ms,
+        depth_m: None,
+        vrms_m_per_s: None,
+        vint_m_per_s: None,
+        vavg_m_per_s: None,
+    };
+    match velocity_kind {
+        VelocityQuantityKind::Interval => sample.vint_m_per_s = Some(velocity_m_per_s),
+        VelocityQuantityKind::Rms => sample.vrms_m_per_s = Some(velocity_m_per_s),
+        VelocityQuantityKind::Average => sample.vavg_m_per_s = Some(velocity_m_per_s),
+    }
+
+    Ok(ParsedVelocityProfileRow {
+        x: point.x,
+        y: point.y,
+        sample,
+    })
+}
+
+fn parse_velocity_navigation_cdp(
+    value: &str,
+    line_number: usize,
+) -> Result<i32, Box<dyn std::error::Error>> {
+    let parsed = value.parse::<f64>().map_err(|error| {
+        format!(
+            "Velocity control profile row {} has invalid CDP '{}': {error}",
+            line_number, value
+        )
+    })?;
+    let rounded = parsed.round();
+    if !parsed.is_finite() || parsed < 0.0 || (parsed - rounded).abs() > 1e-3 {
+        return Err(format!(
+            "Velocity control profile row {} has non-integer CDP '{}'.",
+            line_number, value
+        )
+        .into());
+    }
+    Ok(rounded as i32)
+}
+
+fn normalize_velocity_navigation_line_key(line_key: &str) -> String {
+    line_key
+        .trim()
+        .trim_end_matches(':')
+        .trim_start_matches('Q')
+        .to_ascii_uppercase()
+}
+
+fn token_is_numeric(value: &str) -> bool {
+    value.parse::<f64>().is_ok()
+}
+
+fn token_is_integer_like(value: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    let parsed = value.parse::<f64>()?;
+    Ok(parsed.is_finite() && (parsed - parsed.round()).abs() <= 1e-3)
+}
+
+impl VelocityNavigationIndex {
+    fn insert(&mut self, line_key: &str, cdp: i32, point: ProjectedPoint2) {
+        self.points_by_line
+            .entry(normalize_velocity_navigation_line_key(line_key))
+            .or_default()
+            .insert(cdp, point);
+    }
+
+    fn contains_line(&self, line_key: &str) -> bool {
+        self.points_by_line
+            .contains_key(&normalize_velocity_navigation_line_key(line_key))
+    }
+
+    fn lookup(&self, line_key: &str, cdp: i32) -> Option<ProjectedPoint2> {
+        self.points_by_line
+            .get(&normalize_velocity_navigation_line_key(line_key))
+            .and_then(|points| points.get(&cdp))
+            .cloned()
+    }
+}
+
+fn parse_full_velocity_profile_row(
+    numeric_columns: &[f64],
+    line_number: usize,
+) -> Result<ParsedVelocityProfileRow, Box<dyn std::error::Error>> {
+    let x = numeric_columns[0];
+    let y = numeric_columns[1];
+    let time_ms = numeric_columns[2] as f32;
+    let vrms_m_per_s = numeric_columns[3] as f32;
+    let vint_m_per_s = numeric_columns[4] as f32;
+    let vavg_m_per_s = numeric_columns[5] as f32;
+    let depth_m = numeric_columns[6] as f32;
+
+    validate_velocity_control_profile_coordinate(x, "X", line_number)?;
+    validate_velocity_control_profile_coordinate(y, "Y", line_number)?;
+    validate_velocity_control_profile_time(time_ms, line_number)?;
+    validate_velocity_control_profile_value(vrms_m_per_s, "Vrms", line_number)?;
+    validate_velocity_control_profile_value(vint_m_per_s, "Vint", line_number)?;
+    validate_velocity_control_profile_value(vavg_m_per_s, "Vavg", line_number)?;
+    validate_velocity_control_profile_depth(depth_m, line_number)?;
+
+    Ok(ParsedVelocityProfileRow {
+        x,
+        y,
+        sample: VelocityControlProfileSample {
+            time_ms,
+            depth_m: Some(depth_m),
+            vrms_m_per_s: Some(vrms_m_per_s),
+            vint_m_per_s: Some(vint_m_per_s),
+            vavg_m_per_s: Some(vavg_m_per_s),
+        },
+    })
+}
+
+fn parse_single_velocity_profile_row(
+    numeric_columns: &[f64],
+    line_number: usize,
+    velocity_kind: VelocityQuantityKind,
+) -> Result<ParsedVelocityProfileRow, Box<dyn std::error::Error>> {
+    let x = numeric_columns[0];
+    let y = numeric_columns[1];
+    let time_ms = numeric_columns[2] as f32;
+    let velocity_m_per_s = numeric_columns[3] as f32;
+
+    validate_velocity_control_profile_coordinate(x, "X", line_number)?;
+    validate_velocity_control_profile_coordinate(y, "Y", line_number)?;
+    validate_velocity_control_profile_time(time_ms, line_number)?;
+    validate_velocity_control_profile_value(
+        velocity_m_per_s,
+        velocity_quantity_kind_label(velocity_kind),
+        line_number,
+    )?;
+
+    let mut sample = VelocityControlProfileSample {
+        time_ms,
+        depth_m: None,
+        vrms_m_per_s: None,
+        vint_m_per_s: None,
+        vavg_m_per_s: None,
+    };
+    match velocity_kind {
+        VelocityQuantityKind::Interval => sample.vint_m_per_s = Some(velocity_m_per_s),
+        VelocityQuantityKind::Rms => sample.vrms_m_per_s = Some(velocity_m_per_s),
+        VelocityQuantityKind::Average => sample.vavg_m_per_s = Some(velocity_m_per_s),
+    }
+
+    Ok(ParsedVelocityProfileRow { x, y, sample })
+}
+
+fn validate_velocity_control_profile_coordinate(
+    value: f64,
+    label: &str,
+    line_number: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !value.is_finite() {
+        return Err(format!(
+            "Velocity control profile row {} has invalid {label} coordinate {}.",
+            line_number, value
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_velocity_control_profile_time(
+    time_ms: f32,
+    line_number: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !time_ms.is_finite() || time_ms < 0.0 {
+        return Err(format!(
+            "Velocity control profile row {} has invalid time {}.",
+            line_number, time_ms
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_velocity_control_profile_value(
+    value: f32,
+    label: &str,
+    line_number: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !value.is_finite() || value <= 0.0 {
+        return Err(format!(
+            "Velocity control profile row {} has invalid {label} value {}.",
+            line_number, value
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn validate_velocity_control_profile_depth(
+    depth_m: f32,
+    line_number: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !depth_m.is_finite() || depth_m < 0.0 {
+        return Err(format!(
+            "Velocity control profile row {} has invalid depth {}.",
+            line_number, depth_m
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn velocity_quantity_kind_label(kind: VelocityQuantityKind) -> &'static str {
@@ -1951,6 +3804,8 @@ fn prepare_processing_output_store(
 mod tests {
     use super::*;
     use ndarray::Array3;
+    use ophiolite::{GatherAxisKind, GatherProcessingOperation, GatherSelector};
+    use seis_io::write_small_prestack_segy_fixture;
     use seis_runtime::{
         CoordinateReferenceBinding, CoordinateReferenceDescriptor, CoordinateReferenceSource,
         DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, SurveyGridTransform,
@@ -1958,7 +3813,12 @@ mod tests {
         VolumeMetadata, create_tbvol_store,
     };
     use serde_json::Value;
+    use std::sync::Arc;
     use tempfile::tempdir;
+    use zarrs::array::{ArrayBuilder, DataType};
+    use zarrs::filesystem::FilesystemStore;
+    use zarrs::group::GroupBuilder;
+    use zarrs::storage::ReadableWritableListableStorage;
 
     fn decode_f32le(bytes: &[u8]) -> Vec<f32> {
         bytes
@@ -1975,7 +3835,109 @@ mod tests {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../test-data/survey.zarr")
     }
 
+    fn create_synthetic_mdio_fixture(root: &Path) {
+        let store: ReadableWritableListableStorage =
+            Arc::new(FilesystemStore::new(root).expect("mdio filesystem store"));
+        GroupBuilder::new()
+            .build(store.clone(), "/")
+            .expect("build mdio root group");
+
+        create_mdio_axis_u16(store.clone(), "/inline", "inline", &[100, 101]);
+        create_mdio_axis_u16(store.clone(), "/crossline", "crossline", &[200, 201, 202]);
+        create_mdio_axis_u16_with_attrs(
+            store.clone(),
+            "/time",
+            "time",
+            &[0, 4, 8, 12],
+            Some(serde_json::json!({"unitsV1":{"time":"ms"}})),
+        );
+
+        let seismic = ArrayBuilder::new(vec![2, 3, 4], vec![2, 2, 4], DataType::Float32, 0.0_f32)
+            .dimension_names(Some(["inline", "crossline", "time"]))
+            .build(store, "/seismic")
+            .expect("build seismic array");
+        seismic.store_metadata().expect("store seismic metadata");
+        seismic
+            .store_array_subset_elements(
+                &zarrs::array_subset::ArraySubset::new_with_ranges(&[0..2, 0..3, 0..4]),
+                &(0..24).map(|value| value as f32).collect::<Vec<_>>(),
+            )
+            .expect("store seismic samples");
+    }
+
+    fn create_mdio_axis_u16(
+        store: ReadableWritableListableStorage,
+        path: &str,
+        dimension_name: &str,
+        values: &[u16],
+    ) {
+        create_mdio_axis_u16_with_attrs(store, path, dimension_name, values, None);
+    }
+
+    fn create_mdio_axis_u16_with_attrs(
+        store: ReadableWritableListableStorage,
+        path: &str,
+        dimension_name: &str,
+        values: &[u16],
+        attributes: Option<serde_json::Value>,
+    ) {
+        let mut array = ArrayBuilder::new(
+            vec![values.len() as u64],
+            vec![values.len() as u64],
+            DataType::UInt16,
+            0_u16,
+        )
+        .dimension_names(Some([dimension_name]))
+        .build(store, path)
+        .expect("build mdio axis");
+        if let Some(serde_json::Value::Object(map)) = attributes {
+            for (key, value) in map {
+                array.attributes_mut().insert(key, value);
+            }
+        }
+        array.store_metadata().expect("store mdio axis metadata");
+        array
+            .store_array_subset_elements(
+                &zarrs::array_subset::ArraySubset::new_with_ranges(&[0..values.len() as u64]),
+                values,
+            )
+            .expect("store mdio axis values");
+    }
+
+    fn segy_fixture_path(relative: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../test-data")
+            .join(relative)
+    }
+
+    fn relocate_small_geometry_headers(path: &Path) {
+        let mut bytes = fs::read(path).expect("read segy fixture");
+        let first_trace_offset = 3600usize;
+        let trace_size = 240 + (50 * 4);
+
+        for trace_index in 0..25 {
+            let trace_offset = first_trace_offset + trace_index * trace_size;
+            let inline_src = trace_offset + 188;
+            let crossline_src = trace_offset + 192;
+            let inline_dst = trace_offset + 16;
+            let crossline_dst = trace_offset + 24;
+
+            let inline = bytes[inline_src..inline_src + 4].to_vec();
+            let crossline = bytes[crossline_src..crossline_src + 4].to_vec();
+            bytes[inline_dst..inline_dst + 4].copy_from_slice(&inline);
+            bytes[crossline_dst..crossline_dst + 4].copy_from_slice(&crossline);
+            bytes[inline_src..inline_src + 4].fill(0);
+            bytes[crossline_src..crossline_src + 4].fill(0);
+        }
+
+        fs::write(path, bytes).expect("write relocated segy fixture");
+    }
+
     fn create_test_store(root: &Path) {
+        create_test_store_with_origin(root, 1_000.0, 2_000.0);
+    }
+
+    fn create_test_store_with_origin(root: &Path, origin_x: f64, origin_y: f64) {
         let manifest = TbvolManifest::new(
             VolumeMetadata {
                 kind: DatasetKind::Source,
@@ -2014,11 +3976,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [2, 2, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0],
-                    xlines: vec![200.0, 201.0],
-                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {
                         id: Some(String::from("EPSG:32631")),
@@ -2044,8 +4006,8 @@ mod tests {
                     }),
                     grid_transform: Some(SurveyGridTransform {
                         origin: ProjectedPoint2 {
-                            x: 1_000.0,
-                            y: 2_000.0,
+                            x: origin_x,
+                            y: origin_y,
                         },
                         inline_basis: seis_runtime::ProjectedVector2 { x: 10.0, y: 0.0 },
                         xline_basis: seis_runtime::ProjectedVector2 { x: 0.0, y: 20.0 },
@@ -2063,6 +4025,36 @@ mod tests {
         );
         create_tbvol_store(root, manifest, &Array3::<f32>::zeros((2, 2, 4)), None)
             .expect("create store");
+    }
+
+    fn write_test_navigation_file(path: &Path) {
+        fs::write(
+            path,
+            [
+                "Q10000                  1545628.01N  437 1.82E 603600.06089568.0     DATR12I-021",
+                "Q10000                  2545627.92N  437 1.54E 603600.06089588.0     DATR12I-021",
+                "Q10002                  1545041.58N  42730.78E 603610.06089568.0     DATR12I-022",
+                "Q10002                  2545041.77N  42730.78E 603610.06089588.0     DATR12I-022",
+            ]
+            .join("\n"),
+        )
+        .expect("write navigation sidecar");
+    }
+
+    fn format_test_nlog_3d_essov2xy_row(
+        key_a: i32,
+        key_b: i32,
+        key_c: i32,
+        date: i32,
+        time_ms: i32,
+        velocity_m_per_s: i32,
+        y: i32,
+        x: i32,
+    ) -> String {
+        format!(
+            "V2{:>5}{:>8}{:>6}{:>14}{:>5}{:>21} {:>7} {:>6}    ",
+            key_a, key_b, key_c, date, time_ms, velocity_m_per_s, y, x
+        )
     }
 
     fn write_constant_horizon_xyz(path: &Path, value: f32) {
@@ -2121,6 +4113,94 @@ mod tests {
 
         assert_eq!(response.dataset.descriptor.shape, [23, 18, 75]);
         assert_eq!(response.dataset.descriptor.chunk_shape[2], 75);
+    }
+
+    #[test]
+    fn import_dataset_imports_synthetic_mdio_fixture_to_tbvol() {
+        let temp = tempdir().expect("temp dir");
+        let fixture = temp.path().join("synthetic.mdio");
+        let output = temp.path().join("synthetic.tbvol");
+        create_synthetic_mdio_fixture(&fixture);
+
+        let response = import_dataset(ImportDatasetRequest {
+            schema_version: IPC_SCHEMA_VERSION,
+            input_path: fixture.display().to_string(),
+            output_store_path: output.display().to_string(),
+            geometry_override: None,
+            overwrite_existing: false,
+        })
+        .expect("mdio fixture should import");
+
+        assert_eq!(response.dataset.descriptor.shape, [2, 3, 4]);
+        assert_eq!(response.dataset.descriptor.chunk_shape[2], 4);
+        assert_eq!(response.dataset.descriptor.sample_interval_ms, 4.0);
+    }
+
+    #[test]
+    fn mdio_import_capacity_error_describes_required_space() {
+        let message = mdio_import_capacity_error(
+            &seis_runtime::MdioTbvolStorageEstimate {
+                shape: [3437, 5053, 1501],
+                tile_shape: [28, 31, 1501],
+                tile_count: 594,
+                has_occupancy: true,
+                amplitude_bytes: 104 * 1024 * 1024 * 1024,
+                occupancy_bytes: 17 * 1024 * 1024,
+                total_bytes: 104 * 1024 * 1024 * 1024 + 17 * 1024 * 1024,
+            },
+            14 * 1024 * 1024 * 1024,
+            Path::new("/Users/sc/Library/Application Support/com.traceboost.app/volumes"),
+            Path::new("/Users/sc/Downloads/SubsurfaceData/poseidon/full_stack_agc.mdio"),
+            Path::new(
+                "/Users/sc/Library/Application Support/com.traceboost.app/volumes/full_stack_agc.tbvol",
+            ),
+        );
+
+        assert!(message.contains("needs about"));
+        assert!(message.contains("safety reserve"));
+        assert!(message.contains("Use a smaller ROI/subset import"));
+    }
+
+    #[test]
+    fn sparse_segy_import_capacity_error_describes_regularization_blowup() {
+        let message = sparse_segy_import_capacity_error(
+            &SegyRegularizedTbvolStorageEstimate {
+                shape: [24_020, 27_013, 1501],
+                tile_shape: [23, 18, 1501],
+                observed_trace_count: 64_860,
+                expected_trace_count: 648_859_440,
+                completeness_ratio: 0.00009996001599360256,
+                amplitude_bytes: 3_895_320_000_000,
+                occupancy_bytes: 651_000_000,
+                total_bytes: 3_895_971_000_000,
+            },
+            120 * 1024 * 1024 * 1024,
+            Path::new("/Users/sc/Library/Application Support/com.traceboost.app/volumes"),
+            Path::new(
+                "/Users/sc/Downloads/SubsurfaceData/open-data/teapot-dome/seismic/filt_mig.sgy",
+            ),
+            Path::new(
+                "/Users/sc/Library/Application Support/com.traceboost.app/volumes/filt_mig.tbvol",
+            ),
+        );
+
+        assert!(message.contains("regularize 64860 observed traces"));
+        assert!(message.contains("648859440"));
+        assert!(message.contains("completeness 0.0100%"));
+        assert!(message.contains("Review the inline/crossline mapping"));
+    }
+
+    #[test]
+    fn effective_available_import_bytes_counts_reclaimable_output_and_temp() {
+        let temp = tempdir().expect("temp dir");
+        let output = temp.path().join("survey.tbvol");
+        let stale_temp = temp.path().join("survey.tbvol.tmp");
+        fs::write(&output, vec![0_u8; 16]).expect("write output");
+        fs::write(&stale_temp, vec![0_u8; 32]).expect("write stale temp");
+
+        let available = effective_available_import_bytes(64, &output, true)
+            .expect("estimate effective available bytes");
+        assert_eq!(available, 112);
     }
 
     #[test]
@@ -2196,6 +4276,383 @@ mod tests {
     }
 
     #[test]
+    fn parse_headerless_velocity_control_profiles_as_rms() {
+        let temp = tempdir().expect("temp dir");
+        let input = temp.path().join("DANA_F2_TRIBE_RMS_Lines_21-22.vels");
+        fs::write(
+            &input,
+            [
+                "1000 2000 10 1600",
+                "1000 2000 0 1500",
+                "1000 2020 10 1610",
+                "1000 2020 0 1510",
+            ]
+            .join("\n"),
+        )
+        .expect("write rms velocity control profiles");
+
+        let parsed = parse_velocity_control_profiles_file(&input, VelocityQuantityKind::Rms)
+            .expect("parse rms velocity control profiles");
+        assert_eq!(parsed.sample_count, 4);
+        assert_eq!(parsed.profiles.len(), 2);
+        assert_eq!(parsed.profiles[0].samples.len(), 2);
+        assert_eq!(parsed.profiles[0].samples[0].time_ms, 0.0);
+        assert_eq!(parsed.profiles[0].samples[0].vrms_m_per_s, Some(1500.0));
+        assert_eq!(parsed.profiles[0].samples[0].vint_m_per_s, None);
+        assert_eq!(parsed.profiles[0].samples[1].time_ms, 10.0);
+        assert_eq!(parsed.profiles[1].samples[0].vrms_m_per_s, Some(1510.0));
+    }
+
+    #[test]
+    fn parse_headerless_three_column_velocity_rows_requires_navigation_mapping() {
+        let temp = tempdir().expect("temp dir");
+        let input = temp.path().join("line_velocity.vels");
+        fs::write(&input, ["10000 0 1500", "10000 10 1600"].join("\n"))
+            .expect("write unsupported velocity rows");
+
+        let error = parse_velocity_control_profiles_file(&input, VelocityQuantityKind::Rms)
+            .expect_err("three-column rows should require navigation mapping");
+        let message = error.to_string();
+        assert!(
+            message.contains("need line/navigation mapping before import"),
+            "unexpected error: {message}"
+        );
+    }
+
+    #[test]
+    fn prestack_import_load_preview_scan_and_materialize_work_from_synthetic_segy() {
+        let temp = tempdir().expect("temp dir");
+        let input = temp.path().join("small-ps.sgy");
+        let store = temp.path().join("small-ps.tbgath");
+        write_small_prestack_segy_fixture(&input).expect("write synthetic prestack segy");
+
+        let imported = import_prestack_offset_dataset(ImportPrestackOffsetDatasetRequest {
+            schema_version: IPC_SCHEMA_VERSION,
+            input_path: input.display().to_string(),
+            output_store_path: store.display().to_string(),
+            third_axis_field: PrestackThirdAxisField::Offset,
+            overwrite_existing: false,
+        })
+        .expect("import synthetic prestack segy");
+
+        assert_eq!(imported.dataset.descriptor.shape, [4, 3, 10]);
+        assert_eq!(
+            imported
+                .dataset
+                .descriptor
+                .geometry
+                .summary
+                .gather_axis_kind,
+            Some(GatherAxisKind::Offset)
+        );
+
+        let gather_request = GatherRequest {
+            dataset_id: imported.dataset.descriptor.id.clone(),
+            selector: GatherSelector::Ordinal { index: 0 },
+        };
+        let gather = load_gather(store.display().to_string(), gather_request.clone())
+            .expect("load first gather");
+        assert_eq!(gather.traces, 2);
+        assert_eq!(gather.samples, 10);
+
+        let gather_amplitudes = decode_f32le(&gather.amplitudes_f32le);
+        assert_eq!(gather_amplitudes.len(), 20);
+        assert!(gather_amplitudes[10] > gather_amplitudes[0]);
+
+        let pipeline = GatherProcessingPipeline {
+            schema_version: 1,
+            revision: 1,
+            preset_id: None,
+            name: Some(String::from("Offset mute smoke")),
+            description: None,
+            trace_local_pipeline: None,
+            operations: vec![GatherProcessingOperation::OffsetMute {
+                min_offset: Some(2.0),
+                max_offset: Some(2.0),
+            }],
+        };
+
+        let preview = preview_gather_processing(PreviewGatherProcessingRequest {
+            schema_version: IPC_SCHEMA_VERSION,
+            store_path: store.display().to_string(),
+            gather: gather_request.clone(),
+            pipeline: pipeline.clone(),
+        })
+        .expect("preview gather processing");
+        assert!(preview.preview.preview_ready);
+        assert_eq!(preview.preview.gather.traces, 2);
+
+        let scan = run_velocity_scan(VelocityScanRequest {
+            schema_version: IPC_SCHEMA_VERSION,
+            store_path: store.display().to_string(),
+            gather: gather_request.clone(),
+            trace_local_pipeline: None,
+            min_velocity_m_per_s: 1_500.0,
+            max_velocity_m_per_s: 2_000.0,
+            velocity_step_m_per_s: 250.0,
+            autopick: None,
+        })
+        .expect("run velocity scan");
+        assert_eq!(
+            scan.panel.velocities_m_per_s,
+            vec![1_500.0, 1_750.0, 2_000.0]
+        );
+        assert_eq!(scan.panel.sample_axis_ms.len(), 10);
+        assert_eq!(decode_f32le(&scan.panel.semblance_f32le).len(), 30);
+
+        let derived = apply_gather_processing(RunGatherProcessingRequest {
+            schema_version: IPC_SCHEMA_VERSION,
+            store_path: store.display().to_string(),
+            output_store_path: Some(temp.path().join("offset-mute.tbgath").display().to_string()),
+            overwrite_existing: false,
+            pipeline,
+        })
+        .expect("materialize gather processing");
+        assert_eq!(derived.descriptor.shape, [4, 3, 10]);
+        assert_eq!(
+            derived.descriptor.geometry.summary.gather_axis_kind,
+            Some(GatherAxisKind::Offset)
+        );
+
+        let derived_gather = load_gather(
+            derived.store_path.clone(),
+            GatherRequest {
+                dataset_id: derived.descriptor.id.clone(),
+                selector: GatherSelector::Ordinal { index: 0 },
+            },
+        )
+        .expect("load derived gather");
+        let derived_amplitudes = decode_f32le(&derived_gather.amplitudes_f32le);
+        assert!(
+            derived_amplitudes[..10]
+                .iter()
+                .all(|value| value.abs() < 1.0e-6)
+        );
+        assert!(
+            derived_amplitudes[10..]
+                .iter()
+                .any(|value| value.abs() > 0.0)
+        );
+    }
+
+    #[test]
+    fn parse_line_cdp_velocity_rows_with_navigation_sidecar() {
+        let temp = tempdir().expect("temp dir");
+        let input = temp.path().join("Z2DAN2012A_RMS_Vels.ivl");
+        let navigation_dir = temp.path().join("navigation");
+        fs::create_dir_all(&navigation_dir).expect("create navigation dir");
+        write_test_navigation_file(&navigation_dir.join("Z2DAN2012A-1.hdr.sgn"));
+        fs::write(
+            &input,
+            [
+                "10000 1 10 1600",
+                "10000 1 0 1500",
+                "10002 2 10 1610",
+                "10002 2 0 1510",
+            ]
+            .join("\n"),
+        )
+        .expect("write line/cdp velocity control profiles");
+
+        let parsed = parse_velocity_control_profiles_file(&input, VelocityQuantityKind::Rms)
+            .expect("parse navigation-backed velocity control profiles");
+        assert_eq!(parsed.sample_count, 4);
+        assert_eq!(parsed.profiles.len(), 2);
+        assert_eq!(parsed.profiles[0].location.x, 603600.0);
+        assert_eq!(parsed.profiles[0].location.y, 6089568.0);
+        assert_eq!(parsed.profiles[0].samples[0].vrms_m_per_s, Some(1500.0));
+        assert_eq!(parsed.profiles[1].location.x, 603610.0);
+        assert_eq!(parsed.profiles[1].location.y, 6089588.0);
+        assert_eq!(parsed.profiles[1].samples[1].vrms_m_per_s, Some(1610.0));
+    }
+
+    #[test]
+    fn parse_sectioned_line_velocity_rows_with_navigation_sidecar() {
+        let temp = tempdir().expect("temp dir");
+        let input = temp.path().join("Z2DAN2012A_RMS_Vels.ivl");
+        write_test_navigation_file(&temp.path().join("Z2DAN2012A-1.hdr.sgn"));
+        fs::write(
+            &input,
+            [
+                "DATR12I-021:",
+                "1 0 1500",
+                "1 10 1600",
+                "DATR12I-022:",
+                "2 0 1510",
+                "2 10 1610",
+            ]
+            .join("\n"),
+        )
+        .expect("write sectioned line/cdp velocity control profiles");
+
+        let parsed = parse_velocity_control_profiles_file(&input, VelocityQuantityKind::Rms)
+            .expect("parse sectioned navigation-backed velocity control profiles");
+        assert_eq!(parsed.sample_count, 4);
+        assert_eq!(parsed.profiles.len(), 2);
+        assert_eq!(parsed.profiles[0].samples[0].vrms_m_per_s, Some(1500.0));
+        assert_eq!(parsed.profiles[1].samples[1].vrms_m_per_s, Some(1610.0));
+    }
+
+    #[test]
+    fn parse_nlog_ascii_rms_velocity_rows_without_date_token() {
+        let temp = tempdir().expect("temp dir");
+        let input = temp
+            .path()
+            .join("L2EBN2019ASCAN004_RMS_velocities_stacking_ascii.txt");
+        fs::write(
+            &input,
+            [
+                "#LINE: L2EBN2019ASCAN004",
+                "#08:15 2D Line name",
+                "0        1         2         3         4         5         6         7         8",
+                "12345678901234567890123456789012345678901234567890123456789012345678901234567890",
+                "V2     ASCAN004  400                  24          2          1465 166292 510384",
+                "V2     ASCAN004  400                 203          2          1493 166292 510384",
+                "V2     ASCAN004  800                  24          2          1464 166239 509385",
+                "V2     ASCAN004  800                 206          2          1543 166239 509385",
+            ]
+            .join("\n"),
+        )
+        .expect("write nlog rms velocity control profiles");
+
+        let parsed = parse_velocity_control_profiles_file(&input, VelocityQuantityKind::Rms)
+            .expect("parse nlog rms velocity control profiles");
+        assert_eq!(parsed.sample_count, 4);
+        assert_eq!(parsed.profiles.len(), 2);
+        assert_eq!(parsed.profiles[0].location.x, 166239.0);
+        assert_eq!(parsed.profiles[0].location.y, 509385.0);
+        assert_eq!(parsed.profiles[0].samples[0].time_ms, 24.0);
+        assert_eq!(parsed.profiles[0].samples[0].vrms_m_per_s, Some(1464.0));
+        assert_eq!(parsed.profiles[1].samples[1].time_ms, 203.0);
+        assert_eq!(parsed.profiles[1].samples[1].vrms_m_per_s, Some(1493.0));
+    }
+
+    #[test]
+    fn parse_nlog_ascii_interval_velocity_rows_with_date_token() {
+        let temp = tempdir().expect("temp dir");
+        let input = temp
+            .path()
+            .join("L2EBN2019ASCAN004_PreSTM_velocities_migration_ascii.txt");
+        fs::write(
+            &input,
+            [
+                "#LINE: L2EBN2019ASCAN004",
+                "V2     ASCAN004  200 PDADSTCK310720    0          2          1500 166324 510883",
+                "V2     ASCAN004  200 PDADSTCK310720   24          2          1500 166324 510883",
+                "V2     ASCAN004  400 PDADSTCK310720    0          2          1510 166292 510384",
+                "V2     ASCAN004  400 PDADSTCK310720   24          2          1516 166292 510384",
+            ]
+            .join("\n"),
+        )
+        .expect("write nlog migration velocity control profiles");
+
+        let parsed = parse_velocity_control_profiles_file(&input, VelocityQuantityKind::Interval)
+            .expect("parse nlog migration velocity control profiles");
+        assert_eq!(parsed.sample_count, 4);
+        assert_eq!(parsed.profiles.len(), 2);
+        assert_eq!(parsed.profiles[0].location.x, 166292.0);
+        assert_eq!(parsed.profiles[0].location.y, 510384.0);
+        assert_eq!(parsed.profiles[0].samples[0].vint_m_per_s, Some(1510.0));
+        assert_eq!(parsed.profiles[0].samples[1].time_ms, 24.0);
+        assert_eq!(parsed.profiles[1].samples[0].vint_m_per_s, Some(1500.0));
+    }
+
+    #[test]
+    fn parse_nlog_3d_essov2xy_rows_as_interval_profiles() {
+        let temp = tempdir().expect("temp dir");
+        let input = temp.path().join("NLDEF_PSTM_vels.essov2xy");
+        fs::write(
+            &input,
+            [
+                format_test_nlog_3d_essov2xy_row(630, 1030, 44880, 121018, 114, 1511, 2000, 1000),
+                format_test_nlog_3d_essov2xy_row(630, 1030, 44880, 121018, 10000, 5053, 2000, 1000),
+                format_test_nlog_3d_essov2xy_row(630, 1030, 45680, 121018, 140, 1546, 2020, 1000),
+                format_test_nlog_3d_essov2xy_row(630, 1030, 45680, 121018, 1271, 2008, 2020, 1000),
+            ]
+            .join("\n"),
+        )
+        .expect("write essov2xy rows");
+
+        let parsed = parse_velocity_control_profiles_file(&input, VelocityQuantityKind::Interval)
+            .expect("parse essov2xy rows");
+        assert_eq!(parsed.sample_count, 4);
+        assert_eq!(parsed.profiles.len(), 2);
+        assert_eq!(parsed.profiles[0].location.x, 1000.0);
+        assert_eq!(parsed.profiles[0].location.y, 2000.0);
+        assert_eq!(parsed.profiles[0].samples[0].time_ms, 114.0);
+        assert_eq!(parsed.profiles[0].samples[0].vint_m_per_s, Some(1511.0));
+        assert_eq!(parsed.profiles[0].samples[1].time_ms, 10000.0);
+        assert_eq!(parsed.profiles[0].samples[1].vint_m_per_s, Some(5053.0));
+        assert_eq!(parsed.profiles[1].location.y, 2020.0);
+        assert_eq!(parsed.profiles[1].samples[1].vint_m_per_s, Some(2008.0));
+    }
+
+    #[test]
+    fn import_nlog_3d_essov2xy_interval_model_builds_depth_transform_end_to_end() {
+        let temp = tempdir().expect("temp dir");
+        let store = temp.path().join("survey.tbvol");
+        create_test_store(&store);
+
+        let input = temp.path().join("NLDEF_PSTM_vels.essov2xy");
+        fs::write(
+            &input,
+            [
+                format_test_nlog_3d_essov2xy_row(630, 1030, 44880, 121018, 0, 2000, 2000, 1000),
+                format_test_nlog_3d_essov2xy_row(630, 1030, 44880, 121018, 10, 2000, 2000, 1000),
+                format_test_nlog_3d_essov2xy_row(630, 1030, 44880, 121018, 20, 2000, 2000, 1000),
+                format_test_nlog_3d_essov2xy_row(630, 1030, 44880, 121018, 30, 2000, 2000, 1000),
+                format_test_nlog_3d_essov2xy_row(630, 1030, 45680, 121018, 0, 2000, 2020, 1000),
+                format_test_nlog_3d_essov2xy_row(630, 1030, 45680, 121018, 10, 2000, 2020, 1000),
+                format_test_nlog_3d_essov2xy_row(630, 1030, 45680, 121018, 20, 2000, 2020, 1000),
+                format_test_nlog_3d_essov2xy_row(630, 1030, 45680, 121018, 30, 2000, 2020, 1000),
+                format_test_nlog_3d_essov2xy_row(631, 1030, 44880, 121018, 0, 2000, 2000, 1010),
+                format_test_nlog_3d_essov2xy_row(631, 1030, 44880, 121018, 10, 2000, 2000, 1010),
+                format_test_nlog_3d_essov2xy_row(631, 1030, 44880, 121018, 20, 2000, 2000, 1010),
+                format_test_nlog_3d_essov2xy_row(631, 1030, 44880, 121018, 30, 2000, 2000, 1010),
+                format_test_nlog_3d_essov2xy_row(631, 1030, 45680, 121018, 0, 2000, 2020, 1010),
+                format_test_nlog_3d_essov2xy_row(631, 1030, 45680, 121018, 10, 2000, 2020, 1010),
+                format_test_nlog_3d_essov2xy_row(631, 1030, 45680, 121018, 20, 2000, 2020, 1010),
+                format_test_nlog_3d_essov2xy_row(631, 1030, 45680, 121018, 30, 2000, 2020, 1010),
+            ]
+            .join("\n"),
+        )
+        .expect("write essov2xy interval rows");
+
+        let response = import_velocity_functions_model(
+            store.display().to_string(),
+            input.display().to_string(),
+            VelocityQuantityKind::Interval,
+        )
+        .expect("import essov2xy interval velocity model");
+
+        assert_eq!(response.profile_count, 4);
+        assert_eq!(response.sample_count, 16);
+        assert_eq!(response.model.inline_count, 2);
+        assert_eq!(response.model.xline_count, 2);
+
+        let display = resolved_section_display_view(
+            &store,
+            seis_runtime::SectionAxis::Inline,
+            0,
+            TimeDepthDomain::Depth,
+            Some(&VelocityFunctionSource::VelocityAssetReference {
+                asset_id: response.model.id.clone(),
+            }),
+            Some(VelocityQuantityKind::Interval),
+            false,
+        )
+        .expect("resolve essov2xy depth display");
+        let depth_axis = decode_f32le(&display.section.sample_axis_f32le);
+        assert_eq!(depth_axis.len(), 4);
+        for (actual, expected) in depth_axis.iter().zip([0.0_f32, 10.0, 20.0, 30.0]) {
+            assert!(
+                (actual - expected).abs() <= 1e-4,
+                "expected {expected}, got {actual}"
+            );
+        }
+    }
+
+    #[test]
     fn import_velocity_functions_model_builds_depth_transform_end_to_end() {
         let temp = tempdir().expect("temp dir");
         let store = temp.path().join("survey.tbvol");
@@ -2260,6 +4717,427 @@ mod tests {
                 "expected {expected}, got {actual}"
             );
         }
+    }
+
+    #[test]
+    fn import_rms_velocity_functions_model_builds_depth_transform_end_to_end() {
+        let temp = tempdir().expect("temp dir");
+        let store = temp.path().join("survey.tbvol");
+        create_test_store(&store);
+
+        let input = temp.path().join("DANA_F2_TRIBE_RMS_Lines_21-22.vels");
+        std::fs::write(
+            &input,
+            [
+                "1000 2000 0 2000",
+                "1000 2000 10 2000",
+                "1000 2000 20 2000",
+                "1000 2000 30 2000",
+                "1000 2020 0 2000",
+                "1000 2020 10 2000",
+                "1000 2020 20 2000",
+                "1000 2020 30 2000",
+                "1010 2000 0 2000",
+                "1010 2000 10 2000",
+                "1010 2000 20 2000",
+                "1010 2000 30 2000",
+                "1010 2020 0 2000",
+                "1010 2020 10 2000",
+                "1010 2020 20 2000",
+                "1010 2020 30 2000",
+            ]
+            .join("\n"),
+        )
+        .expect("write rms velocity control profiles");
+
+        let response = import_velocity_functions_model(
+            store.display().to_string(),
+            input.display().to_string(),
+            VelocityQuantityKind::Rms,
+        )
+        .expect("import rms velocity model");
+
+        assert_eq!(response.profile_count, 4);
+        assert_eq!(response.sample_count, 16);
+        assert_eq!(response.model.inline_count, 2);
+        assert_eq!(response.model.xline_count, 2);
+        assert_eq!(response.model.depth_unit, "m");
+
+        let display = resolved_section_display_view(
+            &store,
+            seis_runtime::SectionAxis::Inline,
+            0,
+            TimeDepthDomain::Depth,
+            Some(&VelocityFunctionSource::VelocityAssetReference {
+                asset_id: response.model.id.clone(),
+            }),
+            Some(VelocityQuantityKind::Rms),
+            false,
+        )
+        .expect("resolve rms depth display");
+        let depth_axis = decode_f32le(&display.section.sample_axis_f32le);
+        assert_eq!(depth_axis.len(), 4);
+        for (actual, expected) in depth_axis.iter().zip([0.0_f32, 10.0, 20.0, 30.0]) {
+            assert!(
+                (actual - expected).abs() <= 1e-4,
+                "expected {expected}, got {actual}"
+            );
+        }
+    }
+
+    #[test]
+    fn import_navigation_backed_rms_velocity_model_builds_depth_transform_end_to_end() {
+        let temp = tempdir().expect("temp dir");
+        let store = temp.path().join("survey.tbvol");
+        create_test_store_with_origin(&store, 603_600.0, 6_089_568.0);
+
+        let input = temp.path().join("Z2DAN2012A_RMS_Vels.ivl");
+        write_test_navigation_file(&temp.path().join("Z2DAN2012A-1.hdr.sgn"));
+        std::fs::write(
+            &input,
+            [
+                "10000 1 0 2000",
+                "10000 1 10 2000",
+                "10000 1 20 2000",
+                "10000 1 30 2000",
+                "10000 2 0 2000",
+                "10000 2 10 2000",
+                "10000 2 20 2000",
+                "10000 2 30 2000",
+                "10002 1 0 2000",
+                "10002 1 10 2000",
+                "10002 1 20 2000",
+                "10002 1 30 2000",
+                "10002 2 0 2000",
+                "10002 2 10 2000",
+                "10002 2 20 2000",
+                "10002 2 30 2000",
+            ]
+            .join("\n"),
+        )
+        .expect("write navigation-backed rms velocity control profiles");
+
+        let response = import_velocity_functions_model(
+            store.display().to_string(),
+            input.display().to_string(),
+            VelocityQuantityKind::Rms,
+        )
+        .expect("import navigation-backed rms velocity model");
+
+        assert_eq!(response.profile_count, 4);
+        assert_eq!(response.sample_count, 16);
+        assert_eq!(response.model.inline_count, 2);
+        assert_eq!(response.model.xline_count, 2);
+
+        let display = resolved_section_display_view(
+            &store,
+            seis_runtime::SectionAxis::Inline,
+            0,
+            TimeDepthDomain::Depth,
+            Some(&VelocityFunctionSource::VelocityAssetReference {
+                asset_id: response.model.id.clone(),
+            }),
+            Some(VelocityQuantityKind::Rms),
+            false,
+        )
+        .expect("resolve navigation-backed rms depth display");
+        let depth_axis = decode_f32le(&display.section.sample_axis_f32le);
+        assert_eq!(depth_axis.len(), 4);
+        for (actual, expected) in depth_axis.iter().zip([0.0_f32, 10.0, 20.0, 30.0]) {
+            assert!(
+                (actual - expected).abs() <= 1e-4,
+                "expected {expected}, got {actual}"
+            );
+        }
+    }
+
+    #[test]
+    fn describe_velocity_volume_store_builds_canonical_dense_source_descriptor() {
+        let temp = tempdir().expect("temp dir");
+        let store = temp.path().join("velocity.tbvol");
+        create_test_store(&store);
+
+        let descriptor = describe_velocity_volume_store(
+            store.display().to_string(),
+            VelocityQuantityKind::Interval,
+        )
+        .expect("describe dense velocity source");
+
+        assert_eq!(
+            descriptor.source_kind,
+            TimeDepthTransformSourceKind::VelocityGrid3D
+        );
+        assert_eq!(descriptor.velocity_kind, VelocityQuantityKind::Interval);
+        assert_eq!(descriptor.vertical_domain, TimeDepthDomain::Time);
+        assert_eq!(descriptor.vertical_axis.unit, "ms");
+        assert_eq!(descriptor.vertical_axis.start, 0.0);
+        assert_eq!(descriptor.vertical_axis.step, 10.0);
+        assert_eq!(descriptor.vertical_axis.count, 4);
+        assert_eq!(descriptor.inline_count, 2);
+        assert_eq!(descriptor.xline_count, 2);
+        assert_eq!(
+            descriptor.coverage.relationship,
+            SpatialCoverageRelationship::Exact
+        );
+        assert!(
+            descriptor
+                .notes
+                .iter()
+                .any(|note| note.contains("Time in ms"))
+        );
+    }
+
+    #[test]
+    fn describe_velocity_volume_store_supports_depth_axis_override() {
+        let temp = tempdir().expect("temp dir");
+        let store = temp.path().join("velocity-depth.tbvol");
+        create_test_store(&store);
+
+        let descriptor = describe_velocity_volume_store_with_options(
+            store.display().to_string(),
+            VelocityQuantityKind::Interval,
+            VelocityVolumeDescriptorOptions {
+                vertical_domain: TimeDepthDomain::Depth,
+                vertical_unit: "m".to_string(),
+                vertical_start: Some(1000.0),
+                vertical_step: Some(25.0),
+            },
+        )
+        .expect("describe dense depth velocity source");
+
+        assert_eq!(descriptor.vertical_domain, TimeDepthDomain::Depth);
+        assert_eq!(descriptor.vertical_axis.domain, TimeDepthDomain::Depth);
+        assert_eq!(descriptor.vertical_axis.unit, "m");
+        assert_eq!(descriptor.vertical_axis.start, 1000.0);
+        assert_eq!(descriptor.vertical_axis.step, 25.0);
+        assert!(descriptor.notes.iter().any(|note| note.contains("Depth")));
+    }
+
+    #[test]
+    fn describe_velocity_volume_request_returns_wrapped_response() {
+        let temp = tempdir().expect("temp dir");
+        let store = temp.path().join("velocity-depth.tbvol");
+        create_test_store(&store);
+
+        let response = describe_velocity_volume(DescribeVelocityVolumeRequest {
+            schema_version: IPC_SCHEMA_VERSION,
+            store_path: store.display().to_string(),
+            velocity_kind: VelocityQuantityKind::Interval,
+            vertical_domain: Some(TimeDepthDomain::Depth),
+            vertical_unit: Some("m".to_string()),
+            vertical_start: Some(1000.0),
+            vertical_step: Some(25.0),
+        })
+        .expect("describe wrapped velocity volume");
+
+        assert_eq!(response.schema_version, IPC_SCHEMA_VERSION);
+        assert_eq!(response.volume.vertical_domain, TimeDepthDomain::Depth);
+        assert_eq!(response.volume.vertical_axis.domain, TimeDepthDomain::Depth);
+        assert_eq!(response.volume.vertical_axis.unit, "m");
+        assert_eq!(response.volume.vertical_axis.count, 4);
+    }
+
+    #[test]
+    fn describe_velocity_volume_defaults_to_native_store_axis_metadata() {
+        let temp = tempdir().expect("temp dir");
+        let store = temp.path().join("velocity-native-depth.tbvol");
+        create_test_store(&store);
+        set_store_vertical_axis(
+            &store,
+            TimeDepthDomain::Depth,
+            Some("m"),
+            Some(1000.0),
+            Some(25.0),
+        )
+        .expect("set native vertical axis");
+
+        let descriptor = describe_velocity_volume_store(
+            store.display().to_string(),
+            VelocityQuantityKind::Interval,
+        )
+        .expect("describe native depth velocity source");
+        assert_eq!(descriptor.vertical_domain, TimeDepthDomain::Depth);
+        assert_eq!(descriptor.vertical_axis.domain, TimeDepthDomain::Depth);
+        assert_eq!(descriptor.vertical_axis.unit, "m");
+        assert_eq!(descriptor.vertical_axis.start, 1000.0);
+        assert_eq!(descriptor.vertical_axis.step, 25.0);
+
+        let response = describe_velocity_volume(DescribeVelocityVolumeRequest {
+            schema_version: IPC_SCHEMA_VERSION,
+            store_path: store.display().to_string(),
+            velocity_kind: VelocityQuantityKind::Interval,
+            vertical_domain: None,
+            vertical_unit: None,
+            vertical_start: None,
+            vertical_step: None,
+        })
+        .expect("describe wrapped native depth velocity volume");
+        assert_eq!(response.volume.vertical_domain, TimeDepthDomain::Depth);
+        assert_eq!(response.volume.vertical_axis.domain, TimeDepthDomain::Depth);
+        assert_eq!(response.volume.vertical_axis.unit, "m");
+        assert_eq!(response.volume.vertical_axis.start, 1000.0);
+        assert_eq!(response.volume.vertical_axis.step, 25.0);
+    }
+
+    #[test]
+    fn ingest_velocity_volume_accepts_geometry_override_for_nonstandard_headers() {
+        let temp = tempdir().expect("temp dir");
+        let input = temp.path().join("override-geometry-small.sgy");
+        let failing_store = temp.path().join("velocity-fail.tbvol");
+        let output_store = temp.path().join("velocity-ok.tbvol");
+        fs::copy(segy_fixture_path("small.sgy"), &input).expect("copy segy fixture");
+        relocate_small_geometry_headers(&input);
+
+        let error = ingest_velocity_volume(IngestVelocityVolumeRequest {
+            schema_version: IPC_SCHEMA_VERSION,
+            input_path: input.display().to_string(),
+            output_store_path: failing_store.display().to_string(),
+            velocity_kind: VelocityQuantityKind::Interval,
+            vertical_domain: TimeDepthDomain::Time,
+            vertical_unit: None,
+            vertical_start: None,
+            vertical_step: None,
+            overwrite_existing: false,
+            delete_input_on_success: false,
+            geometry_override: None,
+        })
+        .expect_err("default geometry should fail for relocated headers");
+        let message = error.to_string();
+        assert!(
+            message.contains("geometry")
+                || message.contains("duplicate")
+                || message.contains("regular")
+                || message.contains("inline"),
+            "unexpected ingest error: {message}"
+        );
+
+        let response = ingest_velocity_volume(IngestVelocityVolumeRequest {
+            schema_version: IPC_SCHEMA_VERSION,
+            input_path: input.display().to_string(),
+            output_store_path: output_store.display().to_string(),
+            velocity_kind: VelocityQuantityKind::Interval,
+            vertical_domain: TimeDepthDomain::Time,
+            vertical_unit: None,
+            vertical_start: None,
+            vertical_step: None,
+            overwrite_existing: false,
+            delete_input_on_success: false,
+            geometry_override: Some(SegyGeometryOverride {
+                inline_3d: Some(SegyHeaderField {
+                    start_byte: 17,
+                    value_type: SegyHeaderValueType::I32,
+                }),
+                crossline_3d: Some(SegyHeaderField {
+                    start_byte: 25,
+                    value_type: SegyHeaderValueType::I32,
+                }),
+                third_axis: None,
+            }),
+        })
+        .expect("ingest with geometry override");
+
+        assert_eq!(response.volume.inline_count, 5);
+        assert_eq!(response.volume.xline_count, 5);
+        assert_eq!(response.volume.vertical_domain, TimeDepthDomain::Time);
+        assert_eq!(response.volume.vertical_axis.count, 50);
+
+        let opened = open_dataset_summary(OpenDatasetRequest {
+            schema_version: IPC_SCHEMA_VERSION,
+            store_path: output_store.display().to_string(),
+        })
+        .expect("open ingested velocity volume");
+        assert_eq!(opened.dataset.descriptor.shape, [5, 5, 50]);
+    }
+
+    #[test]
+    fn scan_segy_import_routes_relocated_headers_into_structure_review() {
+        let temp = tempdir().expect("temp dir");
+        let input = temp.path().join("wizard-geometry-small.sgy");
+        let fixture = segy_fixture_path("small.sgy");
+        if !fixture.exists() {
+            return;
+        }
+        fs::copy(fixture, &input).expect("copy segy fixture");
+        relocate_small_geometry_headers(&input);
+
+        let response = scan_segy_import(ScanSegyImportRequest {
+            schema_version: IPC_SCHEMA_VERSION,
+            input_path: input.display().to_string(),
+        })
+        .expect("scan segy import");
+
+        assert_eq!(response.recommended_next_stage, SegyImportWizardStage::Structure);
+        assert!(!response.candidate_plans.is_empty());
+        assert!(
+            response
+                .issues
+                .iter()
+                .any(|issue| issue.code == "review_geometry_mapping")
+        );
+    }
+
+    #[test]
+    fn validate_segy_import_plan_accepts_repaired_geometry_mapping() {
+        let temp = tempdir().expect("temp dir");
+        let input = temp.path().join("wizard-geometry-fixed.sgy");
+        let fixture = segy_fixture_path("small.sgy");
+        if !fixture.exists() {
+            return;
+        }
+        fs::copy(fixture, &input).expect("copy segy fixture");
+        relocate_small_geometry_headers(&input);
+        let fingerprint = source_fingerprint_for_input(&input.display().to_string())
+            .expect("source fingerprint");
+
+        let response = validate_segy_import_plan(ValidateSegyImportPlanRequest {
+            schema_version: IPC_SCHEMA_VERSION,
+            plan: build_segy_import_plan(
+                &input.display().to_string(),
+                &fingerprint,
+                &temp.path().join("wizard-fixed.tbvol").display().to_string(),
+                SegyGeometryOverride {
+                    inline_3d: Some(SegyHeaderField {
+                        start_byte: 17,
+                        value_type: SegyHeaderValueType::I32,
+                    }),
+                    crossline_3d: Some(SegyHeaderField {
+                        start_byte: 25,
+                        value_type: SegyHeaderValueType::I32,
+                    }),
+                    third_axis: None,
+                },
+                SegyImportPlanSource::Manual,
+                None,
+                None,
+                None,
+            ),
+        })
+        .expect("validate repaired geometry mapping");
+
+        assert!(response.can_import);
+        assert_eq!(response.recommended_next_stage, SegyImportWizardStage::Import);
+        assert_eq!(response.resolved_dataset.layout, "post_stack_3d");
+        assert!(
+            !response
+                .issues
+                .iter()
+                .any(|issue| issue.severity == SegyImportIssueSeverity::Blocking)
+        );
+    }
+
+    #[test]
+    fn delete_input_path_after_success_rejects_parent_of_output_store() {
+        let temp = tempdir().expect("temp dir");
+        let input = temp.path().join("raw-input");
+        let output = input.join("nested.tbvol");
+        fs::create_dir_all(&output).expect("create nested output");
+
+        let error = delete_input_path_after_success(&input, &output)
+            .expect_err("should reject deleting output parent");
+        let message = error.to_string();
+        assert!(message.contains("Refusing to delete"));
+        assert!(input.exists());
+        assert!(output.exists());
     }
 
     #[test]

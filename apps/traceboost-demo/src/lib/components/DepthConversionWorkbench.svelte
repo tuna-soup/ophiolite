@@ -1,9 +1,9 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
+  import { onMount } from "svelte";
+  import { emitFrontendDiagnosticsEvent } from "../bridge";
   import { getViewerModelContext } from "../viewer-model.svelte";
-
-  let { open = $bindable(false) }: { open?: boolean } = $props();
 
   const viewerModel = getViewerModelContext();
 
@@ -54,11 +54,15 @@
   });
   const canConvert = $derived(!viewerModel.depthConversionWorkbenchWorking && !conversionBlocker);
 
-  $effect(() => {
-    if (!open) {
-      return;
-    }
+  onMount(() => {
+    void emitFrontendDiagnosticsEvent({
+      stage: "depth_conversion_dialog",
+      level: "debug",
+      message: "Depth conversion dialog mounted."
+    }).catch(() => {});
+  });
 
+  $effect(() => {
     if (!availableHorizons.some((horizon) => horizon.id === selectedHorizonId)) {
       selectedHorizonId = availableHorizons[0]?.id ?? "";
     }
@@ -87,7 +91,6 @@
   }
 
   function closeWorkbench(): void {
-    open = false;
     resetDrafts();
     viewerModel.closeDepthConversionWorkbench();
   }
@@ -137,41 +140,40 @@
   }
 </script>
 
-{#if open}
-  <div class="workbench-backdrop" role="presentation" onclick={closeWorkbench}>
-    <div
-      class="workbench-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Depth conversion"
-      tabindex="0"
-      onclick={(event) => event.stopPropagation()}
-      onkeydown={(event) => event.stopPropagation()}
-    >
-      <div class="workbench-header">
-        <div>
-          <h3>Depth Conversion</h3>
-          <p>
-            Convert a stored survey horizon between TWT and depth using a selected survey velocity model.
-            The output is written back into the active store as another horizon asset.
-          </p>
-        </div>
-        <button class="close-btn" type="button" onclick={closeWorkbench}>Close</button>
+<div class="workbench-backdrop" role="presentation" onclick={closeWorkbench}>
+  <div
+    class="workbench-dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Depth conversion"
+    tabindex="0"
+    onclick={(event) => event.stopPropagation()}
+    onkeydown={(event) => event.stopPropagation()}
+  >
+    <div class="workbench-header">
+      <div>
+        <h3>Depth Conversion</h3>
+        <p>
+          Convert a stored survey horizon between TWT and depth using a selected survey velocity model.
+          The output is written back into the active store as another horizon asset.
+        </p>
       </div>
+      <button class="close-btn" type="button" onclick={closeWorkbench}>Close</button>
+    </div>
 
-      <div class="workbench-layout">
-        <section class="workbench-panel">
-          <div class="field-grid">
-            <label class="field">
-              <span>Source Horizon</span>
-              <select bind:value={selectedHorizonId}>
-                {#each availableHorizons as horizon (horizon.id)}
-                  <option value={horizon.id}>
-                    {horizon.name} | {horizonDomainLabel(horizon.vertical_domain, horizon.vertical_unit)}
-                  </option>
-                {/each}
-              </select>
-            </label>
+    <div class="workbench-layout">
+      <section class="workbench-panel">
+        <div class="field-grid">
+          <label class="field">
+            <span>Source Horizon</span>
+            <select bind:value={selectedHorizonId}>
+              {#each availableHorizons as horizon (horizon.id)}
+                <option value={horizon.id}>
+                  {horizon.name} | {horizonDomainLabel(horizon.vertical_domain, horizon.vertical_unit)}
+                </option>
+              {/each}
+            </select>
+          </label>
 
             <label class="field">
               <span>Velocity Model</span>
@@ -266,26 +268,25 @@
               and the chosen velocity model supplies the time-depth transform used for the conversion.
             </p>
           </div>
-        </aside>
-      </div>
+      </aside>
+    </div>
 
-      {#if conversionBlocker}
-        <p class="build-error">{conversionBlocker}</p>
-      {/if}
+    {#if conversionBlocker}
+      <p class="build-error">{conversionBlocker}</p>
+    {/if}
 
-      {#if viewerModel.depthConversionWorkbenchError}
-        <p class="build-error">{viewerModel.depthConversionWorkbenchError}</p>
-      {/if}
+    {#if viewerModel.depthConversionWorkbenchError}
+      <p class="build-error">{viewerModel.depthConversionWorkbenchError}</p>
+    {/if}
 
-      <div class="workbench-actions">
-        <button class="secondary" type="button" onclick={closeWorkbench}>Cancel</button>
-        <button type="button" disabled={!canConvert} onclick={() => void handleConvert()}>
-          {viewerModel.depthConversionWorkbenchWorking ? "Converting..." : "Convert Horizon"}
-        </button>
-      </div>
+    <div class="workbench-actions">
+      <button class="secondary" type="button" onclick={closeWorkbench}>Cancel</button>
+      <button type="button" disabled={!canConvert} onclick={() => void handleConvert()}>
+        {viewerModel.depthConversionWorkbenchWorking ? "Converting..." : "Convert Horizon"}
+      </button>
     </div>
   </div>
-{/if}
+</div>
 
 <style>
   .workbench-backdrop {

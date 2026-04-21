@@ -10,6 +10,7 @@
   import PipelineOperatorEditor from "./PipelineOperatorEditor.svelte";
   import PipelineSequenceList from "./PipelineSequenceList.svelte";
   import PipelineSessionList from "./PipelineSessionList.svelte";
+  import ResidualWorkbench from "./ResidualWorkbench.svelte";
   import SpectrumInspector from "./SpectrumInspector.svelte";
   import VelocityModelWorkbench from "./VelocityModelWorkbench.svelte";
   import WellTieWorkbench from "./WellTieWorkbench.svelte";
@@ -21,12 +22,14 @@
     showSidebarPanel,
     openSettings,
     requestHorizonImport,
+    requestPetrelImport,
     chartRef = $bindable<{ fitToData?: () => void } | null>(null)
   }: {
     showSidebar: boolean;
     showSidebarPanel: () => void;
     openSettings: () => void;
     requestHorizonImport: () => Promise<void>;
+    requestPetrelImport: () => Promise<void>;
     chartRef?: { fitToData?: () => void } | null;
   } = $props();
 
@@ -42,9 +45,12 @@
   let sectionIndexDraft = $state<number | undefined>(undefined);
   let depthVelocityDraft = $state(String(viewerModel.depthVelocityMPerS));
 
-  const compareViewport = $derived(viewerModel.lastViewport?.viewport ?? null);
+  const compareViewport = $derived(viewerModel.displayedViewport);
+  const chartSessionKey = $derived(`${viewerModel.displayedViewerSessionKey}:${processingModel.displaySectionMode}`);
+  const displayedViewId = $derived(`${viewerModel.displayedViewId}:${processingModel.displaySectionMode}`);
   const geometryRecovery = $derived(viewerModel.importGeometryRecovery);
   const datasetExportDialog = $derived(viewerModel.datasetExportDialog);
+  const tileStats = $derived(viewerModel.sectionTileStatsSnapshot);
   const splitReady = $derived(
     viewerModel.compareSplitEnabled &&
       !!processingModel.displaySection &&
@@ -64,6 +70,54 @@
         : Math.max(0, viewerModel.dataset.descriptor.shape[1] - 1)
       : 0
   );
+  const tileWindow = $derived(resolveSectionTileWindow(viewerModel.section));
+  const tileHitRate = $derived(
+    tileStats.cacheHits + tileStats.fetches > 0 ? tileStats.cacheHits / (tileStats.cacheHits + tileStats.fetches) : null
+  );
+  const tileDiagnosticsStatus = $derived.by(() => {
+    if (!viewerModel.activeStorePath.trim()) {
+      return "No store";
+    }
+    if (!viewerModel.tauriRuntime) {
+      return "Browser fallback";
+    }
+    if (!processingModel.displaySection || !viewerModel.section) {
+      return "Waiting";
+    }
+    if (viewerModel.sectionDomain !== "time") {
+      return "Depth mode";
+    }
+    if (viewerModel.compareSplitEnabled) {
+      return "Compare split";
+    }
+    if (viewerModel.showVelocityOverlay) {
+      return "Velocity overlay";
+    }
+    if (viewerModel.sectionScalarOverlays.length > 0) {
+      return "Scalar overlays";
+    }
+    return "Active";
+  });
+  const tileDiagnosticsDetail = $derived.by(() => {
+    switch (tileDiagnosticsStatus) {
+      case "Browser fallback":
+        return "Section tiles are not requested in browser mode.";
+      case "Depth mode":
+        return "Depth conversion still uses full-section payloads.";
+      case "Compare split":
+        return "Split compare currently pauses viewport tile orchestration.";
+      case "Velocity overlay":
+        return "Velocity overlays currently force full-section loads.";
+      case "Scalar overlays":
+        return "Scalar overlays currently force full-section loads.";
+      case "Active":
+        return "Viewport tiles with halo plus adjacent-slice prefetch.";
+      case "Waiting":
+        return "Load a section and move the viewport to start tile traffic.";
+      default:
+        return "Open a runtime store to enable section tiling diagnostics.";
+    }
+  });
   const toolbarTools = $derived<ChartToolbarToolItem[]>([
     {
       id: "pointer",
@@ -259,6 +313,46 @@
 
     void processingModel.handleKeydown(event);
   }
+
+  function resolveSectionTileWindow(
+    section: unknown
+  ): { trace_start: number; trace_end: number; sample_start: number; sample_end: number; lod?: number } | null {
+    if (!section || typeof section !== "object" || !("window" in section)) {
+      return null;
+    }
+    const candidate = (section as { window?: unknown }).window;
+    if (!candidate || typeof candidate !== "object") {
+      return null;
+    }
+    if (
+      "trace_start" in candidate &&
+      "trace_end" in candidate &&
+      "sample_start" in candidate &&
+      "sample_end" in candidate
+    ) {
+      return candidate as {
+        trace_start: number;
+        trace_end: number;
+        sample_start: number;
+        sample_end: number;
+        lod?: number;
+      };
+    }
+    return null;
+  }
+
+  function formatIndexRange(start: number, end: number): string {
+    return `[${start}, ${end})`;
+  }
+
+  function formatMiB(bytes: number): string {
+    const mib = bytes / (1024 * 1024);
+    return `${mib >= 10 ? mib.toFixed(1) : mib.toFixed(2)} MiB`;
+  }
+
+  function formatPercent(value: number | null): string {
+    return value === null ? "n/a" : `${Math.round(value * 100)}%`;
+  }
 </script>
 
 <svelte:window onkeydown={handleWindowKeyDown} />
@@ -322,6 +416,13 @@
         disabled={!viewerModel.activeStorePath || viewerModel.horizonImporting}
       >
         {viewerModel.horizonImporting ? "Importing…" : `Horizons ${viewerModel.sectionHorizons.length}`}
+      </button>
+      <button
+        class="display-chip action"
+        onclick={() => void requestPetrelImport()}
+        disabled={!viewerModel.tauriRuntime}
+      >
+        Petrel...
       </button>
       {#if viewerModel.sectionWellOverlays.length > 0}
         <div class="display-chip field time-depth-status">
@@ -522,6 +623,57 @@
   </div>
 {/snippet}
 
+{#snippet tileDiagnosticsOverlay()}
+  <div class="tile-diagnostics-overlay">
+    <div class="tile-diagnostics-header">
+      <span>Section Tiling</span>
+      <strong class:active={tileDiagnosticsStatus === "Active"}>{tileDiagnosticsStatus}</strong>
+    </div>
+    <p>{tileDiagnosticsDetail}</p>
+    {#if compareViewport}
+      <dl class="tile-diagnostics-grid">
+        <div>
+          <dt>Viewport</dt>
+          <dd>
+            T {formatIndexRange(compareViewport.trace_start, compareViewport.trace_end)} ·
+            S {formatIndexRange(compareViewport.sample_start, compareViewport.sample_end)}
+          </dd>
+        </div>
+        <div>
+          <dt>Loaded</dt>
+          <dd>
+            {#if tileWindow}
+              T {formatIndexRange(tileWindow.trace_start, tileWindow.trace_end)} ·
+              S {formatIndexRange(tileWindow.sample_start, tileWindow.sample_end)}
+              {#if typeof tileWindow.lod === "number"}
+                · LOD {tileWindow.lod}
+              {/if}
+            {:else}
+              Full section
+            {/if}
+          </dd>
+        </div>
+        <div>
+          <dt>Cache</dt>
+          <dd>{formatMiB(tileStats.cachedBytes)} · {tileStats.evictions} evictions</dd>
+        </div>
+        <div>
+          <dt>Reuse</dt>
+          <dd>{tileStats.cacheHits} hits · {formatPercent(tileHitRate)}</dd>
+        </div>
+        <div>
+          <dt>Fetch</dt>
+          <dd>{tileStats.fetches} viewport · {tileStats.prefetchRequests} prefetch</dd>
+        </div>
+        <div>
+          <dt>Errors</dt>
+          <dd>{tileStats.fetchErrors + tileStats.prefetchErrors}</dd>
+        </div>
+      </dl>
+    {/if}
+  </div>
+{/snippet}
+
 {#if !showSidebar}
   <button class="sidebar-toggle" onclick={showSidebarPanel} aria-label="Show sidebar">
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
@@ -544,7 +696,7 @@
           </p>
         {/if}
       </div>
-      <button type="button" class="crs-advisory-action" onclick={openSettings}>
+      <button type="button" class="crs-advisory-action" onclick={() => openSettings()}>
         Project Settings
       </button>
     </div>
@@ -659,6 +811,7 @@
       <div class="viewer-pane">
       {#if processingModel.displaySection}
         <div class="chart-frame">
+          {#key chartSessionKey}
           <SeismicSectionChart
             bind:this={chartRef}
             --ophiolite-chart-shell-bg="var(--panel-bg)"
@@ -674,8 +827,8 @@
             --ophiolite-toolbar-hover-text="#274b61"
             --ophiolite-toolbar-active-bg="#e8f3fb"
             --ophiolite-toolbar-active-text="#274b61"
-            chartId="traceboost-main"
-            viewId={`${viewerModel.axis}:${viewerModel.index}:${viewerModel.sectionDomain}:${processingModel.displaySectionMode}`}
+            chartId={`traceboost-main:${chartSessionKey}`}
+            viewId={displayedViewId}
             section={processingModel.displaySection}
             sectionScalarOverlays={viewerModel.sectionScalarOverlays}
             sectionHorizons={viewerModel.sectionHorizons}
@@ -687,6 +840,7 @@
             displayTransform={viewerModel.displayTransform}
             interactions={{ tool: viewerModel.chartTool }}
             loading={viewerModel.loading || processingModel.previewBusy || (splitReady && viewerModel.backgroundLoading)}
+            loadingMessage="Loading section..."
             errorMessage={viewerModel.error ?? (splitReady ? viewerModel.backgroundError : null)}
             resetToken={processingModel.displayResetToken}
             onProbeChange={viewerModel.setProbe}
@@ -698,8 +852,10 @@
             stageTopLeft={chartDisplayOverlay}
             plotTopCenter={chartToolbarOverlay}
             plotTopRight={viewerModel.canCycleForegroundCompareSurvey ? compareCycleOverlay : undefined}
+            plotBottomRight={tileDiagnosticsOverlay}
             plotBottomLeft={compareLabelOverlay}
           />
+          {/key}
 
           {#if processingModel.spectrumInspectorOpen}
             <div class="spectrum-inspector-layer">
@@ -1180,7 +1336,10 @@
 {/if}
 
 <VelocityModelWorkbench open={viewerModel.velocityModelWorkbenchOpen} />
-<DepthConversionWorkbench open={viewerModel.depthConversionWorkbenchOpen} />
+<ResidualWorkbench open={viewerModel.residualWorkbenchOpen} />
+{#if viewerModel.depthConversionWorkbenchOpen}
+  <DepthConversionWorkbench />
+{/if}
 <WellTieWorkbench open={viewerModel.wellTieWorkbenchOpen} />
 
 <style>
@@ -1556,6 +1715,78 @@
     gap: var(--ui-space-2);
     flex-wrap: wrap;
     pointer-events: none;
+  }
+
+  .tile-diagnostics-overlay {
+    min-width: min(300px, calc(100vw - 48px));
+    max-width: min(360px, calc(100vw - 48px));
+    display: grid;
+    gap: var(--ui-space-2);
+    padding: 10px 12px;
+    border: 1px solid rgba(176, 212, 238, 0.72);
+    border-radius: var(--ui-radius-md);
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: var(--ui-shadow-soft);
+    backdrop-filter: blur(6px);
+  }
+
+  .tile-diagnostics-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ui-space-3);
+  }
+
+  .tile-diagnostics-header span {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .tile-diagnostics-header strong {
+    font-size: 11px;
+    font-weight: 650;
+    color: #705c1c;
+  }
+
+  .tile-diagnostics-header strong.active {
+    color: #274b61;
+  }
+
+  .tile-diagnostics-overlay p {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--text-muted);
+  }
+
+  .tile-diagnostics-grid {
+    margin: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--ui-space-2) var(--ui-space-4);
+  }
+
+  .tile-diagnostics-grid div {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+  }
+
+  .tile-diagnostics-grid dt {
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .tile-diagnostics-grid dd {
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--text-primary);
+    word-break: break-word;
   }
 
   .compare-label-line {
@@ -1935,6 +2166,10 @@
 
     .display-settings-grid {
       grid-template-columns: minmax(0, 1fr);
+    }
+
+    .tile-diagnostics-grid {
+      grid-template-columns: 1fr;
     }
 
     .export-path-row {

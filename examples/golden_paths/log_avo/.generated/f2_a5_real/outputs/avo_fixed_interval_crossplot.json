@@ -1,0 +1,657 @@
+{
+  "schema_version": 1,
+  "id": "avo-fixed-interval-crossplot",
+  "name": "F2-A5 Fixed Interval Crossplot",
+  "title": "Fixed Interval Intercept-Gradient Crossplot",
+  "subtitle": "F2-A5 fixed 6.096 m layering (Shuey two-term)",
+  "x_axis": {
+    "label": "Intercept",
+    "unit": "ratio"
+  },
+  "y_axis": {
+    "label": "Gradient",
+    "unit": "ratio"
+  },
+  "interfaces": [
+    {
+      "id": "interface-1",
+      "label": "Interface 1",
+      "color": "#0B7285",
+      "reservoir_label": "1887.3 m"
+    },
+    {
+      "id": "interface-2",
+      "label": "Interface 2",
+      "color": "#D9480F",
+      "reservoir_label": "1893.4 m"
+    },
+    {
+      "id": "interface-3",
+      "label": "Interface 3",
+      "color": "#2B8A3E",
+      "reservoir_label": "1899.5 m"
+    },
+    {
+      "id": "interface-4",
+      "label": "Interface 4",
+      "color": "#C2255C",
+      "reservoir_label": "1905.6 m"
+    },
+    {
+      "id": "interface-5",
+      "label": "Interface 5",
+      "color": "#E67700",
+      "reservoir_label": "1911.7 m"
+    },
+    {
+      "id": "interface-6",
+      "label": "Interface 6",
+      "color": "#1C7ED6",
+      "reservoir_label": "1917.8 m"
+    },
+    {
+      "id": "interface-7",
+      "label": "Interface 7",
+      "color": "#0B7285",
+      "reservoir_label": "1923.9 m"
+    },
+    {
+      "id": "interface-8",
+      "label": "Interface 8",
+      "color": "#D9480F",
+      "reservoir_label": "1930.0 m"
+    },
+    {
+      "id": "interface-9",
+      "label": "Interface 9",
+      "color": "#2B8A3E",
+      "reservoir_label": "1936.1 m"
+    },
+    {
+      "id": "interface-10",
+      "label": "Interface 10",
+      "color": "#C2255C",
+      "reservoir_label": "1942.2 m"
+    },
+    {
+      "id": "interface-11",
+      "label": "Interface 11",
+      "color": "#E67700",
+      "reservoir_label": "1948.3 m"
+    },
+    {
+      "id": "interface-12",
+      "label": "Interface 12",
+      "color": "#1C7ED6",
+      "reservoir_label": "1954.4 m"
+    },
+    {
+      "id": "interface-13",
+      "label": "Interface 13",
+      "color": "#0B7285",
+      "reservoir_label": "1960.5 m"
+    },
+    {
+      "id": "interface-14",
+      "label": "Interface 14",
+      "color": "#D9480F",
+      "reservoir_label": "1966.6 m"
+    },
+    {
+      "id": "interface-15",
+      "label": "Interface 15",
+      "color": "#2B8A3E",
+      "reservoir_label": "1972.7 m"
+    },
+    {
+      "id": "interface-16",
+      "label": "Interface 16",
+      "color": "#C2255C",
+      "reservoir_label": "1978.8 m"
+    },
+    {
+      "id": "interface-17",
+      "label": "Interface 17",
+      "color": "#E67700",
+      "reservoir_label": "1984.9 m"
+    },
+    {
+      "id": "interface-18",
+      "label": "Interface 18",
+      "color": "#1C7ED6",
+      "reservoir_label": "1991.0 m"
+    },
+    {
+      "id": "interface-19",
+      "label": "Interface 19",
+      "color": "#0B7285",
+      "reservoir_label": "1997.1 m"
+    },
+    {
+      "id": "interface-20",
+      "label": "Interface 20",
+      "color": "#D9480F",
+      "reservoir_label": "2003.2 m"
+    },
+    {
+      "id": "interface-21",
+      "label": "Interface 21",
+      "color": "#2B8A3E",
+      "reservoir_label": "2009.3 m"
+    },
+    {
+      "id": "interface-22",
+      "label": "Interface 22",
+      "color": "#C2255C",
+      "reservoir_label": "2015.4 m"
+    },
+    {
+      "id": "interface-23",
+      "label": "Interface 23",
+      "color": "#E67700",
+      "reservoir_label": "2021.5 m"
+    },
+    {
+      "id": "interface-24",
+      "label": "Interface 24",
+      "color": "#1C7ED6",
+      "reservoir_label": "2027.6 m"
+    },
+    {
+      "id": "interface-25",
+      "label": "Interface 25",
+      "color": "#0B7285",
+      "reservoir_label": "2033.7 m"
+    },
+    {
+      "id": "interface-26",
+      "label": "Interface 26",
+      "color": "#D9480F",
+      "reservoir_label": "2039.7 m"
+    },
+    {
+      "id": "interface-27",
+      "label": "Interface 27",
+      "color": "#2B8A3E",
+      "reservoir_label": "2045.8 m"
+    },
+    {
+      "id": "interface-28",
+      "label": "Interface 28",
+      "color": "#C2255C",
+      "reservoir_label": "2051.9 m"
+    },
+    {
+      "id": "interface-29",
+      "label": "Interface 29",
+      "color": "#E67700",
+      "reservoir_label": "2058.0 m"
+    },
+    {
+      "id": "interface-30",
+      "label": "Interface 30",
+      "color": "#1C7ED6",
+      "reservoir_label": "2064.1 m"
+    },
+    {
+      "id": "interface-31",
+      "label": "Interface 31",
+      "color": "#0B7285",
+      "reservoir_label": "2070.2 m"
+    },
+    {
+      "id": "interface-32",
+      "label": "Interface 32",
+      "color": "#D9480F",
+      "reservoir_label": "2076.3 m"
+    },
+    {
+      "id": "interface-33",
+      "label": "Interface 33",
+      "color": "#2B8A3E",
+      "reservoir_label": "2082.4 m"
+    },
+    {
+      "id": "interface-34",
+      "label": "Interface 34",
+      "color": "#C2255C",
+      "reservoir_label": "2088.5 m"
+    },
+    {
+      "id": "interface-35",
+      "label": "Interface 35",
+      "color": "#E67700",
+      "reservoir_label": "2094.6 m"
+    },
+    {
+      "id": "interface-36",
+      "label": "Interface 36",
+      "color": "#1C7ED6",
+      "reservoir_label": "2100.7 m"
+    },
+    {
+      "id": "interface-37",
+      "label": "Interface 37",
+      "color": "#0B7285",
+      "reservoir_label": "2106.8 m"
+    },
+    {
+      "id": "interface-38",
+      "label": "Interface 38",
+      "color": "#D9480F",
+      "reservoir_label": "2112.9 m"
+    },
+    {
+      "id": "interface-39",
+      "label": "Interface 39",
+      "color": "#2B8A3E",
+      "reservoir_label": "2119.0 m"
+    },
+    {
+      "id": "interface-40",
+      "label": "Interface 40",
+      "color": "#C2255C",
+      "reservoir_label": "2125.1 m"
+    },
+    {
+      "id": "interface-41",
+      "label": "Interface 41",
+      "color": "#E67700",
+      "reservoir_label": "2131.2 m"
+    },
+    {
+      "id": "interface-42",
+      "label": "Interface 42",
+      "color": "#1C7ED6",
+      "reservoir_label": "2137.3 m"
+    },
+    {
+      "id": "interface-43",
+      "label": "Interface 43",
+      "color": "#0B7285",
+      "reservoir_label": "2143.4 m"
+    },
+    {
+      "id": "interface-44",
+      "label": "Interface 44",
+      "color": "#D9480F",
+      "reservoir_label": "2149.5 m"
+    },
+    {
+      "id": "interface-45",
+      "label": "Interface 45",
+      "color": "#2B8A3E",
+      "reservoir_label": "2155.6 m"
+    },
+    {
+      "id": "interface-46",
+      "label": "Interface 46",
+      "color": "#C2255C",
+      "reservoir_label": "2161.7 m"
+    },
+    {
+      "id": "interface-47",
+      "label": "Interface 47",
+      "color": "#E67700",
+      "reservoir_label": "2167.8 m"
+    },
+    {
+      "id": "interface-48",
+      "label": "Interface 48",
+      "color": "#1C7ED6",
+      "reservoir_label": "2173.9 m"
+    },
+    {
+      "id": "interface-49",
+      "label": "Interface 49",
+      "color": "#0B7285",
+      "reservoir_label": "2180.0 m"
+    },
+    {
+      "id": "interface-50",
+      "label": "Interface 50",
+      "color": "#D9480F",
+      "reservoir_label": "2186.1 m"
+    },
+    {
+      "id": "interface-51",
+      "label": "Interface 51",
+      "color": "#2B8A3E",
+      "reservoir_label": "2192.1 m"
+    },
+    {
+      "id": "interface-52",
+      "label": "Interface 52",
+      "color": "#C2255C",
+      "reservoir_label": "2198.2 m"
+    },
+    {
+      "id": "interface-53",
+      "label": "Interface 53",
+      "color": "#E67700",
+      "reservoir_label": "2204.3 m"
+    },
+    {
+      "id": "interface-54",
+      "label": "Interface 54",
+      "color": "#1C7ED6",
+      "reservoir_label": "2210.4 m"
+    },
+    {
+      "id": "interface-55",
+      "label": "Interface 55",
+      "color": "#0B7285",
+      "reservoir_label": "2216.5 m"
+    },
+    {
+      "id": "interface-56",
+      "label": "Interface 56",
+      "color": "#D9480F",
+      "reservoir_label": "2222.6 m"
+    },
+    {
+      "id": "interface-57",
+      "label": "Interface 57",
+      "color": "#2B8A3E",
+      "reservoir_label": "2228.7 m"
+    },
+    {
+      "id": "interface-58",
+      "label": "Interface 58",
+      "color": "#C2255C",
+      "reservoir_label": "2234.8 m"
+    }
+  ],
+  "points": [
+    {
+      "interface_id": "interface-1",
+      "intercept": 0.006769408471882343,
+      "gradient": 0.0018091497477144003
+    },
+    {
+      "interface_id": "interface-2",
+      "intercept": -0.35781872272491455,
+      "gradient": -0.1545572280883789
+    },
+    {
+      "interface_id": "interface-3",
+      "intercept": 0.10199467837810516,
+      "gradient": -0.036610737442970276
+    },
+    {
+      "interface_id": "interface-4",
+      "intercept": -0.003078215289860964,
+      "gradient": -0.06276781857013702
+    },
+    {
+      "interface_id": "interface-5",
+      "intercept": -0.058842770755290985,
+      "gradient": 0.004697131458669901
+    },
+    {
+      "interface_id": "interface-6",
+      "intercept": -0.03105323575437069,
+      "gradient": 0.010252723470330238
+    },
+    {
+      "interface_id": "interface-7",
+      "intercept": 0.008941548876464367,
+      "gradient": -0.028544120490550995
+    },
+    {
+      "interface_id": "interface-8",
+      "intercept": 0.06075085699558258,
+      "gradient": -0.19142411649227142
+    },
+    {
+      "interface_id": "interface-9",
+      "intercept": 0.10708274692296982,
+      "gradient": -0.1271946132183075
+    },
+    {
+      "interface_id": "interface-10",
+      "intercept": 0.011471562087535858,
+      "gradient": -0.010302817448973656
+    },
+    {
+      "interface_id": "interface-11",
+      "intercept": -0.011899651028215885,
+      "gradient": -0.016029099002480507
+    },
+    {
+      "interface_id": "interface-12",
+      "intercept": 0.00022696163796354085,
+      "gradient": -0.03281882405281067
+    },
+    {
+      "interface_id": "interface-13",
+      "intercept": -0.018617376685142517,
+      "gradient": 0.0066772042773664
+    },
+    {
+      "interface_id": "interface-14",
+      "intercept": 0.010187349282205105,
+      "gradient": 0.009966888464987278
+    },
+    {
+      "interface_id": "interface-15",
+      "intercept": 0.02581055462360382,
+      "gradient": -0.06276311725378036
+    },
+    {
+      "interface_id": "interface-16",
+      "intercept": -0.06011948361992836,
+      "gradient": 0.07344257086515427
+    },
+    {
+      "interface_id": "interface-17",
+      "intercept": 0.03768154978752136,
+      "gradient": 0.003331189975142479
+    },
+    {
+      "interface_id": "interface-18",
+      "intercept": 0.030386075377464294,
+      "gradient": 0.02421356923878193
+    },
+    {
+      "interface_id": "interface-19",
+      "intercept": 0.0015667768893763423,
+      "gradient": -0.0161354411393404
+    },
+    {
+      "interface_id": "interface-20",
+      "intercept": 0.017297647893428802,
+      "gradient": -0.0166966300457716
+    },
+    {
+      "interface_id": "interface-21",
+      "intercept": 0.030165502801537514,
+      "gradient": -0.06275399029254913
+    },
+    {
+      "interface_id": "interface-22",
+      "intercept": 0.022339168936014175,
+      "gradient": -0.029892170801758766
+    },
+    {
+      "interface_id": "interface-23",
+      "intercept": -0.044695641845464706,
+      "gradient": 0.05993042513728142
+    },
+    {
+      "interface_id": "interface-24",
+      "intercept": 0.017428923398256302,
+      "gradient": -0.004409434273838997
+    },
+    {
+      "interface_id": "interface-25",
+      "intercept": -0.002053601900115609,
+      "gradient": 0.0033269620034843683
+    },
+    {
+      "interface_id": "interface-26",
+      "intercept": -0.02227947674691677,
+      "gradient": 0.029173139482736588
+    },
+    {
+      "interface_id": "interface-27",
+      "intercept": 0.004688736982643604,
+      "gradient": -0.012406956404447556
+    },
+    {
+      "interface_id": "interface-28",
+      "intercept": 0.018963510170578957,
+      "gradient": -0.03280041739344597
+    },
+    {
+      "interface_id": "interface-29",
+      "intercept": 0.013783150352537632,
+      "gradient": -0.019794607535004616
+    },
+    {
+      "interface_id": "interface-30",
+      "intercept": 0.02092878893017769,
+      "gradient": -0.01532206404954195
+    },
+    {
+      "interface_id": "interface-31",
+      "intercept": 0.01978454925119877,
+      "gradient": -0.03509088233113289
+    },
+    {
+      "interface_id": "interface-32",
+      "intercept": -0.0623982697725296,
+      "gradient": 0.08547493070363998
+    },
+    {
+      "interface_id": "interface-33",
+      "intercept": -0.01609216071665287,
+      "gradient": 0.03010519966483116
+    },
+    {
+      "interface_id": "interface-34",
+      "intercept": 0.0045153237879276276,
+      "gradient": -0.009076964110136032
+    },
+    {
+      "interface_id": "interface-35",
+      "intercept": 0.054674796760082245,
+      "gradient": -0.018957503139972687
+    },
+    {
+      "interface_id": "interface-36",
+      "intercept": 0.011268742382526398,
+      "gradient": -0.05066137760877609
+    },
+    {
+      "interface_id": "interface-37",
+      "intercept": -0.00521769979968667,
+      "gradient": -0.012879136018455029
+    },
+    {
+      "interface_id": "interface-38",
+      "intercept": -0.022457679733633995,
+      "gradient": 0.02428521029651165
+    },
+    {
+      "interface_id": "interface-39",
+      "intercept": 0.01818929612636566,
+      "gradient": 0.006320133339613676
+    },
+    {
+      "interface_id": "interface-40",
+      "intercept": -0.015225107781589031,
+      "gradient": -0.023674223572015762
+    },
+    {
+      "interface_id": "interface-41",
+      "intercept": 0.014512961730360985,
+      "gradient": 0.02614505961537361
+    },
+    {
+      "interface_id": "interface-42",
+      "intercept": 0.008292023092508316,
+      "gradient": -0.014413410797715187
+    },
+    {
+      "interface_id": "interface-43",
+      "intercept": -0.009369825012981892,
+      "gradient": -0.007074065040796995
+    },
+    {
+      "interface_id": "interface-44",
+      "intercept": -0.027932902798056602,
+      "gradient": 0.03779463842511177
+    },
+    {
+      "interface_id": "interface-45",
+      "intercept": 0.0678606927394867,
+      "gradient": -0.03337809816002846
+    },
+    {
+      "interface_id": "interface-46",
+      "intercept": -0.008132114075124264,
+      "gradient": 0.029111888259649277
+    },
+    {
+      "interface_id": "interface-47",
+      "intercept": -0.027469519525766373,
+      "gradient": -0.020995264872908592
+    },
+    {
+      "interface_id": "interface-48",
+      "intercept": 0.0002605645568110049,
+      "gradient": 0.007817528210580349
+    },
+    {
+      "interface_id": "interface-49",
+      "intercept": 0.022716980427503586,
+      "gradient": -0.02423165552318096
+    },
+    {
+      "interface_id": "interface-50",
+      "intercept": -0.02483448199927807,
+      "gradient": -0.02117505483329296
+    },
+    {
+      "interface_id": "interface-51",
+      "intercept": -0.005849089473485947,
+      "gradient": 0.008213845081627369
+    },
+    {
+      "interface_id": "interface-52",
+      "intercept": -0.019157644361257553,
+      "gradient": 0.025596601888537407
+    },
+    {
+      "interface_id": "interface-53",
+      "intercept": 0.036516521126031876,
+      "gradient": -0.026046058163046837
+    },
+    {
+      "interface_id": "interface-54",
+      "intercept": 0.04372222721576691,
+      "gradient": -0.033909689635038376
+    },
+    {
+      "interface_id": "interface-55",
+      "intercept": -0.029978645965456963,
+      "gradient": -0.0004915338358841836
+    },
+    {
+      "interface_id": "interface-56",
+      "intercept": 0.0031326499301940203,
+      "gradient": 0.06517568230628967
+    },
+    {
+      "interface_id": "interface-57",
+      "intercept": -0.015515664592385292,
+      "gradient": -0.013067577965557575
+    },
+    {
+      "interface_id": "interface-58",
+      "intercept": 0.0046731699258089066,
+      "gradient": 0.024630023166537285
+    }
+  ]
+}

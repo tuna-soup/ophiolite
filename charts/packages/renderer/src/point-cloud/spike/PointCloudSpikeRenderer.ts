@@ -1,10 +1,19 @@
 import {
+  buildCartesianTicks,
+  cloneCartesianAxisOverrides,
+  formatCartesianCanvasFont,
+  formatCartesianTick,
   fitRockPhysicsViewport,
   getRockPhysicsCrossplotPlotRect,
+  resolveCartesianPresentationProfile,
+  resolveCartesianStageLayout,
+  resolveCartesianAxisTitle,
+  resolveCartesianTickCount,
   valueToRockPhysicsScreenX,
   valueToRockPhysicsScreenY
 } from "@ophiolite/charts-core";
 import type {
+  CartesianAxisOverrides,
   InteractionState,
   RockPhysicsAxisRange,
   RockPhysicsPointSymbol,
@@ -30,6 +39,12 @@ const TITLE_COLOR = "#eef7fb";
 const SUBTITLE_COLOR = "#8eb0bf";
 const PROBE_COLOR = "rgba(255, 244, 169, 0.92)";
 const PROBE_FILL = "rgba(255, 244, 169, 0.18)";
+const ROCK_PHYSICS_PRESENTATION = resolveCartesianPresentationProfile("rockPhysics");
+const TICK_FONT = formatCartesianCanvasFont(ROCK_PHYSICS_PRESENTATION.typography.tick);
+const AXIS_LABEL_FONT = formatCartesianCanvasFont(ROCK_PHYSICS_PRESENTATION.typography.axisLabel);
+const TITLE_FONT = formatCartesianCanvasFont(ROCK_PHYSICS_PRESENTATION.typography.title);
+const SUBTITLE_FONT = formatCartesianCanvasFont(ROCK_PHYSICS_PRESENTATION.typography.subtitle);
+const ENABLE_WEBGL_POINT_CLOUD = false;
 
 const EMPTY_INTERACTIONS: InteractionState = {
   capabilities: {
@@ -47,12 +62,14 @@ interface NormalizedRenderState {
   model: RockPhysicsCrossplotModel | null;
   viewport: RockPhysicsCrossplotViewport | null;
   probe: RockPhysicsCrossplotProbe | null;
+  axisOverrides: CartesianAxisOverrides;
   interactions: InteractionState;
 }
 
 export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdapter {
   private host: HTMLDivElement | null = null;
   private glCanvas: HTMLCanvasElement | null = null;
+  private pointContext: CanvasRenderingContext2D | null = null;
   private overlayCanvas: HTMLCanvasElement | null = null;
   private overlayContext: CanvasRenderingContext2D | null = null;
   private gl: WebGL2RenderingContext | null = null;
@@ -65,6 +82,7 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
     model: null,
     viewport: null,
     probe: null,
+    axisOverrides: {},
     interactions: EMPTY_INTERACTIONS
   };
   private uploadedModel: RockPhysicsCrossplotModel | null = null;
@@ -94,20 +112,36 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
     this.host.append(this.glCanvas, this.overlayCanvas);
     container.replaceChildren(this.host);
 
-    this.gl = this.glCanvas.getContext("webgl2", {
-      antialias: true,
-      premultipliedAlpha: false
-    });
-    this.overlayContext = this.overlayCanvas.getContext("2d");
-
-    if (!this.gl) {
-      throw new Error("WebGL2 is required for the point-cloud spike renderer.");
+    if (ENABLE_WEBGL_POINT_CLOUD) {
+      try {
+        this.gl = this.glCanvas.getContext("webgl2", {
+          antialias: true,
+          premultipliedAlpha: false
+        });
+      } catch (error) {
+        console.warn("RockPhysicsCrossplot: WebGL2 context creation failed, falling back to 2D canvas.", error);
+        this.gl = null;
+      }
     }
-
-    this.program = createProgram(this.gl, VERTEX_SHADER_SOURCE, FRAGMENT_SHADER_SOURCE);
-    this.positionBuffer = createBuffer(this.gl);
-    this.colorBuffer = createBuffer(this.gl);
-    this.symbolBuffer = createBuffer(this.gl);
+    this.overlayContext = this.overlayCanvas.getContext("2d");
+    if (this.gl) {
+      try {
+        this.program = createProgram(this.gl, VERTEX_SHADER_SOURCE, FRAGMENT_SHADER_SOURCE);
+        this.positionBuffer = createBuffer(this.gl);
+        this.colorBuffer = createBuffer(this.gl);
+        this.symbolBuffer = createBuffer(this.gl);
+      } catch (error) {
+        console.warn("RockPhysicsCrossplot: WebGL program initialization failed, falling back to 2D canvas.", error);
+        this.program = null;
+        this.positionBuffer = null;
+        this.colorBuffer = null;
+        this.symbolBuffer = null;
+        this.gl = null;
+      }
+    }
+    if (!this.gl) {
+      this.pointContext = this.glCanvas.getContext("2d");
+    }
 
     this.resizeObserver = new ResizeObserver(() => {
       this.resize();
@@ -144,6 +178,7 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
     this.host?.remove();
     this.host = null;
     this.glCanvas = null;
+    this.pointContext = null;
     this.overlayCanvas = null;
     this.overlayContext = null;
     this.gl = null;
@@ -158,12 +193,15 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
       model: null,
       viewport: null,
       probe: null,
+      axisOverrides: {},
       interactions: EMPTY_INTERACTIONS
     };
   }
 
   private uploadModelIfNeeded(model: RockPhysicsCrossplotModel | null): void {
-    if (!this.gl || !this.positionBuffer || !this.colorBuffer || !this.symbolBuffer || !model) {
+    if (!model) {
+      this.currentColors = null;
+      this.currentSymbols = null;
       this.uploadedModel = model;
       return;
     }
@@ -180,14 +218,16 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
       interleaved[index * 2 + 1] = model.columns.y[index] ?? 0;
     }
 
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.positionBuffer);
-    this.gl.bufferData(this.gl.ARRAY_BUFFER, interleaved, this.gl.STATIC_DRAW);
+    if (this.gl && this.positionBuffer && this.colorBuffer && this.symbolBuffer) {
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.positionBuffer);
+      this.gl.bufferData(this.gl.ARRAY_BUFFER, interleaved, this.gl.STATIC_DRAW);
 
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.colorBuffer);
-    this.gl.bufferData(this.gl.ARRAY_BUFFER, this.currentColors, this.gl.STATIC_DRAW);
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.colorBuffer);
+      this.gl.bufferData(this.gl.ARRAY_BUFFER, this.currentColors, this.gl.STATIC_DRAW);
 
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.symbolBuffer);
-    this.gl.bufferData(this.gl.ARRAY_BUFFER, this.currentSymbols, this.gl.STATIC_DRAW);
+      this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.symbolBuffer);
+      this.gl.bufferData(this.gl.ARRAY_BUFFER, this.currentSymbols, this.gl.STATIC_DRAW);
+    }
 
     this.uploadedModel = model;
   }
@@ -211,6 +251,10 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
     if (this.gl) {
       this.gl.viewport(0, 0, actualWidth, actualHeight);
     }
+    if (this.pointContext) {
+      this.pointContext.setTransform(1, 0, 0, 1, 0, 0);
+      this.pointContext.scale(dpr, dpr);
+    }
     if (this.overlayContext) {
       this.overlayContext.setTransform(1, 0, 0, 1, 0, 0);
       this.overlayContext.scale(dpr, dpr);
@@ -219,15 +263,11 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
 
   private draw(): void {
     if (
-      !this.gl ||
-      !this.program ||
-      !this.positionBuffer ||
-      !this.colorBuffer ||
-      !this.symbolBuffer ||
       !this.host ||
       !this.glCanvas ||
       !this.overlayCanvas ||
-      !this.overlayContext
+      !this.overlayContext ||
+      (!this.gl && !this.pointContext)
     ) {
       return;
     }
@@ -238,8 +278,13 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
     const plotRect = getRockPhysicsCrossplotPlotRect(width, height);
     const dpr = Math.max(1, window.devicePixelRatio || 1);
 
-    this.gl.clearColor(6 / 255, 20 / 255, 28 / 255, 1);
-    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+    if (this.gl) {
+      this.gl.clearColor(6 / 255, 20 / 255, 28 / 255, 1);
+      this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+    }
+    if (this.pointContext) {
+      this.pointContext.clearRect(0, 0, width, height);
+    }
     this.overlayContext.clearRect(0, 0, width, height);
 
     if (!model) {
@@ -248,47 +293,72 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
 
     const viewport = resolveViewport(model, this.currentState.viewport);
 
-    this.gl.enable(this.gl.BLEND);
-    this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
-    this.gl.useProgram(this.program);
+    if (this.gl && this.program && this.positionBuffer && this.colorBuffer && this.symbolBuffer) {
+      try {
+        this.gl.enable(this.gl.BLEND);
+        this.gl.blendFunc(this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA);
+        this.gl.useProgram(this.program);
 
-    const positionLocation = this.gl.getAttribLocation(this.program, "aPosition");
-    const colorLocation = this.gl.getAttribLocation(this.program, "aColor");
-    const symbolLocation = this.gl.getAttribLocation(this.program, "aSymbol");
+        const positionLocation = this.gl.getAttribLocation(this.program, "aPosition");
+        const colorLocation = this.gl.getAttribLocation(this.program, "aColor");
+        const symbolLocation = this.gl.getAttribLocation(this.program, "aSymbol");
 
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.positionBuffer);
-    this.gl.enableVertexAttribArray(positionLocation);
-    this.gl.vertexAttribPointer(positionLocation, 2, this.gl.FLOAT, false, 0, 0);
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.positionBuffer);
+        this.gl.enableVertexAttribArray(positionLocation);
+        this.gl.vertexAttribPointer(positionLocation, 2, this.gl.FLOAT, false, 0, 0);
 
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.colorBuffer);
-    this.gl.enableVertexAttribArray(colorLocation);
-    this.gl.vertexAttribPointer(colorLocation, 4, this.gl.UNSIGNED_BYTE, true, 0, 0);
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.colorBuffer);
+        this.gl.enableVertexAttribArray(colorLocation);
+        this.gl.vertexAttribPointer(colorLocation, 4, this.gl.UNSIGNED_BYTE, true, 0, 0);
 
-    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.symbolBuffer);
-    this.gl.enableVertexAttribArray(symbolLocation);
-    this.gl.vertexAttribPointer(symbolLocation, 1, this.gl.FLOAT, false, 0, 0);
+        this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.symbolBuffer);
+        this.gl.enableVertexAttribArray(symbolLocation);
+        this.gl.vertexAttribPointer(symbolLocation, 1, this.gl.FLOAT, false, 0, 0);
 
-    this.gl.uniform2f(
-      this.getRequiredUniformLocation("uCanvasSizePx"),
-      this.glCanvas.width,
-      this.glCanvas.height
-    );
-    this.gl.uniform4f(
-      this.getRequiredUniformLocation("uPlotRectPx"),
-      plotRect.x * dpr,
-      plotRect.y * dpr,
-      plotRect.width * dpr,
-      plotRect.height * dpr
-    );
-    this.gl.uniform2f(this.getRequiredUniformLocation("uDomainX"), viewport.xMin, viewport.xMax);
-    this.gl.uniform2f(this.getRequiredUniformLocation("uDomainY"), viewport.yMin, viewport.yMax);
-    this.gl.uniform1f(this.getRequiredUniformLocation("uPointSizePx"), 5 * dpr);
-    this.gl.drawArrays(this.gl.POINTS, 0, model.pointCount);
+        this.gl.uniform2f(
+          this.getRequiredUniformLocation("uCanvasSizePx"),
+          this.glCanvas.width,
+          this.glCanvas.height
+        );
+        this.gl.uniform4f(
+          this.getRequiredUniformLocation("uPlotRectPx"),
+          plotRect.x * dpr,
+          plotRect.y * dpr,
+          plotRect.width * dpr,
+          plotRect.height * dpr
+        );
+        this.gl.uniform2f(this.getRequiredUniformLocation("uDomainX"), viewport.xMin, viewport.xMax);
+        this.gl.uniform2f(this.getRequiredUniformLocation("uDomainY"), viewport.yMin, viewport.yMax);
+        this.gl.uniform1f(this.getRequiredUniformLocation("uPointSizePx"), 5 * dpr);
+        this.gl.drawArrays(this.gl.POINTS, 0, model.pointCount);
+        const glError = this.gl.getError();
+        if (glError !== this.gl.NO_ERROR || this.gl.isContextLost()) {
+          throw new Error(`WebGL draw failed with code ${glError}.`);
+        }
+      } catch (error) {
+        console.warn("RockPhysicsCrossplot: WebGL draw failed, falling back to 2D canvas.", error);
+        this.gl = null;
+        this.program = null;
+        this.positionBuffer = null;
+        this.colorBuffer = null;
+        this.symbolBuffer = null;
+        this.pointContext ??= this.glCanvas.getContext("2d");
+        if (this.pointContext) {
+          this.pointContext.setTransform(1, 0, 0, 1, 0, 0);
+          this.pointContext.scale(dpr, dpr);
+          this.pointContext.clearRect(0, 0, width, height);
+          drawPointsCanvas(this.pointContext, model, viewport, plotRect, this.currentColors, this.currentSymbols);
+        }
+      }
+    } else if (this.pointContext) {
+      drawPointsCanvas(this.pointContext, model, viewport, plotRect, this.currentColors, this.currentSymbols);
+    }
 
     drawOverlay(this.overlayContext, {
       model,
       viewport,
       probe,
+      axisOverrides: this.currentState.axisOverrides,
       interactions,
       width,
       height,
@@ -316,6 +386,7 @@ function normalizeRenderState(
       model: input.state.model,
       viewport: input.state.viewport,
       probe: input.state.probe,
+      axisOverrides: cloneCartesianAxisOverrides(input.state.axisOverrides),
       interactions: input.state.interactions
     };
   }
@@ -324,6 +395,7 @@ function normalizeRenderState(
     model: input,
     viewport: fitRockPhysicsViewport(input),
     probe: null,
+    axisOverrides: {},
     interactions: EMPTY_INTERACTIONS
   };
 }
@@ -349,28 +421,36 @@ function drawOverlay(
     model: RockPhysicsCrossplotModel;
     viewport: RockPhysicsCrossplotViewport;
     probe: RockPhysicsCrossplotProbe | null;
+    axisOverrides: CartesianAxisOverrides;
     interactions: InteractionState;
     width: number;
     height: number;
     plotRect: ReturnType<typeof getRockPhysicsCrossplotPlotRect>;
   }
 ): void {
-  const { model, viewport, probe, interactions, width, plotRect } = options;
-  drawGrid(context, plotRect, viewport);
-  drawTemplateOverlays(context, plotRect, model, viewport);
-  drawAxes(context, plotRect, model);
-  drawTitle(context, model, width);
-  drawLegend(context, model, plotRect, width);
+  const { model, viewport, probe, axisOverrides, interactions, width, height } = options;
+  const layout = resolveCartesianStageLayout(width, height, ROCK_PHYSICS_PRESENTATION);
+  drawGrid(context, layout, viewport, axisOverrides, model);
+  drawTemplateOverlays(context, layout.plotRect, model, viewport);
+  drawAxes(context, layout, model, axisOverrides);
+  drawTitle(context, model, layout);
+  drawLegend(context, model, layout.plotRect, width);
   if (probe && interactions.modifiers.includes("crosshair")) {
-    drawProbeCursor(context, plotRect, viewport, probe);
+    drawProbeCursor(context, layout.plotRect, viewport, probe, model);
+  }
+  if (interactions.session?.kind === "zoomRect") {
+    drawZoomRectOverlay(context, layout.plotRect, interactions.session);
   }
 }
 
 function drawGrid(
   context: CanvasRenderingContext2D,
-  plotRect: ReturnType<typeof getRockPhysicsCrossplotPlotRect>,
-  viewport: RockPhysicsCrossplotViewport
+  layout: ReturnType<typeof resolveCartesianStageLayout>,
+  viewport: RockPhysicsCrossplotViewport,
+  axisOverrides: CartesianAxisOverrides,
+  model: RockPhysicsCrossplotModel
 ): void {
+  const { plotRect } = layout;
   context.save();
   context.strokeStyle = GRID_COLOR;
   context.lineWidth = 1;
@@ -393,24 +473,24 @@ function drawGrid(
 
   context.restore();
 
-  const xTicks = buildTicks(viewport.xMin, viewport.xMax, 6);
-  const yTicks = buildTicks(viewport.yMin, viewport.yMax, 6);
+  const xTicks = buildCartesianTicks(viewport.xMin, viewport.xMax, resolveCartesianTickCount(axisOverrides.x));
+  const yTicks = buildCartesianTicks(viewport.yMin, viewport.yMax, resolveCartesianTickCount(axisOverrides.y));
 
   context.fillStyle = SUBTITLE_COLOR;
-  context.font = "12px Segoe UI";
+  context.font = TICK_FONT;
   context.textAlign = "center";
   context.textBaseline = "top";
   for (const tick of xTicks) {
     const x = valueToRockPhysicsScreenX(tick, viewport, plotRect);
-    context.fillText(formatTick(tick), x, plotRect.y + plotRect.height + 10);
+    context.fillText(formatCartesianTick(tick, axisOverrides.x?.tickFormat), x, layout.xTickY);
   }
 
   context.save();
   context.textAlign = "right";
   context.textBaseline = "middle";
   for (const tick of yTicks) {
-    const y = valueToRockPhysicsScreenY(tick, viewport, plotRect);
-    context.fillText(formatTick(tick), plotRect.x - 10, y);
+    const y = valueToRockPhysicsScreenY(tick, viewport, plotRect, model.yAxis.direction);
+    context.fillText(formatCartesianTick(tick, axisOverrides.y?.tickFormat), layout.yTickX, y);
   }
   context.restore();
 }
@@ -443,7 +523,7 @@ function drawTemplateOverlays(
     context.beginPath();
     overlay.points.forEach((point, index) => {
       const x = valueToRockPhysicsScreenX(point.x, viewport, plotRect);
-      const y = valueToRockPhysicsScreenY(point.y, viewport, plotRect);
+      const y = valueToRockPhysicsScreenY(point.y, viewport, plotRect, model.yAxis.direction);
       if (index === 0) {
         context.moveTo(x, y);
       } else {
@@ -456,11 +536,18 @@ function drawTemplateOverlays(
     if (overlay.label) {
       const position = overlay.labelPosition ?? centroid(overlay.points);
       const x = valueToRockPhysicsScreenX(position.x, viewport, plotRect);
-      const y = valueToRockPhysicsScreenY(position.y, viewport, plotRect);
+      const y = valueToRockPhysicsScreenY(position.y, viewport, plotRect, model.yAxis.direction);
       context.fillStyle = TITLE_COLOR;
       context.fillText(overlay.label, x, y);
     }
     context.restore();
+  }
+
+  for (const overlay of overlays) {
+    if (overlay.kind !== "axis") {
+      continue;
+    }
+    drawAxisOverlay(context, plotRect, viewport, overlay, model.yAxis.direction);
   }
 
   for (const overlay of overlays) {
@@ -475,7 +562,7 @@ function drawTemplateOverlays(
     context.beginPath();
     overlay.points.forEach((point, index) => {
       const x = valueToRockPhysicsScreenX(point.x, viewport, plotRect);
-      const y = valueToRockPhysicsScreenY(point.y, viewport, plotRect);
+      const y = valueToRockPhysicsScreenY(point.y, viewport, plotRect, model.yAxis.direction);
       if (index === 0) {
         context.moveTo(x, y);
       } else {
@@ -487,7 +574,7 @@ function drawTemplateOverlays(
     const anchor = overlay.points[overlay.points.length - 1];
     if (anchor && overlay.label) {
       const x = valueToRockPhysicsScreenX(anchor.x, viewport, plotRect) - 4;
-      const y = valueToRockPhysicsScreenY(anchor.y, viewport, plotRect) - 4;
+      const y = valueToRockPhysicsScreenY(anchor.y, viewport, plotRect, model.yAxis.direction) - 4;
       context.fillText(overlay.label, x, y);
     }
     context.restore();
@@ -498,7 +585,7 @@ function drawTemplateOverlays(
       continue;
     }
     const x = valueToRockPhysicsScreenX(overlay.x, viewport, plotRect);
-    const y = valueToRockPhysicsScreenY(overlay.y, viewport, plotRect);
+    const y = valueToRockPhysicsScreenY(overlay.y, viewport, plotRect, model.yAxis.direction);
     context.save();
     context.translate(x, y);
     context.rotate(((overlay.rotationDeg ?? 0) * Math.PI) / 180);
@@ -512,11 +599,108 @@ function drawTemplateOverlays(
   context.restore();
 }
 
-function drawAxes(
+function drawAxisOverlay(
   context: CanvasRenderingContext2D,
   plotRect: ReturnType<typeof getRockPhysicsCrossplotPlotRect>,
-  model: RockPhysicsCrossplotModel
+  viewport: RockPhysicsCrossplotViewport,
+  overlay: Extract<NonNullable<RockPhysicsCrossplotModel["templateOverlays"]>[number], { kind: "axis" }>,
+  yDirection: NonNullable<RockPhysicsCrossplotModel["yAxis"]["direction"]> = "normal"
 ): void {
+  const screenPoints = overlay.points.map((point) => ({
+    x: valueToScreenXUnclamped(point.x, viewport, plotRect),
+    y: valueToScreenYUnclamped(point.y, viewport, plotRect, yDirection)
+  }));
+  if (screenPoints.length < 2) {
+    return;
+  }
+
+  const path = buildMeasuredPath(screenPoints);
+  if (path.totalLength <= 0) {
+    return;
+  }
+
+  const tickLengthPx = overlay.tickLengthPx ?? 8;
+  const tickLabelOffsetPx = overlay.tickLabelOffsetPx ?? 5;
+  const labelOffsetPx = overlay.labelOffsetPx ?? tickLengthPx + tickLabelOffsetPx + 10;
+
+  context.save();
+  clipToRect(context, plotRect);
+
+  context.strokeStyle = overlay.color;
+  context.lineWidth = overlay.width ?? 1.5;
+  context.beginPath();
+  screenPoints.forEach((point, index) => {
+    if (index === 0) {
+      context.moveTo(point.x, point.y);
+    } else {
+      context.lineTo(point.x, point.y);
+    }
+  });
+  context.stroke();
+
+  context.fillStyle = overlay.color;
+  context.strokeStyle = overlay.color;
+  context.font = TICK_FONT;
+  context.lineWidth = 1;
+
+  for (const tick of overlay.ticks) {
+    const sample = sampleMeasuredPath(path, ratioForDomainValue(tick.value, overlay.domain));
+    if (!sample) {
+      continue;
+    }
+    const normal = resolveAxisNormal(sample.tangent, overlay.side ?? "left");
+    const tickLengthPx = tick.lengthPx ?? overlay.tickLengthPx ?? 8;
+    const tickEnd = {
+      x: sample.point.x + normal.x * tickLengthPx,
+      y: sample.point.y + normal.y * tickLengthPx
+    };
+
+    context.beginPath();
+    context.moveTo(sample.point.x, sample.point.y);
+    context.lineTo(tickEnd.x, tickEnd.y);
+    context.stroke();
+
+    const labelPoint = {
+      x: sample.point.x + normal.x * (tickLengthPx + tickLabelOffsetPx),
+      y: sample.point.y + normal.y * (tickLengthPx + tickLabelOffsetPx)
+    };
+    applyAxisTextAlignment(context, normal);
+    context.fillText(tick.label ?? formatAxisTick(tick.value), labelPoint.x, labelPoint.y);
+  }
+
+  const labelValue = overlay.labelValue ?? (overlay.domain.min + overlay.domain.max) / 2;
+  const labelSample = sampleMeasuredPath(path, ratioForDomainValue(labelValue, overlay.domain));
+  if (labelSample) {
+    const normal = resolveAxisNormal(labelSample.tangent, overlay.side ?? "left");
+    const labelPoint = {
+      x: labelSample.point.x + normal.x * labelOffsetPx,
+      y: labelSample.point.y + normal.y * labelOffsetPx
+    };
+    let angle = Math.atan2(labelSample.tangent.y, labelSample.tangent.x);
+    if (Math.abs(angle) > Math.PI / 2) {
+      angle += Math.PI;
+    }
+    context.save();
+    context.translate(labelPoint.x, labelPoint.y);
+    context.rotate(angle);
+    context.fillStyle = overlay.color;
+    context.font = AXIS_LABEL_FONT;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(overlay.label, 0, 0);
+    context.restore();
+  }
+
+  context.restore();
+}
+
+function drawAxes(
+  context: CanvasRenderingContext2D,
+  layout: ReturnType<typeof resolveCartesianStageLayout>,
+  model: RockPhysicsCrossplotModel,
+  axisOverrides: CartesianAxisOverrides
+): void {
+  const { plotRect } = layout;
   context.save();
   context.strokeStyle = AXIS_COLOR;
   context.lineWidth = 1.2;
@@ -532,20 +716,20 @@ function drawAxes(
   context.stroke();
 
   context.fillStyle = AXIS_COLOR;
-  context.font = "600 13px Segoe UI";
+  context.font = AXIS_LABEL_FONT;
   context.textAlign = "center";
   context.textBaseline = "alphabetic";
   context.fillText(
-    `${model.xAxis.label}${model.xAxis.unit ? ` (${model.xAxis.unit})` : ""}`,
+    resolveCartesianAxisTitle("X Axis", model.xAxis.label, model.xAxis.unit, axisOverrides.x),
     plotRect.x + plotRect.width / 2,
-    plotRect.y + plotRect.height + 42
+    layout.xAxisLabelY
   );
 
   context.save();
-  context.translate(20, plotRect.y + plotRect.height / 2);
+  context.translate(layout.yAxisLabelX, plotRect.y + plotRect.height / 2);
   context.rotate(-Math.PI / 2);
   context.fillText(
-    `${model.yAxis.label}${model.yAxis.unit ? ` (${model.yAxis.unit})` : ""}`,
+    resolveCartesianAxisTitle("Y Axis", model.yAxis.label, model.yAxis.unit, axisOverrides.y),
     0,
     0
   );
@@ -553,23 +737,27 @@ function drawAxes(
   context.restore();
 }
 
-function drawTitle(context: CanvasRenderingContext2D, model: RockPhysicsCrossplotModel, width: number): void {
+function drawTitle(
+  context: CanvasRenderingContext2D,
+  model: RockPhysicsCrossplotModel,
+  layout: ReturnType<typeof resolveCartesianStageLayout>
+): void {
   context.fillStyle = TITLE_COLOR;
-  context.font = "600 16px Segoe UI";
+  context.font = TITLE_FONT;
   context.textAlign = "left";
   context.textBaseline = "top";
-  context.fillText(model.title, 20, 12);
+  context.fillText(model.title, layout.title.x, layout.title.y);
 
   context.fillStyle = SUBTITLE_COLOR;
-  context.font = "12px Segoe UI";
+  context.font = SUBTITLE_FONT;
   context.fillText(
     `${model.subtitle ?? model.name} • ${model.pointCount.toLocaleString()} samples`,
-    20,
-    34
+    layout.subtitle.x,
+    layout.subtitle.y
   );
 
   context.textAlign = "right";
-  context.fillText(model.templateId, width - 20, 12);
+  context.fillText(model.templateId, layout.plotRect.x + layout.plotRect.width, layout.title.y);
 }
 
 function drawLegend(
@@ -638,10 +826,11 @@ function drawProbeCursor(
   context: CanvasRenderingContext2D,
   plotRect: ReturnType<typeof getRockPhysicsCrossplotPlotRect>,
   viewport: RockPhysicsCrossplotViewport,
-  probe: RockPhysicsCrossplotProbe
+  probe: RockPhysicsCrossplotProbe,
+  model: RockPhysicsCrossplotModel
 ): void {
   const x = valueToRockPhysicsScreenX(probe.xValue, viewport, plotRect);
-  const y = valueToRockPhysicsScreenY(probe.yValue, viewport, plotRect);
+  const y = valueToRockPhysicsScreenY(probe.yValue, viewport, plotRect, model.yAxis.direction);
 
   context.save();
   context.strokeStyle = PROBE_COLOR;
@@ -662,6 +851,32 @@ function drawProbeCursor(
   context.arc(x, y, 7, 0, Math.PI * 2);
   context.fill();
   context.stroke();
+  context.restore();
+}
+
+function drawPointsCanvas(
+  context: CanvasRenderingContext2D,
+  model: RockPhysicsCrossplotModel,
+  viewport: RockPhysicsCrossplotViewport,
+  plotRect: ReturnType<typeof getRockPhysicsCrossplotPlotRect>,
+  colors: Uint8Array | null,
+  symbols: Float32Array | null
+): void {
+  context.save();
+  clipToRect(context, plotRect);
+  for (let index = 0; index < model.pointCount; index += 1) {
+    const xValue = model.columns.x[index];
+    const yValue = model.columns.y[index];
+    if (!Number.isFinite(xValue) || !Number.isFinite(yValue)) {
+      continue;
+    }
+
+    const x = valueToRockPhysicsScreenX(xValue, viewport, plotRect);
+    const y = valueToRockPhysicsScreenY(yValue, viewport, plotRect, model.yAxis.direction);
+    const rgba = colorAt(colors, index);
+    const color = `rgba(${rgba[0]}, ${rgba[1]}, ${rgba[2]}, ${rgba[3] / 255})`;
+    drawSymbol(context, indexToSymbol(symbols?.[index] ?? 0), x, y, 2.5, color);
+  }
   context.restore();
 }
 
@@ -800,6 +1015,19 @@ function drawSymbol(
   context.restore();
 }
 
+function colorAt(colors: Uint8Array | null, index: number): [number, number, number, number] {
+  if (!colors) {
+    return [255, 255, 255, 220];
+  }
+  const offset = index * 4;
+  return [
+    colors[offset] ?? 255,
+    colors[offset + 1] ?? 255,
+    colors[offset + 2] ?? 255,
+    colors[offset + 3] ?? 220
+  ];
+}
+
 function symbolToIndex(symbol: RockPhysicsPointSymbol): number {
   switch (symbol) {
     case "square":
@@ -811,6 +1039,19 @@ function symbolToIndex(symbol: RockPhysicsPointSymbol): number {
     case "circle":
     default:
       return 0;
+  }
+}
+
+function indexToSymbol(value: number): RockPhysicsPointSymbol {
+  switch (Math.round(value)) {
+    case 1:
+      return "square";
+    case 2:
+      return "diamond";
+    case 3:
+      return "triangle";
+    default:
+      return "circle";
   }
 }
 
@@ -840,18 +1081,157 @@ function centroid(points: Array<{ x: number; y: number }>): { x: number; y: numb
   };
 }
 
-function buildTicks(min: number, max: number, count: number): number[] {
-  if (count <= 1 || max === min) {
-    return [min];
+function drawZoomRectOverlay(
+  context: CanvasRenderingContext2D,
+  plotRect: ReturnType<typeof getRockPhysicsCrossplotPlotRect>,
+  session: Extract<InteractionState["session"], { kind: "zoomRect" }>
+): void {
+  const left = Math.max(plotRect.x, Math.min(session.origin.x, session.current.x));
+  const top = Math.max(plotRect.y, Math.min(session.origin.y, session.current.y));
+  const right = Math.min(plotRect.x + plotRect.width, Math.max(session.origin.x, session.current.x));
+  const bottom = Math.min(plotRect.y + plotRect.height, Math.max(session.origin.y, session.current.y));
+  const width = right - left;
+  const height = bottom - top;
+  if (width < 2 || height < 2) {
+    return;
   }
-  return Array.from({ length: count }, (_, index) => min + (index / (count - 1)) * (max - min));
+
+  context.save();
+  context.fillStyle = "rgba(180, 214, 232, 0.12)";
+  context.strokeStyle = "rgba(223, 232, 238, 0.88)";
+  context.lineWidth = 1;
+  context.setLineDash([5, 4]);
+  context.fillRect(left, top, width, height);
+  context.strokeRect(left + 0.5, top + 0.5, Math.max(0, width - 1), Math.max(0, height - 1));
+  context.restore();
 }
 
-function formatTick(value: number): string {
-  if (Math.abs(value) >= 1_000) {
-    return Math.round(value).toString();
+function clipToRect(
+  context: CanvasRenderingContext2D,
+  rect: ReturnType<typeof getRockPhysicsCrossplotPlotRect>
+): void {
+  context.beginPath();
+  context.rect(rect.x, rect.y, rect.width, rect.height);
+  context.clip();
+}
+
+function valueToScreenXUnclamped(
+  value: number,
+  viewport: RockPhysicsCrossplotViewport,
+  plotRect: ReturnType<typeof getRockPhysicsCrossplotPlotRect>
+): number {
+  const ratio = (value - viewport.xMin) / Math.max(1e-6, viewport.xMax - viewport.xMin);
+  return plotRect.x + ratio * plotRect.width;
+}
+
+function valueToScreenYUnclamped(
+  value: number,
+  viewport: RockPhysicsCrossplotViewport,
+  plotRect: ReturnType<typeof getRockPhysicsCrossplotPlotRect>,
+  direction: NonNullable<RockPhysicsCrossplotModel["yAxis"]["direction"]> = "normal"
+): number {
+  const ratio = (value - viewport.yMin) / Math.max(1e-6, viewport.yMax - viewport.yMin);
+  return direction === "reversed"
+    ? plotRect.y + ratio * plotRect.height
+    : plotRect.y + plotRect.height - ratio * plotRect.height;
+}
+
+function ratioForDomainValue(value: number, domain: RockPhysicsAxisRange): number {
+  const span = Math.max(1e-6, domain.max - domain.min);
+  return clamp01((value - domain.min) / span);
+}
+
+function formatAxisTick(value: number): string {
+  return Number.isInteger(value) ? `${value}` : formatCartesianTick(value, "auto");
+}
+
+function applyAxisTextAlignment(
+  context: CanvasRenderingContext2D,
+  normal: { x: number; y: number }
+): void {
+  context.textAlign =
+    Math.abs(normal.x) > 0.4 ? (normal.x >= 0 ? "left" : "right") : "center";
+  context.textBaseline =
+    Math.abs(normal.y) > 0.4 ? (normal.y >= 0 ? "top" : "bottom") : "middle";
+}
+
+function resolveAxisNormal(
+  tangent: { x: number; y: number },
+  side: "left" | "right"
+): { x: number; y: number } {
+  const normal =
+    side === "left"
+      ? { x: -tangent.y, y: tangent.x }
+      : { x: tangent.y, y: -tangent.x };
+  const length = Math.hypot(normal.x, normal.y) || 1;
+  return {
+    x: normal.x / length,
+    y: normal.y / length
+  };
+}
+
+function buildMeasuredPath(points: Array<{ x: number; y: number }>): {
+  segments: Array<{
+    start: { x: number; y: number };
+    end: { x: number; y: number };
+    startLength: number;
+    length: number;
+  }>;
+  totalLength: number;
+} {
+  const segments: Array<{
+    start: { x: number; y: number };
+    end: { x: number; y: number };
+    startLength: number;
+    length: number;
+  }> = [];
+  let totalLength = 0;
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1]!;
+    const end = points[index]!;
+    const length = Math.hypot(end.x - start.x, end.y - start.y);
+    if (length <= 0) {
+      continue;
+    }
+    segments.push({
+      start,
+      end,
+      startLength: totalLength,
+      length
+    });
+    totalLength += length;
   }
-  return value.toFixed(2).replace(/\.00$/, "");
+  return { segments, totalLength };
+}
+
+function sampleMeasuredPath(
+  path: ReturnType<typeof buildMeasuredPath>,
+  ratio: number
+): { point: { x: number; y: number }; tangent: { x: number; y: number } } | null {
+  if (!path.segments.length || path.totalLength <= 0) {
+    return null;
+  }
+  const targetLength = clamp01(ratio) * path.totalLength;
+  const segment =
+    path.segments.find((candidate) => candidate.startLength + candidate.length >= targetLength) ??
+    path.segments[path.segments.length - 1]!;
+  const segmentRatio = (targetLength - segment.startLength) / segment.length;
+  const point = {
+    x: segment.start.x + (segment.end.x - segment.start.x) * segmentRatio,
+    y: segment.start.y + (segment.end.y - segment.start.y) * segmentRatio
+  };
+  const tangentLength = Math.hypot(segment.end.x - segment.start.x, segment.end.y - segment.start.y) || 1;
+  return {
+    point,
+    tangent: {
+      x: (segment.end.x - segment.start.x) / tangentLength,
+      y: (segment.end.y - segment.start.y) / tangentLength
+    }
+  };
+}
+
+function clamp01(value: number): number {
+  return Math.min(Math.max(value, 0), 1);
 }
 
 function createProgram(gl: WebGL2RenderingContext, vertexSource: string, fragmentSource: string): WebGLProgram {

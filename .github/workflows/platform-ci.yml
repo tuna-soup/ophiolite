@@ -15,7 +15,8 @@ jobs:
       - name: Verify generated platform contracts
         run: |
           cargo run -p contracts-export
-          git diff --exit-code -- contracts/ts/ophiolite-contracts
+          cargo run -p traceboost-contracts-export
+          git diff --exit-code -- contracts/ts/ophiolite-contracts traceboost/contracts/ts/seis-contracts
 
   automation-surfaces:
     runs-on: ubuntu-latest

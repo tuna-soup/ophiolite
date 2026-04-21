@@ -16,6 +16,7 @@ import type {
   SectionViewport,
   ViewerState
 } from "@ophiolite/charts-data-models";
+import { resolveLogicalSectionDimensions } from "@ophiolite/charts-data-models";
 import { InteractionManager } from "@ophiolite/charts-core";
 import { clampViewport, fullViewport, zoomViewport, zoomViewportAt } from "./viewport";
 import { getPlotRect, resolveNearestTraceIndex, type RendererAdapter } from "@ophiolite/charts-renderer";
@@ -71,7 +72,7 @@ export class SeismicViewerController {
 
   setSection(section: SectionPayload): void {
     this.state.section = section;
-    this.state.viewport = fullViewport(section.dimensions);
+    this.state.viewport = fullViewport(resolveLogicalSectionDimensions(section));
     this.state.overlay = section.overlay ?? null;
     this.state.sectionScalarOverlays = this.state.sectionScalarOverlays.filter((overlay) =>
       isCompatibleScalarOverlay(section, overlay)
@@ -115,7 +116,7 @@ export class SeismicViewerController {
     if (!this.state.section) {
       return;
     }
-    this.state.viewport = clampViewport(viewport, this.state.section.dimensions);
+    this.state.viewport = clampViewport(viewport, resolveLogicalSectionDimensions(this.state.section));
     this.render();
   }
 
@@ -123,7 +124,7 @@ export class SeismicViewerController {
     if (!this.state.section) {
       return;
     }
-    this.state.viewport = fullViewport(this.state.section.dimensions);
+    this.state.viewport = fullViewport(resolveLogicalSectionDimensions(this.state.section));
     this.render();
   }
 
@@ -131,7 +132,11 @@ export class SeismicViewerController {
     if (!this.state.section || !this.state.viewport || factor <= 0) {
       return;
     }
-    this.state.viewport = zoomViewport(this.state.viewport, this.state.section.dimensions, factor);
+    this.state.viewport = zoomViewport(
+      this.state.viewport,
+      resolveLogicalSectionDimensions(this.state.section),
+      factor
+    );
     this.render();
   }
 
@@ -285,7 +290,10 @@ export class SeismicViewerController {
     );
     let changed = false;
     if (nextViewport) {
-      this.state.viewport = clampViewport(nextViewport, this.state.section.dimensions);
+      this.state.viewport = clampViewport(
+        nextViewport,
+        resolveLogicalSectionDimensions(this.state.section)
+      );
       changed = true;
     }
 
@@ -313,7 +321,7 @@ export class SeismicViewerController {
     const centerSample = sampleIndexFromScreenY(this.state.viewport, plotRect, y);
     this.state.viewport = zoomViewportAt(
       this.state.viewport,
-      this.state.section.dimensions,
+      resolveLogicalSectionDimensions(this.state.section),
       factor,
       centerTrace,
       centerSample
@@ -534,12 +542,8 @@ function isCompatibleSection(primary: SectionPayload | null, secondary: SectionP
     primary.axis === secondary.axis &&
     primary.coordinate.index === secondary.coordinate.index &&
     approximatelyEqual(primary.coordinate.value, secondary.coordinate.value) &&
-    primary.dimensions.traces === secondary.dimensions.traces &&
-    primary.dimensions.samples === secondary.dimensions.samples &&
-    sameFloatArray(primary.horizontalAxis, secondary.horizontalAxis) &&
-    sameOptionalFloatArray(primary.inlineAxis, secondary.inlineAxis) &&
-    sameOptionalFloatArray(primary.xlineAxis, secondary.xlineAxis) &&
-    sameFloatArray(primary.sampleAxis, secondary.sampleAxis)
+    resolveLogicalSectionDimensions(primary).traces === resolveLogicalSectionDimensions(secondary).traces &&
+    resolveLogicalSectionDimensions(primary).samples === resolveLogicalSectionDimensions(secondary).samples
   );
 }
 
@@ -591,33 +595,6 @@ function isCompatibleScalarOverlay(section: SectionPayload, overlay: SectionScal
     overlay.height === section.dimensions.samples &&
     overlay.values.length === overlay.width * overlay.height
   );
-}
-
-function sameOptionalFloatArray(
-  left: Float32Array | Float64Array | undefined,
-  right: Float32Array | Float64Array | undefined
-): boolean {
-  if (!left && !right) {
-    return true;
-  }
-  if (!left || !right) {
-    return false;
-  }
-  return sameFloatArray(left, right);
-}
-
-function sameFloatArray(left: Float32Array | Float64Array, right: Float32Array | Float64Array): boolean {
-  if (left.length !== right.length) {
-    return false;
-  }
-
-  for (let index = 0; index < left.length; index += 1) {
-    if (!approximatelyEqual(left[index]!, right[index]!)) {
-      return false;
-    }
-  }
-
-  return true;
 }
 
 function approximatelyEqual(left: number, right: number): boolean {

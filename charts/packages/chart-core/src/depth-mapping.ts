@@ -28,15 +28,38 @@ function interpolateDepth(
     return projectLinear(mapping[mapping.length - 2]!, mapping[mapping.length - 1]!, value, fromKey, toKey);
   }
 
-  for (let index = 1; index < mapping.length; index += 1) {
-    const left = mapping[index - 1]!;
-    const right = mapping[index]!;
-    if (value >= left[fromKey] && value <= right[fromKey]) {
-      return projectLinear(left, right, value, fromKey, toKey);
-    }
+  const bracket = findInterpolationBracket(mapping, value, fromKey);
+  if (bracket) {
+    return projectLinear(bracket.left, bracket.right, value, fromKey, toKey);
   }
 
   return value;
+}
+
+function findInterpolationBracket(
+  mapping: DepthMappingSample[],
+  value: number,
+  fromKey: "nativeDepth" | "panelDepth"
+): { left: DepthMappingSample; right: DepthMappingSample } | null {
+  let low = 1;
+  let high = mapping.length - 1;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const left = mapping[mid - 1]!;
+    const right = mapping[mid]!;
+    if (value < left[fromKey]) {
+      high = mid - 1;
+      continue;
+    }
+    if (value > right[fromKey]) {
+      low = mid + 1;
+      continue;
+    }
+    return { left, right };
+  }
+
+  return null;
 }
 
 function projectLinear(
@@ -53,4 +76,3 @@ function projectLinear(
   const ratio = (value - left[fromKey]) / span;
   return left[toKey] + ratio * (right[toKey] - left[toKey]);
 }
-

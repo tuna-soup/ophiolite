@@ -1,0 +1,116 @@
+---
+title: Workflow Cookbook
+description: A small catalog of canonical Ophiolite workflow examples.
+draft: false
+---
+
+**Audience:** evaluators and workflow builders  
+**Status:** Preview
+
+This page collects the current canonical workflow examples in one place.
+
+The goal is to make the public surface easy to scan by job, similar to a small cookbook.
+
+## Current canonical examples
+
+### 1. Project discovery
+
+Use when you want to verify the local project surface and the well-survey object graph.
+
+- open or create a project
+- inspect summaries
+- list wells and surveys
+
+See [Python project workflow](/examples/python-project-workflow/).
+
+### 2. LAS to AVO
+
+Use when you want the canonical well-log path:
+
+- import LAS into a project
+- resolve elastic log types such as `Dt`, `Dts`, and `Rho`
+- define interval layering
+- run Zoeppritz AVO
+- export typed response and crossplot sources
+
+Primary surfaces:
+
+- `Project`
+- `Wellbore`
+- `ElasticChannelBindings`
+- `LayeringSpec`
+- `AvoExperiment`
+- `AvoResult.response_source(...)`
+
+See [Python project workflow](/examples/python-project-workflow/) and the repo example under `examples/golden_paths/log_avo/`.
+
+### 3. Seismic processing pipeline
+
+Use when you want a typed built-in seismic operator chain:
+
+- open a dataset
+- choose a section
+- build a `TraceProcessingPipeline`
+- preview bandpass + RMS AGC
+- persist the processed dataset
+
+Primary surfaces:
+
+- `TraceBoostApp`
+- `SeismicDataset`
+- `SectionSelection`
+- `TraceProcessingPipeline`
+
+See [Python project workflow](/examples/python-project-workflow/) and the repo example under `examples/golden_paths/seismic_processing/`.
+
+### 4. CLI automation
+
+Use when you want repeatable command execution, CI scripts, or operational inspection.
+
+See [CLI project automation](/examples/cli-project-automation/).
+
+### 5. Well and top-set selection
+
+Use when you want a focused example around:
+
+- top-set discovery
+- repeated-label interval selection
+- stable interval selectors
+- interval-driven workflow preparation
+
+See [Well and top-set workflow](/examples/well-top-set-workflow/).
+
+### 6. Seismic ingest and geometry review
+
+Use when you want a focused example around:
+
+- SEG-Y preflight
+- geometry overrides
+- typed dataset import and open
+
+See [Seismic ingest and geometry workflow](/examples/seismic-ingest-and-geometry-workflow/).
+
+### 7. External Python operator package
+
+Use when you want to extend Ophiolite without changing the core runtime.
+
+Primary surfaces:
+
+- `OperatorRegistry`
+- `OperatorRequest`
+- `computed_curve(...)`
+
+See [Custom Python operator](/examples/custom-python-operator/).
+
+## Gaps still open
+
+The cookbook is still thin compared with a mature library.
+
+The next high-value additions would be:
+
+- well-panel and top-set workflows
+- broader seismic ingest and geometry examples
+- more rock-physics workflows
+- project lifecycle and reproducibility examples around operator locks
+
+Next: [Runnable examples index](/examples/)

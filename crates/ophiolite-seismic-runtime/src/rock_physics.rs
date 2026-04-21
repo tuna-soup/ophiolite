@@ -23,7 +23,11 @@ pub fn rock_physics_attribute(
     let sample_count = validate_sample_shape(&request.sample_shape)?;
     let vp = optional_samples(request.vp_m_per_s.as_deref(), "vp_m_per_s", sample_count)?;
     let vs = optional_samples(request.vs_m_per_s.as_deref(), "vs_m_per_s", sample_count)?;
-    let density = optional_samples(request.density_g_cc.as_deref(), "density_g_cc", sample_count)?;
+    let density = optional_samples(
+        request.density_g_cc.as_deref(),
+        "density_g_cc",
+        sample_count,
+    )?;
 
     let semantic_parameters = match request.method {
         RockPhysicsAttributeMethod::ElasticImpedance => {
@@ -138,8 +142,10 @@ pub fn avo_intercept_gradient_attribute(
     let values = (0..sample_count)
         .into_par_iter()
         .map(|sample_index| {
-            let intercept = validate_finite_sample(request.intercept[sample_index] as f64, "intercept")?;
-            let gradient = validate_finite_sample(request.gradient[sample_index] as f64, "gradient")?;
+            let intercept =
+                validate_finite_sample(request.intercept[sample_index] as f64, "intercept")?;
+            let gradient =
+                validate_finite_sample(request.gradient[sample_index] as f64, "gradient")?;
             let value = match request.method {
                 AvoInterceptGradientAttributeMethod::ChiProjection => {
                     let chi = semantic_parameters
@@ -203,7 +209,8 @@ fn required_samples<'a>(
     values: Option<&'a [f32]>,
     name: &str,
 ) -> Result<&'a [f32], SeismicStoreError> {
-    values.ok_or_else(|| SeismicStoreError::Message(format!("'{name}' is required for this method")))
+    values
+        .ok_or_else(|| SeismicStoreError::Message(format!("'{name}' is required for this method")))
 }
 
 fn sample(values: &[f32], index: usize) -> f64 {
@@ -263,8 +270,9 @@ fn validate_finite_sample(value: f64, name: &str) -> Result<f64, SeismicStoreErr
 }
 
 fn validate_finite_scalar(value: Option<f32>, name: &str) -> Result<f64, SeismicStoreError> {
-    let value = value
-        .ok_or_else(|| SeismicStoreError::Message(format!("'{name}' is required for this method")))?;
+    let value = value.ok_or_else(|| {
+        SeismicStoreError::Message(format!("'{name}' is required for this method"))
+    })?;
     validate_finite_sample(value as f64, name)
 }
 
@@ -306,9 +314,9 @@ fn vp_vs_ratio_sample(vp_m_per_s: f64, vs_m_per_s: f64) -> Result<f64, SeismicSt
 }
 
 fn poissons_ratio_sample(vp_m_per_s: f64, vs_m_per_s: f64) -> Result<f64, SeismicStoreError> {
-    let ratio_sq =
-        (validate_positive_sample(vp_m_per_s, "vp_m_per_s")? / validate_positive_sample(vs_m_per_s, "vs_m_per_s")?)
-            .powi(2);
+    let ratio_sq = (validate_positive_sample(vp_m_per_s, "vp_m_per_s")?
+        / validate_positive_sample(vs_m_per_s, "vs_m_per_s")?)
+    .powi(2);
     let denominator = 2.0 * (ratio_sq - 1.0);
     if denominator.abs() <= f64::EPSILON {
         return Err(SeismicStoreError::Message(
@@ -404,13 +412,21 @@ fn impedance_reference_terms_from_map(
     Ok(ImpedanceReferenceTerms {
         vp0_m_per_s: *semantic_parameters
             .get("normalization_reference_vp_m_per_s")
-            .ok_or_else(|| SeismicStoreError::Message("missing normalization_reference_vp_m_per_s".to_string()))?,
+            .ok_or_else(|| {
+                SeismicStoreError::Message("missing normalization_reference_vp_m_per_s".to_string())
+            })?,
         vs0_m_per_s: *semantic_parameters
             .get("normalization_reference_vs_m_per_s")
-            .ok_or_else(|| SeismicStoreError::Message("missing normalization_reference_vs_m_per_s".to_string()))?,
+            .ok_or_else(|| {
+                SeismicStoreError::Message("missing normalization_reference_vs_m_per_s".to_string())
+            })?,
         density0_g_cc: *semantic_parameters
             .get("normalization_reference_density_g_cc")
-            .ok_or_else(|| SeismicStoreError::Message("missing normalization_reference_density_g_cc".to_string()))?,
+            .ok_or_else(|| {
+                SeismicStoreError::Message(
+                    "missing normalization_reference_density_g_cc".to_string(),
+                )
+            })?,
         velocity_ratio_k: *semantic_parameters
             .get("velocity_ratio_k")
             .ok_or_else(|| SeismicStoreError::Message("missing velocity_ratio_k".to_string()))?,
@@ -431,14 +447,12 @@ fn normalized_elastic_impedance_sample(
     let a = 1.0 + theta.tan().powi(2);
     let b = -8.0 * terms.velocity_ratio_k * theta.sin().powi(2);
     let c = 1.0 - 4.0 * terms.velocity_ratio_k * theta.sin().powi(2);
-    Ok(
-        vp_m_per_s.powf(a)
-            * vs_m_per_s.powf(b)
-            * density_g_cc.powf(c)
-            * terms.vp0_m_per_s.powf(1.0 - a)
-            * terms.vs0_m_per_s.powf(-b)
-            * terms.density0_g_cc.powf(1.0 - c),
-    )
+    Ok(vp_m_per_s.powf(a)
+        * vs_m_per_s.powf(b)
+        * density_g_cc.powf(c)
+        * terms.vp0_m_per_s.powf(1.0 - a)
+        * terms.vs0_m_per_s.powf(-b)
+        * terms.density0_g_cc.powf(1.0 - c))
 }
 
 fn extended_elastic_impedance_sample(
@@ -455,13 +469,11 @@ fn extended_elastic_impedance_sample(
     let p = chi.cos() + chi.sin();
     let q = -8.0 * terms.velocity_ratio_k * chi.sin();
     let r = chi.cos() - 4.0 * terms.velocity_ratio_k * chi.sin();
-    Ok(
-        terms.vp0_m_per_s
-            * terms.density0_g_cc
-            * (vp_m_per_s / terms.vp0_m_per_s).powf(p)
-            * (vs_m_per_s / terms.vs0_m_per_s).powf(q)
-            * (density_g_cc / terms.density0_g_cc).powf(r),
-    )
+    Ok(terms.vp0_m_per_s
+        * terms.density0_g_cc
+        * (vp_m_per_s / terms.vp0_m_per_s).powf(p)
+        * (vs_m_per_s / terms.vs0_m_per_s).powf(q)
+        * (density_g_cc / terms.density0_g_cc).powf(r))
 }
 
 fn f32_vec_to_le_bytes(values: &[f32]) -> Vec<u8> {
@@ -477,7 +489,8 @@ mod tests {
     use super::*;
 
     fn decode_f32le(bytes: &[u8]) -> Vec<f32> {
-        bytes.chunks_exact(4)
+        bytes
+            .chunks_exact(4)
             .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
             .collect()
     }
@@ -505,7 +518,10 @@ mod tests {
             chi_angle_deg: None,
         };
         let response = rock_physics_attribute(request).unwrap();
-        assert_eq!(response.method, RockPhysicsAttributeMethod::ElasticImpedance);
+        assert_eq!(
+            response.method,
+            RockPhysicsAttributeMethod::ElasticImpedance
+        );
         assert_close(
             &decode_f32le(&response.values_f32le),
             &[5151.158, 5666.6797, 6171.5015, 6649.225],
@@ -560,16 +576,17 @@ mod tests {
 
     #[test]
     fn avo_intercept_gradient_attribute_supports_chi_and_fluid_factor() {
-        let chi_projection = avo_intercept_gradient_attribute(AvoInterceptGradientAttributeRequest {
-            schema_version: 2,
-            method: AvoInterceptGradientAttributeMethod::ChiProjection,
-            sample_shape: vec![3],
-            intercept: vec![0.10, 0.15, 0.20],
-            gradient: vec![-0.20, -0.25, -0.30],
-            chi_angle_deg: Some(30.0),
-            intercept_scalar: None,
-        })
-        .unwrap();
+        let chi_projection =
+            avo_intercept_gradient_attribute(AvoInterceptGradientAttributeRequest {
+                schema_version: 2,
+                method: AvoInterceptGradientAttributeMethod::ChiProjection,
+                sample_shape: vec![3],
+                intercept: vec![0.10, 0.15, 0.20],
+                gradient: vec![-0.20, -0.25, -0.30],
+                chi_angle_deg: Some(30.0),
+                intercept_scalar: None,
+            })
+            .unwrap();
         assert_close(
             &decode_f32le(&chi_projection.values_f32le),
             &[-0.01339746, 0.0049038157, 0.02320508],

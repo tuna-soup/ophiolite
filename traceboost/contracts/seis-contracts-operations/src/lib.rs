@@ -11,11 +11,21 @@ pub use datasets::{
     UpsertDatasetEntryResponse,
 };
 pub use import_ops::{
-    ExportSegyRequest, ExportSegyResponse, ImportDatasetRequest, ImportDatasetResponse,
-    ImportHorizonXyzRequest, ImportHorizonXyzResponse, ImportPrestackOffsetDatasetRequest,
-    ImportPrestackOffsetDatasetResponse, LoadSectionHorizonsRequest, LoadSectionHorizonsResponse,
-    PrestackThirdAxisField, SegyGeometryCandidate, SegyGeometryOverride, SegyHeaderField,
-    SegyHeaderValueType, SuggestedImportAction, SurveyPreflightRequest, SurveyPreflightResponse,
+    DeleteSegyImportRecipeRequest, DeleteSegyImportRecipeResponse, ExportSegyRequest,
+    ExportSegyResponse, ImportDatasetRequest, ImportDatasetResponse, ImportHorizonXyzRequest,
+    ImportHorizonXyzResponse, ImportPrestackOffsetDatasetRequest,
+    ImportPrestackOffsetDatasetResponse, ImportSegyWithPlanRequest,
+    ImportSegyWithPlanResponse, ListSegyImportRecipesRequest, ListSegyImportRecipesResponse,
+    LoadSectionHorizonsRequest, LoadSectionHorizonsResponse, PrestackThirdAxisField,
+    SaveSegyImportRecipeRequest, SaveSegyImportRecipeResponse, ScanSegyImportRequest,
+    SegyGeometryCandidate, SegyGeometryOverride, SegyHeaderField, SegyHeaderValueType,
+    SegyImportCandidatePlan, SegyImportFieldObservation, SegyImportIssue, SegyImportIssueSection,
+    SegyImportIssueSeverity, SegyImportPlan, SegyImportPlanSource, SegyImportPolicy,
+    SegyImportProvenance, SegyImportRecipe, SegyImportRecipeScope, SegyImportResolvedDataset,
+    SegyImportResolvedSpatial, SegyImportRiskSummary, SegyImportScanResponse,
+    SegyImportSparseHandling, SegyImportSpatialPlan, SegyImportValidationResponse,
+    SegyImportWizardStage, SuggestedImportAction, SurveyPreflightRequest,
+    SurveyPreflightResponse, ValidateSegyImportPlanRequest,
 };
 pub use processing_ops::{
     AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, CancelProcessingJobRequest,
@@ -48,6 +58,8 @@ pub use resolve::{
     VerticalInterpolationMethod,
 };
 pub use workspace::{
-    LoadVelocityModelsRequest, LoadVelocityModelsResponse, SaveWorkspaceSessionRequest,
-    SaveWorkspaceSessionResponse, SectionAxis, WorkspacePipelineEntry, WorkspaceSession,
+    DescribeVelocityVolumeRequest, DescribeVelocityVolumeResponse, IngestVelocityVolumeRequest,
+    IngestVelocityVolumeResponse, LoadVelocityModelsRequest, LoadVelocityModelsResponse,
+    SaveWorkspaceSessionRequest, SaveWorkspaceSessionResponse, SectionAxis, WorkspacePipelineEntry,
+    WorkspaceSession,
 };

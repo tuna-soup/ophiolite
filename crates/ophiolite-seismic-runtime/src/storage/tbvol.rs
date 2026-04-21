@@ -5,7 +5,10 @@ use memmap2::{Mmap, MmapMut, MmapOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SeismicStoreError;
-use crate::metadata::{VolumeMetadata, generate_store_id, normalize_source_identity};
+use crate::metadata::{
+    VolumeMetadata, generate_store_id, normalize_source_identity, normalize_volume_axes,
+    validate_vertical_axis,
+};
 
 use super::tile_geometry::{TileCoord, TileGeometry};
 use super::volume_store::{OccupancyTile, TileBuffer, VolumeStoreReader, VolumeStoreWriter};
@@ -39,7 +42,7 @@ impl TbvolManifest {
         let geometry = TileGeometry::new(volume.shape, tile_shape);
         Self {
             format: "tbvol".to_string(),
-            version: 1,
+            version: 2,
             volume,
             tile_shape: geometry.tile_shape(),
             tile_grid_shape: geometry.tile_grid_shape(),
@@ -62,11 +65,18 @@ pub(crate) fn load_tbvol_manifest(
     let bytes = fs::read(manifest_path)?;
     let mut manifest: TbvolManifest = serde_json::from_slice(&bytes)?;
     let mut changed = false;
+    if manifest.version < 2 {
+        manifest.version = 2;
+        changed = true;
+    }
     if manifest.volume.store_id.trim().is_empty() {
         manifest.volume.store_id = generate_store_id();
         changed = true;
     }
     if normalize_source_identity(&mut manifest.volume.source) {
+        changed = true;
+    }
+    if normalize_volume_axes(&mut manifest.volume.axes) {
         changed = true;
     }
     if changed {
@@ -393,6 +403,12 @@ fn validate_manifest(manifest: &TbvolManifest) -> Result<(), SeismicStoreError> 
             "tbvol tiles must span the full sample axis".to_string(),
         ));
     }
+    validate_vertical_axis(
+        &manifest.volume.axes.sample_axis_ms,
+        manifest.volume.shape[2],
+        "sample axis",
+    )
+    .map_err(SeismicStoreError::Message)?;
     Ok(())
 }
 
@@ -457,6 +473,8 @@ fn write_all_at(file: &File, mut bytes: &[u8], mut offset: u64) -> std::io::Resu
 #[cfg(test)]
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use ophiolite_seismic::TimeDepthDomain;
 
     use crate::SectionAxis;
     use crate::metadata::{
@@ -566,11 +584,11 @@ mod tests {
                 regularization: None,
             },
             shape,
-            axes: VolumeAxes {
-                ilines: (0..shape[0]).map(|value| value as f64).collect(),
-                xlines: (0..shape[1]).map(|value| value as f64).collect(),
-                sample_axis_ms: (0..shape[2]).map(|value| value as f32 * 2.0).collect(),
-            },
+            axes: VolumeAxes::from_time_axis(
+                (0..shape[0]).map(|value| value as f64).collect(),
+                (0..shape[1]).map(|value| value as f64).collect(),
+                (0..shape[2]).map(|value| value as f32 * 2.0).collect(),
+            ),
             segy_export: None,
             coordinate_reference_binding: None,
             spatial: None,
@@ -667,12 +685,59 @@ mod tests {
         .expect("write manifest");
 
         let parsed = load_tbvol_manifest(&manifest_path).expect("load manifest");
+        assert_eq!(parsed.version, 2);
         assert!(!parsed.volume.store_id.trim().is_empty());
+        assert_eq!(parsed.volume.axes.sample_axis_domain, TimeDepthDomain::Time);
+        assert_eq!(parsed.volume.axes.sample_axis_unit, "ms");
 
         let rewritten: TbvolManifest =
             serde_json::from_slice(&fs::read(&manifest_path).expect("read rewritten manifest"))
                 .expect("parse rewritten manifest");
+        assert_eq!(rewritten.version, 2);
         assert!(!rewritten.volume.store_id.trim().is_empty());
+        assert_eq!(
+            rewritten.volume.axes.sample_axis_domain,
+            TimeDepthDomain::Time
+        );
+        assert_eq!(rewritten.volume.axes.sample_axis_unit, "ms");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tbvol_roundtrip_preserves_depth_native_vertical_axis_metadata() {
+        let root = unique_test_root("tbvol-depth-axis");
+        let mut volume = test_volume_metadata([2, 2, 4]);
+        volume.axes = VolumeAxes::with_vertical_axis(
+            vec![100.0, 101.0],
+            vec![200.0, 201.0],
+            TimeDepthDomain::Depth,
+            "m".to_string(),
+            vec![1000.0, 1025.0, 1050.0, 1075.0],
+        );
+
+        let writer = TbvolWriter::create(&root, volume, [2, 2, 4], false).expect("create writer");
+        writer
+            .write_tile(
+                TileCoord {
+                    tile_i: 0,
+                    tile_x: 0,
+                },
+                &[0.0_f32; 16],
+            )
+            .expect("write tile");
+        writer.finalize().expect("finalize writer");
+
+        let reader = TbvolReader::open(&root).expect("open tbvol");
+        assert_eq!(
+            reader.manifest.volume.axes.sample_axis_domain,
+            TimeDepthDomain::Depth
+        );
+        assert_eq!(reader.manifest.volume.axes.sample_axis_unit, "m");
+        assert_eq!(
+            reader.manifest.volume.axes.sample_axis_ms,
+            vec![1000.0, 1025.0, 1050.0, 1075.0]
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

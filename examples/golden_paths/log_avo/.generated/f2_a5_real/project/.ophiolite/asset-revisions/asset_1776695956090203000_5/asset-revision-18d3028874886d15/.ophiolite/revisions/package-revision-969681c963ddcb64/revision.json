@@ -1,0 +1,27 @@
+{
+  "revision_id": "package-revision-969681c963ddcb64",
+  "parent_revision_id": null,
+  "package_root": "/Users/sc/dev/ophiolite/examples/golden_paths/log_avo/.generated/f2_a5_real/project/.ophiolite/staging/asset_1776695956090203000_5/asset-stage-f19dc2ac937c15df",
+  "created_at_unix_seconds": 1776695956,
+  "metadata_blob": {
+    "relative_path": "metadata.json",
+    "media_type": "application/json",
+    "byte_count": 16877,
+    "content_hash": "metadata-blob-775d84178692b6e2"
+  },
+  "parquet_blob": {
+    "relative_path": "curves.parquet",
+    "media_type": "application/vnd.apache.parquet",
+    "byte_count": 144438,
+    "content_hash": "parquet-blob-15e69cfd837a90f4"
+  },
+  "diff_summary": {
+    "metadata_changed": false,
+    "row_count_changed": false,
+    "curve_count_changed": false,
+    "curves_added": [],
+    "curves_removed": [],
+    "modified_curves": []
+  },
+  "change_summary": "initial package revision"
+}

@@ -9,6 +9,7 @@
     "typecheck": "svelte-check --tsconfig tsconfig.json"
   },
   "dependencies": {
+    "@ophiolite/charts-core": "workspace:*",
     "@ophiolite/charts-data-models": "workspace:*",
     "@ophiolite/charts": "workspace:*",
     "@ophiolite/charts-toolbar": "workspace:*"

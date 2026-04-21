@@ -17,7 +17,8 @@ from ophiolite_sdk import Project
 project = Project.create("demo-project")
 summary = project.summary()
 print(summary.root)
-print(summary.asset_count)
+print(summary.well_count)
+print(len(project.wells()))
 ```
 
 ## 2. Inspect a source LAS file
@@ -41,22 +42,23 @@ cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- summary .\demo-
 cargo run --quiet --manifest-path Cargo.toml -p ophiolite-cli -- list-curves .\demo-log.laspkg
 ```
 
-## 5. Inspect the platform catalog from Python
+## 5. Inspect project wells from Python
 
 ```python
 from ophiolite_sdk import Project
 
-catalog = Project.platform_catalog()
-print(catalog.product)
-print(len(catalog.operations))
+project = Project.open("demo-project")
+print(project.summary().well_count)
+print(len(project.wells()))
 ```
 
 ## What you proved
 
 - the Rust runtime is installed
 - Python can create and query a local project
+- Python speaks in project and well-domain nouns first
 - the CLI can inspect and package source data
-- public surfaces share one product vocabulary
+- advanced platform and operator surfaces exist without defining the beginner story
 
 ## What comes next
 

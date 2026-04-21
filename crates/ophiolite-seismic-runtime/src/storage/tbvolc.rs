@@ -20,6 +20,24 @@ const AMPLITUDE_FILE: &str = "amplitude.bin";
 const OCCUPANCY_FILE: &str = "occupancy.bin";
 const INDEX_ENTRY_BYTES: usize = 20;
 
+#[derive(Debug, Clone, Serialize)]
+pub struct TbvolArchiveSiblingStatus {
+    pub working_store_root: PathBuf,
+    pub archive_root: PathBuf,
+    pub working_store_bytes: u64,
+    pub archive_exists: bool,
+    pub archive_bytes: Option<u64>,
+    pub archive_fraction_of_working_store: Option<f64>,
+    pub working_store_id: String,
+    pub archive_store_id: Option<String>,
+    pub shape: [usize; 3],
+    pub tile_shape: [usize; 3],
+    pub archive_shape: Option<[usize; 3]>,
+    pub archive_tile_shape: Option<[usize; 3]>,
+    pub exact_compatible: Option<bool>,
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TbvolcAmplitudeEncoding {
     pub codec: String,
@@ -141,6 +159,97 @@ pub(crate) fn load_tbvolc_manifest(
     }
     validate_manifest(&manifest)?;
     Ok(manifest)
+}
+
+pub fn suggested_tbvolc_archive_path(tbvol_root: impl AsRef<Path>) -> PathBuf {
+    tbvol_root.as_ref().with_extension("tbvolc")
+}
+
+pub fn suggested_tbvol_restore_path(tbvolc_root: impl AsRef<Path>) -> PathBuf {
+    tbvolc_root.as_ref().with_extension("tbvol")
+}
+
+pub fn describe_tbvol_archive_sibling(
+    tbvol_root: impl AsRef<Path>,
+) -> Result<TbvolArchiveSiblingStatus, SeismicStoreError> {
+    let working_store_root = tbvol_root.as_ref().to_path_buf();
+    let working_manifest =
+        crate::storage::tbvol::load_tbvol_manifest(&working_store_root.join(MANIFEST_FILE))?;
+    let working_store_bytes = directory_size_bytes(&working_store_root)?;
+    let archive_root = suggested_tbvolc_archive_path(&working_store_root);
+    if !archive_root.join(MANIFEST_FILE).exists() {
+        return Ok(TbvolArchiveSiblingStatus {
+            working_store_root,
+            archive_root,
+            working_store_bytes,
+            archive_exists: false,
+            archive_bytes: None,
+            archive_fraction_of_working_store: None,
+            working_store_id: working_manifest.volume.store_id,
+            archive_store_id: None,
+            shape: working_manifest.volume.shape,
+            tile_shape: working_manifest.tile_shape,
+            archive_shape: None,
+            archive_tile_shape: None,
+            exact_compatible: None,
+            warnings: Vec::new(),
+        });
+    }
+
+    let archive_manifest = load_tbvolc_manifest(&archive_root.join(MANIFEST_FILE))?;
+    let archive_bytes = directory_size_bytes(&archive_root)?;
+    let mut warnings = Vec::new();
+    if archive_manifest.volume.store_id != working_manifest.volume.store_id {
+        warnings.push(format!(
+            "store_id mismatch: working={}, archive={}",
+            working_manifest.volume.store_id, archive_manifest.volume.store_id
+        ));
+    }
+    if archive_manifest.volume.shape != working_manifest.volume.shape {
+        warnings.push(format!(
+            "shape mismatch: working={:?}, archive={:?}",
+            working_manifest.volume.shape, archive_manifest.volume.shape
+        ));
+    }
+    if archive_manifest.tile_shape != working_manifest.tile_shape {
+        warnings.push(format!(
+            "tile shape mismatch: working={:?}, archive={:?}",
+            working_manifest.tile_shape, archive_manifest.tile_shape
+        ));
+    }
+    if archive_manifest.has_occupancy != working_manifest.has_occupancy {
+        warnings.push(format!(
+            "occupancy flag mismatch: working={}, archive={}",
+            working_manifest.has_occupancy, archive_manifest.has_occupancy
+        ));
+    }
+    if serde_json::to_vec(&archive_manifest.volume.axes)?
+        != serde_json::to_vec(&working_manifest.volume.axes)?
+    {
+        warnings.push("volume axes mismatch between working store and archive".to_string());
+    }
+    if serde_json::to_vec(&archive_manifest.volume.source)?
+        != serde_json::to_vec(&working_manifest.volume.source)?
+    {
+        warnings.push("source identity mismatch between working store and archive".to_string());
+    }
+
+    Ok(TbvolArchiveSiblingStatus {
+        working_store_root,
+        archive_root,
+        working_store_bytes,
+        archive_exists: true,
+        archive_bytes: Some(archive_bytes),
+        archive_fraction_of_working_store: Some(archive_bytes as f64 / working_store_bytes as f64),
+        working_store_id: working_manifest.volume.store_id,
+        archive_store_id: Some(archive_manifest.volume.store_id),
+        shape: working_manifest.volume.shape,
+        tile_shape: working_manifest.tile_shape,
+        archive_shape: Some(archive_manifest.volume.shape),
+        archive_tile_shape: Some(archive_manifest.tile_shape),
+        exact_compatible: Some(warnings.is_empty()),
+        warnings,
+    })
 }
 
 pub struct TbvolcReader {
@@ -484,6 +593,27 @@ fn copy_tiles<R: VolumeStoreReader, W: VolumeStoreWriter>(
         }
     }
     Ok(())
+}
+
+fn directory_size_bytes(root: &Path) -> Result<u64, SeismicStoreError> {
+    let metadata = fs::metadata(root)?;
+    if metadata.is_file() {
+        return Ok(metadata.len());
+    }
+
+    let mut total = 0_u64;
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        total = total
+            .checked_add(directory_size_bytes(&entry.path())?)
+            .ok_or_else(|| {
+                SeismicStoreError::Message(format!(
+                    "tbvol/tbvolc size overflow while walking {}",
+                    root.display()
+                ))
+            })?;
+    }
+    Ok(total)
 }
 
 fn validate_manifest(manifest: &TbvolcManifest) -> Result<(), SeismicStoreError> {
@@ -842,6 +972,68 @@ mod tests {
         let _ = fs::remove_dir_all(&restored_root);
     }
 
+    #[test]
+    fn suggested_archive_paths_use_tbvol_and_tbvolc_extensions() {
+        let tbvol_root = PathBuf::from("/tmp/f3_dataset.tbvol");
+        let tbvolc_root = PathBuf::from("/tmp/f3_dataset.tbvolc");
+        assert_eq!(
+            suggested_tbvolc_archive_path(&tbvol_root),
+            PathBuf::from("/tmp/f3_dataset.tbvolc")
+        );
+        assert_eq!(
+            suggested_tbvol_restore_path(&tbvolc_root),
+            PathBuf::from("/tmp/f3_dataset.tbvol")
+        );
+    }
+
+    #[test]
+    fn describe_tbvol_archive_sibling_reports_missing_and_present_archives() {
+        let source_root = unique_test_root("tbvol-archive-status-source", "tbvol");
+        let compressed_root = suggested_tbvolc_archive_path(&source_root);
+        let volume = test_volume_metadata([3, 4, 5]);
+        let tile_shape = [2, 2, 5];
+        let geometry = TileGeometry::new(volume.shape, tile_shape);
+        let writer = TbvolWriter::create(&source_root, volume.clone(), tile_shape, true).unwrap();
+
+        for tile in geometry.iter_tiles() {
+            let origin = geometry.tile_origin(tile);
+            let effective = geometry.effective_tile_shape(tile);
+            let mut amplitudes = vec![0.0_f32; geometry.amplitude_tile_len()];
+            let mut occupancy = vec![0_u8; geometry.occupancy_tile_len()];
+            for local_i in 0..effective[0] {
+                for local_x in 0..effective[1] {
+                    let dst = (local_i * tile_shape[1]) + local_x;
+                    occupancy[dst] = 1;
+                    let trace_start = dst * tile_shape[2];
+                    for sample in 0..effective[2] {
+                        amplitudes[trace_start + sample] =
+                            amplitude_value(origin[0] + local_i, origin[1] + local_x, sample);
+                    }
+                }
+            }
+            writer.write_tile(tile, &amplitudes).unwrap();
+            writer.write_tile_occupancy(tile, &occupancy).unwrap();
+        }
+        writer.finalize().unwrap();
+
+        let missing = describe_tbvol_archive_sibling(&source_root).unwrap();
+        assert!(!missing.archive_exists);
+        assert_eq!(missing.archive_root, compressed_root);
+        assert!(missing.archive_bytes.is_none());
+        assert!(missing.exact_compatible.is_none());
+
+        transcode_tbvol_to_tbvolc(&source_root, &compressed_root).unwrap();
+        let present = describe_tbvol_archive_sibling(&source_root).unwrap();
+        assert!(present.archive_exists);
+        assert!(present.archive_bytes.unwrap() > 0);
+        assert_eq!(present.exact_compatible, Some(true));
+        assert!(present.warnings.is_empty());
+        assert!(present.archive_fraction_of_working_store.unwrap() > 0.0);
+
+        let _ = fs::remove_dir_all(&source_root);
+        let _ = fs::remove_dir_all(&compressed_root);
+    }
+
     fn amplitude_value(iline: usize, xline: usize, sample: usize) -> f32 {
         (iline as f32 * 100.0) + (xline as f32 * 10.0) + sample as f32
     }
@@ -878,11 +1070,11 @@ mod tests {
                 regularization: None,
             },
             shape,
-            axes: VolumeAxes {
-                ilines: (0..shape[0]).map(|value| value as f64).collect(),
-                xlines: (0..shape[1]).map(|value| value as f64).collect(),
-                sample_axis_ms: (0..shape[2]).map(|value| value as f32 * 2.0).collect(),
-            },
+            axes: VolumeAxes::from_time_axis(
+                (0..shape[0]).map(|value| value as f64).collect(),
+                (0..shape[1]).map(|value| value as f64).collect(),
+                (0..shape[2]).map(|value| value as f32 * 2.0).collect(),
+            ),
             segy_export: None,
             coordinate_reference_binding: None,
             spatial: None,

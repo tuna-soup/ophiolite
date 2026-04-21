@@ -1,0 +1,4 @@
+interface:
+  display_name: "Charts"
+  short_description: "Build Ophiolite Charts surfaces using shared presentation and interaction layers"
+  default_prompt: "Use $charts when adding or changing Ophiolite Charts wrappers, shared styling tokens, interaction plumbing, stage sizing, or embedder-facing chart APIs."

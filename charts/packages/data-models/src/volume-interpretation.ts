@@ -9,7 +9,33 @@ export type VolumeInterpretationTool =
   | "crop"
   | "select"
   | "interpret-seed";
-export type VolumeInterpretationAction = "fitToData" | "resetView" | "centerSelection";
+export type VolumeInterpretationAction = "fitToData" | "topView" | "sideView" | "centerSelection";
+export type VolumeInterpretationSelectionGesture = "shiftDragMove" | "delete" | "centerSelection";
+export type VolumeInterpretationDeleteRequest =
+  | {
+      kind: "delete-slice-plane";
+      itemId: string;
+      itemName?: string;
+    }
+  | {
+      kind: "delete-horizon-surface";
+      itemId: string;
+      itemName?: string;
+    };
+export interface VolumeInterpretationMoveSlicePlaneRequest {
+  kind: "move-slice-plane";
+  phase: "preview" | "commit";
+  itemId: string;
+  itemName?: string;
+  axis: VolumeInterpretationAxis;
+  volumeId: string;
+  originalPosition: number;
+  position: number;
+  deltaWorld: number;
+}
+export type VolumeInterpretationEditRequest =
+  | VolumeInterpretationDeleteRequest
+  | VolumeInterpretationMoveSlicePlaneRequest;
 export type VolumeInterpretationSelectionKind =
   | "slice-plane"
   | "horizon-surface"
@@ -169,6 +195,11 @@ export interface VolumeInterpretationSelection {
   kind: VolumeInterpretationSelectionKind;
   itemId: string;
   itemName?: string;
+}
+
+export interface VolumeInterpretationSelectionContext {
+  selection: VolumeInterpretationSelection;
+  allowedGestures: VolumeInterpretationSelectionGesture[];
 }
 
 export interface VolumeInterpretationInterpretationRequest {

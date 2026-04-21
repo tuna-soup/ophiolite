@@ -2,12 +2,15 @@
 
 <script lang="ts">
   import {
+    ALL_ROCK_PHYSICS_TEMPLATE_IDS,
     createMockAvoChiProjectionModel,
     createMockAvoCrossplotModel,
     createMockAvoResponseModel,
     MOCK_SECTION_VELOCITY_MODEL_LABEL,
     STANDARD_ROCK_PHYSICS_TEMPLATE_IDS,
     type AvoCartesianViewport,
+    type CartesianAxisId,
+    type CartesianAxisOverrides,
     type AvoChiProjectionModel,
     type AvoCrossplotModel,
     type AvoCrossplotProbe,
@@ -30,9 +33,11 @@
     type MockSectionKind,
     type RockPhysicsCrossplotModel,
     type RockPhysicsCrossplotProbe,
+    type RockPhysicsTemplateId,
     type RockPhysicsCrossplotViewport,
     type RockPhysicsMockColorMode,
     type RockPhysicsMockOptions,
+    ROCK_PHYSICS_TEMPLATE_GROUPS,
     type SectionHorizonOverlay,
     type SectionScalarOverlay,
     type SectionScalarOverlayColorMap,
@@ -40,7 +45,10 @@
     type SurveyMapModel,
     type SurveyMapProbe,
     type SurveyMapViewport,
+    type VolumeInterpretationAxis,
     type VolumeInterpretationColorMap,
+    type VolumeInterpretationEditRequest,
+    type VolumeInterpretationDeleteRequest,
     type VolumeInterpretationInterpretationRequest,
     type VolumeInterpretationModel,
     type VolumeInterpretationProbe,
@@ -68,33 +76,46 @@
     VolumeInterpretationChart,
     WellCorrelationPanelChart,
     type AvoChartAction,
+    type AvoChiProjectionHistogramChartHandle,
     type AvoChartInteractionConfig,
     type AvoChartInteractionState,
+    type AvoInterceptGradientCrossplotChartHandle,
+    type AvoResponseChartHandle,
     type AvoChartTool,
+    type CartesianAxisContextRequestPayload,
+    type RockPhysicsCrossplotChartHandle,
     type RockPhysicsCrossplotChartAction,
     type RockPhysicsCrossplotChartInteractionConfig,
     type RockPhysicsCrossplotChartInteractionState,
     type RockPhysicsCrossplotChartTool,
+    type SeismicGatherChartHandle,
+    type SeismicSectionChartHandle,
     type SeismicChartAction,
     type SeismicChartInteractionConfig,
     type SeismicChartInteractionState,
     type SeismicChartTool,
+    type SurveyMapChartHandle,
     type SurveyMapChartAction,
     type SurveyMapChartInteractionConfig,
     type SurveyMapChartInteractionState,
     type SurveyMapChartTool,
     type VolumeInterpretationChartAction,
+    type VolumeInterpretationChartHandle,
+    type VolumeInterpretationDebugPickPayload,
     type VolumeInterpretationChartInteractionConfig,
     type VolumeInterpretationChartInteractionState,
     type VolumeInterpretationChartRenderer,
     type VolumeInterpretationChartTool,
+    type WellCorrelationPanelChartHandle,
     type WellCorrelationChartAction,
+    type WellCorrelationDebugSnapshot,
     type WellCorrelationChartInteractionConfig,
     type WellCorrelationChartInteractionState,
     type WellCorrelationChartTool
   } from "@ophiolite/charts";
   import {
     ChartInteractionToolbar,
+    type ToolbarIconName,
     type ChartToolbarActionItem,
     type ChartToolbarToolItem
   } from "@ophiolite/charts-toolbar";
@@ -107,59 +128,109 @@
     SectionView as OphioliteSectionView,
     SectionViewportChanged
   } from "@ophiolite/contracts";
+  import { demoCssVars } from "./demo-presentation";
 
-  interface SeismicChartHandle {
-    fitToData?: () => void;
+  type DemoSeismicBaseRenderer = "auto" | "worker-webgl" | "local-webgl" | "local-canvas";
+  type AxisEditorChartKey = "rockPhysics" | "avoResponse" | "avoCrossplot" | "avoChi";
+
+  interface AxisEditorFormState {
+    label: string;
+    unit: string;
+    min: string;
+    max: string;
+    tickCount: string;
+    tickFormat: string;
   }
 
-  interface GatherChartHandle {
-    fitToData?: () => void;
-  }
-
-  interface CorrelationChartHandle {
-    fitToData?: () => void;
-    zoomBy?: (factor: number) => void;
-    panBy?: (deltaDepth: number) => void;
-  }
-
-  interface SurveyMapChartHandle {
-    fitToData?: () => void;
-    zoomBy?: (factor: number) => void;
-  }
-
-  interface RockPhysicsChartHandle {
-    fitToData?: () => void;
-    zoomBy?: (factor: number) => void;
-    panBy?: (deltaX: number, deltaY: number) => void;
-  }
-
-  interface VolumeInterpretationChartHandle {
-    fitToData?: () => void;
-    resetView?: () => void;
-    centerSelection?: () => void;
-    zoomBy?: (factor: number) => void;
-    orbitBy?: (deltaYawDeg: number, deltaPitchDeg: number) => void;
-    panBy?: (deltaX: number, deltaY: number) => void;
-  }
-
-  interface AvoChartHandle {
-    fitToData?: () => void;
-    zoomBy?: (factor: number) => void;
-    panBy?: (deltaX: number, deltaY: number) => void;
+  interface AxisEditorState {
+    chartKey: AxisEditorChartKey;
+    chartLabel: string;
+    axis: CartesianAxisId;
+    clientX: number;
+    clientY: number;
+    form: AxisEditorFormState;
   }
 
   type DemoRoute = "seismic" | "gather" | "survey-map" | "rock-physics" | "volume" | "avo" | "well-panel";
+  type DemoMode = "playground" | "public" | "embed";
 
-  let seismicChart = $state.raw<SeismicChartHandle | null>(null);
-  let gatherChart = $state.raw<GatherChartHandle | null>(null);
+  const DEMO_LABELS: Record<DemoRoute, string> = {
+    seismic: "Seismic Section",
+    gather: "Prestack Gather",
+    "survey-map": "Survey Map",
+    "rock-physics": "Rock Physics",
+    volume: "Volume Interpretation",
+    avo: "AVO",
+    "well-panel": "Well Panel"
+  };
+
+  const LAUNCH_DEMO_ROUTES = [
+    "seismic",
+    "gather",
+    "survey-map",
+    "rock-physics",
+    "well-panel"
+  ] as const satisfies readonly DemoRoute[];
+
+  const PUBLIC_DEMO_META: Record<
+    DemoRoute,
+    {
+      eyebrow: string;
+      title: string;
+      summary: string;
+    }
+  > = {
+    seismic: {
+      eyebrow: "Early Access Example",
+      title: "Seismic Section",
+      summary: "A focused seismic section example with shared probe behavior, overlays, and heatmap or wiggle presentation."
+    },
+    gather: {
+      eyebrow: "Early Access Example",
+      title: "Prestack Gather",
+      summary: "A prestack gather example over the shared seismic interaction model, centered on view control and probe readout."
+    },
+    "survey-map": {
+      eyebrow: "Early Access Example",
+      title: "Survey Map",
+      summary: "A plan-view chart for survey footprints, well locations, trajectories, and optional scalar context."
+    },
+    "rock-physics": {
+      eyebrow: "Early Access Example",
+      title: "Rock Physics Crossplot",
+      summary: "A dense point-cloud example with template-scoped semantics, probe callbacks, and host-owned axis workflows."
+    },
+    volume: {
+      eyebrow: "Preview Example",
+      title: "Volume Interpretation",
+      summary: "A 3D scene and interpretation preview that remains outside the launch product story while the public boundary hardens."
+    },
+    avo: {
+      eyebrow: "Preview Example",
+      title: "AVO",
+      summary: "A collection of AVO examples aligned to the shared cartesian wrapper direction but not part of the launch marketing core."
+    },
+    "well-panel": {
+      eyebrow: "Early Access Example",
+      title: "Well Correlation Panel",
+      summary: "A depth-aligned multi-well example with explicit panel semantics for scientific interpretation workflows."
+    }
+  };
+
+  let displayMode = $state<DemoMode>(getDemoMode());
+  let seismicChart = $state.raw<SeismicSectionChartHandle | null>(null);
+  let gatherChart = $state.raw<SeismicGatherChartHandle | null>(null);
   let surveyMapChart = $state.raw<SurveyMapChartHandle | null>(null);
-  let correlationChart = $state.raw<CorrelationChartHandle | null>(null);
-  let rockPhysicsChart = $state.raw<RockPhysicsChartHandle | null>(null);
+  let correlationChart = $state.raw<WellCorrelationPanelChartHandle | null>(null);
+  let rockPhysicsChart = $state.raw<RockPhysicsCrossplotChartHandle | null>(null);
   let volumeChart = $state.raw<VolumeInterpretationChartHandle | null>(null);
-  let avoResponseChart = $state.raw<AvoChartHandle | null>(null);
-  let avoCrossplotChart = $state.raw<AvoChartHandle | null>(null);
-  let avoHistogramChart = $state.raw<AvoChartHandle | null>(null);
+  let avoResponseChart = $state.raw<AvoResponseChartHandle | null>(null);
+  let avoCrossplotChart = $state.raw<AvoInterceptGradientCrossplotChartHandle | null>(null);
+  let avoHistogramChart = $state.raw<AvoChiProjectionHistogramChartHandle | null>(null);
   let activeDemo = $state<DemoRoute>(getDemoRoute());
+  let publicMode = $derived(displayMode !== "playground");
+  let embedMode = $derived(displayMode === "embed");
+  let activePublicDemoMeta = $derived(PUBLIC_DEMO_META[activeDemo]);
 
   let sectionKind = $state<MockSectionKind>("inline");
   let sectionDomain = $state<MockSectionDomain>("time");
@@ -186,6 +257,9 @@
     tool: "pointer"
   });
   let lastSeismicEvent = $state("none");
+  let seismicBaseRenderer = $state<DemoSeismicBaseRenderer>("auto");
+  let seismicRendererEpoch = $state(0);
+  let activeSeismicBaseRenderer = $state("unknown");
 
   let gather = $state.raw<GatherView | null>(createMockGatherView());
   let gatherRenderMode = $state<"heatmap" | "wiggle">("wiggle");
@@ -205,6 +279,7 @@
   });
   let lastGatherEvent = $state("none");
   let lastGatherProbe = $state.raw<GatherProbeChanged["probe"]>(null);
+  let activeGatherBaseRenderer = $state("unknown");
 
   let surveyMap = $state.raw<SurveyMapModel | null>(createMockSurveyMap());
   let surveyMapResetToken = $state(0);
@@ -238,8 +313,9 @@
   let lastCorrelationEvent = $state("none");
   let lastCorrelationViewport = $state.raw<WellCorrelationViewport | null>(null);
   let lastCorrelationProbe = $state.raw<WellCorrelationProbe | null>(null);
+  let lastCorrelationDebug = $state.raw<WellCorrelationDebugSnapshot | null>(null);
 
-  let rockPhysicsTemplateId = $state<(typeof STANDARD_ROCK_PHYSICS_TEMPLATE_IDS)[number]>("vp-vs-vs-ai");
+  let rockPhysicsTemplateId = $state<RockPhysicsTemplateId>("vp-vs-vs-ai");
   let rockPhysicsColorMode = $state<RockPhysicsMockColorMode>(getDefaultRockPhysicsMockColorMode("vp-vs-vs-ai"));
   let rockPhysicsDense = $state(false);
   let rockPhysicsModel = $state.raw<RockPhysicsCrossplotModel | null>(createRockPhysicsModel());
@@ -259,6 +335,7 @@
   let lastRockPhysicsProbe = $state.raw<RockPhysicsCrossplotProbe | null>(null);
   let rockPhysicsTemplateSpec = $derived(getRockPhysicsTemplateSpec(rockPhysicsTemplateId));
   let rockPhysicsColorModes = $derived(getRockPhysicsMockColorModes(rockPhysicsTemplateId));
+  let rockPhysicsAxisOverrides = $state.raw<CartesianAxisOverrides>({});
 
   let volumeColormap = $state<VolumeInterpretationColorMap>("red-white-blue");
   let volumeSliceOpacity = $state(0.94);
@@ -266,6 +343,7 @@
   let volumeRenderer = $state<VolumeInterpretationChartRenderer>("vtk");
   let volumeModel = $state.raw<VolumeInterpretationModel | null>(createVolumeSceneModel());
   let volumeResetToken = $state(0);
+  let volumeSliceSerial = $state(0);
   let volumeInteractions = $state.raw<VolumeInterpretationChartInteractionConfig>({
     tool: "pointer"
   });
@@ -274,13 +352,17 @@
       tools: [...VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES.tools],
       actions: [...VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES.actions]
     },
-    tool: "pointer"
+    tool: "pointer",
+    selectionContext: null
   });
   let lastVolumeEvent = $state("none");
   let lastVolumeProbe = $state.raw<VolumeInterpretationProbe | null>(null);
   let lastVolumeSelection = $state.raw<VolumeInterpretationSelection | null>(null);
+  let lastVolumeClickedSelection = $state.raw<VolumeInterpretationSelection | null>(null);
+  let lastVolumeDebugPick = $state.raw<VolumeInterpretationDebugPickPayload | null>(null);
+  let volumeDebugHistory = $state.raw<VolumeInterpretationDebugPickPayload[]>([]);
   let lastVolumeView = $state.raw<VolumeInterpretationView | null>(null);
-  let lastVolumeInterpretationMessage = $state("No interpretation request yet.");
+  let lastVolumeInterpretationMessage = $state("Right-click a slice or horizon to remove it.");
 
   let avoDense = $state(false);
   let avoChiAngleDeg = $state(35);
@@ -305,6 +387,10 @@
   let lastAvoResponseProbe = $state.raw<AvoResponseProbe | null>(null);
   let lastAvoCrossplotProbe = $state.raw<AvoCrossplotProbe | null>(null);
   let lastAvoChiProbe = $state.raw<AvoHistogramProbe | null>(null);
+  let avoResponseAxisOverrides = $state.raw<CartesianAxisOverrides>({});
+  let avoCrossplotAxisOverrides = $state.raw<CartesianAxisOverrides>({});
+  let avoChiAxisOverrides = $state.raw<CartesianAxisOverrides>({});
+  let axisEditor = $state.raw<AxisEditorState | null>(null);
 
   let seismicToolbarTools = $derived.by<ChartToolbarToolItem<SeismicChartTool>[]>(() =>
     SEISMIC_CHART_INTERACTION_CAPABILITIES.tools.map((tool) => ({
@@ -362,7 +448,7 @@
       id: tool,
       label: toolLabel(tool),
       icon: tool,
-      active: lastCorrelationInteractionState.tool === tool,
+      active: correlationInteractions.tool === tool,
       disabled: !correlationPanel
     }))
   );
@@ -395,16 +481,7 @@
     VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES.tools.map((tool) => ({
       id: tool,
       label: volumeToolLabel(tool),
-      icon:
-        tool === "interpret-seed"
-          ? "crosshair"
-          : tool === "orbit"
-            ? "orbit"
-            : tool === "slice-drag" || tool === "crop"
-            ? "pan"
-            : tool === "select"
-              ? "pointer"
-              : tool,
+      icon: volumeToolIcon(tool),
       active: lastVolumeInteractionState.tool === tool,
       disabled: !volumeModel
     }))
@@ -412,9 +489,23 @@
   let volumeToolbarActions = $derived.by<ChartToolbarActionItem<VolumeInterpretationChartAction>[]>(() =>
     VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES.actions.map((action) => ({
       id: action,
-      label: action === "fitToData" ? "Fit" : action === "resetView" ? "Reset" : "Center",
-      icon: "fitToData",
-      disabled: !volumeModel
+      label:
+        action === "fitToData"
+          ? "Fit"
+          : action === "topView"
+            ? "Top"
+            : action === "sideView"
+              ? "Side"
+              : "Center",
+      icon:
+        action === "fitToData"
+          ? "fitToData"
+          : action === "topView"
+            ? "topView"
+            : action === "sideView"
+              ? "sideView"
+              : "centerSelection",
+      disabled: !volumeModel || (action === "centerSelection" && !lastVolumeSelection)
     }))
   );
   let avoToolbarTools = $derived.by<ChartToolbarToolItem<AvoChartTool>[]>(() =>
@@ -438,6 +529,13 @@
   const seismicToolbarTop = `${PLOT_MARGIN.top}px`;
   const seismicToolbarLeft = `${PLOT_MARGIN.left}px`;
   const seismicToolbarRight = `${PLOT_MARGIN.right}px`;
+
+  $effect(() => {
+    const seismicWindow = getSeismicRendererWindow();
+    if (seismicWindow) {
+      seismicWindow.__OPHIOLITE_FORCE_SEISMIC_BASE_RENDERER__ = seismicBaseRenderer;
+    }
+  });
 
   function refreshMockSection() {
     section = toContractSectionView();
@@ -522,6 +620,28 @@
     seismicChart?.fitToData?.();
   }
 
+  function setSeismicBaseRendererPreference(nextRenderer: DemoSeismicBaseRenderer): void {
+    seismicBaseRenderer = nextRenderer;
+    const seismicWindow = getSeismicRendererWindow();
+    if (seismicWindow) {
+      seismicWindow.__OPHIOLITE_FORCE_SEISMIC_BASE_RENDERER__ = nextRenderer;
+    }
+    activeSeismicBaseRenderer = "pending";
+    activeGatherBaseRenderer = "pending";
+    seismicRendererEpoch += 1;
+    queueSeismicRendererKindSync();
+  }
+
+  function getSeismicRendererWindow():
+    | (Window & { __OPHIOLITE_FORCE_SEISMIC_BASE_RENDERER__?: DemoSeismicBaseRenderer })
+    | null {
+    return typeof window === "undefined"
+      ? null
+      : (window as Window & {
+          __OPHIOLITE_FORCE_SEISMIC_BASE_RENDERER__?: DemoSeismicBaseRenderer;
+        });
+  }
+
   function refreshGather() {
     gather = createMockGatherView();
     gatherResetToken += 1;
@@ -564,6 +684,26 @@
 
   function fitGatherToData() {
     gatherChart?.fitToData?.();
+  }
+
+  function queueSeismicRendererKindSync(): void {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.requestAnimationFrame(() => {
+      syncSeismicRendererKinds();
+      window.setTimeout(syncSeismicRendererKinds, 250);
+    });
+  }
+
+  function syncSeismicRendererKinds(): void {
+    if (typeof document === "undefined") {
+      return;
+    }
+    activeSeismicBaseRenderer =
+      document.querySelector<HTMLElement>('[aria-label="Seismic section chart"]')?.dataset.baseRenderer ?? "unknown";
+    activeGatherBaseRenderer =
+      document.querySelector<HTMLElement>('[aria-label="Seismic gather chart"]')?.dataset.baseRenderer ?? "unknown";
   }
 
   function refreshSurveyMap() {
@@ -622,6 +762,17 @@
     };
   }
 
+  async function copyCorrelationDebug(): Promise<void> {
+    if (!lastCorrelationDebug || typeof navigator === "undefined" || !navigator.clipboard) {
+      return;
+    }
+    await navigator.clipboard.writeText(JSON.stringify(lastCorrelationDebug, null, 2));
+  }
+
+  function captureCorrelationDebug(): void {
+    lastCorrelationDebug = correlationChart?.getDebugSnapshot?.() ?? null;
+  }
+
   function runCorrelationAction(action: string) {
     if (action === "fitToData") {
       fitCorrelationToData();
@@ -630,6 +781,9 @@
 
   function handleCorrelationInteractionStateChange(event: WellCorrelationChartInteractionState) {
     lastCorrelationInteractionState = event;
+    if (correlationInteractions.tool === event.tool) {
+      return;
+    }
     correlationInteractions = {
       ...correlationInteractions,
       tool: event.tool
@@ -659,11 +813,15 @@
 
   function refreshRockPhysics() {
     rockPhysicsModel = createRockPhysicsModel();
+    rockPhysicsAxisOverrides = {};
+    closeAxisEditorForChart("rockPhysics");
     rockPhysicsResetToken += 1;
   }
 
   function clearRockPhysics() {
     rockPhysicsModel = null;
+    rockPhysicsAxisOverrides = {};
+    closeAxisEditorForChart("rockPhysics");
     lastRockPhysicsViewport = null;
     lastRockPhysicsProbe = null;
   }
@@ -675,12 +833,16 @@
     refreshRockPhysics();
   }
 
-  function cycleRockPhysicsTemplate() {
-    const currentIndex = STANDARD_ROCK_PHYSICS_TEMPLATE_IDS.indexOf(rockPhysicsTemplateId);
-    const nextIndex = (currentIndex + 1) % STANDARD_ROCK_PHYSICS_TEMPLATE_IDS.length;
-    rockPhysicsTemplateId = STANDARD_ROCK_PHYSICS_TEMPLATE_IDS[nextIndex]!;
-    rockPhysicsColorMode = getDefaultRockPhysicsMockColorMode(rockPhysicsTemplateId);
+  function setRockPhysicsTemplate(templateId: RockPhysicsTemplateId) {
+    rockPhysicsTemplateId = templateId;
+    rockPhysicsColorMode = getDefaultRockPhysicsMockColorMode(templateId);
     refreshRockPhysics();
+  }
+
+  function cycleRockPhysicsTemplate() {
+    const currentIndex = ALL_ROCK_PHYSICS_TEMPLATE_IDS.indexOf(rockPhysicsTemplateId);
+    const nextIndex = (currentIndex + 1) % ALL_ROCK_PHYSICS_TEMPLATE_IDS.length;
+    setRockPhysicsTemplate(ALL_ROCK_PHYSICS_TEMPLATE_IDS[nextIndex]!);
   }
 
   function toggleRockPhysicsDensity() {
@@ -691,6 +853,10 @@
   function setRockPhysicsTool(tool: string) {
     rockPhysicsInteractions = {
       ...rockPhysicsInteractions,
+      tool: tool as RockPhysicsCrossplotChartTool
+    };
+    lastRockPhysicsInteractionState = {
+      ...lastRockPhysicsInteractionState,
       tool: tool as RockPhysicsCrossplotChartTool
     };
   }
@@ -734,6 +900,163 @@
     return value.toFixed(3).replace(/\.000$/, "");
   }
 
+  function createAxisEditorForm(
+    overrides: CartesianAxisOverrides,
+    axis: CartesianAxisId
+  ): AxisEditorFormState {
+    const axisOverride = overrides[axis];
+    return {
+      label: axisOverride?.label ?? "",
+      unit: axisOverride?.unit ?? "",
+      min: formatAxisEditorNumber(axisOverride?.min),
+      max: formatAxisEditorNumber(axisOverride?.max),
+      tickCount: axisOverride?.tickCount ? String(axisOverride.tickCount) : "",
+      tickFormat: axisOverride?.tickFormat ?? "auto"
+    };
+  }
+
+  function formatAxisEditorNumber(value: number | undefined): string {
+    return value === undefined || !Number.isFinite(value) ? "" : String(value);
+  }
+
+  function parseAxisEditorNumber(value: string): number | undefined {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return undefined;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  function parseAxisEditorInteger(value: string): number | undefined {
+    const parsed = parseAxisEditorNumber(value);
+    if (parsed === undefined) {
+      return undefined;
+    }
+    const rounded = Math.round(parsed);
+    return rounded >= 2 ? rounded : undefined;
+  }
+
+  function buildAxisOverrideFromForm(form: AxisEditorFormState): CartesianAxisOverrides[CartesianAxisId] {
+    const next = {
+      label: form.label.trim() || undefined,
+      unit: form.unit.trim() || undefined,
+      min: parseAxisEditorNumber(form.min),
+      max: parseAxisEditorNumber(form.max),
+      tickCount: parseAxisEditorInteger(form.tickCount),
+      tickFormat: form.tickFormat === "auto" ? undefined : form.tickFormat
+    };
+    if (
+      next.label === undefined &&
+      next.unit === undefined &&
+      next.min === undefined &&
+      next.max === undefined &&
+      next.tickCount === undefined &&
+      next.tickFormat === undefined
+    ) {
+      return undefined;
+    }
+    return next;
+  }
+
+  function getAxisOverridesForChart(chartKey: AxisEditorChartKey): CartesianAxisOverrides {
+    switch (chartKey) {
+      case "rockPhysics":
+        return rockPhysicsAxisOverrides;
+      case "avoResponse":
+        return avoResponseAxisOverrides;
+      case "avoCrossplot":
+        return avoCrossplotAxisOverrides;
+      case "avoChi":
+        return avoChiAxisOverrides;
+    }
+  }
+
+  function setAxisOverridesForChart(chartKey: AxisEditorChartKey, overrides: CartesianAxisOverrides): void {
+    switch (chartKey) {
+      case "rockPhysics":
+        rockPhysicsAxisOverrides = overrides;
+        break;
+      case "avoResponse":
+        avoResponseAxisOverrides = overrides;
+        break;
+      case "avoCrossplot":
+        avoCrossplotAxisOverrides = overrides;
+        break;
+      case "avoChi":
+        avoChiAxisOverrides = overrides;
+        break;
+    }
+  }
+
+  function openAxisEditor(
+    chartKey: AxisEditorChartKey,
+    chartLabel: string,
+    event: CartesianAxisContextRequestPayload,
+    overrides: CartesianAxisOverrides
+  ): void {
+    axisEditor = {
+      chartKey,
+      chartLabel,
+      axis: event.axis,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      form: createAxisEditorForm(overrides, event.axis)
+    };
+  }
+
+  function updateAxisEditorField(field: keyof AxisEditorFormState, value: string): void {
+    if (!axisEditor) {
+      return;
+    }
+    axisEditor = {
+      ...axisEditor,
+      form: {
+        ...axisEditor.form,
+        [field]: value
+      }
+    };
+  }
+
+  function closeAxisEditor(): void {
+    axisEditor = null;
+  }
+
+  function applyAxisEditor(): void {
+    if (!axisEditor) {
+      return;
+    }
+    const nextAxisOverride = buildAxisOverrideFromForm(axisEditor.form);
+    const nextOverrides = {
+      ...getAxisOverridesForChart(axisEditor.chartKey)
+    };
+    if (nextAxisOverride) {
+      nextOverrides[axisEditor.axis] = nextAxisOverride;
+    } else {
+      delete nextOverrides[axisEditor.axis];
+    }
+    setAxisOverridesForChart(axisEditor.chartKey, nextOverrides);
+    closeAxisEditor();
+  }
+
+  function resetAxisEditorAxis(): void {
+    if (!axisEditor) {
+      return;
+    }
+    const nextOverrides = {
+      ...getAxisOverridesForChart(axisEditor.chartKey)
+    };
+    delete nextOverrides[axisEditor.axis];
+    setAxisOverridesForChart(axisEditor.chartKey, nextOverrides);
+    closeAxisEditor();
+  }
+
+  function closeAxisEditorForChart(chartKey: AxisEditorChartKey): void {
+    if (axisEditor?.chartKey === chartKey) {
+      axisEditor = null;
+    }
+  }
+
   function createVolumeSceneModel() {
     const base = createMockVolumeInterpretationModel();
     return {
@@ -759,6 +1082,8 @@
   function refreshVolumeScene() {
     volumeModel = createVolumeSceneModel();
     volumeResetToken += 1;
+    lastVolumeSelection = null;
+    lastVolumeClickedSelection = null;
     lastVolumeInterpretationMessage = "Scene refreshed.";
   }
 
@@ -766,6 +1091,8 @@
     volumeModel = null;
     lastVolumeProbe = null;
     lastVolumeSelection = null;
+    lastVolumeClickedSelection = null;
+    lastVolumeDebugPick = null;
     lastVolumeView = null;
     lastVolumeInterpretationMessage = "Scene cleared.";
   }
@@ -818,8 +1145,10 @@
   function runVolumeAction(action: string) {
     if (action === "fitToData") {
       fitVolumeToData();
-    } else if (action === "resetView") {
-      resetVolumeView();
+    } else if (action === "topView") {
+      setVolumeTopView();
+    } else if (action === "sideView") {
+      setVolumeSideView();
     } else if (action === "centerSelection") {
       centerVolumeSelection();
     }
@@ -837,8 +1166,12 @@
     volumeChart?.fitToData?.();
   }
 
-  function resetVolumeView() {
-    volumeChart?.resetView?.();
+  function setVolumeTopView() {
+    volumeChart?.topView?.();
+  }
+
+  function setVolumeSideView() {
+    volumeChart?.sideView?.();
   }
 
   function centerVolumeSelection() {
@@ -855,6 +1188,197 @@
 
   function panVolume(deltaX: number, deltaY: number) {
     volumeChart?.panBy?.(deltaX, deltaY);
+  }
+
+  function handleVolumeDeleteRequest(request: VolumeInterpretationDeleteRequest) {
+    if (!volumeModel) {
+      return;
+    }
+
+    if (request.kind === "delete-slice-plane") {
+      const removedSlice = volumeModel.slicePlanes.find((plane) => plane.id === request.itemId);
+      if (!removedSlice) {
+        return;
+      }
+      volumeModel = {
+        ...volumeModel,
+        slicePlanes: volumeModel.slicePlanes.filter((plane) => plane.id !== request.itemId)
+      };
+      if (lastVolumeClickedSelection?.itemId === request.itemId) {
+        lastVolumeClickedSelection = null;
+      }
+      lastVolumeInterpretationMessage = `Removed ${removedSlice.name}.`;
+      return;
+    }
+
+    const removedHorizon = volumeModel.horizons.find((horizon) => horizon.id === request.itemId);
+    if (!removedHorizon) {
+      return;
+    }
+    volumeModel = {
+      ...volumeModel,
+      horizons: volumeModel.horizons.filter((horizon) => horizon.id !== request.itemId)
+    };
+    if (lastVolumeClickedSelection?.itemId === request.itemId) {
+      lastVolumeClickedSelection = null;
+    }
+    lastVolumeInterpretationMessage = `Removed ${removedHorizon.name}.`;
+  }
+
+  function handleVolumeSelectionChange(selection: VolumeInterpretationSelection | null) {
+    lastVolumeSelection = selection;
+    if (selection) {
+      lastVolumeClickedSelection = selection;
+    }
+  }
+
+  function describeVolumeSelection(selection: VolumeInterpretationSelection | null): string {
+    if (!selection) {
+      return "Last selected: none";
+    }
+    const label =
+      selection.kind === "slice-plane"
+        ? "Slice"
+        : selection.kind === "horizon-surface"
+          ? "Horizon"
+          : selection.kind === "well-trajectory"
+            ? "Well trajectory"
+            : selection.kind === "well-marker"
+              ? "Well marker"
+              : "Annotation";
+    return `${label}: ${selection.itemName ?? selection.itemId}`;
+  }
+
+  function handleVolumeDebugPick(payload: VolumeInterpretationDebugPickPayload) {
+    lastVolumeDebugPick = payload;
+    volumeDebugHistory = [...volumeDebugHistory.slice(-199), payload];
+    const actualLabel = payload.snapshot.actualWinner?.itemName ?? payload.snapshot.actualWinner?.itemId ?? "none";
+    const syntheticLabel =
+      payload.snapshot.syntheticWinner?.itemName ?? payload.snapshot.syntheticWinner?.itemId ?? "none";
+    const syntheticSuffix =
+      syntheticLabel !== "none" && syntheticLabel !== actualLabel ? ` synthetic=${syntheticLabel}` : "";
+    console.groupCollapsed(
+      `[volume-debug] ${payload.phase} (${payload.stageX.toFixed(1)}, ${payload.stageY.toFixed(1)}) actual=${actualLabel}${syntheticSuffix} picked=${payload.snapshot.actualPickedCount} matchedBy=${payload.snapshot.actualMatchedBy ?? "none"} render=(${payload.snapshot.renderPointerX.toFixed(1)}, ${payload.snapshot.renderPointerY.toFixed(1)}) scale=${payload.snapshot.renderScaleX.toFixed(2)}x${payload.snapshot.renderScaleY.toFixed(2)}`
+    );
+    console.log("snapshot", payload.snapshot);
+    console.table(
+      payload.snapshot.candidates.map((candidate) => ({
+        hit: candidate.hit,
+        score: candidate.score === null ? "miss" : candidate.score.toFixed(2),
+        depth: candidate.depth.toFixed(4),
+        targetType: candidate.targetType,
+        kind: candidate.kind,
+        item: candidate.itemName ?? candidate.itemId,
+        screen: `${candidate.screenX.toFixed(1)}, ${candidate.screenY.toFixed(1)}`,
+        world: `${formatVolumeCoordinate(candidate.worldX)}, ${formatVolumeCoordinate(candidate.worldY)}, ${formatVolumeCoordinate(candidate.worldZ)}`
+      }))
+    );
+    console.groupEnd();
+  }
+
+  function formatVolumeDebugJson(payloads: VolumeInterpretationDebugPickPayload[]): string {
+    return JSON.stringify(payloads, null, 2);
+  }
+
+  async function copyVolumeDebugHistory(): Promise<void> {
+    if (volumeDebugHistory.length === 0 || typeof navigator === "undefined" || !navigator.clipboard) {
+      return;
+    }
+    await navigator.clipboard.writeText(formatVolumeDebugJson(volumeDebugHistory));
+    lastVolumeInterpretationMessage = `Copied ${volumeDebugHistory.length} volume debug snapshots.`;
+  }
+
+  function downloadVolumeDebugHistory(): void {
+    if (volumeDebugHistory.length === 0 || typeof document === "undefined") {
+      return;
+    }
+    const blob = new Blob([formatVolumeDebugJson(volumeDebugHistory)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `volume-pick-debug-${new Date().toISOString().replaceAll(":", "-")}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    lastVolumeInterpretationMessage = `Downloaded ${volumeDebugHistory.length} volume debug snapshots.`;
+  }
+
+  function formatVolumeDebugCandidates(payload: VolumeInterpretationDebugPickPayload | null): string {
+    if (!payload) {
+      return "Click in the viewer to inspect pick candidates.";
+    }
+    return payload.snapshot.candidates
+      .map((candidate, index) => {
+        const label = candidate.itemName ?? candidate.itemId;
+        const score = candidate.score === null ? "miss" : candidate.score.toFixed(2);
+        return `${index + 1}. ${candidate.hit ? "*" : "-"} ${candidate.kind} ${label}
+   score ${score} depth ${candidate.depth.toFixed(4)}
+   screen ${candidate.screenX.toFixed(1)}, ${candidate.screenY.toFixed(1)}
+   world ${formatVolumeCoordinate(candidate.worldX)}, ${formatVolumeCoordinate(candidate.worldY)}, ${formatVolumeCoordinate(candidate.worldZ)}`;
+      })
+      .join("\n");
+  }
+
+  function handleVolumeEditRequest(request: VolumeInterpretationEditRequest) {
+    if (!volumeModel) {
+      return;
+    }
+    if (request.kind === "move-slice-plane") {
+      const updatedName = formatVolumeSliceName(request.axis, request.position, volumeModel.sampleDomain);
+      volumeModel = {
+        ...volumeModel,
+        slicePlanes: volumeModel.slicePlanes.map((plane) =>
+          plane.id === request.itemId
+            ? {
+                ...plane,
+                name: updatedName,
+                position: request.position
+              }
+            : plane
+        )
+      };
+      lastVolumeInterpretationMessage =
+        request.phase === "commit"
+          ? `Moved ${updatedName} to ${formatVolumeCoordinate(request.position)}.`
+          : `Moving ${updatedName}...`;
+      return;
+    }
+    handleVolumeDeleteRequest(request);
+  }
+
+  function addRandomVolumeSlice(axis: VolumeInterpretationAxis) {
+    if (!volumeModel) {
+      return;
+    }
+    const volume = volumeModel.volumes[0];
+    if (!volume) {
+      return;
+    }
+
+    volumeSliceSerial += 1;
+    const position = randomSlicePosition(axis, volume.bounds);
+    const name = formatVolumeSliceName(axis, position, volumeModel.sampleDomain);
+
+    volumeModel = {
+      ...volumeModel,
+      slicePlanes: [
+        ...volumeModel.slicePlanes,
+        {
+          id: `slice-${axis}-added-${volumeSliceSerial}`,
+          name,
+          volumeId: volume.id,
+          axis,
+          position,
+          visible: true,
+          style: {
+            colormap: volumeColormap,
+            gain: volume.displayDefaults?.gain ?? 1,
+            opacity: volumeSliceOpacity,
+            showBorder: true
+          }
+        }
+      ]
+    };
+    lastVolumeInterpretationMessage = `Added ${name}.`;
   }
 
   function handleVolumeInterpretationRequest(request: VolumeInterpretationInterpretationRequest) {
@@ -889,6 +1413,33 @@
     return value.toFixed(0);
   }
 
+  function formatVolumeSliceName(
+    axis: VolumeInterpretationAxis,
+    position: number,
+    sampleDomain: VolumeInterpretationModel["sampleDomain"]
+  ): string {
+    const axisLabel =
+      axis === "inline"
+        ? "Inline"
+        : axis === "xline"
+          ? "Xline"
+          : sampleDomain === "depth"
+            ? "Depth Slice"
+            : "Sample Slice";
+    return `${axisLabel} ${Math.round(position)}`;
+  }
+
+  function randomSlicePosition(axis: VolumeInterpretationAxis, bounds: VolumeInterpretationModel["sceneBounds"]): number {
+    const [min, max] =
+      axis === "inline"
+        ? [bounds.minX, bounds.maxX]
+        : axis === "xline"
+          ? [bounds.minY, bounds.maxY]
+          : [bounds.minZ, bounds.maxZ];
+    const padding = Math.max(12, (max - min) * 0.1);
+    return min + padding + Math.random() * Math.max(1, max - min - padding * 2);
+  }
+
   function createAvoResponseModel() {
     return createMockAvoResponseModel({
       sampleCountPerInterface: avoDense ? 4_500 : 620,
@@ -914,6 +1465,12 @@
     avoResponseModel = createAvoResponseModel();
     avoCrossplotModel = createAvoCrossplotModel();
     avoChiModel = createAvoChiModel();
+    avoResponseAxisOverrides = {};
+    avoCrossplotAxisOverrides = {};
+    avoChiAxisOverrides = {};
+    closeAxisEditorForChart("avoResponse");
+    closeAxisEditorForChart("avoCrossplot");
+    closeAxisEditorForChart("avoChi");
     avoResetToken += 1;
   }
 
@@ -921,6 +1478,12 @@
     avoResponseModel = null;
     avoCrossplotModel = null;
     avoChiModel = null;
+    avoResponseAxisOverrides = {};
+    avoCrossplotAxisOverrides = {};
+    avoChiAxisOverrides = {};
+    closeAxisEditorForChart("avoResponse");
+    closeAxisEditorForChart("avoCrossplot");
+    closeAxisEditorForChart("avoChi");
     lastAvoResponseViewport = null;
     lastAvoCrossplotViewport = null;
     lastAvoChiViewport = null;
@@ -1045,8 +1608,29 @@
     }
   }
 
+  function volumeToolIcon(tool: VolumeInterpretationChartTool): ToolbarIconName {
+    switch (tool) {
+      case "pointer":
+        return "pointer";
+      case "orbit":
+        return "orbit";
+      case "pan":
+        return "pan";
+      case "slice-drag":
+        return "sliceDrag";
+      case "interpret-seed":
+        return "crosshair";
+      default:
+        return "pointer";
+    }
+  }
+
   function setDemoRoute(next: DemoRoute) {
     activeDemo = next;
+    closeAxisEditor();
+    if (next === "seismic" || next === "gather") {
+      queueSeismicRendererKindSync();
+    }
     if (typeof window !== "undefined") {
       window.location.hash =
         next === "seismic"
@@ -1065,8 +1649,15 @@
     }
   }
 
-  function handleHashChange() {
+  function handleLocationChange() {
     activeDemo = getDemoRoute();
+    displayMode = getDemoMode();
+  }
+
+  function handleWindowKeyDown(event: KeyboardEvent) {
+    if (event.key === "Escape" && axisEditor) {
+      closeAxisEditor();
+    }
   }
 
   function getDemoRoute(): DemoRoute {
@@ -1093,50 +1684,106 @@
     }
     return "seismic";
   }
+
+  function getDemoMode(): DemoMode {
+    if (typeof window === "undefined") {
+      return "playground";
+    }
+    const mode = new URLSearchParams(window.location.search).get("mode");
+    if (mode === "embed") {
+      return "embed";
+    }
+    if (mode === "public") {
+      return "public";
+    }
+    return "playground";
+  }
 </script>
 
 <svelte:head>
-  <title>Ophiolite Charts Svelte Playground</title>
+  <title>{publicMode ? `${activePublicDemoMeta.title} Example | Ophiolite Charts` : "Ophiolite Charts Svelte Playground"}</title>
 </svelte:head>
 
-<svelte:window onhashchange={handleHashChange} />
+<svelte:window onhashchange={handleLocationChange} onpopstate={handleLocationChange} onkeydown={handleWindowKeyDown} />
 
-<div class="layout">
-  <aside class="sidebar">
-    <div>
-      <h1>Ophiolite Charts / svelte</h1>
-      <p>
-        Wrapper-level playground for <code>@ophiolite/charts</code>. The demos are split by chart family so
-        seismic and well-panel behavior can be evaluated independently.
-      </p>
-    </div>
+{#snippet avoToolbarOverlay()}
+  <ChartInteractionToolbar
+    label="AVO interaction toolbar"
+    tools={avoToolbarTools}
+    actions={avoToolbarActions}
+    onToolSelect={setAvoTool}
+    onActionSelect={runAvoAction}
+    variant="overlay"
+    iconOnly={true}
+  />
+{/snippet}
 
-    <section class="group">
-      <h2>Demo</h2>
-      <button class={["demo-button", activeDemo === "seismic" && "active-demo"]} onclick={() => setDemoRoute("seismic")}>
-        Seismic Section
-      </button>
-      <button class={["demo-button", activeDemo === "gather" && "active-demo"]} onclick={() => setDemoRoute("gather")}>
-        Prestack Gather
-      </button>
-      <button class={["demo-button", activeDemo === "survey-map" && "active-demo"]} onclick={() => setDemoRoute("survey-map")}>
-        Survey Map
-      </button>
-      <button class={["demo-button", activeDemo === "rock-physics" && "active-demo"]} onclick={() => setDemoRoute("rock-physics")}>
-        Rock Physics
-      </button>
-      <button class={["demo-button", activeDemo === "volume" && "active-demo"]} onclick={() => setDemoRoute("volume")}>
-        Volume Interpretation
-      </button>
-      <button class={["demo-button", activeDemo === "avo" && "active-demo"]} onclick={() => setDemoRoute("avo")}>
-        AVO
-      </button>
-      <button class={["demo-button", activeDemo === "well-panel" && "active-demo"]} onclick={() => setDemoRoute("well-panel")}>
-        Well Panel
-      </button>
-    </section>
+{#snippet correlationToolbarOverlay()}
+  <ChartInteractionToolbar
+    label="Correlation interaction toolbar"
+    tools={correlationToolbarTools}
+    actions={correlationToolbarActions}
+    onToolSelect={setCorrelationTool}
+    onActionSelect={runCorrelationAction}
+    variant="overlay"
+    iconOnly={true}
+  />
+{/snippet}
 
-    {#if activeDemo === "seismic"}
+<div class={["layout", publicMode && "layout-public", embedMode && "layout-embed"]} style={demoCssVars}>
+  {#if !publicMode}
+    <aside class="sidebar">
+      <div>
+        <h1>Ophiolite Charts / svelte</h1>
+        <p>
+          Wrapper-level playground for <code>@ophiolite/charts</code>. The demos are split by chart family so
+          seismic and well-panel behavior can be evaluated independently.
+        </p>
+      </div>
+
+      <section class="group">
+        <h2>Demo</h2>
+        <button class={["demo-button", activeDemo === "seismic" && "active-demo"]} onclick={() => setDemoRoute("seismic")}>
+          Seismic Section
+        </button>
+        <button class={["demo-button", activeDemo === "gather" && "active-demo"]} onclick={() => setDemoRoute("gather")}>
+          Prestack Gather
+        </button>
+        <button class={["demo-button", activeDemo === "survey-map" && "active-demo"]} onclick={() => setDemoRoute("survey-map")}>
+          Survey Map
+        </button>
+        <button class={["demo-button", activeDemo === "rock-physics" && "active-demo"]} onclick={() => setDemoRoute("rock-physics")}>
+          Rock Physics
+        </button>
+        <button class={["demo-button", activeDemo === "volume" && "active-demo"]} onclick={() => setDemoRoute("volume")}>
+          Volume Interpretation
+        </button>
+        <button class={["demo-button", activeDemo === "avo" && "active-demo"]} onclick={() => setDemoRoute("avo")}>
+          AVO
+        </button>
+        <button class={["demo-button", activeDemo === "well-panel" && "active-demo"]} onclick={() => setDemoRoute("well-panel")}>
+          Well Panel
+        </button>
+      </section>
+
+      {#if activeDemo === "seismic"}
+      <section class="group">
+        <h2>Renderer</h2>
+        <label class="demo-field">
+          <span>Base Renderer</span>
+          <select
+            value={seismicBaseRenderer}
+            onchange={(event) =>
+              setSeismicBaseRendererPreference(event.currentTarget.value as DemoSeismicBaseRenderer)}
+          >
+            <option value="auto">Auto</option>
+            <option value="worker-webgl">Worker WebGL</option>
+            <option value="local-webgl">Local WebGL</option>
+            <option value="local-canvas">Local Canvas</option>
+          </select>
+        </label>
+      </section>
+
       <section class="group">
         <h2>Seismic Controls</h2>
         <button onclick={toggleSectionKind}>
@@ -1187,6 +1834,8 @@
           velocity overlay: {showVelocityOverlay ? "on" : "off"}
           velocity colormap: {velocityOverlayColorMap}
           velocity alpha: {Math.round(velocityOverlayOpacity * 100)}%
+          base renderer requested: {seismicBaseRenderer}
+          base renderer active: {activeSeismicBaseRenderer}
           tool: {lastSeismicInteractionState.tool}
           last event: {lastSeismicEvent}
           {#if section}
@@ -1212,6 +1861,23 @@
       </section>
     {:else if activeDemo === "gather"}
       <section class="group">
+        <h2>Renderer</h2>
+        <label class="demo-field">
+          <span>Base Renderer</span>
+          <select
+            value={seismicBaseRenderer}
+            onchange={(event) =>
+              setSeismicBaseRendererPreference(event.currentTarget.value as DemoSeismicBaseRenderer)}
+          >
+            <option value="auto">Auto</option>
+            <option value="worker-webgl">Worker WebGL</option>
+            <option value="local-webgl">Local WebGL</option>
+            <option value="local-canvas">Local Canvas</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="group">
         <h2>Gather Controls</h2>
         <button onclick={refreshGather}>Refresh Mock Gather</button>
         <button onclick={clearGather}>Clear Gather</button>
@@ -1231,6 +1897,8 @@
           gather loaded: {gather ? "yes" : "no"}
           render mode: {gatherRenderMode}
           colormap: {gatherColormap}
+          base renderer requested: {seismicBaseRenderer}
+          base renderer active: {activeGatherBaseRenderer}
           tool: {lastGatherInteractionState.tool}
           last event: {lastGatherEvent}
           {#if gather}
@@ -1244,13 +1912,7 @@
       <section class="group">
         <h2>Gather Readout</h2>
         <div class="readout">
-          {#if lastGatherProbe}
-            trace {lastGatherProbe.trace_index} ({lastGatherProbe.trace_coordinate.toFixed(2)})
-            sample {lastGatherProbe.sample_index} ({lastGatherProbe.sample_value.toFixed(1)})
-            amplitude {lastGatherProbe.amplitude.toFixed(4)}
-          {:else}
-            Probe callbacks will appear after you move over the gather.
-          {/if}
+          Probe readout is rendered inside the chart.
 
           {#if lastGatherViewport}
             traces {lastGatherViewport.viewport.trace_start}..{lastGatherViewport.viewport.trace_end}
@@ -1287,14 +1949,7 @@
       <section class="group">
         <h2>Survey Map Readout</h2>
         <div class="readout">
-          {#if lastSurveyMapProbe}
-            x {lastSurveyMapProbe.x.toFixed(0)}
-            y {lastSurveyMapProbe.y.toFixed(0)}
-            well {lastSurveyMapProbe.wellName ?? "n/a"}
-            value {lastSurveyMapProbe.scalarValue?.toFixed(1) ?? "n/a"}
-          {:else}
-            Probe callbacks will appear after you move over the survey map.
-          {/if}
+          Probe readout is rendered inside the chart.
 
           {#if lastSurveyMapViewport}
             x {lastSurveyMapViewport.xMin.toFixed(0)}..{lastSurveyMapViewport.xMax.toFixed(0)}
@@ -1315,6 +1970,20 @@
         <button onclick={cycleRockPhysicsTemplate} disabled={!rockPhysicsModel}>
           Next Template: {rockPhysicsTemplateSpec.title}
         </button>
+        {#each ROCK_PHYSICS_TEMPLATE_GROUPS as group (group.id)}
+          <div class="template-picker">
+            <div class="template-picker-label">{group.label}</div>
+            {#each group.templateIds as templateId (templateId)}
+              <button
+                class:active-demo={rockPhysicsTemplateId === templateId}
+                onclick={() => setRockPhysicsTemplate(templateId)}
+                disabled={rockPhysicsTemplateId === templateId && rockPhysicsModel !== null}
+              >
+                {getRockPhysicsTemplateSpec(templateId).title}
+              </button>
+            {/each}
+          </div>
+        {/each}
         <button onclick={toggleRockPhysicsColorMode} disabled={!rockPhysicsModel}>
           Next Color: {rockPhysicsModel?.colorBinding.label ?? rockPhysicsColorMode}
         </button>
@@ -1369,8 +2038,14 @@
         <h2>Volume Controls</h2>
         <button onclick={refreshVolumeScene}>Refresh Scene</button>
         <button onclick={clearVolumeScene}>Clear Scene</button>
+        <button onclick={() => addRandomVolumeSlice("inline")} disabled={!volumeModel}>Add Inline Slice</button>
+        <button onclick={() => addRandomVolumeSlice("xline")} disabled={!volumeModel}>Add Xline Slice</button>
+        <button onclick={() => addRandomVolumeSlice("sample")} disabled={!volumeModel}>
+          Add {volumeModel?.sampleDomain === "depth" ? "Depth" : "Sample"} Slice
+        </button>
         <button onclick={fitVolumeToData} disabled={!volumeModel}>Fit To Data</button>
-        <button onclick={resetVolumeView} disabled={!volumeModel}>Reset View</button>
+        <button onclick={setVolumeTopView} disabled={!volumeModel}>Top View</button>
+        <button onclick={setVolumeSideView} disabled={!volumeModel}>Side View</button>
         <button onclick={centerVolumeSelection} disabled={!volumeModel}>Center Selection</button>
         <button onclick={() => zoomVolume(1.12)} disabled={!volumeModel}>Zoom In</button>
         <button onclick={() => zoomVolume(0.9)} disabled={!volumeModel}>Zoom Out</button>
@@ -1436,11 +2111,44 @@
             selection {lastVolumeSelection.kind} {lastVolumeSelection.itemName ?? lastVolumeSelection.itemId}
           {/if}
 
+          {#if lastVolumeInteractionState.selectionContext}
+            actions {lastVolumeInteractionState.selectionContext.allowedGestures.join(", ")}
+          {/if}
+
           {#if lastVolumeView}
             yaw {lastVolumeView.yawDeg.toFixed(1)} pitch {lastVolumeView.pitchDeg.toFixed(1)} zoom {lastVolumeView.zoom.toFixed(2)}
           {/if}
 
           {lastVolumeInterpretationMessage}
+        </div>
+      </section>
+
+      <section class="group">
+        <h2>Volume Pick Debug</h2>
+        <button onclick={copyVolumeDebugHistory} disabled={volumeDebugHistory.length === 0}>Copy Debug JSON</button>
+        <button onclick={downloadVolumeDebugHistory} disabled={volumeDebugHistory.length === 0}>Download Debug JSON</button>
+        <div class="readout">
+          {#if lastVolumeDebugPick}
+            phase {lastVolumeDebugPick.phase}
+            pointer {lastVolumeDebugPick.stageX.toFixed(1)}, {lastVolumeDebugPick.stageY.toFixed(1)}
+            render pointer {lastVolumeDebugPick.snapshot.renderPointerX.toFixed(1)}, {lastVolumeDebugPick.snapshot.renderPointerY.toFixed(1)}
+            render scale {lastVolumeDebugPick.snapshot.renderScaleX.toFixed(2)} x {lastVolumeDebugPick.snapshot.renderScaleY.toFixed(2)}
+            winner {lastVolumeDebugPick.snapshot.winner?.itemName ?? lastVolumeDebugPick.snapshot.winner?.itemId ?? "none"}
+            winner target {lastVolumeDebugPick.snapshot.winner?.kind ?? "none"}
+            actual winner {lastVolumeDebugPick.snapshot.actualWinner?.itemName ?? lastVolumeDebugPick.snapshot.actualWinner?.itemId ?? "none"}
+            actual picked props {lastVolumeDebugPick.snapshot.actualPickedCount}
+            actual matched by {lastVolumeDebugPick.snapshot.actualMatchedBy ?? "none"}
+            {#if (lastVolumeDebugPick.snapshot.syntheticWinner?.itemName ?? lastVolumeDebugPick.snapshot.syntheticWinner?.itemId ?? "none") !== "none"
+              && (lastVolumeDebugPick.snapshot.syntheticWinner?.itemName ?? lastVolumeDebugPick.snapshot.syntheticWinner?.itemId)
+                !== (lastVolumeDebugPick.snapshot.actualWinner?.itemName ?? lastVolumeDebugPick.snapshot.actualWinner?.itemId)}
+              debug synthetic {lastVolumeDebugPick.snapshot.syntheticWinner?.itemName ?? lastVolumeDebugPick.snapshot.syntheticWinner?.itemId}
+            {/if}
+            winner world {lastVolumeDebugPick.snapshot.winner
+              ? `${formatVolumeCoordinate(lastVolumeDebugPick.snapshot.winner.worldX)}, ${formatVolumeCoordinate(lastVolumeDebugPick.snapshot.winner.worldY)}, ${formatVolumeCoordinate(lastVolumeDebugPick.snapshot.winner.worldZ)}`
+              : "n/a"}
+          {/if}
+
+          {formatVolumeDebugCandidates(lastVolumeDebugPick)}
         </div>
       </section>
     {:else if activeDemo === "avo"}
@@ -1511,7 +2219,7 @@
         <div class="readout">
             chart bound: {correlationChart ? "yes" : "no"}
             panel loaded: {correlationPanel ? "yes" : "no"}
-            tool: {lastCorrelationInteractionState.tool}
+            tool: {correlationInteractions.tool}
             last event: {lastCorrelationEvent}
           {#if correlationPanel}
             wells: {correlationPanel.wells.length}
@@ -1540,10 +2248,44 @@
           {/if}
         </div>
       </section>
-    {/if}
-  </aside>
 
-  <main class="content">
+      <section class="group">
+        <h2>Well Panel Debug</h2>
+        <button onclick={captureCorrelationDebug} disabled={!correlationChart}>Refresh Debug JSON</button>
+        <button onclick={copyCorrelationDebug} disabled={!lastCorrelationDebug}>Copy Debug JSON</button>
+        <div class="readout">
+          {#if lastCorrelationDebug}
+            {JSON.stringify(lastCorrelationDebug, null, 2)}
+          {:else}
+            Debug snapshot will appear after the well panel chart mounts.
+          {/if}
+        </div>
+      </section>
+      {/if}
+    </aside>
+  {/if}
+
+  <main class={["content", publicMode && "content-public", embedMode && "content-embed"]}>
+    {#if publicMode && !embedMode}
+      <section class="public-intro">
+        <div class="public-copy">
+          <p class="public-eyebrow">{activePublicDemoMeta.eyebrow}</p>
+          <h1>{activePublicDemoMeta.title}</h1>
+          <p>{activePublicDemoMeta.summary}</p>
+        </div>
+        <div class="public-nav">
+          {#each LAUNCH_DEMO_ROUTES as route (route)}
+            <button
+              class={["demo-button", "public-nav-button", activeDemo === route && "active-demo"]}
+              onclick={() => setDemoRoute(route)}
+            >
+              {DEMO_LABELS[route]}
+            </button>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
     {#if activeDemo === "seismic"}
       <section class="card">
         <header>
@@ -1573,6 +2315,7 @@
               iconOnly={true}
             />
           </div>
+          {#key `seismic:${seismicRendererEpoch}`}
             <SeismicSectionChart
               bind:this={seismicChart}
               chartId="svelte-playground-seismic"
@@ -1584,15 +2327,25 @@
               displayTransform={{
                 gain: 1.15,
                 renderMode,
-              colormap,
-              polarity: "normal"
-            }}
-            interactions={seismicInteractions}
-            resetToken={resetToken}
-            onInteractionEvent={(payload) => (lastSeismicEvent = payload.event.type)}
-            onInteractionStateChange={handleSeismicInteractionStateChange}
-            onViewportChange={(event) => (lastViewport = event)}
-          />
+                colormap,
+                polarity: "normal"
+              }}
+              interactions={seismicInteractions}
+              resetToken={resetToken}
+              onInteractionEvent={(payload) => {
+                lastSeismicEvent = payload.event.type;
+                syncSeismicRendererKinds();
+              }}
+              onInteractionStateChange={(event) => {
+                handleSeismicInteractionStateChange(event);
+                syncSeismicRendererKinds();
+              }}
+              onViewportChange={(event) => {
+                lastViewport = event;
+                syncSeismicRendererKinds();
+              }}
+            />
+          {/key}
         </div>
       </section>
     {:else if activeDemo === "gather"}
@@ -1623,24 +2376,38 @@
               iconOnly={true}
             />
           </div>
-          <SeismicGatherChart
-            bind:this={gatherChart}
-            chartId="svelte-playground-gather"
-            viewId={gatherViewId}
-            {gather}
-            displayTransform={{
-              gain: 1,
-              renderMode: gatherRenderMode,
-              colormap: gatherColormap,
-              polarity: "normal"
-            }}
-            interactions={gatherInteractions}
-            resetToken={gatherResetToken}
-            onInteractionEvent={(payload) => (lastGatherEvent = payload.event.type)}
-            onInteractionStateChange={handleGatherInteractionStateChange}
-            onProbeChange={(event) => (lastGatherProbe = event.probe)}
-            onViewportChange={(event) => (lastGatherViewport = event)}
-          />
+          {#key `gather:${seismicRendererEpoch}`}
+            <SeismicGatherChart
+              bind:this={gatherChart}
+              chartId="svelte-playground-gather"
+              viewId={gatherViewId}
+              {gather}
+              displayTransform={{
+                gain: 1,
+                renderMode: gatherRenderMode,
+                colormap: gatherColormap,
+                polarity: "normal"
+              }}
+              interactions={gatherInteractions}
+              resetToken={gatherResetToken}
+              onInteractionEvent={(payload) => {
+                lastGatherEvent = payload.event.type;
+                syncSeismicRendererKinds();
+              }}
+              onInteractionStateChange={(event) => {
+                handleGatherInteractionStateChange(event);
+                syncSeismicRendererKinds();
+              }}
+              onProbeChange={(event) => {
+                lastGatherProbe = event.probe;
+                syncSeismicRendererKinds();
+              }}
+              onViewportChange={(event) => {
+                lastGatherViewport = event;
+                syncSeismicRendererKinds();
+              }}
+            />
+          {/key}
         </div>
       </section>
     {:else if activeDemo === "survey-map"}
@@ -1721,7 +2488,6 @@
             interactions={rockPhysicsInteractions}
             resetToken={rockPhysicsResetToken}
             onInteractionEvent={(payload) => (lastRockPhysicsEvent = payload.event.type)}
-            onInteractionStateChange={handleRockPhysicsInteractionStateChange}
             onProbeChange={(event) => (lastRockPhysicsProbe = event.probe)}
             onViewportChange={(event) => (lastRockPhysicsViewport = event.viewport)}
           />
@@ -1740,6 +2506,9 @@
           </div>
         </header>
         <div class="viewer viewer-volume">
+          <div class="viewer-selection-overlay viewer-selection-overlay-volume">
+            {describeVolumeSelection(lastVolumeClickedSelection)}
+          </div>
           <div
             class="viewer-toolbar viewer-toolbar-seismic"
             style:top={seismicToolbarTop}
@@ -1766,25 +2535,15 @@
             onInteractionEvent={(payload) => (lastVolumeEvent = payload.event.type)}
             onInteractionStateChange={handleVolumeInteractionStateChange}
             onProbeChange={(event) => (lastVolumeProbe = event.probe)}
-            onSelectionChange={(event) => (lastVolumeSelection = event.selection)}
+            onSelectionChange={(event) => handleVolumeSelectionChange(event.selection)}
             onViewStateChange={(event) => (lastVolumeView = event.view)}
+            onDebugPick={handleVolumeDebugPick}
+            onEditRequest={(event) => handleVolumeEditRequest(event.request)}
             onInterpretationRequest={(event) => handleVolumeInterpretationRequest(event.request)}
           />
         </div>
       </section>
     {:else if activeDemo === "avo"}
-      {#snippet avoToolbarOverlay()}
-        <ChartInteractionToolbar
-          label="AVO interaction toolbar"
-          tools={avoToolbarTools}
-          actions={avoToolbarActions}
-          onToolSelect={setAvoTool}
-          onActionSelect={runAvoAction}
-          variant="overlay"
-          iconOnly={true}
-        />
-      {/snippet}
-
       <section class="card">
         <header>
           <div>
@@ -1800,9 +2559,13 @@
             bind:this={avoResponseChart}
             chartId="svelte-playground-avo-response"
             model={avoResponseModel}
+            axisOverrides={avoResponseAxisOverrides}
             interactions={avoInteractions}
             resetToken={avoResetToken}
-            stageTopLeft={avoToolbarOverlay}
+            stageTopLeft={avoToolbarOverlay as never}
+            onAxisContextRequest={(event) =>
+              openAxisEditor("avoResponse", "AVO Response", event, avoResponseAxisOverrides)}
+            onAxisOverridesChange={(event) => (avoResponseAxisOverrides = event.axisOverrides)}
             onInteractionEvent={(payload) => (lastAvoEvent = payload.event.type)}
             onInteractionStateChange={handleAvoInteractionStateChange}
             onProbeChange={(event) => (lastAvoResponseProbe = event.probe)}
@@ -1826,9 +2589,13 @@
             bind:this={avoCrossplotChart}
             chartId="svelte-playground-avo-crossplot"
             model={avoCrossplotModel}
+            axisOverrides={avoCrossplotAxisOverrides}
             interactions={avoInteractions}
             resetToken={avoResetToken}
-            stageTopLeft={avoToolbarOverlay}
+            stageTopLeft={avoToolbarOverlay as never}
+            onAxisContextRequest={(event) =>
+              openAxisEditor("avoCrossplot", "AVO Intercept-Gradient Crossplot", event, avoCrossplotAxisOverrides)}
+            onAxisOverridesChange={(event) => (avoCrossplotAxisOverrides = event.axisOverrides)}
             onInteractionEvent={(payload) => (lastAvoEvent = payload.event.type)}
             onInteractionStateChange={handleAvoInteractionStateChange}
             onProbeChange={(event) => (lastAvoCrossplotProbe = event.probe)}
@@ -1852,9 +2619,13 @@
             bind:this={avoHistogramChart}
             chartId="svelte-playground-avo-chi"
             model={avoChiModel}
+            axisOverrides={avoChiAxisOverrides}
             interactions={avoInteractions}
             resetToken={avoResetToken}
-            stageTopLeft={avoToolbarOverlay}
+            stageTopLeft={avoToolbarOverlay as never}
+            onAxisContextRequest={(event) =>
+              openAxisEditor("avoChi", "AVO Weighted-Stack / Chi Projection", event, avoChiAxisOverrides)}
+            onAxisOverridesChange={(event) => (avoChiAxisOverrides = event.axisOverrides)}
             onInteractionEvent={(payload) => (lastAvoEvent = payload.event.type)}
             onInteractionStateChange={handleAvoInteractionStateChange}
             onProbeChange={(event) => (lastAvoChiProbe = event.probe)}
@@ -1873,17 +2644,6 @@
             </p>
           </div>
         </header>
-        {#snippet correlationToolbarOverlay()}
-          <ChartInteractionToolbar
-            label="Correlation interaction toolbar"
-            tools={correlationToolbarTools}
-            actions={correlationToolbarActions}
-            onToolSelect={setCorrelationTool}
-            onActionSelect={runCorrelationAction}
-            variant="overlay"
-            iconOnly={true}
-          />
-        {/snippet}
         <div class="viewer viewer-correlation">
           <WellCorrelationPanelChart
             bind:this={correlationChart}
@@ -1891,7 +2651,7 @@
             panel={correlationPanel}
             interactions={correlationInteractions}
             resetToken={correlationResetToken}
-            stageTopLeft={correlationToolbarOverlay}
+            stageTopLeft={correlationToolbarOverlay as never}
             onInteractionEvent={(payload) => (lastCorrelationEvent = payload.event.type)}
             onInteractionStateChange={handleCorrelationInteractionStateChange}
             onProbeChange={(event) => (lastCorrelationProbe = event.probe)}
@@ -1901,6 +2661,104 @@
       </section>
     {/if}
   </main>
+
+  {#if axisEditor}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div class="axis-editor-backdrop" onclick={closeAxisEditor}>
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="axis-editor-panel"
+        style:left={`${Math.max(16, axisEditor.clientX - 140)}px`}
+        style:top={`${Math.max(16, axisEditor.clientY - 12)}px`}
+        onclick={(event) => event.stopPropagation()}
+      >
+        <div class="axis-editor-header">
+          <div>
+            <h2>{axisEditor.chartLabel}</h2>
+            <p>{axisEditor.axis.toUpperCase()} axis</p>
+          </div>
+          <button type="button" class="axis-editor-close" onclick={closeAxisEditor}>Close</button>
+        </div>
+
+        <label class="axis-editor-field">
+          <span>Label</span>
+          <input
+            type="text"
+            value={axisEditor.form.label}
+            oninput={(event) => updateAxisEditorField("label", event.currentTarget.value)}
+          />
+        </label>
+
+        <label class="axis-editor-field">
+          <span>Unit</span>
+          <input
+            type="text"
+            value={axisEditor.form.unit}
+            oninput={(event) => updateAxisEditorField("unit", event.currentTarget.value)}
+          />
+        </label>
+
+        <div class="axis-editor-grid">
+          <label class="axis-editor-field">
+            <span>Min</span>
+            <input
+              type="number"
+              step="any"
+              value={axisEditor.form.min}
+              oninput={(event) => updateAxisEditorField("min", event.currentTarget.value)}
+            />
+          </label>
+          <label class="axis-editor-field">
+            <span>Max</span>
+            <input
+              type="number"
+              step="any"
+              value={axisEditor.form.max}
+              oninput={(event) => updateAxisEditorField("max", event.currentTarget.value)}
+            />
+          </label>
+        </div>
+
+        <div class="axis-editor-grid">
+          <label class="axis-editor-field">
+            <span>Tick Count</span>
+            <input
+              type="number"
+              min="2"
+              step="1"
+              value={axisEditor.form.tickCount}
+              oninput={(event) => updateAxisEditorField("tickCount", event.currentTarget.value)}
+            />
+          </label>
+          <label class="axis-editor-field">
+            <span>Tick Format</span>
+            <select
+              value={axisEditor.form.tickFormat}
+              onchange={(event) => updateAxisEditorField("tickFormat", event.currentTarget.value)}
+            >
+              <option value="auto">Auto</option>
+              <option value="fixed:0">Fixed 0</option>
+              <option value="fixed:1">Fixed 1</option>
+              <option value="fixed:2">Fixed 2</option>
+              <option value="fixed:3">Fixed 3</option>
+              <option value="fixed:4">Fixed 4</option>
+              <option value="scientific">Scientific</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="axis-editor-actions">
+          <button type="button" class="axis-editor-secondary" onclick={resetAxisEditorAxis}>Reset Axis</button>
+          <div class="axis-editor-action-group">
+            <button type="button" class="axis-editor-secondary" onclick={closeAxisEditor}>Cancel</button>
+            <button type="button" onclick={applyAxisEditor}>Apply</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -1912,8 +2770,7 @@
   }
 
   :global(body) {
-    font-family: "Segoe UI", sans-serif;
-    background: linear-gradient(160deg, #07131b 0%, #102534 45%, #17384c 100%);
+    background: #0b1720;
     color: #edf2f5;
   }
 
@@ -1921,15 +2778,27 @@
     display: grid;
     grid-template-columns: 340px 1fr;
     min-height: 100%;
+    font-family: var(--demo-font-family);
+    background: var(--demo-shell-bg);
+    color: var(--demo-shell-text);
   }
 
   .sidebar {
     padding: 22px;
-    border-right: 1px solid rgba(255, 255, 255, 0.12);
-    background: rgba(5, 10, 16, 0.48);
+    border-right: 1px solid var(--demo-sidebar-border);
+    background: var(--demo-sidebar-bg);
     display: grid;
     align-content: start;
     gap: 18px;
+  }
+
+  .layout-public {
+    grid-template-columns: 1fr;
+    min-height: 100vh;
+  }
+
+  .layout-embed {
+    min-height: auto;
   }
 
   h1,
@@ -1943,7 +2812,7 @@
   }
 
   p {
-    color: #c7d6de;
+    color: var(--demo-text-muted);
     line-height: 1.45;
   }
 
@@ -1961,34 +2830,66 @@
     font-size: 13px;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #bfd0da;
+    color: var(--demo-group-title);
   }
 
   button {
     padding: 10px 12px;
-    border-radius: 10px;
-    border: 0;
+    border-radius: var(--demo-radius-md);
+    border: 1px solid var(--demo-button-border);
     font: inherit;
-    background: #e8eff3;
-    color: #07131b;
+    background: var(--demo-button-bg);
+    color: var(--demo-button-text);
     font-weight: 600;
     cursor: pointer;
+    box-shadow: var(--demo-button-shadow);
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease,
+      opacity 120ms ease;
   }
 
   button.active-demo {
-    background: #9dd9ff;
+    background: var(--demo-button-bg-active);
   }
 
   button:disabled {
     cursor: not-allowed;
     opacity: 0.55;
+    background: var(--demo-button-bg-disabled);
+    box-shadow: none;
   }
 
   .range-control {
     display: grid;
     gap: 6px;
     font-size: 12px;
-    color: #d6e4eb;
+    color: var(--demo-shell-text);
+  }
+
+  .demo-field {
+    display: grid;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--demo-shell-text);
+  }
+
+  .demo-field select {
+    min-width: 0;
+    padding: 10px 12px;
+    border-radius: var(--demo-radius-md);
+    border: 1px solid var(--demo-button-border);
+    background: var(--demo-button-bg);
+    color: var(--demo-button-text);
+    font: inherit;
+    box-shadow: var(--demo-button-shadow);
+  }
+
+  .demo-field select:focus {
+    outline: none;
+    border-color: var(--demo-input-border-focus);
+    box-shadow: 0 0 0 3px rgba(134, 178, 203, 0.18);
   }
 
   .range-control input {
@@ -1997,11 +2898,26 @@
 
   .readout {
     padding: 10px 12px;
-    border-radius: 10px;
-    background: rgba(0, 0, 0, 0.22);
+    border-radius: var(--demo-radius-md);
+    border: 1px solid var(--demo-readout-border);
+    background: var(--demo-readout-bg);
     white-space: pre-wrap;
     font-size: 12px;
     line-height: 1.45;
+  }
+
+  .template-picker {
+    display: grid;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .template-picker-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--demo-text-muted);
   }
 
   .content {
@@ -2010,11 +2926,68 @@
     gap: 22px;
   }
 
+  .content-public {
+    width: min(1440px, 100%);
+    margin: 0 auto;
+    padding: 28px;
+    gap: 18px;
+  }
+
+  .content-embed {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    gap: 0;
+  }
+
+  .public-intro {
+    display: grid;
+    gap: 18px;
+    padding: 10px 0 2px;
+  }
+
+  .public-copy {
+    display: grid;
+    gap: 8px;
+    max-width: 760px;
+  }
+
+  .public-eyebrow {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--demo-group-title);
+  }
+
+  .public-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .public-nav-button {
+    min-width: 0;
+  }
+
   .card {
     display: grid;
     grid-template-rows: auto 1fr;
     gap: 10px;
     min-height: 480px;
+  }
+
+  .content-public .card {
+    min-height: 0;
+  }
+
+  .content-embed .card {
+    min-height: 0;
+    gap: 0;
+  }
+
+  .content-embed .card > header {
+    display: none;
   }
 
   header {
@@ -2032,9 +3005,9 @@
   .viewer {
     position: relative;
     min-height: 520px;
-    border-radius: 18px;
+    border-radius: var(--demo-radius-md);
     overflow: hidden;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    box-shadow: inset 0 0 0 1px var(--demo-viewer-border);
   }
 
   .viewer-seismic {
@@ -2086,6 +3059,141 @@
     right: var(--plot-right);
   }
 
+  .viewer-selection-overlay {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 2;
+    max-width: min(320px, calc(100% - 32px));
+    padding: 9px 11px;
+    border: 1px solid var(--demo-selection-border);
+    border-radius: var(--demo-radius-md);
+    background: var(--demo-selection-bg);
+    color: var(--demo-selection-text);
+    font: 600 12px/1.35 var(--demo-font-family);
+    pointer-events: none;
+  }
+
+  .viewer-selection-overlay-volume {
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+  }
+
+  .axis-editor-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: var(--demo-modal-backdrop);
+  }
+
+  .axis-editor-panel {
+    position: fixed;
+    width: min(336px, calc(100vw - 32px));
+    display: grid;
+    gap: 14px;
+    padding: 14px;
+    border-radius: var(--demo-radius-md);
+    border: 1px solid var(--demo-modal-border);
+    background: var(--demo-modal-bg);
+    box-shadow: var(--demo-modal-shadow);
+    color: var(--demo-modal-text);
+  }
+
+  .axis-editor-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .axis-editor-header h2 {
+    font-size: 14px;
+    line-height: 1.1;
+  }
+
+  .axis-editor-header p {
+    margin-top: 4px;
+    font-size: 11px;
+    line-height: 1.2;
+    color: var(--demo-modal-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .axis-editor-close {
+    background: var(--demo-secondary-bg);
+    border-color: var(--demo-secondary-border);
+    color: var(--demo-secondary-text);
+    box-shadow: none;
+  }
+
+  .axis-editor-grid {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .axis-editor-field {
+    display: grid;
+    gap: 6px;
+    font-size: 11px;
+    line-height: 1.2;
+    color: var(--demo-modal-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .axis-editor-field input,
+  .axis-editor-field select {
+    min-width: 0;
+    padding: 9px 10px;
+    border-radius: var(--demo-radius-sm);
+    border: 1px solid var(--demo-input-border);
+    background: var(--demo-input-bg);
+    color: var(--demo-input-text);
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.25;
+    box-sizing: border-box;
+  }
+
+  .axis-editor-field input::placeholder {
+    color: var(--demo-input-placeholder);
+  }
+
+  .axis-editor-field input:focus,
+  .axis-editor-field select:focus {
+    outline: none;
+    border-color: var(--demo-input-border-focus);
+    box-shadow: 0 0 0 3px rgba(134, 178, 203, 0.18);
+  }
+
+  .axis-editor-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .axis-editor-action-group {
+    display: flex;
+    gap: 8px;
+  }
+
+  .axis-editor-secondary {
+    background: var(--demo-secondary-bg);
+    border-color: var(--demo-secondary-border);
+    color: var(--demo-secondary-text);
+    box-shadow: none;
+  }
+
+  .axis-editor-actions button:not(.axis-editor-secondary) {
+    background: var(--demo-primary-bg);
+    border-color: var(--demo-primary-border);
+    color: var(--demo-primary-text);
+    box-shadow: none;
+  }
+
   @media (max-width: 1100px) {
     .layout {
       grid-template-columns: 1fr;
@@ -2097,6 +3205,21 @@
 
     .viewer {
       min-height: 420px;
+    }
+
+    .content-public {
+      padding: 18px;
+    }
+
+    .axis-editor-grid,
+    .axis-editor-actions {
+      grid-template-columns: 1fr;
+      justify-items: stretch;
+    }
+
+    .axis-editor-actions,
+    .axis-editor-action-group {
+      display: grid;
     }
   }
 </style>

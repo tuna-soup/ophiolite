@@ -16,7 +16,7 @@
   } from "./types";
 
   interface DragState {
-    kind: "orbit" | "pan" | "slice-drag";
+    kind: "orbit" | "pan" | "selected-slice-move" | "zoom";
     pointerId: number;
     lastX: number;
     lastY: number;
@@ -43,6 +43,9 @@
     onViewStateChange,
     onInteractionStateChange,
     onInteractionEvent,
+    onEditRequest,
+    onDeleteRequest,
+    onDebugPick,
     onInterpretationRequest
   }: VolumeInterpretationChartProps = $props();
 
@@ -59,10 +62,10 @@
     scaleVolumeInterpretationStageSize(resolveVolumeInterpretationStageSize(model), stageScale)
   );
   let hostCursor = $derived.by(() => {
-    if (drag?.kind === "orbit" || drag?.kind === "pan" || drag?.kind === "slice-drag") {
+    if (drag?.kind === "orbit" || drag?.kind === "pan" || drag?.kind === "selected-slice-move") {
       return "grabbing";
     }
-    if (effectiveTool === "orbit" || effectiveTool === "pan" || effectiveTool === "slice-drag") {
+    if (effectiveTool === "orbit" || effectiveTool === "pan") {
       return "grab";
     }
     if (effectiveTool === "interpret-seed") {
@@ -104,7 +107,7 @@
         });
       }
 
-      const nextInteractionState = createInteractionState(state.tool);
+      const nextInteractionState = createInteractionState(state.tool, state.selectionContext);
       const nextInteractionStateKey = JSON.stringify(nextInteractionState);
       if (nextInteractionStateKey !== lastInteractionStateKey) {
         lastInteractionStateKey = nextInteractionStateKey;
@@ -115,6 +118,18 @@
       onInteractionEvent?.({
         chartId,
         event
+      });
+    });
+    const unsubscribeEditRequest = activeController.onEditRequest((request) => {
+      onEditRequest?.({
+        chartId,
+        request
+      });
+    });
+    const unsubscribeDeleteRequest = activeController.onDeleteRequest((request) => {
+      onDeleteRequest?.({
+        chartId,
+        request
       });
     });
     const unsubscribeInterpretationRequest = activeController.onInterpretationRequest((request) => {
@@ -134,8 +149,10 @@
     const onPointerLeave = () => handlePointerLeave();
     const onWheel = (event: WheelEvent) => handleWheel(event);
     const onKeyDown = (event: KeyboardEvent) => handleKeyDown(event);
+    const onContextMenu = (event: MouseEvent) => handleContextMenu(event);
     const onFocus = () => controller?.interactions.setFocused(true);
     const onBlur = () => {
+      controller?.cancelSelectedSliceMove();
       drag = null;
       controller?.interactions.setFocused(false);
       controller?.clearPointer();
@@ -150,6 +167,7 @@
     element.addEventListener("pointerleave", onPointerLeave);
     element.addEventListener("wheel", onWheel, { passive: false });
     element.addEventListener("keydown", onKeyDown);
+    element.addEventListener("contextmenu", onContextMenu);
     element.addEventListener("focus", onFocus);
     element.addEventListener("blur", onBlur);
 
@@ -158,6 +176,8 @@
     });
 
     return () => {
+      unsubscribeEditRequest();
+      unsubscribeDeleteRequest();
       unsubscribeInterpretationRequest();
       unsubscribeInteractionEvent();
       unsubscribeStateChange();
@@ -169,6 +189,7 @@
       element.removeEventListener("pointerleave", onPointerLeave);
       element.removeEventListener("wheel", onWheel);
       element.removeEventListener("keydown", onKeyDown);
+      element.removeEventListener("contextmenu", onContextMenu);
       element.removeEventListener("focus", onFocus);
       element.removeEventListener("blur", onBlur);
       if (controller === activeController) {
@@ -184,6 +205,14 @@
 
   export function resetView(): void {
     controller?.resetView();
+  }
+
+  export function topView(): void {
+    controller?.setTopView();
+  }
+
+  export function sideView(): void {
+    controller?.setSideView();
   }
 
   export function centerSelection(): void {
@@ -229,6 +258,21 @@
     element.setPointerCapture(event.pointerId);
     const point = pointerPoint(event, element);
     controller.updatePointer(point.x, point.y);
+    onDebugPick?.({
+      chartId,
+      phase: "primary",
+      stageX: point.x,
+      stageY: point.y,
+      snapshot: controller.debugPick(point.x, point.y)
+    });
+    if (effectiveTool === "pointer" && event.shiftKey && controller.beginSelectedSliceMove(point.x, point.y)) {
+      drag = { kind: "selected-slice-move", pointerId: event.pointerId, lastX: point.x, lastY: point.y };
+      return;
+    }
+    if (effectiveTool === "pointer" && event.ctrlKey) {
+      drag = { kind: "zoom", pointerId: event.pointerId, lastX: point.x, lastY: point.y };
+      return;
+    }
     if (effectiveTool === "orbit") {
       drag = { kind: "orbit", pointerId: event.pointerId, lastX: point.x, lastY: point.y };
       return;
@@ -236,9 +280,6 @@
     if (effectiveTool === "pan" || effectiveTool === "crop") {
       drag = { kind: "pan", pointerId: event.pointerId, lastX: point.x, lastY: point.y };
       return;
-    }
-    if (effectiveTool === "slice-drag") {
-      drag = { kind: "slice-drag", pointerId: event.pointerId, lastX: point.x, lastY: point.y };
     }
   }
 
@@ -258,9 +299,10 @@
         controller.orbit(deltaX * 0.3, deltaY * 0.18);
       } else if (drag.kind === "pan") {
         controller.pan(deltaX, deltaY);
+      } else if (drag.kind === "zoom") {
+        controller.zoom(Math.exp(-deltaY * 0.012));
       } else {
-        const span = Math.max(1, model ? model.sceneBounds.maxX - model.sceneBounds.minX : 1);
-        controller.moveActiveSlice((deltaX - deltaY) * span * 0.0015);
+        controller.previewSelectedSliceMoveFromScreenDelta(deltaX, deltaY);
       }
       drag = {
         ...drag,
@@ -282,7 +324,9 @@
       return;
     }
     const point = pointerPoint(event, element);
-    if (!drag || drag.pointerId !== event.pointerId) {
+    if (drag?.pointerId === event.pointerId && drag.kind === "selected-slice-move") {
+      controller.commitSelectedSliceMove();
+    } else if (!drag || drag.pointerId !== event.pointerId) {
       controller.handlePrimaryAction(point.x, point.y);
     }
     drag = null;
@@ -297,6 +341,7 @@
     if (element instanceof HTMLDivElement && element.hasPointerCapture(event.pointerId)) {
       element.releasePointerCapture(event.pointerId);
     }
+    controller?.cancelSelectedSliceMove();
     drag = null;
   }
 
@@ -307,10 +352,11 @@
   }
 
   function handleWheel(event: WheelEvent): void {
-    if (!controller) {
+    if (!controller || effectiveTool !== "pointer" || !event.ctrlKey) {
       return;
     }
-    controller.zoom(event.deltaY < 0 ? 1.08 : 0.92);
+    const zoomFactor = event.deltaY < 0 ? 1.14 : 0.88;
+    controller.zoom(zoomFactor);
     event.preventDefault();
   }
 
@@ -331,13 +377,24 @@
         break;
       case "r":
       case "R":
-        controller.resetView();
+        controller.setTool("orbit");
+        event.preventDefault();
+        break;
+      case "p":
+      case "P":
+        controller.setTool("pointer");
         event.preventDefault();
         break;
       case "c":
       case "C":
         controller.centerSelection();
         event.preventDefault();
+        break;
+      case "Backspace":
+      case "Delete":
+        if (controller.deleteSelection()) {
+          event.preventDefault();
+        }
         break;
     }
   }
@@ -346,17 +403,46 @@
     return interactions?.tool ?? tool;
   }
 
-  function createInteractionState(toolName: VolumeInterpretationChartTool): VolumeInterpretationChartInteractionState {
+  function handleContextMenu(event: MouseEvent): void {
+    if (!controller) {
+      return;
+    }
+    const element = event.currentTarget;
+    if (!(element instanceof HTMLDivElement)) {
+      return;
+    }
+    const point = pointerPoint(event, element);
+    onDebugPick?.({
+      chartId,
+      phase: "secondary",
+      stageX: point.x,
+      stageY: point.y,
+      snapshot: controller.debugPick(point.x, point.y)
+    });
+    controller.handleSecondaryAction(point.x, point.y);
+    event.preventDefault();
+  }
+
+  function createInteractionState(
+    toolName: VolumeInterpretationChartTool,
+    selectionContext: VolumeInterpretationChartInteractionState["selectionContext"] = null
+  ): VolumeInterpretationChartInteractionState {
     return {
       capabilities: {
         tools: [...VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES.tools],
         actions: [...VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES.actions]
       },
-      tool: toolName
+      tool: toolName,
+      selectionContext: selectionContext
+        ? {
+            selection: { ...selectionContext.selection },
+            allowedGestures: [...selectionContext.allowedGestures]
+          }
+        : null
     };
   }
 
-  function pointerPoint(event: PointerEvent | WheelEvent, element: HTMLDivElement): { x: number; y: number } {
+  function pointerPoint(event: MouseEvent | PointerEvent | WheelEvent, element: HTMLDivElement): { x: number; y: number } {
     const rect = element.getBoundingClientRect();
     return {
       x: event.clientX - rect.left,

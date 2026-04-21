@@ -21,6 +21,17 @@ export interface OphioliteEncodedSectionView extends Omit<
   xline_axis_f64le: EncodedSeismicBytes | null;
   sample_axis_f32le: EncodedSeismicBytes;
   amplitudes_f32le: EncodedSeismicBytes;
+  logical_dimensions?: {
+    traces: number;
+    samples: number;
+  };
+  window?: {
+    trace_start: number;
+    trace_end: number;
+    sample_start: number;
+    sample_end: number;
+    lod?: number;
+  };
 }
 
 export interface OphioliteEncodedGatherView extends Omit<
@@ -79,6 +90,21 @@ export function adaptOphioliteSectionViewToPayload(contract: OphioliteEncodedSec
           storeId: contract.metadata.store_id ?? undefined,
           derivedFrom: contract.metadata.derived_from ?? undefined,
           notes: contract.metadata.notes
+        }
+      : undefined,
+    logicalDimensions: contract.logical_dimensions
+      ? {
+          traces: contract.logical_dimensions.traces,
+          samples: contract.logical_dimensions.samples
+        }
+      : undefined,
+    window: contract.window
+      ? {
+          traceStart: contract.window.trace_start,
+          traceEnd: contract.window.trace_end,
+          sampleStart: contract.window.sample_start,
+          sampleEnd: contract.window.sample_end,
+          lod: contract.window.lod
         }
       : undefined,
     presentation: decodeSectionPresentation(contract),
@@ -196,6 +222,44 @@ export function validateSectionPayload(section: SectionPayload): SeismicValidati
   });
 
   validateDisplayTransform(section.displayDefaults, "displayDefaults", issues);
+
+  if (section.window) {
+    if (
+      !Number.isFinite(section.window.traceStart) ||
+      !Number.isFinite(section.window.traceEnd) ||
+      !Number.isFinite(section.window.sampleStart) ||
+      !Number.isFinite(section.window.sampleEnd)
+    ) {
+      issues.push(issue("invalid-section-window", "window", "Window bounds must be finite numbers."));
+    }
+    const logical = section.logicalDimensions ?? section.dimensions;
+    if (
+      section.window.traceStart < 0 ||
+      section.window.traceEnd > logical.traces ||
+      section.window.traceEnd - section.window.traceStart !== section.dimensions.traces
+    ) {
+      issues.push(
+        issue(
+          "section-window-trace-mismatch",
+          "window.trace",
+          "Window trace bounds must match the loaded trace dimension and stay within logical dimensions."
+        )
+      );
+    }
+    if (
+      section.window.sampleStart < 0 ||
+      section.window.sampleEnd > logical.samples ||
+      section.window.sampleEnd - section.window.sampleStart !== section.dimensions.samples
+    ) {
+      issues.push(
+        issue(
+          "section-window-sample-mismatch",
+          "window.sample",
+          "Window sample bounds must match the loaded sample dimension and stay within logical dimensions."
+        )
+      );
+    }
+  }
   return issues;
 }
 

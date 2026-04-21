@@ -3,9 +3,12 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use seis_runtime::{
     IngestOptions, InterpMethod, SectionAxis, SeisGeometryOptions, SparseSurveyPolicy,
-    UpscaleOptions, ingest_segy, inspect_segy, preflight_segy, render_section_csv, run_validation,
+    UpscaleOptions, describe_store, describe_tbvol_archive_sibling, ingest_segy, inspect_segy,
+    preflight_segy, render_section_csv, run_validation, suggested_tbvol_restore_path,
+    suggested_tbvolc_archive_path, transcode_tbvol_to_tbvolc, transcode_tbvolc_to_tbvol,
     upscale_store,
 };
+use serde::Serialize;
 
 #[derive(Debug, Parser)]
 #[command(name = "seis-runtime")]
@@ -80,6 +83,32 @@ enum Command {
         #[arg(long)]
         index: usize,
     },
+    ArchiveStatus {
+        input: PathBuf,
+    },
+    ArchiveCreate {
+        input: PathBuf,
+        output: Option<PathBuf>,
+    },
+    ArchiveRestore {
+        input: PathBuf,
+        output: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct ArchiveRestoreSummary {
+    archive_root: PathBuf,
+    working_store_root: PathBuf,
+    volume: seis_runtime::VolumeDescriptor,
+}
+
+#[derive(Debug, Serialize)]
+struct ArchiveCreateSummary {
+    working_store_root: PathBuf,
+    archive_root: PathBuf,
+    is_default_sibling: bool,
+    default_sibling_status: Option<seis_runtime::TbvolArchiveSiblingStatus>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -200,6 +229,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             index,
         } => {
             render_section_csv(input, axis.into(), index, output)?;
+        }
+        Command::ArchiveStatus { input } => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&describe_tbvol_archive_sibling(input)?)?
+            );
+        }
+        Command::ArchiveCreate { input, output } => {
+            let default_output = suggested_tbvolc_archive_path(&input);
+            let output = output.unwrap_or_else(|| default_output.clone());
+            transcode_tbvol_to_tbvolc(&input, &output)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&ArchiveCreateSummary {
+                    working_store_root: input.clone(),
+                    archive_root: output.clone(),
+                    is_default_sibling: output == default_output,
+                    default_sibling_status: (output == default_output)
+                        .then(|| describe_tbvol_archive_sibling(&input))
+                        .transpose()?,
+                })?
+            );
+        }
+        Command::ArchiveRestore { input, output } => {
+            let output = output.unwrap_or_else(|| suggested_tbvol_restore_path(&input));
+            transcode_tbvolc_to_tbvol(&input, &output)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&ArchiveRestoreSummary {
+                    archive_root: input,
+                    working_store_root: output.clone(),
+                    volume: describe_store(&output)?,
+                })?
+            );
         }
     }
 

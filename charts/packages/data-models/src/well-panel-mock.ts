@@ -96,6 +96,7 @@ function createWellColumn(
         asset_id: `${id}-tops`,
         logical_asset_id: `${id}-tops-logical`,
         asset_name: `${name} tops`,
+        set_kind: "top_set",
         rows: buildTopRows(offset)
       }
     ],
@@ -457,6 +458,7 @@ function buildLogCurve(
     original_mnemonic: name,
     unit,
     semantic_type: semanticType,
+    log_type: "continuous",
     depths: Array.from(nativeDepths),
     values: Array.from(nativeDepths, (depth) => valueAtDepth(depth))
   };
@@ -518,7 +520,9 @@ function buildTopRows(offset: number): OphioliteResolvedTopRow[] {
     top_depth: topDepth + offset * 0.45,
     base_depth: rows[index + 1]?.[1] ? rows[index + 1]![1] + offset * 0.45 : null,
     source: "interpretation",
-    depth_reference: "measured_depth"
+    source_depth_reference: "measured_depth",
+    depth_domain: "depth",
+    depth_datum: "md"
   }));
 }
 

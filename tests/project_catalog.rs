@@ -3,16 +3,19 @@ use ophiolite::{
     AssetBindingInput, AssetKind, AssetStatus, ComputeAvailability, ComputeParameterValue,
     CoordinateReferenceBinding, CoordinateReferenceDescriptor, CoordinateReferenceSource,
     CurveSemanticType, DatasetKind, DepthRangeQuery, GeometryProvenance, HeaderFieldSpec,
-    OphioliteProject, ProjectComputeRunRequest, ProjectSurveyMapRequestDto, ProjectedPoint2,
-    ProjectedPolygon2, ProjectedVector2, RockPhysicsColorRequestDto,
+    OperatorAssignment, OphioliteProject, ProjectComputeRunRequest, ProjectSurveyMapRequestDto,
+    ProjectedPoint2, ProjectedPolygon2, ProjectedVector2, RockPhysicsColorRequestDto,
     RockPhysicsContinuousColorRequestDto, RockPhysicsCrossplotRequestDto,
     RockPhysicsCurveSemanticDto, RockPhysicsTemplateIdDto, SourceIdentity, SurveyGridTransform,
     SurveyMapSpatialAvailabilityDto, SurveyMapTransformStatusDto, SurveySpatialAvailability,
-    SurveySpatialDescriptor, TbvolManifest, VolumeAxes, VolumeMetadata, WellAzimuthReferenceKind,
+    SurveySpatialDescriptor, TbvolManifest, TimeDepthDomain, VerticalMeasurementPath, VolumeAxes,
+    VolumeMetadata, WellAzimuthReferenceKind, WellMarkerHorizonResidualRequestDto, WellMetadata,
     WellPanelRequestDto, WellboreAnchorKind, WellboreAnchorReference, WellboreGeometry,
-    create_tbvol_store, examples, import_las_asset,
+    WellboreMetadata, create_tbvol_store, examples, import_las_asset,
 };
-use ophiolite_seismic_runtime::{generate_store_id, segy_sample_data_fidelity};
+use ophiolite_seismic_runtime::{
+    generate_store_id, import_horizon_xyzs_with_vertical_domain, segy_sample_data_fidelity,
+};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
@@ -211,6 +214,464 @@ fn project_persists_wellbore_geometry_across_reopen() {
     let reopened = OphioliteProject::open(&root).unwrap();
     let reopened_wellbore = reopened.list_wellbores(&well.id).unwrap().remove(0);
     assert_eq!(reopened_wellbore.geometry, Some(geometry));
+}
+
+#[test]
+fn project_import_las_seeds_well_and_wellbore_metadata() {
+    let root = temp_project_root("project_import_las_seeds_well_and_wellbore_metadata");
+    fs::create_dir_all(&root).unwrap();
+    let las_path = root.join("seeded.las");
+    fs::write(
+        &las_path,
+        "~Version Information\nVERS. 2.0 : CWLS LOG ASCII STANDARD - VERSION 2.0\nWRAP. NO : ONE LINE PER DEPTH STEP\n~Well Information\nSTRT.M 1000 : START DEPTH\nSTOP.M 1001 : STOP DEPTH\nSTEP.M 0.5 : STEP\nNULL. -999.25 : NULL VALUE\nCOMP. Example Operator : COMPANY\nWELL. Demo Well : WELL\nFLD. Demo Field : FIELD\nLOC. Block A : LOCATION\nPROV. Offshore NL : PROVINCE\nSRVC. Example Logging : SERVICE COMPANY\nUWI. DEMO-UWI : UNIQUE WELL ID\nAPI. DEMO-API : API NUMBER\n~Curve Information\nDEPT.M : Depth\nGR.API : Gamma Ray\n~Ascii\n1000 80\n1000.5 81\n1001 82\n",
+    )
+    .unwrap();
+
+    let mut project = OphioliteProject::create(&root).unwrap();
+    project.import_las(&las_path, Some("logs")).unwrap();
+
+    let well = project.list_wells().unwrap().remove(0);
+    let well_metadata = well.metadata.expect("well metadata should be seeded");
+    assert_eq!(well_metadata.field_name.as_deref(), Some("Demo Field"));
+    assert_eq!(well_metadata.location_text.as_deref(), Some("Block A"));
+    assert_eq!(well_metadata.province_state.as_deref(), Some("Offshore NL"));
+    assert_eq!(well_metadata.operator_history.len(), 1);
+    assert_eq!(
+        well_metadata.operator_history[0]
+            .organisation_name
+            .as_deref(),
+        Some("Example Operator")
+    );
+
+    let wellbore = project.list_wellbores(&well.id).unwrap().remove(0);
+    let wellbore_metadata = wellbore
+        .metadata
+        .expect("wellbore metadata should be seeded");
+    assert_eq!(wellbore_metadata.location_text.as_deref(), Some("Block A"));
+    assert_eq!(
+        wellbore_metadata.service_company_name.as_deref(),
+        Some("Example Logging")
+    );
+}
+
+#[test]
+fn project_persists_well_and_wellbore_metadata_across_reopen() {
+    let root = temp_project_root("project_persists_well_and_wellbore_metadata_across_reopen");
+    let mut project = OphioliteProject::create(&root).unwrap();
+
+    let import = project
+        .import_las(examples::path("6038187_v1.2_short.las"), Some("logs"))
+        .unwrap();
+
+    let well_metadata = WellMetadata {
+        basin_name: Some("North Sea".to_string()),
+        country: Some("Netherlands".to_string()),
+        operator_history: vec![OperatorAssignment {
+            organisation_name: Some("Ophiolite Energy".to_string()),
+            organisation_id: Some("operator:ophiolite".to_string()),
+            effective_at: Some("2025-01-01T00:00:00Z".to_string()),
+            terminated_at: None,
+            source: Some("test".to_string()),
+            note: None,
+        }],
+        notes: vec!["curated metadata".to_string()],
+        ..WellMetadata::default()
+    };
+    let wellbore_metadata = WellboreMetadata {
+        status: Some("drilled".to_string()),
+        purpose: Some("exploration".to_string()),
+        trajectory_type: Some("directional".to_string()),
+        notes: vec!["candidate canonical wellbore metadata".to_string()],
+        ..WellboreMetadata::default()
+    };
+
+    let updated_well = project
+        .set_well_metadata(&import.resolution.well_id, Some(well_metadata.clone()))
+        .unwrap();
+    let updated_wellbore = project
+        .set_wellbore_metadata(
+            &import.resolution.wellbore_id,
+            Some(wellbore_metadata.clone()),
+        )
+        .unwrap();
+
+    assert_eq!(updated_well.metadata, Some(well_metadata.clone()));
+    assert_eq!(updated_wellbore.metadata, Some(wellbore_metadata.clone()));
+
+    let reopened = OphioliteProject::open(&root).unwrap();
+    let reopened_well = reopened
+        .list_wells()
+        .unwrap()
+        .into_iter()
+        .find(|well| well.id == import.resolution.well_id)
+        .unwrap();
+    let reopened_wellbore = reopened
+        .list_wellbores(&import.resolution.well_id)
+        .unwrap()
+        .into_iter()
+        .find(|wellbore| wellbore.id == import.resolution.wellbore_id)
+        .unwrap();
+
+    assert_eq!(reopened_well.metadata, Some(well_metadata));
+    assert_eq!(reopened_wellbore.metadata, Some(wellbore_metadata));
+}
+
+#[test]
+fn project_tracks_and_applies_definitive_trajectory_asset() {
+    let root = temp_project_root("project_tracks_and_applies_definitive_trajectory_asset");
+    let first_csv = root.join("trajectory-a.csv");
+    let second_csv = root.join("trajectory-b.csv");
+    fs::create_dir_all(&root).unwrap();
+    fs::write(
+        &first_csv,
+        "md,tvd,northing,easting,inclination,azimuth\n0,0,0,0,0,0\n100,90,10,5,12,45\n",
+    )
+    .unwrap();
+    fs::write(
+        &second_csv,
+        "md,tvd,northing,easting,inclination,azimuth\n0,0,0,0,0,0\n150,130,30,15,15,60\n300,260,60,30,20,75\n",
+    )
+    .unwrap();
+
+    let mut project = OphioliteProject::create(&root).unwrap();
+    let binding = AssetBindingInput {
+        well_name: "Well A".to_string(),
+        wellbore_name: "Well A".to_string(),
+        uwi: Some("UWI-A".to_string()),
+        api: None,
+        operator_aliases: Vec::new(),
+    };
+
+    let first = project
+        .import_trajectory_csv(&first_csv, &binding, Some("trajectory"))
+        .unwrap();
+    let wellbore_after_first = project
+        .list_wellbores(&first.resolution.well_id)
+        .unwrap()
+        .remove(0);
+    assert_eq!(
+        wellbore_after_first.definitive_trajectory_asset_id,
+        Some(first.asset.id.clone())
+    );
+
+    let second = project
+        .import_trajectory_csv(&second_csv, &binding, Some("trajectory-v2"))
+        .unwrap();
+    let resolved_first = project
+        .resolve_wellbore_trajectory(&first.resolution.wellbore_id)
+        .unwrap();
+    assert_eq!(
+        resolved_first.source_asset_ids,
+        vec![first.asset.id.0.clone()]
+    );
+    assert_eq!(resolved_first.stations.len(), 2);
+
+    let updated_wellbore = project
+        .set_definitive_trajectory_asset(&first.resolution.wellbore_id, Some(&second.asset.id))
+        .unwrap();
+    assert_eq!(
+        updated_wellbore.definitive_trajectory_asset_id,
+        Some(second.asset.id.clone())
+    );
+
+    let resolved_second = project
+        .resolve_wellbore_trajectory(&first.resolution.wellbore_id)
+        .unwrap();
+    assert_eq!(
+        resolved_second.source_asset_ids,
+        vec![second.asset.id.0.clone()]
+    );
+    assert_eq!(resolved_second.stations.len(), 3);
+    assert!(
+        resolved_second
+            .notes
+            .iter()
+            .any(|note| note.contains("using definitive trajectory asset"))
+    );
+}
+
+#[test]
+fn project_tracks_canonical_well_markers_from_definitive_top_set() {
+    let root = temp_project_root("project_tracks_canonical_well_markers_from_definitive_top_set");
+    fs::create_dir_all(&root).unwrap();
+    let first_csv = root.join("tops-a.csv");
+    let second_csv = root.join("tops-b.csv");
+    fs::write(
+        &first_csv,
+        "name,top_depth,base_depth,source,depth_reference\nSand A,101.0,103.0,Interpreter,MD\nSand B,106.0,108.5,Interpreter,MD\n",
+    )
+    .unwrap();
+    fs::write(
+        &second_csv,
+        "name,top_depth,base_depth,source,depth_reference\nSand C,1500.0,1515.0,Geology,TVDSS\n",
+    )
+    .unwrap();
+
+    let mut project = OphioliteProject::create(&root).unwrap();
+    let binding = AssetBindingInput {
+        well_name: "Marker Well".to_string(),
+        wellbore_name: "Marker WB".to_string(),
+        uwi: Some("MARKER-UWI".to_string()),
+        api: None,
+        operator_aliases: Vec::new(),
+    };
+
+    let first = project
+        .import_tops_csv(&first_csv, &binding, Some("tops"))
+        .unwrap();
+    let wellbore_after_first = project
+        .list_wellbores(&first.resolution.well_id)
+        .unwrap()
+        .remove(0);
+    assert_eq!(
+        wellbore_after_first.definitive_top_set_asset_id,
+        Some(first.asset.id.clone())
+    );
+
+    let markers_after_first = project
+        .list_well_markers(&first.resolution.wellbore_id)
+        .unwrap();
+    assert_eq!(markers_after_first.len(), 2);
+    assert_eq!(markers_after_first[0].name, "Sand A");
+    assert_eq!(
+        markers_after_first[0].source_asset_id,
+        Some(first.asset.id.clone())
+    );
+    assert_eq!(
+        markers_after_first[0].top_measurement.path,
+        VerticalMeasurementPath::MeasuredDepth
+    );
+    assert_eq!(
+        markers_after_first[0]
+            .base_measurement
+            .as_ref()
+            .map(|value| value.value),
+        Some(103.0)
+    );
+
+    let second = project
+        .import_tops_csv(&second_csv, &binding, Some("tops-v2"))
+        .unwrap();
+    let markers_before_switch = project
+        .list_well_markers(&first.resolution.wellbore_id)
+        .unwrap();
+    assert_eq!(markers_before_switch.len(), 2);
+    assert_eq!(markers_before_switch[0].name, "Sand A");
+
+    let updated_wellbore = project
+        .set_definitive_top_set_asset(&first.resolution.wellbore_id, Some(&second.asset.id))
+        .unwrap();
+    assert_eq!(
+        updated_wellbore.definitive_top_set_asset_id,
+        Some(second.asset.id.clone())
+    );
+
+    let markers_after_switch = project
+        .list_well_markers(&first.resolution.wellbore_id)
+        .unwrap();
+    assert_eq!(markers_after_switch.len(), 1);
+    assert_eq!(markers_after_switch[0].name, "Sand C");
+    assert_eq!(
+        markers_after_switch[0].source_asset_id,
+        Some(second.asset.id.clone())
+    );
+    assert_eq!(
+        markers_after_switch[0].top_measurement.path,
+        VerticalMeasurementPath::TrueVerticalDepthSubsea
+    );
+}
+
+#[test]
+fn project_overwrite_tops_resyncs_canonical_well_markers() {
+    let root = temp_project_root("project_overwrite_tops_resyncs_canonical_well_markers");
+    fs::create_dir_all(&root).unwrap();
+    let csv_path = root.join("tops.csv");
+    fs::write(
+        &csv_path,
+        "name,top_depth,base_depth,source,depth_reference\nTop A,100.0,101.0,Interpreter,MD\n",
+    )
+    .unwrap();
+
+    let mut project = OphioliteProject::create(&root).unwrap();
+    let binding = AssetBindingInput {
+        well_name: "Overwrite Well".to_string(),
+        wellbore_name: "Overwrite WB".to_string(),
+        uwi: Some("OVERWRITE-UWI".to_string()),
+        api: None,
+        operator_aliases: Vec::new(),
+    };
+
+    let imported = project
+        .import_tops_csv(&csv_path, &binding, Some("tops"))
+        .unwrap();
+    project
+        .overwrite_tops_asset(
+            &imported.asset.id,
+            &[ophiolite::TopRow {
+                name: "Top A".to_string(),
+                top_depth: 110.0,
+                base_depth: Some(112.0),
+                source: Some("Interpreter".to_string()),
+                source_depth_reference: Some("MD".to_string()),
+                depth_domain: Some("md".to_string()),
+                depth_datum: None,
+            }],
+        )
+        .unwrap();
+
+    let markers = project
+        .list_well_markers(&imported.resolution.wellbore_id)
+        .unwrap();
+    assert_eq!(markers.len(), 1);
+    assert_eq!(markers[0].top_measurement.value, 110.0);
+    assert_eq!(
+        markers[0]
+            .base_measurement
+            .as_ref()
+            .map(|value| value.value),
+        Some(112.0)
+    );
+
+    let reopened = OphioliteProject::open(&root).unwrap();
+    let reopened_markers = reopened
+        .list_well_markers(&imported.resolution.wellbore_id)
+        .unwrap();
+    assert_eq!(reopened_markers.len(), 1);
+    assert_eq!(reopened_markers[0].top_measurement.value, 110.0);
+}
+
+#[test]
+fn project_authored_well_marker_set_overrides_top_set_and_falls_back_when_cleared() {
+    let root = temp_project_root(
+        "project_authored_well_marker_set_overrides_top_set_and_falls_back_when_cleared",
+    );
+    fs::create_dir_all(&root).unwrap();
+    let tops_csv = root.join("tops.csv");
+    let markers_csv = root.join("markers.csv");
+    fs::write(
+        &tops_csv,
+        "name,top_depth,base_depth,source,depth_reference\nSand A,101.0,103.0,Interpreter,MD\n",
+    )
+    .unwrap();
+    fs::write(
+        &markers_csv,
+        "name,marker_kind,top_depth,base_depth,source,depth_reference,note\nFault A,fault,1500.0,1510.0,Geology,TVDSS,interpreted from image log\n",
+    )
+    .unwrap();
+
+    let mut project = OphioliteProject::create(&root).unwrap();
+    let binding = AssetBindingInput {
+        well_name: "Author Well".to_string(),
+        wellbore_name: "Author WB".to_string(),
+        uwi: Some("AUTHOR-UWI".to_string()),
+        api: None,
+        operator_aliases: Vec::new(),
+    };
+
+    let tops = project
+        .import_tops_csv(&tops_csv, &binding, Some("tops"))
+        .unwrap();
+    let marker_set = project
+        .import_well_markers_csv(&markers_csv, &binding, Some("markers"))
+        .unwrap();
+
+    let wellbore = project
+        .list_wellbores(&tops.resolution.well_id)
+        .unwrap()
+        .remove(0);
+    assert_eq!(
+        wellbore.definitive_top_set_asset_id,
+        Some(tops.asset.id.clone())
+    );
+    assert_eq!(
+        wellbore.definitive_marker_set_asset_id,
+        Some(marker_set.asset.id.clone())
+    );
+
+    let canonical_markers = project
+        .list_well_markers(&tops.resolution.wellbore_id)
+        .unwrap();
+    assert_eq!(canonical_markers.len(), 1);
+    assert_eq!(canonical_markers[0].name, "Fault A");
+    assert_eq!(canonical_markers[0].marker_kind.as_deref(), Some("fault"));
+    assert_eq!(
+        canonical_markers[0].top_measurement.path,
+        VerticalMeasurementPath::TrueVerticalDepthSubsea
+    );
+
+    let cleared = project
+        .set_definitive_marker_set_asset(&tops.resolution.wellbore_id, None)
+        .unwrap();
+    assert_eq!(cleared.definitive_marker_set_asset_id, None);
+    assert_eq!(
+        cleared.definitive_top_set_asset_id,
+        Some(tops.asset.id.clone())
+    );
+
+    let fallback_markers = project
+        .list_well_markers(&tops.resolution.wellbore_id)
+        .unwrap();
+    assert_eq!(fallback_markers.len(), 1);
+    assert_eq!(fallback_markers[0].name, "Sand A");
+    assert_eq!(
+        fallback_markers[0].top_measurement.path,
+        VerticalMeasurementPath::MeasuredDepth
+    );
+}
+
+#[test]
+fn project_overwrite_well_marker_set_resyncs_canonical_well_markers() {
+    let root =
+        temp_project_root("project_overwrite_well_marker_set_resyncs_canonical_well_markers");
+    fs::create_dir_all(&root).unwrap();
+    let csv_path = root.join("markers.csv");
+    fs::write(
+        &csv_path,
+        "name,marker_kind,top_depth,base_depth,source,depth_reference,note\nMarker A,formation,1000.0,1005.0,Geo,MD,initial\n",
+    )
+    .unwrap();
+
+    let mut project = OphioliteProject::create(&root).unwrap();
+    let binding = AssetBindingInput {
+        well_name: "Marker Asset Well".to_string(),
+        wellbore_name: "Marker Asset WB".to_string(),
+        uwi: Some("MARKER-ASSET-UWI".to_string()),
+        api: None,
+        operator_aliases: Vec::new(),
+    };
+
+    let imported = project
+        .import_well_markers_csv(&csv_path, &binding, Some("markers"))
+        .unwrap();
+    project
+        .overwrite_well_marker_set_asset(
+            &imported.asset.id,
+            &[ophiolite::WellMarkerRow {
+                name: "Marker B".to_string(),
+                marker_kind: Some("fault".to_string()),
+                top_depth: 1200.0,
+                base_depth: Some(1210.0),
+                source: Some("Geo".to_string()),
+                source_depth_reference: Some("TVD".to_string()),
+                depth_domain: Some("tvd".to_string()),
+                depth_datum: None,
+                note: Some("updated".to_string()),
+            }],
+        )
+        .unwrap();
+
+    let markers = project
+        .list_well_markers(&imported.resolution.wellbore_id)
+        .unwrap();
+    assert_eq!(markers.len(), 1);
+    assert_eq!(markers[0].name, "Marker B");
+    assert_eq!(markers[0].marker_kind.as_deref(), Some("fault"));
+    assert_eq!(markers[0].top_measurement.value, 1200.0);
+    assert_eq!(
+        markers[0].top_measurement.path,
+        VerticalMeasurementPath::TrueVerticalDepth
+    );
+    assert!(markers[0].notes.iter().any(|note| note.contains("updated")));
 }
 
 #[test]
@@ -567,7 +1028,7 @@ fn project_imports_seismic_trace_data_store_and_tracks_it_in_catalog() {
     assert!(metadata_json.contains("\"family\": \"Volume\""));
     assert!(metadata_json.contains("\"label\": \"survey\""));
     assert!(metadata_json.contains("\"trace_data_descriptor\""));
-    assert!(metadata_json.contains("\"layout\": \"PostStack3D\""));
+    assert!(metadata_json.contains("\"layout\": \"post_stack3_d\""));
 }
 
 #[test]
@@ -611,7 +1072,10 @@ fn project_resolves_survey_map_source_with_explicit_spatial_gaps() {
         })
         .unwrap();
 
-    assert_eq!(resolved.schema_version, 1);
+    assert_eq!(
+        resolved.schema_version,
+        ophiolite::SURVEY_MAP_CONTRACT_VERSION
+    );
     assert_eq!(resolved.surveys.len(), 1);
     assert_eq!(resolved.wells.len(), 1);
     assert_eq!(resolved.surveys[0].index_grid.inline_axis.count, 2);
@@ -624,17 +1088,18 @@ fn project_resolves_survey_map_source_with_explicit_spatial_gaps() {
     ));
     assert!(matches!(
         resolved.surveys[0].transform_status,
-        ophiolite::SurveyMapTransformStatusDto::NativeOnly
+        ophiolite::SurveyMapTransformStatusDto::DisplayUnavailable
     ));
     assert!(matches!(
         resolved.surveys[0].transform_diagnostics.policy,
         ophiolite::SurveyMapTransformPolicyDto::BestAvailable
     ));
-    assert!(
+    assert_eq!(
         resolved.surveys[0]
             .transform_diagnostics
             .target_coordinate_reference_id
-            .is_none()
+            .as_deref(),
+        Some("EPSG:23031")
     );
     assert!(!resolved.surveys[0].native_spatial.notes.is_empty());
     assert!(resolved.wells[0].surface_location.is_none());
@@ -776,7 +1241,9 @@ fn structured_asset_edits_create_revision_history() {
         top_depth: 110.0,
         base_depth: Some(111.0),
         source: Some("interp".to_string()),
-        depth_reference: Some("MD".to_string()),
+        source_depth_reference: Some("MD".to_string()),
+        depth_domain: Some("md".to_string()),
+        depth_datum: None,
     }];
     project
         .overwrite_tops_asset(&imported.asset.id, &updated_rows)
@@ -1022,6 +1489,167 @@ fn project_runs_structured_compute_and_persists_derived_assets() {
     );
 }
 
+#[test]
+fn project_computes_well_marker_depth_horizon_residuals() {
+    let root = temp_project_root("project_computes_well_marker_depth_horizon_residuals");
+    let source_root = root.join("source").join("survey-depth.tbvol");
+    let manifest = sample_projected_store_manifest();
+    let data = Array3::from_shape_fn((2, 3, 4), |(iline, xline, sample)| {
+        iline as f32 * 100.0 + xline as f32 * 10.0 + sample as f32
+    });
+    create_tbvol_store(&source_root, manifest, &data, None).unwrap();
+
+    let trajectory_csv = write_csv(
+        &root,
+        "trajectory_residual.csv",
+        "md,tvd,tvdss,northing,easting\n0,0,-50,0,0\n100,1060,910,100,200\n",
+    );
+    let markers_csv = write_csv(
+        &root,
+        "markers_residual.csv",
+        "name,marker_kind,top_depth,source,depth_reference,note\nTop A,top,50,synthetic,md,control\nTop B,top,430,synthetic,tvdss,subsea\n",
+    );
+
+    let mut project = OphioliteProject::create(root.join("project")).unwrap();
+    let binding = AssetBindingInput {
+        well_name: "Residual Well".to_string(),
+        wellbore_name: "Residual WB".to_string(),
+        uwi: Some("RES-UWI-001".to_string()),
+        api: None,
+        operator_aliases: vec!["Ophiolite".to_string()],
+    };
+    let seismic = project
+        .import_seismic_trace_data_store(&source_root, &binding, Some("survey-main"))
+        .unwrap();
+    let trajectory = project
+        .import_trajectory_csv(&trajectory_csv, &binding, Some("trajectory"))
+        .unwrap();
+    let markers = project
+        .import_well_markers_csv(&markers_csv, &binding, Some("markers"))
+        .unwrap();
+    project
+        .set_wellbore_geometry(
+            &trajectory.resolution.wellbore_id,
+            Some(WellboreGeometry {
+                anchor: Some(WellboreAnchorReference {
+                    kind: WellboreAnchorKind::Surface,
+                    coordinate_reference: Some(CoordinateReferenceDescriptor {
+                        id: Some("EPSG:23031".to_string()),
+                        name: Some("ED50 / UTM zone 31N".to_string()),
+                        geodetic_datum: Some("ED50".to_string()),
+                        unit: Some("m".to_string()),
+                    }),
+                    location: ProjectedPoint2 {
+                        x: 500_000.0,
+                        y: 6_200_000.0,
+                    },
+                    parent_wellbore_id: None,
+                    parent_measured_depth_m: None,
+                    notes: Vec::new(),
+                }),
+                vertical_datum: Some("KB".to_string()),
+                depth_unit: Some("m".to_string()),
+                azimuth_reference: WellAzimuthReferenceKind::GridNorth,
+                notes: Vec::new(),
+            }),
+        )
+        .unwrap();
+
+    let horizon_xyz = write_csv(
+        &root,
+        "residual_horizon.xyz",
+        "500000 6200000 500\n500100 6200000 520\n500200 6200000 540\n500000 6200100 510\n500100 6200100 530\n500200 6200100 550\n",
+    );
+    let survey_store_root = PathBuf::from(&seismic.asset.package_path).join("store");
+    let imported = import_horizon_xyzs_with_vertical_domain(
+        &survey_store_root,
+        &[&horizon_xyz],
+        TimeDepthDomain::Depth,
+        Some("m"),
+        None,
+        None,
+        true,
+    )
+    .unwrap();
+    let horizon_id = imported[0].id.clone();
+
+    let preview = project
+        .resolve_well_marker_horizon_residual_source(&WellMarkerHorizonResidualRequestDto {
+            schema_version: 1,
+            source_asset_id: markers.asset.id.0.clone(),
+            survey_asset_id: seismic.asset.id.0.clone(),
+            horizon_id: horizon_id.clone(),
+            marker_name: Some("Top A".to_string()),
+        })
+        .unwrap();
+    assert_eq!(preview.horizon_id, horizon_id);
+    assert_eq!(preview.rows.len(), 1);
+    assert_eq!(preview.rows[0].status, "ok");
+    assert_eq!(preview.rows[0].measured_depth, Some(50.0));
+    assert_eq!(preview.rows[0].true_vertical_depth, Some(530.0));
+    assert_eq!(preview.rows[0].x, Some(500_100.0));
+    assert_eq!(preview.rows[0].y, Some(6_200_050.0));
+    assert_eq!(preview.rows[0].horizon_depth, Some(525.0));
+    assert_eq!(preview.rows[0].residual, Some(5.0));
+    assert!(
+        preview
+            .diagnostics
+            .iter()
+            .any(|entry| entry.contains("canonical marker 'Top A'"))
+    );
+
+    let catalog = project.list_compute_catalog(&markers.asset.id).unwrap();
+    assert!(catalog.functions.iter().any(|entry| {
+        entry.metadata.id == "well_markers:depth_horizon_residuals"
+            && matches!(entry.availability, ComputeAvailability::Available)
+    }));
+
+    let result = project
+        .run_compute(&ProjectComputeRunRequest {
+            source_asset_id: markers.asset.id.clone(),
+            function_id: "well_markers:depth_horizon_residuals".to_string(),
+            curve_bindings: BTreeMap::new(),
+            parameters: BTreeMap::from([
+                (
+                    "survey_asset_id".to_string(),
+                    ComputeParameterValue::String(seismic.asset.id.0.clone()),
+                ),
+                (
+                    "horizon_id".to_string(),
+                    ComputeParameterValue::String(horizon_id.clone()),
+                ),
+                (
+                    "marker_name".to_string(),
+                    ComputeParameterValue::String("Top A".to_string()),
+                ),
+            ]),
+            output_collection_name: None,
+            output_mnemonic: None,
+        })
+        .unwrap();
+
+    assert_eq!(
+        result.asset.asset_kind,
+        AssetKind::WellMarkerHorizonResidualSet
+    );
+    let rows = project
+        .read_well_marker_horizon_residual_rows(&result.asset.id)
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, "ok");
+    assert_eq!(rows[0].residual, Some(5.0));
+    let points = project
+        .read_well_marker_horizon_residual_points(&result.asset.id)
+        .unwrap();
+    assert_eq!(points.len(), 1);
+    assert_eq!(points[0].marker_name, "Top A");
+    assert_eq!(points[0].x, 500_100.0);
+    assert_eq!(points[0].y, 6_200_050.0);
+    assert_eq!(points[0].z, 530.0);
+    assert_eq!(points[0].horizon_depth, 525.0);
+    assert_eq!(points[0].residual, 5.0);
+}
+
 fn temp_project_root(label: &str) -> PathBuf {
     let unique = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
     let nanos = SystemTime::now()
@@ -1074,11 +1702,11 @@ fn sample_store_manifest() -> TbvolManifest {
                 regularization: None,
             },
             shape: [2, 3, 4],
-            axes: VolumeAxes {
-                ilines: vec![1000.0, 1001.0],
-                xlines: vec![2000.0, 2001.0, 2002.0],
-                sample_axis_ms: vec![0.0, 2.0, 4.0, 6.0],
-            },
+            axes: VolumeAxes::from_time_axis(
+                vec![1000.0, 1001.0],
+                vec![2000.0, 2001.0, 2002.0],
+                vec![0.0, 2.0, 4.0, 6.0],
+            ),
             segy_export: None,
             coordinate_reference_binding: None,
             spatial: None,
@@ -1088,4 +1716,58 @@ fn sample_store_manifest() -> TbvolManifest {
         [2, 3, 4],
         false,
     )
+}
+
+fn sample_projected_store_manifest() -> TbvolManifest {
+    let mut manifest = sample_store_manifest();
+    let coordinate_reference = CoordinateReferenceDescriptor {
+        id: Some("EPSG:23031".to_string()),
+        name: Some("ED50 / UTM zone 31N".to_string()),
+        geodetic_datum: Some("ED50".to_string()),
+        unit: Some("m".to_string()),
+    };
+    manifest.volume.coordinate_reference_binding = Some(CoordinateReferenceBinding {
+        detected: Some(coordinate_reference.clone()),
+        effective: Some(coordinate_reference.clone()),
+        source: CoordinateReferenceSource::Header,
+        notes: Vec::new(),
+    });
+    manifest.volume.spatial = Some(SurveySpatialDescriptor {
+        coordinate_reference: Some(coordinate_reference),
+        grid_transform: Some(SurveyGridTransform {
+            origin: ProjectedPoint2 {
+                x: 500_000.0,
+                y: 6_200_000.0,
+            },
+            inline_basis: ProjectedVector2 { x: 0.0, y: 100.0 },
+            xline_basis: ProjectedVector2 { x: 100.0, y: 0.0 },
+        }),
+        footprint: Some(ProjectedPolygon2 {
+            exterior: vec![
+                ProjectedPoint2 {
+                    x: 500_000.0,
+                    y: 6_200_000.0,
+                },
+                ProjectedPoint2 {
+                    x: 500_000.0,
+                    y: 6_200_100.0,
+                },
+                ProjectedPoint2 {
+                    x: 500_200.0,
+                    y: 6_200_100.0,
+                },
+                ProjectedPoint2 {
+                    x: 500_200.0,
+                    y: 6_200_000.0,
+                },
+                ProjectedPoint2 {
+                    x: 500_000.0,
+                    y: 6_200_000.0,
+                },
+            ],
+        }),
+        availability: SurveySpatialAvailability::Available,
+        notes: vec!["synthetic projected survey".to_string()],
+    });
+    manifest
 }

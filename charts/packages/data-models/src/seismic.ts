@@ -17,6 +17,14 @@ export interface SectionDimensions {
   samples: number;
 }
 
+export interface SectionWindow {
+  traceStart: number;
+  traceEnd: number;
+  sampleStart: number;
+  sampleEnd: number;
+  lod?: number;
+}
+
 export interface DisplayTransform {
   gain: number;
   clipMin?: number;
@@ -165,6 +173,8 @@ export interface SectionPayload {
     derivedFrom?: string;
     notes?: string[];
   };
+  logicalDimensions?: SectionDimensions;
+  window?: SectionWindow;
   displayDefaults?: Partial<DisplayTransform>;
   overlay?: OverlayPayload;
   presentation?: SeismicPresentation;
@@ -200,4 +210,111 @@ export interface ViewerState {
 
 export interface RenderFrame {
   state: ViewerState;
+}
+
+export function resolveLogicalSectionDimensions(section: SectionPayload): SectionDimensions {
+  return section.logicalDimensions ?? section.dimensions;
+}
+
+export function resolveLoadedSectionWindow(section: SectionPayload): SectionWindow {
+  return (
+    section.window ?? {
+      traceStart: 0,
+      traceEnd: section.dimensions.traces,
+      sampleStart: 0,
+      sampleEnd: section.dimensions.samples,
+      lod: 0
+    }
+  );
+}
+
+export function sectionWindowCoversViewport(section: SectionPayload, viewport: SectionViewport): boolean {
+  const window = resolveLoadedSectionWindow(section);
+  return (
+    viewport.traceStart >= window.traceStart &&
+    viewport.traceEnd <= window.traceEnd &&
+    viewport.sampleStart >= window.sampleStart &&
+    viewport.sampleEnd <= window.sampleEnd
+  );
+}
+
+export function intersectViewportWithSectionWindow(
+  section: SectionPayload,
+  viewport: SectionViewport
+): SectionViewport | null {
+  const window = resolveLoadedSectionWindow(section);
+  const traceStart = Math.max(viewport.traceStart, window.traceStart);
+  const traceEnd = Math.min(viewport.traceEnd, window.traceEnd);
+  const sampleStart = Math.max(viewport.sampleStart, window.sampleStart);
+  const sampleEnd = Math.min(viewport.sampleEnd, window.sampleEnd);
+  if (traceEnd <= traceStart || sampleEnd <= sampleStart) {
+    return null;
+  }
+  return { traceStart, traceEnd, sampleStart, sampleEnd };
+}
+
+export function toLoadedSectionViewport(
+  section: SectionPayload,
+  viewport: SectionViewport
+): SectionViewport | null {
+  const visible = intersectViewportWithSectionWindow(section, viewport);
+  if (!visible) {
+    return null;
+  }
+  const window = resolveLoadedSectionWindow(section);
+  return {
+    traceStart: visible.traceStart - window.traceStart,
+    traceEnd: visible.traceEnd - window.traceStart,
+    sampleStart: visible.sampleStart - window.sampleStart,
+    sampleEnd: visible.sampleEnd - window.sampleStart
+  };
+}
+
+export function globalTraceToLocalIndex(section: SectionPayload, traceIndex: number): number | null {
+  const window = resolveLoadedSectionWindow(section);
+  if (traceIndex < window.traceStart || traceIndex >= window.traceEnd) {
+    return null;
+  }
+  return traceIndex - window.traceStart;
+}
+
+export function globalSampleToLocalIndex(section: SectionPayload, sampleIndex: number): number | null {
+  const window = resolveLoadedSectionWindow(section);
+  if (sampleIndex < window.sampleStart || sampleIndex >= window.sampleEnd) {
+    return null;
+  }
+  return sampleIndex - window.sampleStart;
+}
+
+export function sectionHorizontalCoordinateAt(section: SectionPayload, traceIndex: number): number | null {
+  const local = globalTraceToLocalIndex(section, traceIndex);
+  return local === null ? null : section.horizontalAxis[local] ?? null;
+}
+
+export function sectionInlineCoordinateAt(section: SectionPayload, traceIndex: number): number | null {
+  const local = globalTraceToLocalIndex(section, traceIndex);
+  return local === null ? null : section.inlineAxis?.[local] ?? null;
+}
+
+export function sectionXlineCoordinateAt(section: SectionPayload, traceIndex: number): number | null {
+  const local = globalTraceToLocalIndex(section, traceIndex);
+  return local === null ? null : section.xlineAxis?.[local] ?? null;
+}
+
+export function sectionSampleValueAt(section: SectionPayload, sampleIndex: number): number | null {
+  const local = globalSampleToLocalIndex(section, sampleIndex);
+  return local === null ? null : section.sampleAxis[local] ?? null;
+}
+
+export function sectionAmplitudeAt(
+  section: SectionPayload,
+  traceIndex: number,
+  sampleIndex: number
+): number | null {
+  const localTrace = globalTraceToLocalIndex(section, traceIndex);
+  const localSample = globalSampleToLocalIndex(section, sampleIndex);
+  if (localTrace === null || localSample === null) {
+    return null;
+  }
+  return section.amplitudes[localTrace * section.dimensions.samples + localSample] ?? null;
 }

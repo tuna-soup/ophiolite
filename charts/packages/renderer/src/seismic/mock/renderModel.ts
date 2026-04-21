@@ -10,6 +10,10 @@ import type {
   SectionPayload,
   SectionViewport
 } from "@ophiolite/charts-data-models";
+import {
+  sectionAmplitudeAt,
+  sectionHorizontalCoordinateAt
+} from "@ophiolite/charts-data-models";
 import { sampleIndexToScreenY, traceIndexToScreenX } from "./sectionTransforms";
 import { buildWigglePanelGeometry, mapCoordinateToPlotX, type PlotRect } from "./wiggleGeometry";
 
@@ -35,6 +39,7 @@ export interface BaseRenderState {
   plotRect: PlotRect;
   width: number;
   height: number;
+  pixelRatio: number;
 }
 
 export interface OverlayRenderState {
@@ -47,6 +52,7 @@ export interface OverlayRenderState {
   plotRect: PlotRect;
   width: number;
   height: number;
+  pixelRatio: number;
   probe: RenderFrame["state"]["probe"];
   interactions: RenderFrame["state"]["interactions"];
   sectionScalarOverlays: SectionScalarOverlay[];
@@ -95,7 +101,8 @@ export function createBaseRenderState(
   frame: RenderFrame,
   plotRect: PlotRect,
   width: number,
-  height: number
+  height: number,
+  pixelRatio: number
 ): BaseRenderState {
   return {
     section: frame.state.section,
@@ -107,7 +114,8 @@ export function createBaseRenderState(
     splitPosition: frame.state.splitPosition,
     plotRect,
     width,
-    height
+    height,
+    pixelRatio
   };
 }
 
@@ -115,7 +123,8 @@ export function createOverlayRenderState(
   frame: RenderFrame,
   plotRect: PlotRect,
   width: number,
-  height: number
+  height: number,
+  pixelRatio: number
 ): OverlayRenderState {
   return {
     section: frame.state.section,
@@ -127,6 +136,7 @@ export function createOverlayRenderState(
     plotRect,
     width,
     height,
+    pixelRatio,
     probe: frame.state.probe,
     interactions: frame.state.interactions,
     sectionScalarOverlays: frame.state.sectionScalarOverlays,
@@ -169,6 +179,7 @@ export function diffRenderStates(
     !previousBase ||
     previousBase.width !== nextBase.width ||
     previousBase.height !== nextBase.height ||
+    previousBase.pixelRatio !== nextBase.pixelRatio ||
     previousBase.plotRect.x !== nextBase.plotRect.x ||
     previousBase.plotRect.y !== nextBase.plotRect.y ||
     previousBase.plotRect.width !== nextBase.plotRect.width ||
@@ -206,18 +217,21 @@ export function prepareHeatmapData(
   let max = Number.NEGATIVE_INFINITY;
 
   for (const source of [section, secondarySection].filter((candidate): candidate is SectionPayload => Boolean(candidate))) {
-    const samplesPerTrace = source.dimensions.samples;
     for (let trace = viewport.traceStart; trace < viewport.traceEnd; trace += 1) {
       for (let sample = viewport.sampleStart; sample < viewport.sampleEnd; sample += 1) {
-        const value = source.amplitudes[trace * samplesPerTrace + sample] * displayTransform.gain;
+        const amplitude = sectionAmplitudeAt(source, trace, sample);
+        if (amplitude === null) {
+          continue;
+        }
+        const value = amplitude * displayTransform.gain;
         min = Math.min(min, value);
         max = Math.max(max, value);
       }
     }
   }
 
-  const clipMin = displayTransform.clipMin ?? min;
-  const clipMax = displayTransform.clipMax ?? max;
+  const clipMin = Number.isFinite(displayTransform.clipMin ?? min) ? (displayTransform.clipMin ?? min) : -1;
+  const clipMax = Number.isFinite(displayTransform.clipMax ?? max) ? (displayTransform.clipMax ?? max) : 1;
   return {
     clipMin,
     clipMax,
@@ -237,9 +251,7 @@ export function prepareWiggleData(
   canvasHeight: number
 ): PreparedWiggleData {
   const panel = buildWigglePanelGeometry({
-    horizontalAxis: section.horizontalAxis,
-    amplitudes: section.amplitudes,
-    samplesPerTrace: section.dimensions.samples,
+    section,
     traceStart: viewport.traceStart,
     traceEnd: viewport.traceEnd,
     sampleStart: viewport.sampleStart,
@@ -294,12 +306,20 @@ export function prepareWiggleInstances(
   const maxReadableTraces = Math.max(1, Math.floor(plotRect.width / 6));
   const traceStride = Math.max(1, Math.ceil(visibleTraceCount / maxReadableTraces));
   const traceIndices = buildTraceIndices(viewport.traceStart, viewport.traceEnd, traceStride);
-  const visibleCoords = Array.from(section.horizontalAxis.slice(viewport.traceStart, viewport.traceEnd));
+  const visibleCoords = [];
+  for (let trace = viewport.traceStart; trace < viewport.traceEnd; trace += 1) {
+    const coordinate = sectionHorizontalCoordinateAt(section, trace);
+    if (coordinate !== null) {
+      visibleCoords.push(coordinate);
+    }
+  }
+  if (visibleCoords.length === 0) {
+    visibleCoords.push(viewport.traceStart, Math.max(viewport.traceStart + 1, viewport.traceEnd - 1));
+  }
   const coordMin = Math.min(...visibleCoords);
   const coordMax = Math.max(...visibleCoords);
   const globalScale = visibleAmplitudeScale(
-    section.amplitudes,
-    section.dimensions.samples,
+    section,
     viewport.traceStart,
     viewport.traceEnd,
     viewport.sampleStart,
@@ -311,13 +331,32 @@ export function prepareWiggleInstances(
   const amplitudeScaleClip: number[] = [];
 
   for (const traceIndex of traceIndices) {
-    const baselineX = mapCoordinateToPlotX(section.horizontalAxis[traceIndex], coordMin, coordMax, plotRect);
+    const baselineX = mapCoordinateToPlotX(
+      sectionHorizontalCoordinateAt(section, traceIndex) ?? traceIndex,
+      coordMin,
+      coordMax,
+      plotRect
+    );
     const previous = traceIndex - traceStride >= viewport.traceStart ? traceIndex - traceStride : null;
     const next = traceIndex + traceStride < viewport.traceEnd ? traceIndex + traceStride : null;
     const previousX =
-      previous === null ? Number.POSITIVE_INFINITY : mapCoordinateToPlotX(section.horizontalAxis[previous], coordMin, coordMax, plotRect);
+      previous === null
+        ? Number.POSITIVE_INFINITY
+        : mapCoordinateToPlotX(
+            sectionHorizontalCoordinateAt(section, previous) ?? previous,
+            coordMin,
+            coordMax,
+            plotRect
+          );
     const nextX =
-      next === null ? Number.POSITIVE_INFINITY : mapCoordinateToPlotX(section.horizontalAxis[next], coordMin, coordMax, plotRect);
+      next === null
+        ? Number.POSITIVE_INFINITY
+        : mapCoordinateToPlotX(
+            sectionHorizontalCoordinateAt(section, next) ?? next,
+            coordMin,
+            coordMax,
+            plotRect
+          );
     const spacing = Math.min(
       Number.isFinite(previousX) ? Math.abs(baselineX - previousX) : Number.POSITIVE_INFINITY,
       Number.isFinite(nextX) ? Math.abs(nextX - baselineX) : Number.POSITIVE_INFINITY
@@ -362,8 +401,7 @@ export function buildOverlaySpatialIndex(
 }
 
 function visibleAmplitudeScale(
-  amplitudes: Float32Array,
-  samplesPerTrace: number,
+  section: SectionPayload,
   traceStart: number,
   traceEnd: number,
   sampleStart: number,
@@ -373,7 +411,11 @@ function visibleAmplitudeScale(
   let maxAbs = 0;
   for (let trace = traceStart; trace < traceEnd; trace += 1) {
     for (let sample = sampleStart; sample < sampleEnd; sample += 1) {
-      maxAbs = Math.max(maxAbs, Math.abs(amplitudes[trace * samplesPerTrace + sample] * gain));
+      const amplitude = sectionAmplitudeAt(section, trace, sample);
+      if (amplitude === null) {
+        continue;
+      }
+      maxAbs = Math.max(maxAbs, Math.abs(amplitude * gain));
     }
   }
   return Math.max(maxAbs, 1e-6);

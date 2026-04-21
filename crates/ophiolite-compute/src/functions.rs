@@ -17,6 +17,20 @@ impl ComputeParameterValue {
             _ => None,
         }
     }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(value) => Some(value.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Boolean(value) => Some(*value),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -86,7 +100,9 @@ pub struct TopDataRow {
     pub top_depth: f64,
     pub base_depth: Option<f64>,
     pub source: Option<String>,
-    pub depth_reference: Option<String>,
+    pub source_depth_reference: Option<String>,
+    pub depth_domain: Option<String>,
+    pub depth_datum: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

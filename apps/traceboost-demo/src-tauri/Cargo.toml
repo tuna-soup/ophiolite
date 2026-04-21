@@ -16,6 +16,8 @@ blake3 = "1.5"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 log = "0.4"
 ophiolite = { path = "../../../" }
+proj = { workspace = true }
+proj-sys = "0.27"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

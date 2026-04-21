@@ -3,12 +3,14 @@
 <script lang="ts">
   import {
     getSurveyMapPlotRect,
+    resolveProbePanelPresentation,
     resolveSurveyMapViewMetrics,
     screenToWorld,
     SURVEY_MAP_MARGIN
   } from "@ophiolite/charts-core";
   import { SurveyMapController } from "@ophiolite/charts-domain";
   import { SurveyMapCanvasRenderer } from "@ophiolite/charts-renderer";
+  import ProbePanel from "./ProbePanel.svelte";
   import { resolveSurveyMapStageSize, scaleSurveyMapStageSize } from "./survey-map-stage";
   import {
     SURVEY_MAP_CHART_INTERACTION_CAPABILITIES,
@@ -59,9 +61,23 @@
   let hostElement = $state.raw<HTMLDivElement | null>(null);
   let lastRequestedTool = resolveRequestedTool();
   let effectiveTool = $state(lastRequestedTool);
+  const surveyMapProbePanelInset = resolveProbePanelPresentation("light", "compact").frame.insetPx;
   let stageSize = $derived(
     scaleSurveyMapStageSize(resolveSurveyMapStageSize(map), stageScale)
   );
+  let surveyMapProbePanelPosition = $derived.by(() => {
+    if (!currentViewport) {
+      return null;
+    }
+    const stageWidth = hostElement?.clientWidth ?? stageSize.width;
+    const stageHeight = hostElement?.clientHeight ?? stageSize.height;
+    const plotRect = getSurveyMapPlotRect(stageWidth, stageHeight);
+    const drawRect = resolveSurveyMapViewMetrics(currentViewport, plotRect).drawRect;
+    return {
+      left: `${Math.round(drawRect.x + surveyMapProbePanelInset)}px`,
+      bottom: `${Math.round(stageHeight - (drawRect.y + drawRect.height) + surveyMapProbePanelInset)}px`
+    };
+  });
   let hostCursor = $derived.by(() => {
     if (activeDragKind === "pan") {
       return "grabbing";
@@ -392,6 +408,26 @@
     controller.pan(-deltaX / Math.max(metrics.scale, 1e-6), deltaY / Math.max(metrics.scale, 1e-6));
   }
 
+  function surveyMapProbeRows(): Array<{ label: string; value: string }> {
+    if (!currentProbe) {
+      return [];
+    }
+
+    const rows = [
+      { label: "x", value: currentProbe.x.toFixed(0) },
+      { label: "y", value: currentProbe.y.toFixed(0) }
+    ];
+
+    if (currentProbe.scalarValue !== undefined) {
+      rows.unshift({
+        label: currentProbe.scalarName?.toLowerCase() ?? "value",
+        value: currentProbe.scalarValue.toFixed(1)
+      });
+    }
+
+    return rows;
+  }
+
   function releasePointerCapture(element: HTMLDivElement, pointerId: number): void {
     if (activePointerId === pointerId) {
       activePointerId = null;
@@ -466,33 +502,14 @@
           </div>
         </div>
       {/if}
-      {#if currentProbe && !loading && !errorMessage && map}
-        <div
-          class="ophiolite-charts-probe-panel"
-          style:right={`${SURVEY_MAP_MARGIN.right}px`}
-          style:bottom={`${SURVEY_MAP_MARGIN.bottom}px`}
-        >
-          {#if currentProbe.wellName}
-            <div class="ophiolite-charts-probe-panel-row">
-              <span>well</span>
-              <span>{currentProbe.wellName}</span>
-            </div>
-          {/if}
-          {#if currentProbe.scalarValue !== undefined}
-            <div class="ophiolite-charts-probe-panel-row">
-              <span>{currentProbe.scalarName?.toLowerCase() ?? "value"}</span>
-              <span>{currentProbe.scalarValue.toFixed(1)}</span>
-            </div>
-          {/if}
-          <div class="ophiolite-charts-probe-panel-row">
-            <span>x</span>
-            <span>{currentProbe.x.toFixed(0)}</span>
-          </div>
-          <div class="ophiolite-charts-probe-panel-row">
-            <span>y</span>
-            <span>{currentProbe.y.toFixed(0)}</span>
-          </div>
-        </div>
+      {#if currentProbe && !loading && !errorMessage && map && surveyMapProbePanelPosition}
+        <ProbePanel
+          theme="light"
+          size="compact"
+          left={surveyMapProbePanelPosition.left}
+          bottom={surveyMapProbePanelPosition.bottom}
+          rows={surveyMapProbeRows()}
+        />
       {/if}
     </div>
   </div>
@@ -583,32 +600,4 @@
     bottom: calc(var(--ophiolite-charts-plot-bottom) + var(--ophiolite-charts-overlay-pad));
   }
 
-  .ophiolite-charts-probe-panel {
-    position: absolute;
-    z-index: 3;
-    padding: 6px 8px;
-    border: 1px solid rgba(76, 66, 49, 0.18);
-    background: rgba(255, 252, 247, 0.94);
-    box-shadow: 0 8px 22px rgba(44, 33, 16, 0.12);
-    color: #2f271d;
-    pointer-events: none;
-  }
-
-  .ophiolite-charts-probe-panel-row {
-    display: grid;
-    grid-template-columns: 44px auto;
-    column-gap: 8px;
-    align-items: baseline;
-    font: 500 12px/1.2 sans-serif;
-    white-space: nowrap;
-  }
-
-  .ophiolite-charts-probe-panel-row span:first-child {
-    color: #776754;
-    text-transform: lowercase;
-  }
-
-  .ophiolite-charts-probe-panel-row span:last-child {
-    color: #2f271d;
-  }
 </style>

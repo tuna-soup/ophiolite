@@ -30,6 +30,8 @@ Those surfaces should reuse shared workflow orchestration here rather than reimp
   - survey preflight
   - dataset import
   - dataset open/summary
+  - trace-local processing preview
+  - trace-local processing materialization
   - survey-map resolution
   - native coordinate-reference assignment
   - survey time-depth demo/model workflows
@@ -44,6 +46,8 @@ Those surfaces should reuse shared workflow orchestration here rather than reimp
   - set-native-coordinate-reference
   - resolve-survey-map
   - view-section
+  - preview-processing
+  - run-processing
   - load-velocity-models
   - ensure-demo-survey-time-depth-transform
   - prepare-survey-demo

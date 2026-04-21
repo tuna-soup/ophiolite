@@ -5,6 +5,7 @@ Push-Location $repoRoot
 
 try {
     cargo run -p contracts-export
+    cargo run -p traceboost-contracts-export
 }
 finally {
     Pop-Location

@@ -1,6 +1,6 @@
 use crate::{
     AssetId, AssetKind, AssetRecord, DrillingObservationRow, LasError, OphioliteProject,
-    PressureObservationRow, Result, TopRow, TrajectoryRow,
+    PressureObservationRow, Result, TopRow, TrajectoryRow, WellMarkerRow,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -76,7 +76,33 @@ pub struct TopRowPatch {
     #[serde(default)]
     pub source: Option<OptionalFieldPatch<String>>,
     #[serde(default)]
-    pub depth_reference: Option<OptionalFieldPatch<String>>,
+    pub source_depth_reference: Option<OptionalFieldPatch<String>>,
+    #[serde(default)]
+    pub depth_domain: Option<OptionalFieldPatch<String>>,
+    #[serde(default)]
+    pub depth_datum: Option<OptionalFieldPatch<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct WellMarkerRowPatch {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub marker_kind: Option<OptionalFieldPatch<String>>,
+    #[serde(default)]
+    pub top_depth: Option<f64>,
+    #[serde(default)]
+    pub base_depth: Option<OptionalFieldPatch<f64>>,
+    #[serde(default)]
+    pub source: Option<OptionalFieldPatch<String>>,
+    #[serde(default)]
+    pub source_depth_reference: Option<OptionalFieldPatch<String>>,
+    #[serde(default)]
+    pub depth_domain: Option<OptionalFieldPatch<String>>,
+    #[serde(default)]
+    pub depth_datum: Option<OptionalFieldPatch<String>>,
+    #[serde(default)]
+    pub note: Option<OptionalFieldPatch<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
@@ -140,6 +166,21 @@ pub enum TopSetEditRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum WellMarkerSetEditRequest {
+    AddRow {
+        row: WellMarkerRow,
+        at_index: Option<usize>,
+    },
+    UpdateRow {
+        row_index: usize,
+        patch: WellMarkerRowPatch,
+    },
+    DeleteRow {
+        row_index: usize,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum PressureObservationEditRequest {
     AddRow {
         row: PressureObservationRow,
@@ -173,6 +214,7 @@ pub enum DrillingObservationEditRequest {
 enum StructuredRows {
     Trajectory(Vec<TrajectoryRow>),
     TopSet(Vec<TopRow>),
+    WellMarkerSet(Vec<WellMarkerRow>),
     Pressure(Vec<PressureObservationRow>),
     Drilling(Vec<DrillingObservationRow>),
 }
@@ -204,6 +246,15 @@ impl StructuredAssetEditSessionStore {
                 StructuredRows::Trajectory(project.read_trajectory_rows(&request.asset_id, None)?)
             }
             AssetKind::TopSet => StructuredRows::TopSet(project.read_tops(&request.asset_id)?),
+            AssetKind::WellMarkerSet => {
+                StructuredRows::WellMarkerSet(project.read_well_marker_rows(&request.asset_id)?)
+            }
+            AssetKind::WellMarkerHorizonResidualSet => {
+                return Err(LasError::Validation(
+                    "structured edit sessions do not support well marker horizon residual assets"
+                        .to_string(),
+                ))
+            }
             AssetKind::PressureObservation => StructuredRows::Pressure(
                 project.read_pressure_observations(&request.asset_id, None)?,
             ),
@@ -214,8 +265,8 @@ impl StructuredAssetEditSessionStore {
             | AssetKind::ManualTimeDepthPickSet
             | AssetKind::WellTieObservationSet
             | AssetKind::WellTimeDepthAuthoredModel
-            |
-            AssetKind::WellTimeDepthModel => {
+            | AssetKind::WellTimeDepthModel
+            | AssetKind::RawSourceBundle => {
                 return Err(LasError::Validation(
                     "structured edit sessions do not support well time-depth model assets"
                         .to_string(),
@@ -223,7 +274,7 @@ impl StructuredAssetEditSessionStore {
             }
             AssetKind::Log => {
                 return Err(LasError::Validation(
-                    "structured edit sessions only support trajectory, tops, pressure, and drilling assets".to_string(),
+                    "structured edit sessions only support trajectory, tops, well markers, pressure, and drilling assets".to_string(),
                 ))
             }
             AssetKind::SeismicTraceData => {
@@ -276,6 +327,19 @@ impl StructuredAssetEditSessionStore {
             _ => Err(kind_mismatch_error(
                 self.session(request)?.asset_kind.clone(),
                 AssetKind::TopSet,
+            )),
+        }
+    }
+
+    pub fn well_marker_rows(
+        &self,
+        request: &StructuredAssetSessionRequest,
+    ) -> Result<Vec<WellMarkerRow>> {
+        match &self.session(request)?.rows {
+            StructuredRows::WellMarkerSet(rows) => Ok(rows.clone()),
+            _ => Err(kind_mismatch_error(
+                self.session(request)?.asset_kind.clone(),
+                AssetKind::WellMarkerSet,
             )),
         }
     }
@@ -340,6 +404,23 @@ impl StructuredAssetEditSessionStore {
         ))
     }
 
+    pub fn apply_well_marker_edit(
+        &mut self,
+        request: &StructuredAssetSessionRequest,
+        edit: &WellMarkerSetEditRequest,
+    ) -> Result<StructuredAssetEditSessionSummary> {
+        let session = self.session_mut(request)?;
+        if let StructuredRows::WellMarkerSet(rows) = &mut session.rows {
+            apply_well_marker_edit(rows, edit)?;
+            session.dirty = true;
+            return Ok(session.summary());
+        }
+        Err(kind_mismatch_error(
+            session.asset_kind.clone(),
+            AssetKind::WellMarkerSet,
+        ))
+    }
+
     pub fn apply_pressure_edit(
         &mut self,
         request: &StructuredAssetSessionRequest,
@@ -388,6 +469,9 @@ impl StructuredAssetEditSessionStore {
             }
             StructuredRows::TopSet(rows) => {
                 project.overwrite_tops_asset(&snapshot.asset_id, rows)?
+            }
+            StructuredRows::WellMarkerSet(rows) => {
+                project.overwrite_well_marker_set_asset(&snapshot.asset_id, rows)?
             }
             StructuredRows::Pressure(rows) => {
                 project.overwrite_pressure_asset(&snapshot.asset_id, rows)?
@@ -448,6 +532,7 @@ impl StructuredRows {
         match self {
             Self::Trajectory(rows) => rows.len(),
             Self::TopSet(rows) => rows.len(),
+            Self::WellMarkerSet(rows) => rows.len(),
             Self::Pressure(rows) => rows.len(),
             Self::Drilling(rows) => rows.len(),
         }
@@ -502,10 +587,52 @@ fn apply_tops_edit(rows: &mut Vec<TopRow>, edit: &TopSetEditRequest) -> Result<(
             }
             apply_optional_field_patch(&mut row.base_depth, patch.base_depth.as_ref())?;
             apply_optional_field_patch(&mut row.source, patch.source.as_ref())?;
-            apply_optional_field_patch(&mut row.depth_reference, patch.depth_reference.as_ref())?;
+            apply_optional_field_patch(
+                &mut row.source_depth_reference,
+                patch.source_depth_reference.as_ref(),
+            )?;
+            apply_optional_field_patch(&mut row.depth_domain, patch.depth_domain.as_ref())?;
+            apply_optional_field_patch(&mut row.depth_datum, patch.depth_datum.as_ref())?;
+            crate::project_assets::normalize_top_row_depth_semantics(row);
             Ok(())
         }
         TopSetEditRequest::DeleteRow { row_index } => delete_row(rows, *row_index),
+    }
+}
+
+fn apply_well_marker_edit(
+    rows: &mut Vec<WellMarkerRow>,
+    edit: &WellMarkerSetEditRequest,
+) -> Result<()> {
+    match edit {
+        WellMarkerSetEditRequest::AddRow { row, at_index } => {
+            insert_row(rows, row.clone(), *at_index)
+        }
+        WellMarkerSetEditRequest::UpdateRow { row_index, patch } => {
+            let row_count = rows.len();
+            let row = rows
+                .get_mut(*row_index)
+                .ok_or_else(|| row_index_error(*row_index, row_count))?;
+            if let Some(value) = &patch.name {
+                row.name = value.clone();
+            }
+            apply_optional_field_patch(&mut row.marker_kind, patch.marker_kind.as_ref())?;
+            if let Some(value) = patch.top_depth {
+                row.top_depth = value;
+            }
+            apply_optional_field_patch(&mut row.base_depth, patch.base_depth.as_ref())?;
+            apply_optional_field_patch(&mut row.source, patch.source.as_ref())?;
+            apply_optional_field_patch(
+                &mut row.source_depth_reference,
+                patch.source_depth_reference.as_ref(),
+            )?;
+            apply_optional_field_patch(&mut row.depth_domain, patch.depth_domain.as_ref())?;
+            apply_optional_field_patch(&mut row.depth_datum, patch.depth_datum.as_ref())?;
+            apply_optional_field_patch(&mut row.note, patch.note.as_ref())?;
+            crate::project_assets::normalize_well_marker_row_depth_semantics(row);
+            Ok(())
+        }
+        WellMarkerSetEditRequest::DeleteRow { row_index } => delete_row(rows, *row_index),
     }
 }
 
@@ -603,6 +730,7 @@ fn validate_rows(rows: &StructuredRows) -> Result<()> {
     match rows {
         StructuredRows::Trajectory(rows) => validate_trajectory_rows(rows),
         StructuredRows::TopSet(rows) => validate_top_rows(rows),
+        StructuredRows::WellMarkerSet(rows) => validate_well_marker_rows(rows),
         StructuredRows::Pressure(rows) => validate_pressure_rows(rows),
         StructuredRows::Drilling(rows) => validate_drilling_rows(rows),
     }
@@ -662,6 +790,29 @@ fn validate_pressure_rows(rows: &[PressureObservationRow]) -> Result<()> {
     Ok(())
 }
 
+fn validate_well_marker_rows(rows: &[WellMarkerRow]) -> Result<()> {
+    for (index, row) in rows.iter().enumerate() {
+        if row.name.trim().is_empty() {
+            return Err(LasError::Validation(format!(
+                "well marker row {index} requires a name"
+            )));
+        }
+        if !row.top_depth.is_finite() {
+            return Err(LasError::Validation(format!(
+                "well marker row {index} requires a finite top_depth"
+            )));
+        }
+        if let Some(base_depth) = row.base_depth
+            && base_depth < row.top_depth
+        {
+            return Err(LasError::Validation(format!(
+                "well marker row {index} base_depth must be greater than or equal to top_depth"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn validate_drilling_rows(rows: &[DrillingObservationRow]) -> Result<()> {
     for (index, row) in rows.iter().enumerate() {
         if row.event_kind.trim().is_empty() {
@@ -692,6 +843,8 @@ fn asset_kind_name(kind: &AssetKind) -> &'static str {
         AssetKind::Log => "log",
         AssetKind::Trajectory => "trajectory",
         AssetKind::TopSet => "top_set",
+        AssetKind::WellMarkerSet => "well_marker_set",
+        AssetKind::WellMarkerHorizonResidualSet => "well_marker_horizon_residual_set",
         AssetKind::PressureObservation => "pressure_observation",
         AssetKind::DrillingObservation => "drilling_observation",
         AssetKind::CheckshotVspObservationSet => "checkshot_vsp_observation_set",
@@ -699,6 +852,7 @@ fn asset_kind_name(kind: &AssetKind) -> &'static str {
         AssetKind::WellTieObservationSet => "well_tie_observation_set",
         AssetKind::WellTimeDepthAuthoredModel => "well_time_depth_authored_model",
         AssetKind::WellTimeDepthModel => "well_time_depth_model",
+        AssetKind::RawSourceBundle => "raw_source_bundle",
         AssetKind::SeismicTraceData => "seismic_trace_data",
     }
 }
@@ -838,6 +992,83 @@ mod tests {
             .read_trajectory_rows(&imported.asset.id, None)
             .unwrap();
         assert_eq!(rows[1].measured_depth, 110.0);
+    }
+
+    #[test]
+    fn structured_edit_store_updates_and_saves_well_markers() {
+        let root = temp_project_root("structured_edit_store_updates_and_saves_well_markers");
+        let mut project = OphioliteProject::create(&root).unwrap();
+        let csv_path = write_csv(
+            &root,
+            "markers.csv",
+            "name,marker_kind,top_depth,base_depth,source,depth_reference,note\nMarker A,formation,100,101,interp,MD,initial\n",
+        );
+        let binding = crate::AssetBindingInput {
+            well_name: "Well A".to_string(),
+            wellbore_name: "WB-1".to_string(),
+            uwi: Some("UWI-1".to_string()),
+            api: None,
+            operator_aliases: Vec::new(),
+        };
+        let imported = project
+            .import_well_markers_csv(&csv_path, &binding, Some("markers"))
+            .unwrap();
+
+        let mut store = StructuredAssetEditSessionStore::default();
+        let summary = store
+            .open_session(&OpenStructuredAssetEditSessionRequest {
+                project_root: root.display().to_string(),
+                asset_id: imported.asset.id.clone(),
+            })
+            .unwrap();
+
+        store
+            .apply_well_marker_edit(
+                &StructuredAssetSessionRequest {
+                    session_id: summary.session_id.clone(),
+                },
+                &WellMarkerSetEditRequest::UpdateRow {
+                    row_index: 0,
+                    patch: WellMarkerRowPatch {
+                        name: Some("Marker B".to_string()),
+                        marker_kind: Some(OptionalFieldPatch {
+                            set: Some("fault".to_string()),
+                            clear: false,
+                        }),
+                        top_depth: Some(110.0),
+                        base_depth: Some(OptionalFieldPatch {
+                            set: Some(111.0),
+                            clear: false,
+                        }),
+                        note: Some(OptionalFieldPatch {
+                            set: Some("revised".to_string()),
+                            clear: false,
+                        }),
+                        ..Default::default()
+                    },
+                },
+            )
+            .unwrap();
+        let saved = store
+            .save_session(&StructuredAssetSessionRequest {
+                session_id: summary.session_id.clone(),
+            })
+            .unwrap();
+
+        assert!(!saved.session.dirty);
+        let reopened = OphioliteProject::open(&root).unwrap();
+        let rows = reopened.read_well_marker_rows(&imported.asset.id).unwrap();
+        assert_eq!(rows[0].name, "Marker B");
+        assert_eq!(rows[0].marker_kind.as_deref(), Some("fault"));
+        assert_eq!(rows[0].top_depth, 110.0);
+        assert_eq!(rows[0].base_depth, Some(111.0));
+        assert_eq!(rows[0].note.as_deref(), Some("revised"));
+
+        let canonical = reopened
+            .list_well_markers(&imported.resolution.wellbore_id)
+            .unwrap();
+        assert_eq!(canonical[0].name, "Marker B");
+        assert_eq!(canonical[0].marker_kind.as_deref(), Some("fault"));
     }
 
     fn temp_project_root(label: &str) -> PathBuf {

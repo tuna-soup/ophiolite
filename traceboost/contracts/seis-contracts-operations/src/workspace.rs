@@ -2,8 +2,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::import_ops::SegyGeometryOverride;
 pub use ophiolite_seismic::{
     DatasetSummary, SectionAxis, SubvolumeCropOperation, SurveyTimeDepthTransform3D,
+    TimeDepthDomain, VelocityQuantityKind, VelocitySource3D,
 };
 use seis_contracts_core::TraceLocalProcessingPipeline;
 
@@ -62,6 +64,8 @@ pub struct WorkspaceSession {
     pub project_wellbore_id: Option<String>,
     pub project_section_tolerance_m: Option<f64>,
     pub selected_project_well_time_depth_model_asset_id: Option<String>,
+    #[serde(default)]
+    pub native_engineering_accepted_store_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
@@ -143,6 +147,8 @@ pub struct SaveWorkspaceSessionRequest {
     pub project_wellbore_id: Option<String>,
     pub project_section_tolerance_m: Option<f64>,
     pub selected_project_well_time_depth_model_asset_id: Option<String>,
+    #[serde(default)]
+    pub native_engineering_accepted_store_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
@@ -164,4 +170,59 @@ pub struct LoadVelocityModelsRequest {
 pub struct LoadVelocityModelsResponse {
     pub schema_version: u32,
     pub models: Vec<SurveyTimeDepthTransform3D>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export)]
+pub struct DescribeVelocityVolumeRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    pub velocity_kind: VelocityQuantityKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_domain: Option<TimeDepthDomain>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_start: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_step: Option<f32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export)]
+pub struct DescribeVelocityVolumeResponse {
+    pub schema_version: u32,
+    pub volume: VelocitySource3D,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export)]
+pub struct IngestVelocityVolumeRequest {
+    pub schema_version: u32,
+    pub input_path: String,
+    pub output_store_path: String,
+    pub velocity_kind: VelocityQuantityKind,
+    pub vertical_domain: TimeDepthDomain,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_start: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertical_step: Option<f32>,
+    #[serde(default)]
+    pub overwrite_existing: bool,
+    #[serde(default)]
+    pub delete_input_on_success: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_override: Option<SegyGeometryOverride>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]
+#[ts(export)]
+pub struct IngestVelocityVolumeResponse {
+    pub schema_version: u32,
+    pub input_path: String,
+    pub store_path: String,
+    pub deleted_input: bool,
+    pub volume: VelocitySource3D,
 }

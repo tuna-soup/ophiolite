@@ -18,6 +18,9 @@ import type {
 } from "@ophiolite/contracts";
 import type {
   AvoCartesianViewport,
+  CartesianAxisContextTrigger,
+  CartesianAxisId,
+  CartesianAxisOverrides,
   AvoChiProjectionModel,
   AvoCrossplotModel,
   AvoCrossplotProbe,
@@ -33,9 +36,12 @@ import type {
   SectionHorizonOverlay,
   SectionWellOverlay,
   SectionScalarOverlay,
+  VolumeInterpretationEditRequest,
+  VolumeInterpretationDeleteRequest,
   VolumeInterpretationInterpretationRequest,
   VolumeInterpretationModel,
   VolumeInterpretationProbe,
+  VolumeInterpretationSelectionContext,
   VolumeInterpretationSelection,
   VolumeInterpretationTool,
   VolumeInterpretationView,
@@ -47,6 +53,7 @@ import type {
   WellCorrelationViewport,
   WellPanelModel
 } from "@ophiolite/charts-data-models";
+import type { VolumeInterpretationPickDebugSnapshot } from "@ophiolite/charts-renderer";
 import { getChartDefinition } from "@ophiolite/charts-data-models";
 
 export type SeismicChartPrimaryMode = "cursor" | "panZoom";
@@ -68,6 +75,17 @@ export interface SectionViewLike extends Omit<
   xline_axis_f64le: EncodedSectionBytes | null;
   sample_axis_f32le: EncodedSectionBytes;
   amplitudes_f32le: EncodedSectionBytes;
+  logical_dimensions?: {
+    traces: number;
+    samples: number;
+  };
+  window?: {
+    trace_start: number;
+    trace_end: number;
+    sample_start: number;
+    sample_end: number;
+    lod?: number;
+  };
 }
 
 export interface GatherViewLike extends Omit<
@@ -137,6 +155,7 @@ export interface SeismicSectionChartProps extends SeismicChartOverlayProps {
   crosshairEnabled?: boolean;
   primaryMode?: SeismicChartPrimaryMode;
   loading?: boolean;
+  loadingMessage?: string;
   emptyMessage?: string;
   errorMessage?: string | null;
   resetToken?: string | number | null;
@@ -216,6 +235,45 @@ export interface WellCorrelationInteractionEventPayload {
   event: InteractionEvent;
 }
 
+export interface WellCorrelationDebugSnapshot {
+  sessionId: number;
+  reason: string;
+  mount: {
+    startedAtMs: number;
+    firstViewportAtMs: number | null;
+    overlayReadyAtMs: number | null;
+    ageMs: number;
+  };
+  sync: {
+    count: number;
+    lastDurationMs: number | null;
+    totalDurationMs: number;
+  };
+  overlay: {
+    normalizeCount: number;
+    lastNormalizeMs: number | null;
+    layoutCount: number;
+    lastLayoutMs: number | null;
+    viewportReady: boolean;
+    columns: number;
+    clipWidth: number | null;
+  };
+  renderer: {
+    renderCount: number;
+    lastRenderMs: number | null;
+    baseChanged: boolean | null;
+    overlayDraw: boolean | null;
+    contentWidth: number | null;
+    viewportWidth: number | null;
+  };
+  state: {
+    wells: number;
+    viewport: WellCorrelationViewport | null;
+    probeTrackId: string | null;
+    scrollLeft: number;
+  };
+}
+
 export interface WellCorrelationChartOverlayProps {
   stageTopLeft?: Snippet;
   plotTopCenter?: Snippet;
@@ -285,6 +343,16 @@ export interface SurveyMapInteractionEventPayload {
   event: InteractionEvent;
 }
 
+export interface CartesianAxisContextRequestPayload {
+  chartId: string;
+  axis: CartesianAxisId;
+  trigger: CartesianAxisContextTrigger;
+  clientX: number;
+  clientY: number;
+  stageX: number;
+  stageY: number;
+}
+
 export interface SurveyMapChartOverlayProps {
   stageTopLeft?: Snippet;
   plotTopCenter?: Snippet;
@@ -351,6 +419,11 @@ export interface RockPhysicsCrossplotInteractionEventPayload {
   event: InteractionEvent;
 }
 
+export interface RockPhysicsCrossplotAxisOverridesChangePayload {
+  chartId: string;
+  axisOverrides: CartesianAxisOverrides;
+}
+
 export interface RockPhysicsCrossplotChartOverlayProps {
   stageTopLeft?: Snippet;
   plotTopCenter?: Snippet;
@@ -364,6 +437,7 @@ export interface RockPhysicsCrossplotChartProps extends RockPhysicsCrossplotChar
   chartId: string;
   model: RockPhysicsCrossplotModel | null;
   viewport?: RockPhysicsCrossplotViewport | null;
+  axisOverrides?: CartesianAxisOverrides;
   interactions?: RockPhysicsCrossplotChartInteractionConfig;
   loading?: boolean;
   emptyMessage?: string;
@@ -373,15 +447,23 @@ export interface RockPhysicsCrossplotChartProps extends RockPhysicsCrossplotChar
   onProbeChange?: RockPhysicsCrossplotProbeChangeHandler;
   onInteractionStateChange?: RockPhysicsCrossplotInteractionStateChangeHandler;
   onInteractionEvent?: RockPhysicsCrossplotInteractionEventHandler;
+  onAxisOverridesChange?: RockPhysicsCrossplotAxisOverridesChangeHandler;
+  onAxisContextRequest?: RockPhysicsCrossplotAxisContextRequestHandler;
 }
 
 export type RockPhysicsCrossplotViewportChangeHandler = (payload: RockPhysicsCrossplotViewportChangePayload) => void;
 export type RockPhysicsCrossplotProbeChangeHandler = (payload: RockPhysicsCrossplotProbeChangePayload) => void;
 export type RockPhysicsCrossplotInteractionStateChangeHandler = (payload: RockPhysicsCrossplotChartInteractionState) => void;
 export type RockPhysicsCrossplotInteractionEventHandler = (payload: RockPhysicsCrossplotInteractionEventPayload) => void;
+export type RockPhysicsCrossplotAxisOverridesChangeHandler = (
+  payload: RockPhysicsCrossplotAxisOverridesChangePayload
+) => void;
+export type RockPhysicsCrossplotAxisContextRequestHandler = (
+  payload: CartesianAxisContextRequestPayload
+) => void;
 
 export type VolumeInterpretationChartTool = VolumeInterpretationTool;
-export type VolumeInterpretationChartAction = "fitToData" | "resetView" | "centerSelection";
+export type VolumeInterpretationChartAction = "fitToData" | "topView" | "sideView" | "centerSelection";
 export type VolumeInterpretationChartRenderer = "vtk" | "placeholder";
 
 export interface VolumeInterpretationChartInteractionConfig {
@@ -399,6 +481,7 @@ export const VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES: VolumeInterpr
 export interface VolumeInterpretationChartInteractionState {
   capabilities: VolumeInterpretationChartInteractionCapabilities;
   tool: VolumeInterpretationChartTool;
+  selectionContext: VolumeInterpretationSelectionContext | null;
 }
 
 export interface VolumeInterpretationProbeChangePayload {
@@ -419,6 +502,24 @@ export interface VolumeInterpretationViewStateChangePayload {
 export interface VolumeInterpretationInterpretationRequestPayload {
   chartId: string;
   request: VolumeInterpretationInterpretationRequest;
+}
+
+export interface VolumeInterpretationDeleteRequestPayload {
+  chartId: string;
+  request: VolumeInterpretationDeleteRequest;
+}
+
+export interface VolumeInterpretationEditRequestPayload {
+  chartId: string;
+  request: VolumeInterpretationEditRequest;
+}
+
+export interface VolumeInterpretationDebugPickPayload {
+  chartId: string;
+  phase: "primary" | "secondary";
+  stageX: number;
+  stageY: number;
+  snapshot: VolumeInterpretationPickDebugSnapshot;
 }
 
 export interface VolumeInterpretationInteractionEventPayload {
@@ -450,6 +551,9 @@ export interface VolumeInterpretationChartProps extends VolumeInterpretationChar
   onViewStateChange?: VolumeInterpretationViewStateChangeHandler;
   onInteractionStateChange?: VolumeInterpretationInteractionStateChangeHandler;
   onInteractionEvent?: VolumeInterpretationInteractionEventHandler;
+  onEditRequest?: VolumeInterpretationEditRequestHandler;
+  onDeleteRequest?: VolumeInterpretationDeleteRequestHandler;
+  onDebugPick?: VolumeInterpretationDebugPickHandler;
   onInterpretationRequest?: VolumeInterpretationInterpretationRequestHandler;
 }
 
@@ -460,6 +564,9 @@ export type VolumeInterpretationInteractionStateChangeHandler = (
   payload: VolumeInterpretationChartInteractionState
 ) => void;
 export type VolumeInterpretationInteractionEventHandler = (payload: VolumeInterpretationInteractionEventPayload) => void;
+export type VolumeInterpretationEditRequestHandler = (payload: VolumeInterpretationEditRequestPayload) => void;
+export type VolumeInterpretationDeleteRequestHandler = (payload: VolumeInterpretationDeleteRequestPayload) => void;
+export type VolumeInterpretationDebugPickHandler = (payload: VolumeInterpretationDebugPickPayload) => void;
 export type VolumeInterpretationInterpretationRequestHandler = (
   payload: VolumeInterpretationInterpretationRequestPayload
 ) => void;
@@ -509,6 +616,11 @@ export interface AvoInteractionEventPayload {
   event: InteractionEvent;
 }
 
+export interface AvoAxisOverridesChangePayload {
+  chartId: string;
+  axisOverrides: CartesianAxisOverrides;
+}
+
 export interface AvoChartOverlayProps {
   stageTopLeft?: Snippet;
   plotTopCenter?: Snippet;
@@ -522,6 +634,7 @@ export interface AvoInterceptGradientCrossplotChartProps extends AvoChartOverlay
   chartId: string;
   model: AvoCrossplotModel | null;
   viewport?: AvoCartesianViewport | null;
+  axisOverrides?: CartesianAxisOverrides;
   interactions?: AvoChartInteractionConfig;
   loading?: boolean;
   emptyMessage?: string;
@@ -531,12 +644,15 @@ export interface AvoInterceptGradientCrossplotChartProps extends AvoChartOverlay
   onProbeChange?: AvoCrossplotProbeChangeHandler;
   onInteractionStateChange?: AvoInteractionStateChangeHandler;
   onInteractionEvent?: AvoInteractionEventHandler;
+  onAxisOverridesChange?: AvoAxisOverridesChangeHandler;
+  onAxisContextRequest?: AvoAxisContextRequestHandler;
 }
 
 export interface AvoResponseChartProps extends AvoChartOverlayProps {
   chartId: string;
   model: AvoResponseModel | null;
   viewport?: AvoCartesianViewport | null;
+  axisOverrides?: CartesianAxisOverrides;
   interactions?: AvoChartInteractionConfig;
   loading?: boolean;
   emptyMessage?: string;
@@ -546,12 +662,15 @@ export interface AvoResponseChartProps extends AvoChartOverlayProps {
   onProbeChange?: AvoResponseProbeChangeHandler;
   onInteractionStateChange?: AvoInteractionStateChangeHandler;
   onInteractionEvent?: AvoInteractionEventHandler;
+  onAxisOverridesChange?: AvoAxisOverridesChangeHandler;
+  onAxisContextRequest?: AvoAxisContextRequestHandler;
 }
 
 export interface AvoChiProjectionHistogramChartProps extends AvoChartOverlayProps {
   chartId: string;
   model: AvoChiProjectionModel | null;
   viewport?: AvoCartesianViewport | null;
+  axisOverrides?: CartesianAxisOverrides;
   interactions?: AvoChartInteractionConfig;
   loading?: boolean;
   emptyMessage?: string;
@@ -561,6 +680,8 @@ export interface AvoChiProjectionHistogramChartProps extends AvoChartOverlayProp
   onProbeChange?: AvoHistogramProbeChangeHandler;
   onInteractionStateChange?: AvoInteractionStateChangeHandler;
   onInteractionEvent?: AvoInteractionEventHandler;
+  onAxisOverridesChange?: AvoAxisOverridesChangeHandler;
+  onAxisContextRequest?: AvoAxisContextRequestHandler;
 }
 
 export type AvoViewportChangeHandler = (payload: AvoViewportChangePayload) => void;
@@ -569,6 +690,78 @@ export type AvoResponseProbeChangeHandler = (payload: AvoResponseProbeChangePayl
 export type AvoHistogramProbeChangeHandler = (payload: AvoHistogramProbeChangePayload) => void;
 export type AvoInteractionStateChangeHandler = (payload: AvoChartInteractionState) => void;
 export type AvoInteractionEventHandler = (payload: AvoInteractionEventPayload) => void;
+export type AvoAxisOverridesChangeHandler = (payload: AvoAxisOverridesChangePayload) => void;
+export type AvoAxisContextRequestHandler = (payload: CartesianAxisContextRequestPayload) => void;
+
+export interface SeismicSectionChartHandle {
+  fitToData(): void;
+  resetView(): void;
+  setViewport(nextViewport: NonNullable<SeismicSectionChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+  panBy(deltaTrace: number, deltaSample: number): void;
+  setSplitRatio(nextSplitPosition: number): void;
+}
+
+export interface SeismicGatherChartHandle {
+  fitToData(): void;
+  resetView(): void;
+  setViewport(nextViewport: NonNullable<SeismicGatherChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+  panBy(deltaTrace: number, deltaSample: number): void;
+}
+
+export interface WellCorrelationPanelChartHandle {
+  fitToData(): void;
+  setViewport(nextViewport: NonNullable<WellCorrelationPanelChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+  panBy(deltaDepth: number): void;
+  getDebugSnapshot(): WellCorrelationDebugSnapshot | null;
+}
+
+export interface SurveyMapChartHandle {
+  fitToData(): void;
+  setViewport(nextViewport: NonNullable<SurveyMapChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+}
+
+export interface RockPhysicsCrossplotChartHandle {
+  fitToData(): void;
+  setViewport(nextViewport: NonNullable<RockPhysicsCrossplotChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+  panBy(deltaX: number, deltaY: number): void;
+}
+
+export interface AvoResponseChartHandle {
+  fitToData(): void;
+  setViewport(nextViewport: NonNullable<AvoResponseChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+  panBy(deltaX: number, deltaY: number): void;
+}
+
+export interface AvoInterceptGradientCrossplotChartHandle {
+  fitToData(): void;
+  setViewport(nextViewport: NonNullable<AvoInterceptGradientCrossplotChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+  panBy(deltaX: number, deltaY: number): void;
+}
+
+export interface AvoChiProjectionHistogramChartHandle {
+  fitToData(): void;
+  setViewport(nextViewport: NonNullable<AvoChiProjectionHistogramChartProps["viewport"]>): void;
+  zoomBy(factor: number): void;
+  panBy(deltaX: number, deltaY: number): void;
+}
+
+export interface VolumeInterpretationChartHandle {
+  fitToData(): void;
+  resetView(): void;
+  topView(): void;
+  sideView(): void;
+  centerSelection(): void;
+  zoomBy(factor: number): void;
+  orbitBy(deltaYawDeg: number, deltaPitchDeg: number): void;
+  panBy(deltaX: number, deltaY: number): void;
+}
 
 function chartInteractionCapabilities<TTool extends ChartInteractionToolId, TAction extends ChartInteractionActionId>(
   chartId:

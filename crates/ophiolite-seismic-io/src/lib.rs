@@ -8,7 +8,7 @@ pub use export::{
     CubeChunkDescriptor, CubeChunkShape, CubeExportChunk, CubeExportMetadata, ExportTraceChunk,
     ExportTraceChunkIter, ExportTraceChunkRef, TraceExportMetadata,
 };
-pub use fixtures::{FixtureCase, curated_fixtures};
+pub use fixtures::{FixtureCase, curated_fixtures, write_small_prestack_segy_fixture};
 pub use hdf5::{Hdf5CubeLayout, Hdf5CubeWriteError, Hdf5CubeWriter};
 pub use inspect::{
     Endianness, FileSummary, InspectError, InspectOptions, SampleFormat, SampleIntervalSource,

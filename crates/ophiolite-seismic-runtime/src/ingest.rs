@@ -9,6 +9,7 @@ use ophiolite_seismic_io::{
 
 use crate::TileCoord;
 use crate::error::SeismicStoreError;
+use crate::mdio::{ingest_mdio_store, looks_like_mdio_path};
 use crate::metadata::{
     DatasetKind, GeometryProvenance, HeaderFieldSpec, RegularizationProvenance, SourceIdentity,
     VolumeAxes, VolumeMetadata, generate_store_id, segy_sample_data_fidelity,
@@ -80,6 +81,7 @@ pub struct IngestOptions {
 pub enum VolumeImportFormat {
     Segy,
     ZarrStore,
+    MdioStore,
     OpenVdsStore,
 }
 
@@ -184,6 +186,9 @@ pub fn ingest_volume(
     match detect_volume_import_format(&input_path)? {
         VolumeImportFormat::Segy => ingest_segy(&input_path, store_root, options),
         VolumeImportFormat::ZarrStore => ingest_zarr_store(&input_path, store_root, options),
+        VolumeImportFormat::MdioStore => {
+            ingest_mdio_store(&input_path, store_root, options.chunk_shape, None)
+        }
         VolumeImportFormat::OpenVdsStore => ingest_openvds_store(&input_path, store_root, options),
     }
 }
@@ -200,6 +205,7 @@ pub fn detect_volume_import_format(
     match extension.as_deref() {
         Some("sgy") | Some("segy") => return Ok(VolumeImportFormat::Segy),
         Some("zarr") => return Ok(VolumeImportFormat::ZarrStore),
+        Some("mdio") => return Ok(VolumeImportFormat::MdioStore),
         Some("vds") => return Ok(VolumeImportFormat::OpenVdsStore),
         _ => {}
     }
@@ -216,6 +222,10 @@ pub fn detect_volume_import_format(
         return Ok(VolumeImportFormat::OpenVdsStore);
     }
 
+    if looks_like_mdio_path(&input_path) {
+        return Ok(VolumeImportFormat::MdioStore);
+    }
+
     Err(SeismicStoreError::Message(format!(
         "unsupported volume import format: {}",
         input_path.display()
@@ -226,7 +236,13 @@ pub fn normalize_volume_import_path(input_path: impl AsRef<Path>) -> PathBuf {
     let input_path = input_path.as_ref();
     let file_name = input_path.file_name().and_then(|value| value.to_str());
     match file_name.map(|value| value.to_ascii_lowercase()) {
-        Some(name) if name == crate::metadata::StoreManifest::FILE_NAME || name == "zarr.json" => {
+        Some(name)
+            if name == crate::metadata::StoreManifest::FILE_NAME
+                || name == "zarr.json"
+                || name == ".zgroup"
+                || name == ".zattrs"
+                || name == ".zmetadata" =>
+        {
             input_path.parent().unwrap_or(input_path).to_path_buf()
         }
         _ => input_path.to_path_buf(),
@@ -292,11 +308,11 @@ pub fn ingest_prestack_offset_segy(
         &geometry_report,
         None,
     );
-    let axes = VolumeAxes {
-        ilines: cube.ilines.iter().map(|value| *value as f64).collect(),
-        xlines: cube.xlines.iter().map(|value| *value as f64).collect(),
-        sample_axis_ms: cube.sample_axis_ms.clone(),
-    };
+    let axes = VolumeAxes::from_time_axis(
+        cube.ilines.iter().map(|value| *value as f64).collect(),
+        cube.xlines.iter().map(|value| *value as f64).collect(),
+        cube.sample_axis_ms.clone(),
+    );
     let manifest = TbgathManifest::new(
         VolumeMetadata {
             kind: DatasetKind::Source,
@@ -352,36 +368,14 @@ pub fn load_source_volume_with_options(
     let coordinate_reference_binding = coordinate_reference_binding_from_spatial(spatial.as_ref());
 
     match geometry_report.classification {
-        GeometryClassification::RegularDense => {
-            let cube = reader.assemble_cube()?;
-            if cube.offsets.len() != 1 {
-                return Err(SeismicStoreError::UnsupportedOffsetCount {
-                    offset_count: cube.offsets.len(),
-                });
-            }
-
-            let shape = [cube.ilines.len(), cube.xlines.len(), cube.samples_per_trace];
-            let data = Array3::from_shape_vec(shape, cube.data)?;
-            Ok(SourceVolume {
-                source: build_source_identity(
-                    segy_path,
-                    &summary,
-                    cube.samples_per_trace,
-                    cube.sample_interval_us,
-                    &geometry_report,
-                    None,
-                ),
-                axes: VolumeAxes {
-                    ilines: cube.ilines.into_iter().map(|value| value as f64).collect(),
-                    xlines: cube.xlines.into_iter().map(|value| value as f64).collect(),
-                    sample_axis_ms: cube.sample_axis_ms,
-                },
-                coordinate_reference_binding,
-                spatial,
-                data,
-                occupancy: None,
-            })
-        }
+        GeometryClassification::RegularDense => load_dense_regular_poststack(
+            segy_path,
+            &summary,
+            &reader,
+            &geometry_report,
+            coordinate_reference_binding,
+            spatial,
+        ),
         GeometryClassification::RegularSparse => regularize_sparse_regular_poststack(
             segy_path,
             &summary,
@@ -391,6 +385,106 @@ pub fn load_source_volume_with_options(
         ),
         _ => Err(unsupported_geometry_error(&geometry_report)),
     }
+}
+
+fn load_dense_regular_poststack(
+    segy_path: &Path,
+    summary: &ophiolite_seismic_io::FileSummary,
+    reader: &ophiolite_seismic_io::SegyReader,
+    geometry_report: &GeometryReport,
+    coordinate_reference_binding: Option<CoordinateReferenceBinding>,
+    spatial: Option<SurveySpatialDescriptor>,
+) -> Result<SourceVolume, SeismicStoreError> {
+    if geometry_report.third_axis_field.is_some() || !geometry_report.third_axis_values.is_empty() {
+        let cube = reader.assemble_cube()?;
+        if cube.offsets.len() != 1 {
+            return Err(SeismicStoreError::UnsupportedOffsetCount {
+                offset_count: cube.offsets.len(),
+            });
+        }
+
+        let shape = [cube.ilines.len(), cube.xlines.len(), cube.samples_per_trace];
+        let data = Array3::from_shape_vec(shape, cube.data)?;
+        return Ok(SourceVolume {
+            source: build_source_identity(
+                segy_path,
+                summary,
+                cube.samples_per_trace,
+                cube.sample_interval_us,
+                geometry_report,
+                None,
+            ),
+            axes: VolumeAxes::from_time_axis(
+                cube.ilines.into_iter().map(|value| value as f64).collect(),
+                cube.xlines.into_iter().map(|value| value as f64).collect(),
+                cube.sample_axis_ms,
+            ),
+            coordinate_reference_binding,
+            spatial,
+            data,
+            occupancy: None,
+        });
+    }
+
+    let headers = reader.load_trace_headers(
+        &[
+            geometry_report.inline_field,
+            geometry_report.crossline_field,
+        ],
+        ophiolite_seismic_io::TraceSelection::All,
+    )?;
+    let ilines = headers
+        .column(geometry_report.inline_field)
+        .expect("geometry analysis validated inline field");
+    let xlines = headers
+        .column(geometry_report.crossline_field)
+        .expect("geometry analysis validated crossline field");
+    let traces = reader.read_all_traces(ChunkReadConfig::default())?;
+    let samples_per_trace = traces.samples_per_trace;
+    let shape = [
+        geometry_report.inline_values.len(),
+        geometry_report.crossline_values.len(),
+        samples_per_trace,
+    ];
+    let inline_lookup = index_lookup(&geometry_report.inline_values);
+    let xline_lookup = index_lookup(&geometry_report.crossline_values);
+    let mut data = vec![0.0_f32; shape[0] * shape[1] * shape[2]];
+
+    for trace_index in 0..headers.rows() {
+        let inline_index = inline_lookup[&ilines[trace_index]];
+        let xline_index = xline_lookup[&xlines[trace_index]];
+        let dst_start = (inline_index * shape[1] + xline_index) * shape[2];
+        let dst_end = dst_start + shape[2];
+        data[dst_start..dst_end].copy_from_slice(traces.trace(trace_index));
+    }
+
+    Ok(SourceVolume {
+        source: build_source_identity(
+            segy_path,
+            summary,
+            samples_per_trace,
+            reader.resolved_sample_interval_us(),
+            geometry_report,
+            None,
+        ),
+        axes: VolumeAxes::from_time_axis(
+            geometry_report
+                .inline_values
+                .iter()
+                .map(|value| *value as f64)
+                .collect(),
+            geometry_report
+                .crossline_values
+                .iter()
+                .map(|value| *value as f64)
+                .collect(),
+            reader.sample_axis_ms(),
+        ),
+        coordinate_reference_binding,
+        spatial,
+        data: Array3::from_shape_vec(shape, data)?,
+        occupancy: None,
+    })
 }
 
 fn regularize_sparse_regular_poststack(
@@ -465,19 +559,19 @@ fn regularize_sparse_regular_poststack(
                 missing_bin_count: geometry_report.missing_bin_count,
             }),
         ),
-        axes: VolumeAxes {
-            ilines: geometry_report
+        axes: VolumeAxes::from_time_axis(
+            geometry_report
                 .inline_values
                 .iter()
                 .map(|value| *value as f64)
                 .collect(),
-            xlines: geometry_report
+            geometry_report
                 .crossline_values
                 .iter()
                 .map(|value| *value as f64)
                 .collect(),
-            sample_axis_ms: reader.sample_axis_ms(),
-        },
+            reader.sample_axis_ms(),
+        ),
         coordinate_reference_binding,
         spatial,
         data: Array3::from_shape_vec(shape, data)?,
@@ -522,19 +616,19 @@ fn ingest_sparse_regular_poststack_to_tbvol(
             missing_bin_count: geometry_report.missing_bin_count,
         }),
     );
-    let axes = VolumeAxes {
-        ilines: geometry_report
+    let axes = VolumeAxes::from_time_axis(
+        geometry_report
             .inline_values
             .iter()
             .map(|value| *value as f64)
             .collect(),
-        xlines: geometry_report
+        geometry_report
             .crossline_values
             .iter()
             .map(|value| *value as f64)
             .collect(),
-        sample_axis_ms: reader.sample_axis_ms(),
-    };
+        reader.sample_axis_ms(),
+    );
     let spatial = derive_survey_spatial_descriptor(reader, geometry_report)?;
     let volume_metadata = VolumeMetadata {
         kind: DatasetKind::Source,
@@ -1151,13 +1245,10 @@ fn amplitude_map_as_f32_slice(map: &mut memmap2::MmapMut) -> Result<&mut [f32], 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mdio::looks_like_mdio_path;
     use ophiolite_seismic::{DatasetId, GatherRequest, GatherSelector};
+    use ophiolite_seismic_io::write_small_prestack_segy_fixture;
     use tempfile::tempdir;
-
-    fn prestack_fixture_path() -> std::path::PathBuf {
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../TraceBoost/test-data/small-ps.sgy")
-    }
 
     fn zarr_fixture_path() -> std::path::PathBuf {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1165,13 +1256,10 @@ mod tests {
     }
 
     #[test]
-    fn ingest_prestack_offset_segy_builds_offset_gather_store_when_fixture_is_available() {
-        let fixture = prestack_fixture_path();
-        if !fixture.exists() {
-            return;
-        }
-
+    fn ingest_prestack_offset_segy_builds_offset_gather_store_from_synthetic_fixture() {
         let temp_dir = tempdir().expect("temp dir");
+        let fixture = temp_dir.path().join("small-ps.sgy");
+        write_small_prestack_segy_fixture(&fixture).expect("write synthetic prestack fixture");
         let output_root = temp_dir.path().join("small-ps.tbgath");
         let handle = ingest_prestack_offset_segy(
             &fixture,
@@ -1224,6 +1312,30 @@ mod tests {
         assert_eq!(
             detect_volume_import_format("synthetic.vds").expect("vds should be detected"),
             VolumeImportFormat::OpenVdsStore
+        );
+    }
+
+    #[test]
+    fn detect_volume_import_format_handles_mdio_extension_and_metadata_root() {
+        let temp_dir = tempdir().expect("temp dir");
+        let fixture = temp_dir.path().join("poseidon.mdio");
+        std::fs::create_dir_all(fixture.join("seismic")).expect("fixture dirs");
+        std::fs::write(fixture.join(".zgroup"), br#"{"zarr_format":2}"#).expect("zgroup");
+        std::fs::write(fixture.join(".zattrs"), br#"{}"#).expect("zattrs");
+        std::fs::write(
+            fixture.join("seismic").join(".zarray"),
+            br#"{"shape":[1,1,1],"chunks":[1,1,1],"dtype":"<f4","compressor":null,"fill_value":0.0,"filters":null,"order":"C","zarr_format":2}"#,
+        )
+        .expect("zarray");
+
+        assert!(looks_like_mdio_path(&fixture));
+        assert_eq!(
+            detect_volume_import_format(&fixture).expect("mdio fixture should be detected"),
+            VolumeImportFormat::MdioStore
+        );
+        assert_eq!(
+            normalize_volume_import_path(fixture.join(".zmetadata")),
+            fixture
         );
     }
 

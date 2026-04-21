@@ -17,7 +17,6 @@ export {
   getChartFamilyDefinition,
   listChartDefinitionsByFamily
 } from "@ophiolite/charts-data-models";
-export * from "./contracts";
 export type * from "./types";
 export type {
   ChartAssetFamilyId,

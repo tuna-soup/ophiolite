@@ -40,6 +40,8 @@ export interface RockPhysicsAxisRange {
   max: number;
 }
 
+export type RockPhysicsAxisDirection = "normal" | "reversed";
+
 export interface RockPhysicsCrossplotViewport {
   xMin: number;
   xMax: number;
@@ -52,6 +54,7 @@ export interface RockPhysicsAxisDefinition {
   unit?: string;
   semantic: RockPhysicsCurveSemantic;
   range: RockPhysicsAxisRange;
+  direction?: RockPhysicsAxisDirection;
 }
 
 export interface RockPhysicsCategoryDefinition {
@@ -117,6 +120,31 @@ export interface RockPhysicsTemplatePolylineOverlay {
   }>;
 }
 
+export interface RockPhysicsTemplateAxisTick {
+  value: number;
+  label?: string;
+  lengthPx?: number;
+}
+
+export interface RockPhysicsTemplateAxisOverlay {
+  kind: "axis";
+  id: string;
+  label: string;
+  color: string;
+  domain: RockPhysicsAxisRange;
+  ticks: RockPhysicsTemplateAxisTick[];
+  points: Array<{
+    x: number;
+    y: number;
+  }>;
+  width?: number;
+  tickLengthPx?: number;
+  tickLabelOffsetPx?: number;
+  labelValue?: number;
+  labelOffsetPx?: number;
+  side?: "left" | "right";
+}
+
 export interface RockPhysicsTemplatePolygonOverlay {
   kind: "polygon";
   id: string;
@@ -146,6 +174,7 @@ export interface RockPhysicsTemplateTextOverlay {
 }
 
 export type RockPhysicsTemplateOverlay =
+  | RockPhysicsTemplateAxisOverlay
   | RockPhysicsTemplatePolylineOverlay
   | RockPhysicsTemplatePolygonOverlay
   | RockPhysicsTemplateTextOverlay;

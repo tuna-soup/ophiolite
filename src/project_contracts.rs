@@ -6,6 +6,7 @@ use ts_rs::TS;
 pub const WELL_PANEL_CONTRACT_VERSION: u32 = 1;
 pub const SURVEY_MAP_CONTRACT_VERSION: u32 = 2;
 pub const SECTION_WELL_OVERLAY_CONTRACT_VERSION: u32 = 1;
+pub const WELL_MARKER_HORIZON_RESIDUAL_CONTRACT_VERSION: u32 = 1;
 pub const ROCK_PHYSICS_CROSSPLOT_CONTRACT_VERSION: u32 = 1;
 pub const AVO_ANALYSIS_CONTRACT_VERSION: u32 = 1;
 
@@ -32,6 +33,7 @@ pub struct WellPanelLogCurveDto {
     pub original_mnemonic: String,
     pub unit: Option<String>,
     pub semantic_type: String,
+    pub log_type: String,
     pub depths: Vec<f64>,
     pub values: Vec<Option<f64>>,
 }
@@ -62,7 +64,12 @@ pub struct WellPanelTopRowDto {
     pub top_depth: f64,
     pub base_depth: Option<f64>,
     pub source: Option<String>,
-    pub depth_reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_depth_reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth_domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth_datum: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -70,7 +77,13 @@ pub struct WellPanelTopSetDto {
     pub asset_id: String,
     pub logical_asset_id: String,
     pub asset_name: String,
+    #[serde(default = "default_well_panel_top_set_kind")]
+    pub set_kind: String,
     pub rows: Vec<WellPanelTopRowDto>,
+}
+
+fn default_well_panel_top_set_kind() -> String {
+    "top_set".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -918,4 +931,72 @@ pub struct ResolveSectionWellOverlaysResponse {
     pub schema_version: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overlays: Vec<ResolvedSectionWellOverlayDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct WellMarkerHorizonResidualRequestDto {
+    pub schema_version: u32,
+    pub source_asset_id: String,
+    pub survey_asset_id: String,
+    pub horizon_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct WellMarkerHorizonResidualRowDto {
+    pub marker_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker_kind: Option<String>,
+    pub source_depth: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_depth_reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_depth_domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_depth_datum: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measured_depth: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub true_vertical_depth: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub true_vertical_depth_subsea: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizon_depth: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub residual: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizon_inline_ordinal: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizon_xline_ordinal: Option<f64>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ResolvedWellMarkerHorizonResidualSourceDto {
+    pub schema_version: u32,
+    pub source_asset_id: String,
+    pub source_asset_kind: String,
+    pub survey_asset_id: String,
+    pub horizon_id: String,
+    pub horizon_name: String,
+    pub well_id: String,
+    pub wellbore_id: String,
+    pub well_name: String,
+    pub wellbore_name: String,
+    pub residual_sign_convention: String,
+    pub sampling_method: String,
+    pub depth_reference_used: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trajectory_asset_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rows: Vec<WellMarkerHorizonResidualRowDto>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<String>,
 }

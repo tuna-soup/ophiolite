@@ -1,0 +1,474 @@
+{
+  "package": {
+    "package_version": 1,
+    "metadata_schema_version": "0.2.0"
+  },
+  "document": {
+    "summary": {
+      "source_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/f02a05_20030103-1-06_lwd2259a5rt.las",
+      "original_filename": "f02a05_20030103-1-06_lwd2259a5rt.las",
+      "source_fingerprint": "0ef73a7f0985c8f0",
+      "las_version": "2",
+      "wrap_mode": "YES",
+      "delimiter": "SPACE",
+      "row_count": 1517,
+      "curve_count": 9,
+      "issue_count": 0
+    },
+    "provenance": {
+      "source_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/f02a05_20030103-1-06_lwd2259a5rt.las",
+      "original_filename": "f02a05_20030103-1-06_lwd2259a5rt.las",
+      "source_fingerprint": "0ef73a7f0985c8f0",
+      "imported_at_unix_seconds": 1776696198
+    },
+    "encoding": "utf-8"
+  },
+  "canonical": {
+    "version": {
+      "vers": "2",
+      "wrap": "YES",
+      "delimiter": "SPACE"
+    },
+    "well": {
+      "well": null,
+      "company": null,
+      "field": null,
+      "location": null,
+      "province": null,
+      "service_company": "Baker Hughes INTEQ",
+      "date": null,
+      "uwi": null,
+      "api": null,
+      "start": 1880.0,
+      "stop": 2259.0,
+      "step": 0.25,
+      "null_value": -999.25
+    },
+    "index": {
+      "name": "DEPT",
+      "original_mnemonic": "DEPT",
+      "canonical_name": "index",
+      "unit": "M",
+      "kind": "Depth",
+      "row_count": 1517,
+      "nullable": false,
+      "storage_kind": "Numeric",
+      "alias": {
+        "mnemonic": "depth",
+        "unit_hint": "m"
+      }
+    },
+    "curves": [
+      {
+        "name": "DEPT",
+        "original_mnemonic": "DEPT",
+        "canonical_name": "DEPT",
+        "unit": "M",
+        "description": "1 DEPTH",
+        "header_value": "00 000 00 00",
+        "nullable": false,
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "alias": {
+          "mnemonic": "depth",
+          "unit_hint": "m"
+        }
+      },
+      {
+        "name": "BDCX",
+        "original_mnemonic": "BDCX",
+        "canonical_name": "BDCX",
+        "unit": "g/cc",
+        "description": "2 Bulk Density Compensated [MWD]",
+        "header_value": "00 000 00 00",
+        "nullable": true,
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "alias": {
+          "mnemonic": "bulk_density",
+          "unit_hint": "g/cc"
+        }
+      },
+      {
+        "name": "DRHX",
+        "original_mnemonic": "DRHX",
+        "canonical_name": "DRHX",
+        "unit": "g/cc",
+        "description": "3 Delta RHO - Density Cor [MWD]",
+        "header_value": "00 000 00 00",
+        "nullable": true,
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "alias": {
+          "mnemonic": null,
+          "unit_hint": "g/cc"
+        }
+      },
+      {
+        "name": "GR1AX",
+        "original_mnemonic": "GR1AX",
+        "canonical_name": "GR1AX",
+        "unit": "MWD-API",
+        "description": "4 Gamma Ray 1 [MWD]&Apparent",
+        "header_value": "00 000 00 00",
+        "nullable": true,
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "alias": {
+          "mnemonic": "gamma_ray",
+          "unit_hint": "mwd-api"
+        }
+      },
+      {
+        "name": "NPLX",
+        "original_mnemonic": "NPLX",
+        "canonical_name": "NPLX",
+        "unit": "pu",
+        "description": "5 Neutron Porosity (LS) [MWD]",
+        "header_value": "00 000 00 00",
+        "nullable": true,
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "alias": {
+          "mnemonic": "neutron_porosity",
+          "unit_hint": "pu"
+        }
+      },
+      {
+        "name": "RACLX",
+        "original_mnemonic": "RACLX",
+        "canonical_name": "RACLX",
+        "unit": "ohmm",
+        "description": "6 Resistivity (AT) (LS) [MWD]&400kHz-Compensated Corrected",
+        "header_value": "00 000 00 00",
+        "nullable": true,
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "alias": {
+          "mnemonic": null,
+          "unit_hint": "ohmm"
+        }
+      },
+      {
+        "name": "RPCHX",
+        "original_mnemonic": "RPCHX",
+        "canonical_name": "RPCHX",
+        "unit": "ohmm",
+        "description": "7 Resistivity (PD) (LS) [MWD]&2MHz-Compensated Corrected",
+        "header_value": "00 000 00 00",
+        "nullable": true,
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "alias": {
+          "mnemonic": null,
+          "unit_hint": "ohmm"
+        }
+      },
+      {
+        "name": "TCDX",
+        "original_mnemonic": "TCDX",
+        "canonical_name": "TCDX",
+        "unit": "deg",
+        "description": "8 CDS Temperature [MWD]",
+        "header_value": "C         00 000 00 00",
+        "nullable": true,
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "alias": {
+          "mnemonic": null,
+          "unit_hint": "deg"
+        }
+      },
+      {
+        "name": "TVD",
+        "original_mnemonic": "TVD",
+        "canonical_name": "TVD",
+        "unit": "meters",
+        "description": "9 True Vertical Depth",
+        "header_value": "00 000 00 00",
+        "nullable": true,
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "alias": {
+          "mnemonic": null,
+          "unit_hint": "meters"
+        }
+      }
+    ],
+    "parameters": [],
+    "other": null,
+    "issue_count": 0
+  },
+  "storage": {
+    "index": {
+      "curve_id": "DEPT",
+      "raw_mnemonic": "DEPT",
+      "unit": "M",
+      "kind": "Depth"
+    },
+    "index_unit": "M",
+    "curve_columns": [
+      {
+        "name": "DEPT",
+        "canonical_name": "index",
+        "original_mnemonic": "DEPT",
+        "unit": "M",
+        "header_value": {
+          "Text": "00 000 00 00"
+        },
+        "description": "1 DEPTH",
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "nullable": false,
+        "alias": {
+          "mnemonic": "depth",
+          "unit_hint": "m"
+        },
+        "is_index": true
+      },
+      {
+        "name": "BDCX",
+        "canonical_name": "BDCX",
+        "original_mnemonic": "BDCX",
+        "unit": "g/cc",
+        "header_value": {
+          "Text": "00 000 00 00"
+        },
+        "description": "2 Bulk Density Compensated [MWD]",
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "nullable": true,
+        "alias": {
+          "mnemonic": "bulk_density",
+          "unit_hint": "g/cc"
+        },
+        "is_index": false
+      },
+      {
+        "name": "DRHX",
+        "canonical_name": "DRHX",
+        "original_mnemonic": "DRHX",
+        "unit": "g/cc",
+        "header_value": {
+          "Text": "00 000 00 00"
+        },
+        "description": "3 Delta RHO - Density Cor [MWD]",
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "nullable": true,
+        "alias": {
+          "mnemonic": null,
+          "unit_hint": "g/cc"
+        },
+        "is_index": false
+      },
+      {
+        "name": "GR1AX",
+        "canonical_name": "GR1AX",
+        "original_mnemonic": "GR1AX",
+        "unit": "MWD-API",
+        "header_value": {
+          "Text": "00 000 00 00"
+        },
+        "description": "4 Gamma Ray 1 [MWD]&Apparent",
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "nullable": true,
+        "alias": {
+          "mnemonic": "gamma_ray",
+          "unit_hint": "mwd-api"
+        },
+        "is_index": false
+      },
+      {
+        "name": "NPLX",
+        "canonical_name": "NPLX",
+        "original_mnemonic": "NPLX",
+        "unit": "pu",
+        "header_value": {
+          "Text": "00 000 00 00"
+        },
+        "description": "5 Neutron Porosity (LS) [MWD]",
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "nullable": true,
+        "alias": {
+          "mnemonic": "neutron_porosity",
+          "unit_hint": "pu"
+        },
+        "is_index": false
+      },
+      {
+        "name": "RACLX",
+        "canonical_name": "RACLX",
+        "original_mnemonic": "RACLX",
+        "unit": "ohmm",
+        "header_value": {
+          "Text": "00 000 00 00"
+        },
+        "description": "6 Resistivity (AT) (LS) [MWD]&400kHz-Compensated Corrected",
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "nullable": true,
+        "alias": {
+          "mnemonic": null,
+          "unit_hint": "ohmm"
+        },
+        "is_index": false
+      },
+      {
+        "name": "RPCHX",
+        "canonical_name": "RPCHX",
+        "original_mnemonic": "RPCHX",
+        "unit": "ohmm",
+        "header_value": {
+          "Text": "00 000 00 00"
+        },
+        "description": "7 Resistivity (PD) (LS) [MWD]&2MHz-Compensated Corrected",
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "nullable": true,
+        "alias": {
+          "mnemonic": null,
+          "unit_hint": "ohmm"
+        },
+        "is_index": false
+      },
+      {
+        "name": "TCDX",
+        "canonical_name": "TCDX",
+        "original_mnemonic": "TCDX",
+        "unit": "deg",
+        "header_value": {
+          "Text": "C         00 000 00 00"
+        },
+        "description": "8 CDS Temperature [MWD]",
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "nullable": true,
+        "alias": {
+          "mnemonic": null,
+          "unit_hint": "deg"
+        },
+        "is_index": false
+      },
+      {
+        "name": "TVD",
+        "canonical_name": "TVD",
+        "original_mnemonic": "TVD",
+        "unit": "meters",
+        "header_value": {
+          "Text": "00 000 00 00"
+        },
+        "description": "9 True Vertical Depth",
+        "storage_kind": "Numeric",
+        "row_count": 1517,
+        "nullable": true,
+        "alias": {
+          "mnemonic": null,
+          "unit_hint": "meters"
+        },
+        "is_index": false
+      }
+    ]
+  },
+  "raw": {
+    "version": {
+      "items": [
+        {
+          "mnemonic": "VERS",
+          "original_mnemonic": "VERS",
+          "unit": "",
+          "value": {
+            "Number": 2.0
+          },
+          "description": "CWLS LOG ASCII STANDARD - VERSION 1.20",
+          "line_number": 2,
+          "raw_line": " VERS.         2.00:   CWLS LOG ASCII STANDARD - VERSION 1.20"
+        },
+        {
+          "mnemonic": "WRAP",
+          "original_mnemonic": "WRAP",
+          "unit": "",
+          "value": {
+            "Text": "YES"
+          },
+          "description": "MULTIPLE LINES PER DEPTH STEP",
+          "line_number": 3,
+          "raw_line": " WRAP.          YES:   MULTIPLE LINES PER DEPTH STEP"
+        }
+      ],
+      "mnemonic_case": "Preserve"
+    },
+    "well": {
+      "items": [
+        {
+          "mnemonic": "STRT",
+          "original_mnemonic": "STRT",
+          "unit": "M",
+          "value": {
+            "Number": 1880.0
+          },
+          "description": "",
+          "line_number": 5,
+          "raw_line": " STRT.M        1880.0000: "
+        },
+        {
+          "mnemonic": "STOP",
+          "original_mnemonic": "STOP",
+          "unit": "M",
+          "value": {
+            "Number": 2259.0
+          },
+          "description": "",
+          "line_number": 6,
+          "raw_line": " STOP.M        2259.0000: "
+        },
+        {
+          "mnemonic": "STEP",
+          "original_mnemonic": "STEP",
+          "unit": "M",
+          "value": {
+            "Number": 0.25
+          },
+          "description": "",
+          "line_number": 7,
+          "raw_line": " STEP.M           0.2500: "
+        },
+        {
+          "mnemonic": "NULL",
+          "original_mnemonic": "NULL",
+          "unit": "",
+          "value": {
+            "Number": -999.25
+          },
+          "description": "",
+          "line_number": 8,
+          "raw_line": " NULL.         -999.250: "
+        },
+        {
+          "mnemonic": "SRVC",
+          "original_mnemonic": "SRVC",
+          "unit": "",
+          "value": {
+            "Text": "Baker Hughes INTEQ"
+          },
+          "description": "Service Company",
+          "line_number": 9,
+          "raw_line": " SRVC.         Baker Hughes INTEQ                   : Service Company"
+        }
+      ],
+      "mnemonic_case": "Preserve"
+    },
+    "params": {
+      "items": [],
+      "mnemonic_case": "Preserve"
+    },
+    "other": "",
+    "extra_sections": {},
+    "curve_mnemonic_case": "Preserve"
+  },
+  "diagnostics": {
+    "issues": []
+  }
+}

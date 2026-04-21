@@ -1,0 +1,65 @@
+{
+  "asset_kind": "TopSet",
+  "asset_schema_version": "0.1.0",
+  "logical_asset_id": "logical_1776696202694817000_2",
+  "storage_asset_id": "asset_1776696202695367000_3",
+  "well_id": "well_1776696198365060000_1",
+  "wellbore_id": "wellbore_1776696198368028000_2",
+  "asset_collection_id": "collection_1776696202694809000_1",
+  "source_artifacts": [
+    {
+      "source_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/lithostratigrafie.txt",
+      "original_filename": "lithostratigrafie.txt",
+      "source_fingerprint": "source-9959eb61f9f2ca7d"
+    }
+  ],
+  "provenance": {
+    "source_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/lithostratigrafie.txt",
+    "original_filename": "lithostratigrafie.txt",
+    "source_fingerprint": "source-9959eb61f9f2ca7d",
+    "imported_at_unix_seconds": 1776696202
+  },
+  "diagnostics": [],
+  "extents": {
+    "index_kind": "Depth",
+    "start": 689.9,
+    "stop": 2710.0,
+    "row_count": 18
+  },
+  "bulk_data_descriptors": [
+    {
+      "relative_path": "metadata.json",
+      "media_type": "application/json",
+      "role": "metadata"
+    },
+    {
+      "relative_path": "data.parquet",
+      "media_type": "application/vnd.apache.parquet",
+      "role": "bulk_data"
+    }
+  ],
+  "reference_metadata": {
+    "identifiers": {
+      "primary_name": "F2-A5",
+      "uwi": null,
+      "api": null,
+      "operator_aliases": [
+        "Veba Oil and Gas Nederland B.V."
+      ]
+    },
+    "coordinate_reference": null,
+    "vertical_datum": "KellyBushing",
+    "depth_reference": "MeasuredDepth",
+    "unit_system": {
+      "depth_unit": null,
+      "coordinate_unit": null,
+      "pressure_unit": null
+    }
+  },
+  "created_at_unix_seconds": 1776696202,
+  "imported_at_unix_seconds": 1776696202,
+  "supersedes": null,
+  "derived_from": null,
+  "curve_semantics": [],
+  "compute_manifest": null
+}

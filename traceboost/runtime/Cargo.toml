@@ -19,7 +19,7 @@ seis_contracts_core = { package = "seis-contracts-core", path = "../contracts/se
 seis_contracts_views = { package = "seis-contracts-views", path = "../contracts/seis-contracts-views" }
 seis_io = { package = "seis-io", path = "../io" }
 thiserror = "2.0"
-zarrs = { version = "0.23.7", default-features = true }
+zarrs = { version = "0.22.5", default-features = true }
 
 [dev-dependencies]
 tempfile = "3.15"

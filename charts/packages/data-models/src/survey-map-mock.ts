@@ -3,11 +3,11 @@ import { adaptOphioliteSurveyMapToChart } from "./ophiolite-survey-map-adapter";
 import type { SurveyMapModel } from "./survey-map";
 
 const GRID_COLUMNS = 56;
-const GRID_ROWS = 44;
-const X_MIN = 920_000;
-const X_MAX = 1_048_000;
-const Y_MIN = 96_000;
-const Y_MAX = 106_000;
+const GRID_ROWS = 56;
+const X_MIN = 2_238_400;
+const X_MAX = 2_242_800;
+const Y_MIN = 6_681_200;
+const Y_MAX = 6_685_600;
 
 export function createMockSurveyMap(): SurveyMapModel {
   return adaptOphioliteSurveyMapToChart(createMockOphioliteSurveyMapSource());
@@ -24,17 +24,17 @@ export function createMockOphioliteSurveyMapSource(): OphioliteResolvedSurveyMap
       const y = Y_MIN + row * yStep;
       const nx = (x - X_MIN) / (X_MAX - X_MIN);
       const ny = (y - Y_MIN) / (Y_MAX - Y_MIN);
-      const basin = 0.68 - nx * 1.35 + ny * 0.24;
-      const ridge = Math.exp(-((nx - 0.34) ** 2) / 0.03 - ((ny - 0.34) ** 2) / 0.12) * 0.55;
-      const flank = Math.exp(-((nx - 0.58) ** 2) / 0.014 - ((ny - 0.63) ** 2) / 0.06) * 0.42;
-      const trend = Math.sin(nx * 9.5 + ny * 5.2) * 0.05 + Math.cos(nx * 3.4 - ny * 7.1) * 0.04;
-      values[row * GRID_COLUMNS + column] = 1820 + basin * 120 + ridge * 95 + flank * 55 + trend * 40;
+      const regionalDip = (0.64 - nx) * 34 + (ny - 0.38) * 20;
+      const saddle = Math.exp(-((nx - 0.46) ** 2) / 0.032 - ((ny - 0.56) ** 2) / 0.048) * 16;
+      const closure = Math.exp(-((nx - 0.22) ** 2) / 0.02 - ((ny - 0.16) ** 2) / 0.03) * -24;
+      const undulation = Math.sin(nx * 7.4 - ny * 3.1) * 3.8 + Math.cos(nx * 2.6 + ny * 8.2) * 2.6;
+      values[row * GRID_COLUMNS + column] = 3268 + regionalDip + saddle + closure + undulation;
     }
   }
 
   return {
     id: "mock-survey-map",
-    name: "Stybarrow survey map",
+    name: "Horizon Map of Reservoir Top",
     x_label: "Easting",
     y_label: "Northing",
     coordinate_unit: "m",
@@ -44,34 +44,34 @@ export function createMockOphioliteSurveyMapSource(): OphioliteResolvedSurveyMap
         id: "stybarrow-outline",
         name: "Stybarrow 3D",
         outline: [
-          { x: 926_000, y: 96_400 },
-          { x: 1_043_000, y: 96_800 },
-          { x: 1_038_000, y: 105_200 },
-          { x: 931_500, y: 104_700 }
+          { x: 2_238_780, y: 6_681_460 },
+          { x: 2_242_420, y: 6_681_520 },
+          { x: 2_242_120, y: 6_685_120 },
+          { x: 2_239_060, y: 6_685_060 }
         ],
         stroke: "rgba(41, 55, 68, 0.9)",
         fill: "rgba(255, 255, 255, 0.1)"
       }
     ],
     wells: [
-      createWell("stybarrow-1", "Stybarrow-1", 988_500, 103_900, "#f2f5f8", -2_000, -4_400),
-      createWell("stybarrow-2", "Stybarrow-2", 993_700, 101_400, "#e9eef2", 1_900, -2_700),
-      createWell("stybarrow-3", "Stybarrow-3", 976_100, 98_700, "#f4f6f7", 2_500, 1_600),
-      createWell("pyrenees-4", "Pyrenees-4", 1_012_000, 101_100, "#f4f6f7", -1_100, 2_800),
-      createWell("pyrenees-5", "Pyrenees-5", 1_020_500, 100_000, "#f4f6f7", 1_400, 3_300),
-      createWell("whale-1", "Whale-1", 1_033_000, 103_300, "#f4f6f7", -2_600, -1_500)
+      createWell("stybarrow-1", "Stybarrow-1", 2_239_980, 6_682_360, "#f2f5f8", -180, -520),
+      createWell("stybarrow-2", "Stybarrow-2", 2_240_920, 6_683_120, "#e9eef2", 220, -440),
+      createWell("stybarrow-3", "Stybarrow-3", 2_239_520, 6_684_020, "#f4f6f7", 260, 340),
+      createWell("pyrenees-4", "Pyrenees-4", 2_241_080, 6_684_780, "#f4f6f7", -180, 420),
+      createWell("pyrenees-5", "Pyrenees-5", 2_241_760, 6_683_880, "#f4f6f7", 260, 300),
+      createWell("whale-1", "Whale-1", 2_240_760, 6_682_020, "#f4f6f7", -220, 560)
     ],
     scalar_field: {
-      id: "mock-twt-grid",
-      name: "TWT",
+      id: "mock-reservoir-top-grid",
+      name: "Reservoir Top",
       columns: GRID_COLUMNS,
       rows: GRID_ROWS,
       values,
       origin: { x: X_MIN, y: Y_MIN },
       step: { x: xStep, y: yStep },
-      unit: "ms",
-      min_value: 1600,
-      max_value: 1960
+      unit: "m",
+      min_value: 3236,
+      max_value: 3308
     }
   };
 }
@@ -101,4 +101,3 @@ function createWell(
     color
   };
 }
-

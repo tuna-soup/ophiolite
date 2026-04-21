@@ -8,6 +8,13 @@ import type {
   SectionPayload,
   SectionViewport
 } from "@ophiolite/charts-data-models";
+import {
+  sectionAmplitudeAt,
+  sectionHorizontalCoordinateAt,
+  sectionInlineCoordinateAt,
+  sectionSampleValueAt,
+  sectionXlineCoordinateAt
+} from "@ophiolite/charts-data-models";
 import { getPlotRect, resolveNearestTraceIndex, sampleIndexToScreenY, traceIndexToScreenX } from "@ophiolite/charts-renderer";
 
 const DEFAULT_SNAP_WINDOW = 8;
@@ -112,14 +119,14 @@ export function pickAt(
   traceIndex: number,
   sampleIndex: number
 ): CursorProbe {
-  const amplitude = section.amplitudes[traceIndex * section.dimensions.samples + sampleIndex];
+  const amplitude = sectionAmplitudeAt(section, traceIndex, sampleIndex) ?? 0;
   return {
     traceIndex,
-    traceCoordinate: section.horizontalAxis[traceIndex],
-    inlineCoordinate: section.inlineAxis?.[traceIndex],
-    xlineCoordinate: section.xlineAxis?.[traceIndex],
+    traceCoordinate: sectionHorizontalCoordinateAt(section, traceIndex) ?? traceIndex,
+    inlineCoordinate: sectionInlineCoordinateAt(section, traceIndex) ?? undefined,
+    xlineCoordinate: sectionXlineCoordinateAt(section, traceIndex) ?? undefined,
     sampleIndex,
-    sampleValue: section.sampleAxis[sampleIndex],
+    sampleValue: sectionSampleValueAt(section, sampleIndex) ?? sampleIndex,
     amplitude,
     screenX: traceIndexToScreenX(section, viewport, renderMode, plotRect, traceIndex),
     screenY: sampleIndexToScreenY(viewport, plotRect, sampleIndex)
@@ -147,14 +154,14 @@ function recomputeHorizonPicks(
     const right = anchors[anchorIndex + 1];
     const traceStart = left.traceIndex;
     const traceEnd = right.traceIndex;
-    const leftCoord = section.horizontalAxis[left.traceIndex];
-    const rightCoord = section.horizontalAxis[right.traceIndex];
+    const leftCoord = sectionHorizontalCoordinateAt(section, left.traceIndex) ?? left.traceIndex;
+    const rightCoord = sectionHorizontalCoordinateAt(section, right.traceIndex) ?? right.traceIndex;
 
     for (let traceIndex = traceStart; traceIndex <= traceEnd; traceIndex += 1) {
       if (anchorIndex > 0 && traceIndex === traceStart) {
         continue;
       }
-      const coordinate = section.horizontalAxis[traceIndex];
+      const coordinate = sectionHorizontalCoordinateAt(section, traceIndex) ?? traceIndex;
       const ratio =
         rightCoord === leftCoord ? 0 : (coordinate - leftCoord) / (rightCoord - leftCoord);
       const provisional = Math.round(left.sampleIndex + ratio * (right.sampleIndex - left.sampleIndex));
@@ -175,10 +182,10 @@ function snapPick(
   const sampleIndex = snapTraceSample(section, traceIndex, targetSampleIndex, snapMode, snapWindow);
   return {
     traceIndex,
-    traceCoordinate: section.horizontalAxis[traceIndex],
+    traceCoordinate: sectionHorizontalCoordinateAt(section, traceIndex) ?? traceIndex,
     sampleIndex,
-    sampleValue: section.sampleAxis[sampleIndex],
-    amplitude: section.amplitudes[traceIndex * section.dimensions.samples + sampleIndex]
+    sampleValue: sectionSampleValueAt(section, sampleIndex) ?? sampleIndex,
+    amplitude: sectionAmplitudeAt(section, traceIndex, sampleIndex) ?? 0
   };
 }
 
@@ -195,9 +202,9 @@ function snapTraceSample(
   const candidates: number[] = [];
 
   for (let sampleIndex = start; sampleIndex <= end; sampleIndex += 1) {
-    const previous = section.amplitudes[traceIndex * samplesPerTrace + sampleIndex - 1];
-    const current = section.amplitudes[traceIndex * samplesPerTrace + sampleIndex];
-    const next = section.amplitudes[traceIndex * samplesPerTrace + sampleIndex + 1];
+    const previous = sectionAmplitudeAt(section, traceIndex, sampleIndex - 1) ?? 0;
+    const current = sectionAmplitudeAt(section, traceIndex, sampleIndex) ?? 0;
+    const next = sectionAmplitudeAt(section, traceIndex, sampleIndex + 1) ?? 0;
     const isPeak = current >= previous && current >= next;
     const isTrough = current <= previous && current <= next;
     if ((snapMode === "peak" && isPeak) || (snapMode === "trough" && isTrough)) {
@@ -214,8 +221,8 @@ function snapTraceSample(
     if (distance !== 0) {
       return distance;
     }
-    const leftAmplitude = section.amplitudes[traceIndex * samplesPerTrace + left];
-    const rightAmplitude = section.amplitudes[traceIndex * samplesPerTrace + right];
+    const leftAmplitude = sectionAmplitudeAt(section, traceIndex, left) ?? 0;
+    const rightAmplitude = sectionAmplitudeAt(section, traceIndex, right) ?? 0;
     return snapMode === "peak" ? rightAmplitude - leftAmplitude : leftAmplitude - rightAmplitude;
   })[0];
 }

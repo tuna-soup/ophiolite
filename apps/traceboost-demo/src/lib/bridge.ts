@@ -4,15 +4,21 @@ import type {
   BuildSurveyTimeDepthTransformRequest,
   ExportSegyResponse,
   CancelProcessingJobResponse,
+  DescribeVelocityVolumeRequest,
+  DescribeVelocityVolumeResponse,
   DatasetRegistryEntry,
   DatasetRegistryStatus,
   GetProcessingJobResponse,
+  IngestVelocityVolumeRequest,
+  IngestVelocityVolumeResponse,
   ImportDatasetResponse,
   ImportHorizonXyzResponse,
+  ImportSegyWithPlanResponse,
   ImportedHorizonDescriptor,
   LoadVelocityModelsResponse,
   LoadWorkspaceStateResponse,
   ListPipelinePresetsResponse,
+  ListSegyImportRecipesResponse,
   OpenDatasetResponse,
   PreviewSubvolumeProcessingRequest,
   PreviewSubvolumeProcessingResponse,
@@ -25,9 +31,14 @@ import type {
   SaveWorkspaceSessionRequest,
   SaveWorkspaceSessionResponse,
   SavePipelinePresetResponse,
+  SaveSegyImportRecipeResponse,
+  SegyImportScanResponse,
   SectionAxis,
   SectionHorizonOverlayView,
   SegyGeometryOverride,
+  SegyImportPlan,
+  SegyImportRecipe,
+  SegyImportValidationResponse,
   SetDatasetNativeCoordinateReferenceRequest,
   SetDatasetNativeCoordinateReferenceResponse,
   SetActiveDatasetEntryResponse,
@@ -48,6 +59,7 @@ import type {
 import { IPC_SCHEMA_VERSION as SCHEMA_VERSION } from "@traceboost/seis-contracts";
 import type {
   CheckshotVspObservationSet1D,
+  CoordinateReferenceDescriptor,
   ResolvedSurveyMapSourceDto,
   ManualTimeDepthPickSet1D,
   ResolveSectionWellOverlaysResponse,
@@ -61,12 +73,15 @@ import type {
 import {
   parsePackedPreviewProcessingResponse,
   parsePackedSectionDisplayResponse,
+  parsePackedSectionTileResponse,
   parsePackedSectionViewResponse
 } from "./transport/packed-sections";
 import type {
   TransportPreviewProcessingResponse,
   TransportResolvedSectionDisplayView,
-  TransportSectionView
+  TransportSectionTileView,
+  TransportSectionView,
+  TransportWindowedSectionView
 } from "./transport/packed-sections";
 export type {
   SectionBytePayload,
@@ -74,7 +89,9 @@ export type {
   TransportPreviewView,
   TransportResolvedSectionDisplayView,
   TransportSectionScalarOverlayView,
-  TransportSectionView
+  TransportSectionTileView,
+  TransportSectionView,
+  TransportWindowedSectionView
 } from "./transport/packed-sections";
 
 export interface DiagnosticsStatus {
@@ -103,19 +120,165 @@ export interface FrontendDiagnosticsEventRequest {
   fields?: Record<string, unknown> | null;
 }
 
+export interface RunSectionBrowsingBenchmarkRequest {
+  storePath: string;
+  axis: SectionAxis;
+  sectionIndex: number;
+  traceRange: [number, number];
+  sampleRange: [number, number];
+  lod: number;
+  iterations?: number;
+  includeFullSectionBaseline?: boolean;
+  stepOffsets?: number[];
+  switchAxis?: SectionAxis;
+  switchSectionIndex?: number;
+}
+
+export interface SectionBrowsingBenchmarkCase {
+  scenario: string;
+  axis: string;
+  index: number;
+  traceRange: [number, number];
+  sampleRange: [number, number];
+  lod: number;
+  traceStep: number;
+  sampleStep: number;
+  outputTraces: number;
+  outputSamples: number;
+  payloadBytes: number;
+  iterationMs: number[];
+  medianMs: number;
+  meanMs: number;
+}
+
+export interface RunSectionBrowsingBenchmarkResponse {
+  sessionLogPath: string;
+  storePath: string;
+  datasetId: string;
+  shape: [number, number, number];
+  tileShape: [number, number, number];
+  axis: string;
+  sectionIndex: number;
+  traceRange: [number, number];
+  sampleRange: [number, number];
+  lod: number;
+  iterations: number;
+  includeFullSectionBaseline: boolean;
+  stepOffsets: number[];
+  switchAxis?: string | null;
+  switchSectionIndex?: number | null;
+  cases: SectionBrowsingBenchmarkCase[];
+}
+
 export interface HorizonImportCoordinateReferenceOptions {
   sourceCoordinateReferenceId?: string | null;
   sourceCoordinateReferenceName?: string | null;
   assumeSameAsSurvey?: boolean;
+  verticalDomain?: ImportedHorizonDescriptor["vertical_domain"] | null;
+  verticalUnit?: string | null;
 }
+
+export interface HorizonImportPreviewFile {
+  source_path: string;
+  name: string;
+  parsed_point_count: number;
+  invalid_row_count: number;
+  x_min: number | null;
+  x_max: number | null;
+  y_min: number | null;
+  y_max: number | null;
+  z_min: number | null;
+  z_max: number | null;
+  estimated_mapped_point_count: number | null;
+  estimated_missing_cell_count: number | null;
+  can_commit: boolean;
+  issues: string[];
+}
+
+export interface HorizonXyzFilePreview {
+  source_path: string;
+  name: string;
+  parsed_point_count: number;
+  invalid_row_count: number;
+  x_min: number | null;
+  x_max: number | null;
+  y_min: number | null;
+  y_max: number | null;
+  z_min: number | null;
+  z_max: number | null;
+  issues: string[];
+}
+
+export interface HorizonImportPreview {
+  files: HorizonImportPreviewFile[];
+  source_coordinate_reference: CoordinateReferenceDescriptor | null;
+  aligned_coordinate_reference: CoordinateReferenceDescriptor | null;
+  transformed: boolean;
+  can_commit: boolean;
+  notes: string[];
+  issues: string[];
+}
+
+export interface HorizonSourceImportCanonicalDraft {
+  selectedSourcePaths: string[];
+  verticalDomain: ImportedHorizonDescriptor["vertical_domain"];
+  verticalUnit?: string | null;
+  sourceCoordinateReference?: CoordinateReferenceDescriptor | null;
+  assumeSameAsSurvey: boolean;
+}
+
+export interface HorizonSourceImportPreview {
+  parsed: HorizonImportPreview;
+  suggestedDraft: HorizonSourceImportCanonicalDraft;
+}
+
+export interface PreviewHorizonSourceImportRequest {
+  storePath: string;
+  inputPaths: string[];
+  draft?: HorizonSourceImportCanonicalDraft | null;
+}
+
+export interface CommitHorizonSourceImportRequest {
+  storePath: string;
+  draft: HorizonSourceImportCanonicalDraft;
+}
+
+export interface CoordinateReferenceCatalogEntry {
+  authority: string;
+  code: string;
+  authId: string;
+  name: string;
+  deprecated: boolean;
+  areaName?: string | null;
+  coordinateReferenceType: string;
+}
+
+export type CoordinateReferenceSelection =
+  | {
+      kind: "authority_code";
+      authority: string;
+      code: string;
+      authId: string;
+      name?: string | null;
+    }
+  | {
+      kind: "local_engineering";
+      label: string;
+    }
+  | {
+      kind: "unresolved";
+    };
 
 export type ProjectDisplayCoordinateReference =
   | {
       kind: "native_engineering";
     }
   | {
-      kind: "coordinate_reference_id";
-      coordinateReferenceId: string;
+      kind: "authority_code";
+      authority: string;
+      code: string;
+      authId: string;
+      name?: string | null;
     };
 
 export interface ProjectGeospatialSettings {
@@ -158,6 +321,461 @@ export interface ProjectAssetBindingInput {
   uwi?: string | null;
   api?: string | null;
   operator_aliases: string[];
+}
+
+export interface ProjectOperatorAssignment {
+  organisation_name?: string | null;
+  organisation_id?: string | null;
+  effective_at?: string | null;
+  terminated_at?: string | null;
+  source?: string | null;
+  note?: string | null;
+}
+
+export interface ProjectExternalReference {
+  system: string;
+  id: string;
+  kind?: string | null;
+  note?: string | null;
+}
+
+export interface ProjectProjectedPoint2 {
+  x: number;
+  y: number;
+}
+
+export interface ProjectLocatedPoint {
+  coordinate_reference?: CoordinateReferenceDescriptor | null;
+  point: ProjectProjectedPoint2;
+  recorded_at?: string | null;
+  source?: string | null;
+  note?: string | null;
+}
+
+export interface ProjectVerticalMeasurement {
+  measurement_id?: string | null;
+  value: number;
+  unit?: string | null;
+  path: string;
+  coordinate_reference?: CoordinateReferenceDescriptor | null;
+  reference_measurement_id?: string | null;
+  reference_entity_id?: string | null;
+  source?: string | null;
+  description?: string | null;
+}
+
+export interface ProjectWellMetadata {
+  field_name?: string | null;
+  block_name?: string | null;
+  basin_name?: string | null;
+  country?: string | null;
+  province_state?: string | null;
+  location_text?: string | null;
+  interest_type?: string | null;
+  operator_history?: ProjectOperatorAssignment[];
+  surface_location?: ProjectLocatedPoint | null;
+  default_vertical_measurement_id?: string | null;
+  default_vertical_coordinate_reference?: CoordinateReferenceDescriptor | null;
+  vertical_measurements?: ProjectVerticalMeasurement[];
+  external_references?: ProjectExternalReference[];
+  notes?: string[];
+}
+
+export interface ProjectWellboreMetadata {
+  sequence_number?: number | null;
+  status?: string | null;
+  purpose?: string | null;
+  trajectory_type?: string | null;
+  parent_wellbore_id?: string | null;
+  target_formation?: string | null;
+  primary_material?: string | null;
+  location_text?: string | null;
+  service_company_name?: string | null;
+  operator_history?: ProjectOperatorAssignment[];
+  bottom_hole_location?: ProjectLocatedPoint | null;
+  default_vertical_measurement_id?: string | null;
+  default_vertical_coordinate_reference?: CoordinateReferenceDescriptor | null;
+  vertical_measurements?: ProjectVerticalMeasurement[];
+  external_references?: ProjectExternalReference[];
+  notes?: string[];
+}
+
+export interface ProjectWellFolderImportIssue {
+  severity: "info" | "warning" | "blocking";
+  code: string;
+  message: string;
+  slice?: string | null;
+  sourcePath?: string | null;
+}
+
+export type ProjectWellFolderImportOmissionKind =
+  | "surface_location"
+  | "trajectory"
+  | "tops_rows"
+  | "log"
+  | "ascii_log"
+  | "unsupported_sources";
+
+export type ProjectWellFolderImportOmissionReasonCode =
+  | "source_crs_unresolved"
+  | "trajectory_not_committed"
+  | "tops_rows_incomplete"
+  | "log_unselected"
+  | "ascii_log_unselected"
+  | "unsupported_preserved_as_source"
+  | "unsupported_preserved_as_raw_bundle";
+
+export interface ProjectWellFolderImportOmission {
+  kind: ProjectWellFolderImportOmissionKind;
+  slice: string;
+  reasonCode: ProjectWellFolderImportOmissionReasonCode;
+  message: string;
+  sourcePath?: string | null;
+  rowCount?: number | null;
+}
+
+export interface ProjectWellFolderImportBindingDraft {
+  wellName: string;
+  wellboreName: string;
+  uwi?: string | null;
+  api?: string | null;
+  operatorAliases: string[];
+}
+
+export interface ProjectWellFolderDetectedSource {
+  sourcePath: string;
+  fileName: string;
+  status:
+    | "not_present"
+    | "parsed"
+    | "parsed_with_issues"
+    | "unsupported"
+    | "not_viable_for_commit"
+    | "ready_for_commit";
+  reason: string;
+}
+
+export interface ProjectWellFolderMetadataSlicePreview {
+  status:
+    | "not_present"
+    | "parsed"
+    | "parsed_with_issues"
+    | "unsupported"
+    | "not_viable_for_commit"
+    | "ready_for_commit";
+  commitEnabled: boolean;
+  sourcePath?: string | null;
+  wellMetadata?: ProjectWellMetadata | null;
+  wellboreMetadata?: ProjectWellboreMetadata | null;
+  detectedCoordinateReferences: CoordinateReferenceDescriptor[];
+  notes: string[];
+}
+
+export interface ProjectWellFolderLogFilePreview {
+  sourcePath: string;
+  fileName: string;
+  status:
+    | "not_present"
+    | "parsed"
+    | "parsed_with_issues"
+    | "unsupported"
+    | "not_viable_for_commit"
+    | "ready_for_commit";
+  rowCount: number;
+  curveCount: number;
+  indexCurveName: string;
+  curveNames: string[];
+  detectedWellName?: string | null;
+  issueCount: number;
+  defaultSelected: boolean;
+  selectionReason?: string | null;
+  duplicateGroupId?: string | null;
+}
+
+export interface ProjectWellFolderLogsSlicePreview {
+  status:
+    | "not_present"
+    | "parsed"
+    | "parsed_with_issues"
+    | "unsupported"
+    | "not_viable_for_commit"
+    | "ready_for_commit";
+  commitEnabled: boolean;
+  files: ProjectWellFolderLogFilePreview[];
+}
+
+export interface ProjectWellFolderAsciiLogColumnPreview {
+  name: string;
+  numericCount: number;
+  nullCount: number;
+  sampleValues: number[];
+}
+
+export interface ProjectWellFolderAsciiLogFilePreview {
+  sourcePath: string;
+  fileName: string;
+  status:
+    | "not_present"
+    | "parsed"
+    | "parsed_with_issues"
+    | "unsupported"
+    | "not_viable_for_commit"
+    | "ready_for_commit";
+  rowCount: number;
+  columnCount: number;
+  defaultDepthColumn?: string | null;
+  defaultValueColumns: string[];
+  columns: ProjectWellFolderAsciiLogColumnPreview[];
+  issueCount: number;
+}
+
+export interface ProjectWellFolderAsciiLogsSlicePreview {
+  status:
+    | "not_present"
+    | "parsed"
+    | "parsed_with_issues"
+    | "unsupported"
+    | "not_viable_for_commit"
+    | "ready_for_commit";
+  commitEnabled: boolean;
+  files: ProjectWellFolderAsciiLogFilePreview[];
+}
+
+export interface ProjectWellFolderTopDraftRow {
+  name?: string | null;
+  topDepth?: number | null;
+  baseDepth?: number | null;
+  anomaly?: string | null;
+  quality?: string | null;
+  note?: string | null;
+}
+
+export interface ProjectWellFolderTopsSlicePreview {
+  status:
+    | "not_present"
+    | "parsed"
+    | "parsed_with_issues"
+    | "unsupported"
+    | "not_viable_for_commit"
+    | "ready_for_commit";
+  commitEnabled: boolean;
+  sourcePath?: string | null;
+  rowCount: number;
+  committableRowCount: number;
+  preferredDepthReference?: string | null;
+  sourceName?: string | null;
+  rows: ProjectWellFolderTopDraftRow[];
+}
+
+export interface ProjectWellFolderTrajectoryDraftRow {
+  measuredDepth?: number | null;
+  inclinationDeg?: number | null;
+  azimuthDeg?: number | null;
+  trueVerticalDepth?: number | null;
+  xOffset?: number | null;
+  yOffset?: number | null;
+}
+
+export interface ProjectWellFolderTrajectorySlicePreview {
+  status:
+    | "not_present"
+    | "parsed"
+    | "parsed_with_issues"
+    | "unsupported"
+    | "not_viable_for_commit"
+    | "ready_for_commit";
+  commitEnabled: boolean;
+  sourcePath?: string | null;
+  rowCount: number;
+  committableRowCount: number;
+  nonEmptyColumnCount: Record<string, number>;
+  draftRows: ProjectWellFolderTrajectoryDraftRow[];
+  sampleRows: ProjectWellFolderTrajectoryDraftRow[];
+}
+
+export type WellFolderCoordinateReferenceCandidateConfidence = "high" | "medium" | "low";
+
+export type WellFolderCoordinateReferenceSelectionMode =
+  | "detected"
+  | "assume_same_as_survey"
+  | "manual"
+  | "unresolved";
+
+export interface WellFolderCoordinateReferenceCandidate {
+  coordinateReference: CoordinateReferenceDescriptor;
+  confidence: WellFolderCoordinateReferenceCandidateConfidence;
+  evidence: string;
+  rationale: string;
+  supportsGeometryCommit: boolean;
+}
+
+export interface WellFolderCoordinateReferencePreview {
+  requiredForSurfaceLocation: boolean;
+  requiredForTrajectory: boolean;
+  recommendedCandidateId?: string | null;
+  candidates: WellFolderCoordinateReferenceCandidate[];
+  notes: string[];
+}
+
+export interface WellFolderCoordinateReferenceSelection {
+  mode: WellFolderCoordinateReferenceSelectionMode;
+  candidateId?: string | null;
+  coordinateReference?: CoordinateReferenceDescriptor | null;
+}
+
+export interface ProjectWellFolderImportPreview {
+  schemaVersion: number;
+  folderPath: string;
+  folderName: string;
+  binding: ProjectWellFolderImportBindingDraft;
+  sourceCoordinateReference: WellFolderCoordinateReferencePreview;
+  metadata: ProjectWellFolderMetadataSlicePreview;
+  logs: ProjectWellFolderLogsSlicePreview;
+  asciiLogs: ProjectWellFolderAsciiLogsSlicePreview;
+  topsMarkers: ProjectWellFolderTopsSlicePreview;
+  trajectory: ProjectWellFolderTrajectorySlicePreview;
+  unsupportedSources: ProjectWellFolderDetectedSource[];
+  issues: ProjectWellFolderImportIssue[];
+}
+
+export interface ProjectWellFolderImportedAsset {
+  assetKind: string;
+  sourcePath: string;
+  assetId: string;
+  collectionId: string;
+  collectionName: string;
+}
+
+export interface CommitProjectWellImportRequest {
+  projectRoot: string;
+  folderPath: string;
+  sourcePaths?: string[] | null;
+  draft?: ProjectWellSourceImportCanonicalDraft | null;
+  binding: ProjectAssetBindingInput;
+  wellMetadata?: ProjectWellMetadata | null;
+  wellboreMetadata?: ProjectWellboreMetadata | null;
+  sourceCoordinateReference: WellFolderCoordinateReferenceSelection;
+  importLogs: boolean;
+  selectedLogSourcePaths?: string[] | null;
+  importTopsMarkers: boolean;
+  importTrajectory: boolean;
+  topsDepthReference?: string | null;
+  topsRows?: ProjectWellFolderTopDraftRow[] | null;
+  trajectoryRows?: ProjectWellFolderTrajectoryDraftRow[] | null;
+  asciiLogImports?: ProjectWellFolderAsciiLogImportRequest[] | null;
+}
+
+export interface PreviewProjectWellImportRequest {
+  folderPath: string;
+  sourcePaths?: string[] | null;
+}
+
+export interface ProjectWellFolderAsciiLogCurveMapping {
+  sourceColumn: string;
+  mnemonic: string;
+  unit?: string | null;
+}
+
+export interface ProjectWellFolderAsciiLogImportRequest {
+  sourcePath: string;
+  depthColumn: string;
+  valueColumns: ProjectWellFolderAsciiLogCurveMapping[];
+  nullValue?: number | null;
+}
+
+export interface ProjectWellFolderImportCommitResponse {
+  schemaVersion: number;
+  wellId: string;
+  wellboreId: string;
+  createdWell: boolean;
+  createdWellbore: boolean;
+  sourceCoordinateReferenceMode: WellFolderCoordinateReferenceSelectionMode;
+  sourceCoordinateReference?: CoordinateReferenceDescriptor | null;
+  importedAssets: ProjectWellFolderImportedAsset[];
+  omissions: ProjectWellFolderImportOmission[];
+  issues: ProjectWellFolderImportIssue[];
+}
+
+export type ProjectWellSourceImportIssue = ProjectWellFolderImportIssue;
+export type ProjectWellSourceImportOmissionKind = ProjectWellFolderImportOmissionKind;
+export type ProjectWellSourceImportOmissionReasonCode = ProjectWellFolderImportOmissionReasonCode;
+export type ProjectWellSourceImportOmission = ProjectWellFolderImportOmission;
+export type ProjectWellSourceImportBindingDraft = ProjectWellFolderImportBindingDraft;
+export type ProjectWellSourceDetectedSource = ProjectWellFolderDetectedSource;
+export type ProjectWellSourceMetadataSlicePreview = ProjectWellFolderMetadataSlicePreview;
+export type ProjectWellSourceLogFilePreview = ProjectWellFolderLogFilePreview;
+export type ProjectWellSourceLogsSlicePreview = ProjectWellFolderLogsSlicePreview;
+export type ProjectWellSourceAsciiLogColumnPreview = ProjectWellFolderAsciiLogColumnPreview;
+export type ProjectWellSourceAsciiLogFilePreview = ProjectWellFolderAsciiLogFilePreview;
+export type ProjectWellSourceAsciiLogsSlicePreview = ProjectWellFolderAsciiLogsSlicePreview;
+export type ProjectWellSourceTopDraftRow = ProjectWellFolderTopDraftRow;
+export type ProjectWellSourceTopsSlicePreview = ProjectWellFolderTopsSlicePreview;
+export type ProjectWellSourceTrajectoryDraftRow = ProjectWellFolderTrajectoryDraftRow;
+export type ProjectWellSourceTrajectorySlicePreview = ProjectWellFolderTrajectorySlicePreview;
+export type WellSourceCoordinateReferenceCandidateConfidence =
+  WellFolderCoordinateReferenceCandidateConfidence;
+export type WellSourceCoordinateReferenceSelectionMode =
+  WellFolderCoordinateReferenceSelectionMode;
+export type WellSourceCoordinateReferenceCandidate = WellFolderCoordinateReferenceCandidate;
+export type WellSourceCoordinateReferencePreview = WellFolderCoordinateReferencePreview;
+export type WellSourceCoordinateReferenceSelection = WellFolderCoordinateReferenceSelection;
+export type ProjectWellSourceImportedAsset = ProjectWellFolderImportedAsset;
+export type ProjectWellSourceAsciiLogCurveMapping = ProjectWellFolderAsciiLogCurveMapping;
+export type ProjectWellSourceAsciiLogImportRequest = ProjectWellFolderAsciiLogImportRequest;
+export type ProjectWellSourceImportCommitResponse = ProjectWellFolderImportCommitResponse;
+
+export interface ProjectWellSourceImportTopsCanonicalDraft {
+  depthReference?: string | null;
+  rows: ProjectWellSourceTopDraftRow[];
+}
+
+export interface ProjectWellSourceImportTrajectoryCanonicalDraft {
+  enabled: boolean;
+  rows?: ProjectWellSourceTrajectoryDraftRow[] | null;
+}
+
+export interface ProjectWellSourceImportPlanCanonicalDraft {
+  selectedLogSourcePaths?: string[] | null;
+  asciiLogImports?: ProjectWellSourceAsciiLogImportRequest[] | null;
+  topsMarkers?: ProjectWellSourceImportTopsCanonicalDraft | null;
+  trajectory?: ProjectWellSourceImportTrajectoryCanonicalDraft | null;
+}
+
+export interface ProjectWellSourceImportCanonicalDraft {
+  binding: ProjectAssetBindingInput;
+  sourceCoordinateReference: WellSourceCoordinateReferenceSelection;
+  wellMetadata?: ProjectWellMetadata | null;
+  wellboreMetadata?: ProjectWellboreMetadata | null;
+  importPlan: ProjectWellSourceImportPlanCanonicalDraft;
+}
+
+export interface ProjectWellSourceImportPreview {
+  parsed: ProjectWellFolderImportPreview;
+  suggestedDraft: ProjectWellSourceImportCanonicalDraft;
+}
+
+export interface PreviewProjectWellSourceImportRequest {
+  sourceRootPath: string;
+  sourcePaths?: string[] | null;
+}
+
+export interface CommitProjectWellSourceImportRequest {
+  projectRoot: string;
+  sourceRootPath: string;
+  sourcePaths?: string[] | null;
+  draft?: ProjectWellSourceImportCanonicalDraft | null;
+  binding?: ProjectAssetBindingInput;
+  wellMetadata?: ProjectWellMetadata | null;
+  wellboreMetadata?: ProjectWellboreMetadata | null;
+  sourceCoordinateReference?: WellSourceCoordinateReferenceSelection;
+  importLogs?: boolean;
+  selectedLogSourcePaths?: string[] | null;
+  importTopsMarkers?: boolean;
+  importTrajectory?: boolean;
+  topsDepthReference?: string | null;
+  topsRows?: ProjectWellSourceTopDraftRow[] | null;
+  trajectoryRows?: ProjectWellSourceTrajectoryDraftRow[] | null;
+  asciiLogImports?: ProjectWellSourceAsciiLogImportRequest[] | null;
 }
 
 export interface ProjectWellTimeDepthModelDescriptor {
@@ -304,6 +922,214 @@ export interface ProjectWellOverlayInventoryResponse {
   displayCompatibility: ProjectMapDisplayCompatibilitySummary;
 }
 
+export interface ProjectWellMarkerDescriptor {
+  name: string;
+  markerKind?: string | null;
+  sourceAssetId?: string | null;
+  topDepth: number;
+  baseDepth?: number | null;
+  depthReference?: string | null;
+  source?: string | null;
+  note?: string | null;
+}
+
+export interface ProjectWellMarkerHorizonResidualPointDescriptor {
+  markerName: string;
+  markerKind?: string | null;
+  x: number;
+  y: number;
+  z: number;
+  horizonDepth: number;
+  residual: number;
+  status: string;
+  note?: string | null;
+}
+
+export interface ProjectWellMarkerHorizonResidualDescriptor {
+  assetId: string;
+  sourceAssetId?: string | null;
+  surveyAssetId?: string | null;
+  horizonId?: string | null;
+  markerName?: string | null;
+  wellId: string;
+  wellboreId: string;
+  status: string;
+  name: string;
+  rowCount: number;
+  pointCount: number;
+  markerNames: string[];
+  points: ProjectWellMarkerHorizonResidualPointDescriptor[];
+}
+
+export interface ProjectWellMarkerResidualInventoryResponse {
+  markers: ProjectWellMarkerDescriptor[];
+  residualAssets: ProjectWellMarkerHorizonResidualDescriptor[];
+}
+
+export type VendorProjectImportVendor = "opendtect" | "petrel";
+
+export type VendorProjectCanonicalTargetKind =
+  | "seismic_trace_data"
+  | "survey_store_horizon"
+  | "log"
+  | "trajectory"
+  | "top_set"
+  | "well_marker_set"
+  | "well_time_depth_model"
+  | "checkshot_vsp_observation_set"
+  | "raw_source_bundle"
+  | "external_open_format"
+  | "none";
+
+export type VendorProjectImportDisposition = "canonical" | "canonical_with_loss" | "raw_source_only";
+
+export type VendorProjectImportIssueSeverity = "info" | "warning" | "blocking";
+
+export interface VendorProjectImportIssue {
+  severity: VendorProjectImportIssueSeverity;
+  code: string;
+  message: string;
+  sourcePath?: string | null;
+  vendorObjectId?: string | null;
+}
+
+export interface VendorProjectCoordinateReferenceDescriptor {
+  id?: string | null;
+  name?: string | null;
+  geodetic_datum?: string | null;
+  unit?: string | null;
+}
+
+export interface VendorProjectSurveyMetadata {
+  name?: string | null;
+  surveyDataType?: string | null;
+  inlineRange?: [number, number, number] | null;
+  crosslineRange?: [number, number, number] | null;
+  zRange?: [number, number, number] | null;
+  zDomain?: string | null;
+  coordinateReference?: VendorProjectCoordinateReferenceDescriptor | null;
+  coordinateReferenceSourcePath?: string | null;
+  notes: string[];
+}
+
+export interface VendorProjectObjectPreview {
+  vendorObjectId: string;
+  vendorKind: string;
+  displayName: string;
+  sourcePaths: string[];
+  canonicalTargetKind: VendorProjectCanonicalTargetKind;
+  disposition: VendorProjectImportDisposition;
+  requiresCrsDecision: boolean;
+  defaultSelected: boolean;
+  notes: string[];
+}
+
+export interface VendorProjectScanRequest {
+  vendor: VendorProjectImportVendor;
+  projectRoot: string;
+}
+
+export interface VendorProjectScanResponse {
+  schemaVersion: number;
+  vendor: VendorProjectImportVendor;
+  projectRoot: string;
+  vendorProject?: string | null;
+  surveyMetadata: VendorProjectSurveyMetadata;
+  objects: VendorProjectObjectPreview[];
+  issues: VendorProjectImportIssue[];
+}
+
+export interface VendorProjectPlanSurveyCandidate {
+  asset_id: string;
+  logical_asset_id: string;
+  collection_id: string;
+  name: string;
+  status: string;
+  owner_scope: string;
+  owner_id: string;
+  owner_name: string;
+  well_id: string;
+  well_name: string;
+  wellbore_id: string;
+  wellbore_name: string;
+  effective_coordinate_reference_id?: string | null;
+  effective_coordinate_reference_name?: string | null;
+}
+
+export interface VendorProjectPlannedImport {
+  vendorObjectId: string;
+  displayName: string;
+  canonicalTargetKind: VendorProjectCanonicalTargetKind;
+  disposition: VendorProjectImportDisposition;
+  requiresTargetSurveyAsset: boolean;
+  sourcePaths: string[];
+  notes: string[];
+}
+
+export interface VendorProjectPlanRequest {
+  vendor: VendorProjectImportVendor;
+  projectRoot: string;
+  selectedVendorObjectIds: string[];
+  targetProjectRoot?: string | null;
+  targetSurveyAssetId?: string | null;
+  binding?: ProjectAssetBindingInput | null;
+  coordinateReference?: VendorProjectCoordinateReferenceDescriptor | null;
+}
+
+export interface VendorProjectPlanResponse {
+  schemaVersion: number;
+  vendor: VendorProjectImportVendor;
+  projectRoot: string;
+  plannedImports: VendorProjectPlannedImport[];
+  bridgeRequests: Array<Record<string, unknown>>;
+  targetSurveyAssetRequired: boolean;
+  targetSurveyAssetCandidates: VendorProjectPlanSurveyCandidate[];
+  selectedTargetSurveyAsset?: VendorProjectPlanSurveyCandidate | null;
+  runtimeProbe?: Record<string, unknown> | null;
+  blockingIssues: VendorProjectImportIssue[];
+  warnings: VendorProjectImportIssue[];
+}
+
+export interface VendorProjectCommittedAsset {
+  vendorObjectId: string;
+  displayName: string;
+  canonicalTargetKind: VendorProjectCanonicalTargetKind;
+  disposition: VendorProjectImportDisposition;
+  assetId?: string | null;
+  collectionId?: string | null;
+  collectionName?: string | null;
+  sourcePaths: string[];
+  notes: string[];
+}
+
+export interface VendorProjectValidationReport {
+  vendorObjectId: string;
+  displayName: string;
+  checks: string[];
+  notes: string[];
+}
+
+export interface VendorProjectCommitRequest {
+  plan: VendorProjectPlanResponse;
+  targetProjectRoot?: string | null;
+  binding?: ProjectAssetBindingInput | null;
+  targetSurveyAssetId?: string | null;
+  coordinateReference?: VendorProjectCoordinateReferenceDescriptor | null;
+  bridgeOutputs?: Array<Record<string, unknown>>;
+  dryRun: boolean;
+}
+
+export interface VendorProjectCommitResponse {
+  schemaVersion: number;
+  vendor: VendorProjectImportVendor;
+  projectRoot: string;
+  targetProjectRoot?: string | null;
+  importedAssets: VendorProjectCommittedAsset[];
+  preservedRawSources: VendorProjectCommittedAsset[];
+  validationReports: VendorProjectValidationReport[];
+  issues: VendorProjectImportIssue[];
+}
+
 export interface ResolveProjectSurveyMapRequest {
   projectRoot: string;
   surveyAssetId: string;
@@ -313,6 +1139,26 @@ export interface ResolveProjectSurveyMapRequest {
 
 export interface ResolveProjectSurveyMapResponse {
   surveyMap: ResolvedSurveyMapSourceDto;
+}
+
+export interface ComputeProjectWellMarkerResidualRequest {
+  projectRoot: string;
+  wellboreId: string;
+  surveyAssetId: string;
+  horizonId: string;
+  markerName: string;
+  outputCollectionName?: string | null;
+}
+
+export interface ComputeProjectWellMarkerResidualResponse {
+  assetId: string;
+  collectionId: string;
+  collectionName: string;
+  wellId: string;
+  wellboreId: string;
+  markerName: string;
+  horizonId: string;
+  pointCount: number;
 }
 
 export interface ImportProjectWellTimeDepthModelRequest {
@@ -333,6 +1179,7 @@ export interface ImportProjectWellTimeDepthModelResponse {
 export interface ImportProjectWellTimeDepthAssetRequest {
   projectRoot: string;
   jsonPath: string;
+  jsonPayload?: string | null;
   binding: ProjectAssetBindingInput;
   collectionName?: string | null;
   assetKind:
@@ -341,6 +1188,75 @@ export interface ImportProjectWellTimeDepthAssetRequest {
     | "well_tie_observation_set"
     | "well_time_depth_authored_model"
     | "well_time_depth_model";
+}
+
+export interface ProjectWellTimeDepthPreviewIssue {
+  severity: "info" | "warning" | "blocking";
+  code: string;
+  message: string;
+}
+
+export interface PreviewProjectWellTimeDepthAssetRequest {
+  jsonPath: string;
+  jsonPayload?: string | null;
+  assetKind:
+    | "checkshot_vsp_observation_set"
+    | "manual_time_depth_pick_set"
+    | "well_tie_observation_set"
+    | "well_time_depth_authored_model"
+    | "well_time_depth_model";
+}
+
+export interface ProjectWellTimeDepthAssetPreview {
+  assetKind: PreviewProjectWellTimeDepthAssetRequest["assetKind"];
+  jsonPath: string;
+  canImport: boolean;
+  id?: string | null;
+  name?: string | null;
+  wellboreId?: string | null;
+  depthReference?: string | null;
+  travelTimeReference?: string | null;
+  sampleCount?: number | null;
+  noteCount?: number | null;
+  sourceKind?: string | null;
+  sourceBindingCount?: number | null;
+  assumptionIntervalCount?: number | null;
+  samplingStepM?: number | null;
+  resolvedTrajectoryFingerprint?: string | null;
+  sourceWellTimeDepthModelAssetId?: string | null;
+  tieWindowStartMs?: number | null;
+  tieWindowEndMs?: number | null;
+  traceSearchRadiusM?: number | null;
+  bulkShiftMs?: number | null;
+  stretchFactor?: number | null;
+  traceSearchOffsetM?: number | null;
+  correlation?: number | null;
+  issues: ProjectWellTimeDepthPreviewIssue[];
+  rawJson: string;
+}
+
+export interface ProjectWellTimeDepthImportCanonicalDraft {
+  assetKind: PreviewProjectWellTimeDepthAssetRequest["assetKind"];
+  jsonPayload: string;
+  collectionName?: string | null;
+}
+
+export interface ProjectWellTimeDepthImportPreview {
+  parsed: ProjectWellTimeDepthAssetPreview;
+  suggestedDraft: ProjectWellTimeDepthImportCanonicalDraft;
+}
+
+export interface PreviewProjectWellTimeDepthImportRequest {
+  jsonPath: string;
+  draft?: ProjectWellTimeDepthImportCanonicalDraft | null;
+  assetKind: PreviewProjectWellTimeDepthAssetRequest["assetKind"];
+}
+
+export interface CommitProjectWellTimeDepthImportRequest {
+  projectRoot: string;
+  jsonPath: string;
+  binding: ProjectAssetBindingInput;
+  draft: ProjectWellTimeDepthImportCanonicalDraft;
 }
 
 export interface CompileProjectWellTimeDepthAuthoredModelRequest {
@@ -477,12 +1393,43 @@ function defaultWorkspaceSession(): WorkspaceSession {
     project_survey_asset_id: null,
     project_wellbore_id: null,
     project_section_tolerance_m: null,
-    selected_project_well_time_depth_model_asset_id: null
+    selected_project_well_time_depth_model_asset_id: null,
+    native_engineering_accepted_store_paths: []
   };
 }
 
 function storageAvailable(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
+}
+
+function unixTimestampBigInt(): bigint {
+  return BigInt(Math.floor(Date.now() / 1000));
+}
+
+function parseOptionalUnixTimestamp(value: unknown): bigint | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "bigint") {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return BigInt(Math.trunc(value));
+  }
+  if (typeof value === "string" && /^-?\d+$/.test(value.trim())) {
+    return BigInt(value.trim());
+  }
+  return null;
+}
+
+function parseRequiredUnixTimestamp(value: unknown): bigint {
+  return parseOptionalUnixTimestamp(value) ?? 0n;
+}
+
+function serializeJsonWithBigInt(value: unknown): string {
+  return JSON.stringify(value, (_key, nestedValue) =>
+    typeof nestedValue === "bigint" ? nestedValue.toString() : nestedValue
+  );
 }
 
 function loadLocalRegistry(): DatasetRegistryEntry[] {
@@ -494,24 +1441,45 @@ function loadLocalRegistry(): DatasetRegistryEntry[] {
     return [];
   }
   try {
-    return JSON.parse(stored) as DatasetRegistryEntry[];
+    const parsed = JSON.parse(stored) as DatasetRegistryEntry[];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.map((entry) => ({
+      ...entry,
+      last_opened_at_unix_s: parseOptionalUnixTimestamp(entry.last_opened_at_unix_s),
+      last_imported_at_unix_s: parseOptionalUnixTimestamp(entry.last_imported_at_unix_s),
+      updated_at_unix_s: parseRequiredUnixTimestamp(entry.updated_at_unix_s)
+    }));
   } catch {
     return [];
   }
 }
 
 function loadLocalSession(): WorkspaceSession {
+  const defaults = defaultWorkspaceSession();
   if (!storageAvailable()) {
-    return defaultWorkspaceSession();
+    return defaults;
   }
   const stored = window.localStorage.getItem(WORKSPACE_SESSION_STORAGE_KEY);
   if (!stored) {
-    return defaultWorkspaceSession();
+    return defaults;
   }
   try {
-    return JSON.parse(stored) as WorkspaceSession;
+    const parsed = JSON.parse(stored) as Partial<WorkspaceSession>;
+    return {
+      ...defaults,
+      ...parsed,
+      native_engineering_accepted_store_paths: Array.isArray(
+        parsed.native_engineering_accepted_store_paths
+      )
+        ? parsed.native_engineering_accepted_store_paths
+            .map((value) => String(value).trim())
+            .filter((value, index, values) => value.length > 0 && values.indexOf(value) === index)
+        : []
+    };
   } catch {
-    return defaultWorkspaceSession();
+    return defaults;
   }
 }
 
@@ -519,7 +1487,7 @@ function saveLocalRegistry(entries: DatasetRegistryEntry[]): void {
   if (!storageAvailable()) {
     return;
   }
-  window.localStorage.setItem(DATASET_REGISTRY_STORAGE_KEY, JSON.stringify(entries));
+  window.localStorage.setItem(DATASET_REGISTRY_STORAGE_KEY, serializeJsonWithBigInt(entries));
 }
 
 function entryStoreIdentity(entry: DatasetRegistryEntry): { storeId: string; storePath: string } | null {
@@ -574,6 +1542,46 @@ function projectGeospatialSettingsStorageKey(projectRoot: string): string {
   return `${PROJECT_GEOSPATIAL_SETTINGS_STORAGE_KEY_PREFIX}${projectRoot.trim()}`;
 }
 
+function normalizeLocalProjectDisplayCoordinateReference(
+  value: ProjectGeospatialSettings["displayCoordinateReference"]
+): ProjectDisplayCoordinateReference | null {
+  if (!value || typeof value !== "object" || typeof value.kind !== "string") {
+    return null;
+  }
+  const legacyValue = value as { kind?: unknown; coordinateReferenceId?: unknown };
+  if (value.kind === "native_engineering") {
+    return { kind: "native_engineering" };
+  }
+  if (
+    value.kind === "authority_code" &&
+    typeof value.authority === "string" &&
+    typeof value.code === "string" &&
+    typeof value.authId === "string"
+  ) {
+    return {
+      kind: "authority_code",
+      authority: value.authority.trim().toUpperCase(),
+      code: value.code.trim(),
+      authId: value.authId.trim().toUpperCase(),
+      name: typeof value.name === "string" ? value.name.trim() || null : null
+    };
+  }
+  if (legacyValue.kind === "coordinate_reference_id" && typeof legacyValue.coordinateReferenceId === "string") {
+    const authId = legacyValue.coordinateReferenceId.trim().toUpperCase();
+    const [authority, code] = authId.split(":", 2);
+    if (authority && code) {
+      return {
+        kind: "authority_code",
+        authority,
+        code,
+        authId,
+        name: null
+      };
+    }
+  }
+  return null;
+}
+
 function loadLocalProjectGeospatialSettings(projectRoot: string): ProjectGeospatialSettings | null {
   if (!storageAvailable()) {
     return null;
@@ -584,7 +1592,17 @@ function loadLocalProjectGeospatialSettings(projectRoot: string): ProjectGeospat
     return null;
   }
   try {
-    return JSON.parse(stored) as ProjectGeospatialSettings;
+    const parsed = JSON.parse(stored) as ProjectGeospatialSettings;
+    const normalizedDisplayCoordinateReference = normalizeLocalProjectDisplayCoordinateReference(
+      parsed.displayCoordinateReference
+    );
+    if (!normalizedDisplayCoordinateReference) {
+      return null;
+    }
+    return {
+      ...parsed,
+      displayCoordinateReference: normalizedDisplayCoordinateReference
+    };
   } catch {
     return null;
   }
@@ -682,6 +1700,94 @@ export async function importDataset(
   });
 }
 
+export async function scanSegyImport(inputPath: string): Promise<SegyImportScanResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<SegyImportScanResponse>("scan_segy_import_command", { inputPath });
+  }
+
+  return postJson<SegyImportScanResponse>("/api/segy-import/scan", { inputPath });
+}
+
+export async function validateSegyImportPlan(
+  plan: SegyImportPlan
+): Promise<SegyImportValidationResponse> {
+  const request = {
+    schema_version: SCHEMA_VERSION,
+    plan
+  };
+  if (isTauriEnvironment()) {
+    return invokeTauri<SegyImportValidationResponse>("validate_segy_import_plan_command", {
+      request
+    });
+  }
+
+  return postJson<SegyImportValidationResponse>("/api/segy-import/validate", request);
+}
+
+export async function importSegyWithPlan(
+  plan: SegyImportPlan,
+  validationFingerprint: string
+): Promise<ImportSegyWithPlanResponse> {
+  const request = {
+    schema_version: SCHEMA_VERSION,
+    plan,
+    validation_fingerprint: validationFingerprint
+  };
+  if (isTauriEnvironment()) {
+    return invokeTauri<ImportSegyWithPlanResponse>("import_segy_with_plan_command", { request });
+  }
+
+  return postJson<ImportSegyWithPlanResponse>("/api/segy-import/import", request);
+}
+
+export async function listSegyImportRecipes(
+  sourceFingerprint: string | null = null
+): Promise<ListSegyImportRecipesResponse> {
+  const request = {
+    schema_version: SCHEMA_VERSION,
+    source_fingerprint: sourceFingerprint
+  };
+  if (isTauriEnvironment()) {
+    return invokeTauri<ListSegyImportRecipesResponse>("list_segy_import_recipes_command", {
+      request
+    });
+  }
+
+  return postJson<ListSegyImportRecipesResponse>("/api/segy-import/recipes/list", request);
+}
+
+export async function saveSegyImportRecipe(
+  recipe: SegyImportRecipe
+): Promise<SaveSegyImportRecipeResponse> {
+  const request = {
+    schema_version: SCHEMA_VERSION,
+    recipe
+  };
+  if (isTauriEnvironment()) {
+    return invokeTauri<SaveSegyImportRecipeResponse>("save_segy_import_recipe_command", {
+      request
+    });
+  }
+
+  return postJson<SaveSegyImportRecipeResponse>("/api/segy-import/recipes/save", request);
+}
+
+export async function deleteSegyImportRecipe(recipeId: string): Promise<boolean> {
+  const request = {
+    schema_version: SCHEMA_VERSION,
+    recipe_id: recipeId
+  };
+  if (isTauriEnvironment()) {
+    const response = await invokeTauri<{ deleted: boolean }>("delete_segy_import_recipe_command", {
+      request
+    });
+    return response.deleted;
+  }
+
+  const response = await postJson<{ deleted: boolean }>("/api/segy-import/recipes/delete", request);
+  return response.deleted;
+}
+
 export async function defaultImportStorePath(inputPath: string): Promise<string> {
   if (isTauriEnvironment()) {
     return invokeTauri<string>("default_import_store_path_command", { inputPath });
@@ -764,6 +1870,8 @@ export async function importHorizonXyz(
     return invokeTauri<ImportHorizonXyzResponse>("import_horizon_xyz_command", {
       storePath,
       inputPaths,
+      verticalDomain: options.verticalDomain ?? null,
+      verticalUnit: options.verticalUnit ?? null,
       sourceCoordinateReferenceId: options.sourceCoordinateReferenceId ?? null,
       sourceCoordinateReferenceName: options.sourceCoordinateReferenceName ?? null,
       assumeSameAsSurvey: options.assumeSameAsSurvey === true
@@ -773,10 +1881,68 @@ export async function importHorizonXyz(
   return postJson<ImportHorizonXyzResponse>("/api/horizons/import", {
     storePath,
     inputPaths,
+    verticalDomain: options.verticalDomain ?? null,
+    verticalUnit: options.verticalUnit ?? null,
     sourceCoordinateReferenceId: options.sourceCoordinateReferenceId ?? null,
     sourceCoordinateReferenceName: options.sourceCoordinateReferenceName ?? null,
     assumeSameAsSurvey: options.assumeSameAsSurvey === true
   });
+}
+
+export async function previewHorizonXyzImport(
+  storePath: string,
+  inputPaths: string[],
+  options: HorizonImportCoordinateReferenceOptions = {}
+): Promise<HorizonImportPreview> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<HorizonImportPreview>("preview_horizon_xyz_import_command", {
+      storePath,
+      inputPaths,
+      verticalDomain: options.verticalDomain ?? null,
+      verticalUnit: options.verticalUnit ?? null,
+      sourceCoordinateReferenceId: options.sourceCoordinateReferenceId ?? null,
+      sourceCoordinateReferenceName: options.sourceCoordinateReferenceName ?? null,
+      assumeSameAsSurvey: options.assumeSameAsSurvey === true
+    });
+  }
+
+  throw new Error("Horizon import preview is only available in the desktop runtime right now.");
+}
+
+export async function previewHorizonSourceImport(
+  request: PreviewHorizonSourceImportRequest
+): Promise<HorizonSourceImportPreview> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<HorizonSourceImportPreview>("preview_horizon_source_import_command", {
+      request
+    });
+  }
+
+  throw new Error("Horizon source import preview is only available in the desktop runtime right now.");
+}
+
+export async function inspectHorizonXyzFiles(
+  inputPaths: string[]
+): Promise<HorizonXyzFilePreview[]> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<HorizonXyzFilePreview[]>("inspect_horizon_xyz_files_command", {
+      inputPaths
+    });
+  }
+
+  throw new Error("Horizon xyz inspection is only available in the desktop runtime right now.");
+}
+
+export async function commitHorizonSourceImport(
+  request: CommitHorizonSourceImportRequest
+): Promise<ImportHorizonXyzResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<ImportHorizonXyzResponse>("commit_horizon_source_import_command", {
+      request
+    });
+  }
+
+  throw new Error("Horizon source import is only available in the desktop runtime right now.");
 }
 
 export async function fetchSectionHorizons(
@@ -821,6 +1987,29 @@ export async function fetchSectionView(
     `/api/section?storePath=${encodeURIComponent(storePath)}&axis=${encodeURIComponent(axis)}&index=${encodeURIComponent(index)}`
   );
   return readJson<SectionView>(response);
+}
+
+export async function fetchSectionTileView(
+  storePath: string,
+  axis: SectionAxis,
+  index: number,
+  traceRange: [number, number],
+  sampleRange: [number, number],
+  lod: number
+): Promise<TransportSectionTileView> {
+  if (isTauriEnvironment()) {
+    const payload = await invokeTauriRaw("load_section_tile_binary_command", {
+      storePath,
+      axis,
+      index,
+      traceRange,
+      sampleRange,
+      lod
+    });
+    return parsePackedSectionTileResponse(payload);
+  }
+
+  throw new Error("Section tile loading is only available in the desktop runtime right now.");
 }
 
 export async function fetchDepthConvertedSectionView(
@@ -886,6 +2075,30 @@ export async function loadVelocityModels(storePath: string): Promise<SurveyTimeD
   }
 
   return [];
+}
+
+export async function describeVelocityVolume(
+  request: DescribeVelocityVolumeRequest
+): Promise<DescribeVelocityVolumeResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<DescribeVelocityVolumeResponse>("describe_velocity_volume_command", {
+      request
+    });
+  }
+
+  throw new Error("Velocity-volume description is only available in the desktop runtime right now.");
+}
+
+export async function ingestVelocityVolume(
+  request: IngestVelocityVolumeRequest
+): Promise<IngestVelocityVolumeResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<IngestVelocityVolumeResponse>("ingest_velocity_volume_command", {
+      request
+    });
+  }
+
+  throw new Error("Velocity-volume ingest is only available in the desktop runtime right now.");
 }
 
 export async function loadHorizonAssets(storePath: string): Promise<ImportedHorizonDescriptor[]> {
@@ -1171,7 +2384,7 @@ export async function upsertDatasetEntry(
           (trimmedImportedStore && entry.imported_store_path === trimmedImportedStore)
       );
   ensureUniqueStoreIdentityLocal(entries, request, existingIndex);
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixTimestampBigInt();
   const entry: DatasetRegistryEntry =
     existingIndex >= 0
       ? {
@@ -1192,7 +2405,7 @@ export async function upsertDatasetEntry(
           status: entries[existingIndex].status
         }
       : {
-          entry_id: explicitEntryId ?? `dataset-${now}-${entries.length + 1}`,
+          entry_id: explicitEntryId ?? `dataset-${now.toString()}-${entries.length + 1}`,
           display_name:
             request.display_name?.trim() ||
             request.dataset?.descriptor.label ||
@@ -1267,7 +2480,7 @@ export async function setActiveDatasetEntry(entryId: string): Promise<SetActiveD
   if (index < 0) {
     throw new Error(`Unknown dataset entry: ${entryId}`);
   }
-  const now = Math.floor(Date.now() / 1000);
+  const now = unixTimestampBigInt();
   const entry = {
     ...entries[index],
     last_opened_at_unix_s: now,
@@ -1308,7 +2521,8 @@ export async function saveWorkspaceSession(
     project_wellbore_id: request.project_wellbore_id ?? null,
     project_section_tolerance_m: request.project_section_tolerance_m ?? null,
     selected_project_well_time_depth_model_asset_id:
-      request.selected_project_well_time_depth_model_asset_id ?? null
+      request.selected_project_well_time_depth_model_asset_id ?? null,
+    native_engineering_accepted_store_paths: request.native_engineering_accepted_store_paths ?? []
   };
   saveLocalSession(session);
   return {
@@ -1336,6 +2550,102 @@ export async function loadProjectGeospatialSettings(projectRoot: string): Promis
   }
 
   return loadLocalProjectGeospatialSettings(normalizedProjectRoot);
+}
+
+export async function searchCoordinateReferences(
+  request: {
+    query?: string | null;
+    limit?: number | null;
+    includeDeprecated?: boolean;
+    projectedOnly?: boolean;
+    includeGeographic?: boolean;
+    includeVertical?: boolean;
+  } = {}
+): Promise<CoordinateReferenceCatalogEntry[]> {
+  if (isTauriEnvironment()) {
+    const response = await invokeTauri<{ entries: CoordinateReferenceCatalogEntry[] }>(
+      "search_coordinate_references_command",
+      {
+        request: {
+          query: request.query ?? null,
+          limit: request.limit ?? null,
+          includeDeprecated: request.includeDeprecated === true,
+          projectedOnly: request.projectedOnly === true,
+          includeGeographic: request.includeGeographic !== false,
+          includeVertical: request.includeVertical === true
+        }
+      }
+    );
+    return response.entries ?? [];
+  }
+
+  const query = request.query?.trim().toUpperCase() ?? "";
+  const common: CoordinateReferenceCatalogEntry[] = [
+    {
+      authority: "EPSG",
+      code: "4326",
+      authId: "EPSG:4326",
+      name: "WGS 84",
+      deprecated: false,
+      areaName: "World",
+      coordinateReferenceType: "geographic_2d"
+    },
+    {
+      authority: "EPSG",
+      code: "3857",
+      authId: "EPSG:3857",
+      name: "WGS 84 / Pseudo-Mercator",
+      deprecated: false,
+      areaName: "World",
+      coordinateReferenceType: "projected"
+    },
+    {
+      authority: "EPSG",
+      code: "23031",
+      authId: "EPSG:23031",
+      name: "ED50 / UTM zone 31N",
+      deprecated: false,
+      areaName: "Europe - 0°E to 6°E",
+      coordinateReferenceType: "projected"
+    },
+    {
+      authority: "EPSG",
+      code: "28992",
+      authId: "EPSG:28992",
+      name: "Amersfoort / RD New",
+      deprecated: false,
+      areaName: "Netherlands - onshore",
+      coordinateReferenceType: "projected"
+    }
+  ];
+  return common
+    .filter((entry) =>
+      !query
+        ? true
+        : entry.authId.includes(query) ||
+          entry.name.toUpperCase().includes(query) ||
+          entry.code.includes(query)
+    )
+    .slice(0, request.limit ?? 24);
+}
+
+export async function resolveCoordinateReference(request: {
+  authority?: string | null;
+  code?: string | null;
+  authId?: string | null;
+}): Promise<CoordinateReferenceCatalogEntry> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<CoordinateReferenceCatalogEntry>("resolve_coordinate_reference_command", {
+      request
+    });
+  }
+
+  const authId = request.authId?.trim().toUpperCase() ?? "";
+  const entries = await searchCoordinateReferences({ query: authId, limit: 1 });
+  if (entries[0]) {
+    return entries[0];
+  }
+  throw new Error(`Unknown coordinate reference '${authId || `${request.authority ?? ""}:${request.code ?? ""}`}'.`);
 }
 
 export async function saveProjectGeospatialSettings(
@@ -1377,7 +2687,13 @@ export async function setDatasetNativeCoordinateReference(
   if (isTauriEnvironment()) {
     return invokeTauri<SetDatasetNativeCoordinateReferenceResponse>(
       "set_dataset_native_coordinate_reference_command",
-      { request }
+      {
+        request: {
+          storePath: request.store_path,
+          coordinateReferenceId: request.coordinate_reference_id,
+          coordinateReferenceName: request.coordinate_reference_name
+        }
+      }
     );
   }
 
@@ -1412,6 +2728,17 @@ export async function setDatasetNativeCoordinateReference(
                             entry.last_dataset.descriptor.spatial.coordinate_reference?.name ??
                             null
                         }
+                      : request.coordinate_reference_name
+                        ? {
+                            ...(entry.last_dataset.descriptor.spatial.coordinate_reference ?? {
+                              id: null,
+                              name: null,
+                              geodetic_datum: null,
+                              unit: null
+                            }),
+                            id: null,
+                            name: request.coordinate_reference_name
+                          }
                       : entry.last_dataset.descriptor.coordinate_reference_binding?.detected ??
                         entry.last_dataset.descriptor.spatial.coordinate_reference
                   }
@@ -1435,8 +2762,23 @@ export async function setDatasetNativeCoordinateReference(
                             entry.last_dataset.descriptor.coordinate_reference_binding.detected?.name ??
                             null
                         }
+                      : request.coordinate_reference_name
+                        ? {
+                            ...(entry.last_dataset.descriptor.coordinate_reference_binding.effective ??
+                              entry.last_dataset.descriptor.coordinate_reference_binding.detected ?? {
+                                id: null,
+                                name: null,
+                                geodetic_datum: null,
+                                unit: null
+                              }),
+                            id: null,
+                            name: request.coordinate_reference_name
+                          }
                       : entry.last_dataset.descriptor.coordinate_reference_binding.detected,
-                    source: request.coordinate_reference_id ? "user_override" : "header"
+                    source:
+                      request.coordinate_reference_id || request.coordinate_reference_name
+                        ? "user_override"
+                        : "header"
                   }
                 : entry.last_dataset.descriptor.coordinate_reference_binding
             }
@@ -1551,6 +2893,73 @@ export async function listProjectWellOverlayInventory(
   throw new Error("Project well-overlay inventory is only available in the desktop runtime.");
 }
 
+export async function listProjectSurveyHorizons(
+  projectRoot: string,
+  assetId: string
+): Promise<ImportedHorizonDescriptor[]> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<ImportedHorizonDescriptor[]>("list_project_survey_horizons_command", {
+      request: {
+        projectRoot,
+        assetId
+      }
+    });
+  }
+
+  throw new Error("Project survey horizon listing is only available in the desktop runtime.");
+}
+
+export async function listProjectWellMarkerResidualInventory(
+  projectRoot: string,
+  wellboreId: string
+): Promise<ProjectWellMarkerResidualInventoryResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<ProjectWellMarkerResidualInventoryResponse>(
+      "list_project_well_marker_residual_inventory_command",
+      {
+        request: {
+          projectRoot,
+          wellboreId
+        }
+      }
+    );
+  }
+
+  throw new Error("Project well marker/residual inventory is only available in the desktop runtime.");
+}
+
+export async function scanVendorProject(
+  request: VendorProjectScanRequest
+): Promise<VendorProjectScanResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<VendorProjectScanResponse>("scan_vendor_project_command", { request });
+  }
+
+  throw new Error("Vendor project scanning is only available in the desktop runtime.");
+}
+
+export async function planVendorProjectImport(
+  request: VendorProjectPlanRequest
+): Promise<VendorProjectPlanResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<VendorProjectPlanResponse>("plan_vendor_project_import_command", { request });
+  }
+
+  throw new Error("Vendor project planning is only available in the desktop runtime.");
+}
+
+export async function commitVendorProjectImport(
+  request: VendorProjectCommitRequest
+): Promise<VendorProjectCommitResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<VendorProjectCommitResponse>("commit_vendor_project_import_command", {
+      request
+    });
+  }
+
+  throw new Error("Vendor project commit is only available in the desktop runtime.");
+}
+
 export async function importProjectWellTimeDepthAsset(
   request: ImportProjectWellTimeDepthAssetRequest
 ): Promise<ImportProjectWellTimeDepthModelResponse> {
@@ -1562,6 +2971,154 @@ export async function importProjectWellTimeDepthAsset(
   }
 
   throw new Error("Project well-model import is only available in the desktop runtime.");
+}
+
+export async function previewProjectWellTimeDepthAsset(
+  request: PreviewProjectWellTimeDepthAssetRequest
+): Promise<ProjectWellTimeDepthAssetPreview> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<ProjectWellTimeDepthAssetPreview>(
+      "preview_project_well_time_depth_asset_command",
+      { request }
+    );
+  }
+
+  throw new Error("Project well-model preview is only available in the desktop runtime.");
+}
+
+export async function previewProjectWellTimeDepthImport(
+  request: PreviewProjectWellTimeDepthImportRequest
+): Promise<ProjectWellTimeDepthImportPreview> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<ProjectWellTimeDepthImportPreview>(
+      "preview_project_well_time_depth_import_command",
+      { request }
+    );
+  }
+
+  throw new Error("Project well-model preview is only available in the desktop runtime.");
+}
+
+export async function previewProjectWellSourceImport(
+  request: PreviewProjectWellSourceImportRequest
+): Promise<ProjectWellSourceImportPreview> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<ProjectWellSourceImportPreview>("preview_project_well_sources_command", {
+      request
+    });
+  }
+
+  throw new Error("Project well-source preview is only available in the desktop runtime.");
+}
+
+export async function previewProjectWellImport(
+  request: PreviewProjectWellImportRequest
+): Promise<ProjectWellFolderImportPreview> {
+  const response = await previewProjectWellSourceImport({
+    sourceRootPath: request.folderPath,
+    sourcePaths: request.sourcePaths
+  });
+  return response.parsed;
+}
+
+function legacyWellSourceImportDraft(request: {
+  binding?: ProjectAssetBindingInput;
+  wellMetadata?: ProjectWellMetadata | null;
+  wellboreMetadata?: ProjectWellboreMetadata | null;
+  sourceCoordinateReference?: WellSourceCoordinateReferenceSelection;
+  importLogs?: boolean;
+  selectedLogSourcePaths?: string[] | null;
+  importTopsMarkers?: boolean;
+  importTrajectory?: boolean;
+  topsDepthReference?: string | null;
+  topsRows?: ProjectWellSourceTopDraftRow[] | null;
+  trajectoryRows?: ProjectWellSourceTrajectoryDraftRow[] | null;
+  asciiLogImports?: ProjectWellSourceAsciiLogImportRequest[] | null;
+}): ProjectWellSourceImportCanonicalDraft {
+  if (!request.binding) {
+    throw new Error("Project well-source import requires either a canonical draft or binding data.");
+  }
+  if (!request.sourceCoordinateReference) {
+    throw new Error(
+      "Project well-source import requires either a canonical draft or source CRS selection data."
+    );
+  }
+
+  return {
+    binding: request.binding,
+    sourceCoordinateReference: request.sourceCoordinateReference,
+    wellMetadata: request.wellMetadata ?? null,
+    wellboreMetadata: request.wellboreMetadata ?? null,
+    importPlan: {
+      selectedLogSourcePaths: request.importLogs ? (request.selectedLogSourcePaths ?? null) : null,
+      asciiLogImports: request.importLogs ? (request.asciiLogImports ?? null) : null,
+      topsMarkers: request.importTopsMarkers
+        ? {
+            depthReference: request.topsDepthReference ?? null,
+            rows: request.topsRows ?? []
+          }
+        : null,
+      trajectory: request.importTrajectory
+        ? {
+            enabled: true,
+            rows: request.trajectoryRows ?? null
+          }
+        : null
+    }
+  };
+}
+
+export async function commitProjectWellSourceImport(
+  request: CommitProjectWellSourceImportRequest
+): Promise<ProjectWellSourceImportCommitResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<ProjectWellSourceImportCommitResponse>(
+      "commit_project_well_sources_command",
+      {
+        request: {
+          ...request,
+          draft: request.draft ?? legacyWellSourceImportDraft(request)
+        }
+      }
+    );
+  }
+
+  throw new Error("Project well-source import is only available in the desktop runtime.");
+}
+
+export async function commitProjectWellTimeDepthImport(
+  request: CommitProjectWellTimeDepthImportRequest
+): Promise<ImportProjectWellTimeDepthModelResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<ImportProjectWellTimeDepthModelResponse>(
+      "commit_project_well_time_depth_import_command",
+      { request }
+    );
+  }
+
+  throw new Error("Project well-model import is only available in the desktop runtime.");
+}
+
+export async function commitProjectWellImport(
+  request: CommitProjectWellImportRequest
+): Promise<ProjectWellFolderImportCommitResponse> {
+  return commitProjectWellSourceImport({
+    projectRoot: request.projectRoot,
+    sourceRootPath: request.folderPath,
+    sourcePaths: request.sourcePaths,
+    draft: request.draft,
+    binding: request.binding,
+    wellMetadata: request.wellMetadata,
+    wellboreMetadata: request.wellboreMetadata,
+    sourceCoordinateReference: request.sourceCoordinateReference,
+    importLogs: request.importLogs,
+    selectedLogSourcePaths: request.selectedLogSourcePaths,
+    importTopsMarkers: request.importTopsMarkers,
+    importTrajectory: request.importTrajectory,
+    topsDepthReference: request.topsDepthReference,
+    topsRows: request.topsRows,
+    asciiLogImports: request.asciiLogImports
+  });
 }
 
 export async function importProjectWellTimeDepthModel(
@@ -1630,6 +3187,19 @@ export async function acceptProjectWellTie(
   throw new Error("Project well-tie acceptance is only available in the desktop runtime.");
 }
 
+export async function computeProjectWellMarkerResidual(
+  request: ComputeProjectWellMarkerResidualRequest
+): Promise<ComputeProjectWellMarkerResidualResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<ComputeProjectWellMarkerResidualResponse>(
+      "compute_project_well_marker_residual_command",
+      { request }
+    );
+  }
+
+  throw new Error("Project residual computation is only available in the desktop runtime.");
+}
+
 export async function resolveProjectSectionWellOverlays(
   request: SectionWellOverlayRequestDto
 ): Promise<ResolveSectionWellOverlaysResponse> {
@@ -1657,6 +3227,19 @@ export async function setDiagnosticsVerbosity(enabled: boolean): Promise<void> {
   }
 
   await invokeTauri<void>("set_diagnostics_verbosity_command", { enabled });
+}
+
+export async function runSectionBrowsingBenchmark(
+  request: RunSectionBrowsingBenchmarkRequest
+): Promise<RunSectionBrowsingBenchmarkResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<RunSectionBrowsingBenchmarkResponse>(
+      "run_section_browsing_benchmark_command",
+      { request }
+    );
+  }
+
+  throw new Error("Section browsing benchmark is only available in the desktop runtime.");
 }
 
 export async function listenToDiagnosticsEvents(

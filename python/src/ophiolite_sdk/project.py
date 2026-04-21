@@ -2,21 +2,29 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import warnings
 
-from ophiolite_automation.catalog import load_operation_catalog
 from ophiolite_automation.client import OphioliteApp
 
 from .models import (
     ComputeCatalog,
     ComputeRequest,
     ComputeRun,
+    LogAssetImportResult,
     OperatorLock,
     OperatorPackageInstallResult,
     PlatformCatalog,
     ProjectSummary,
+    SurveySummary,
+    TopsSourceImportResult,
     WellSummary,
+    WellboreBinding,
     WellboreSummary,
 )
+from .platform import catalog as load_platform_catalog
+from .surveys import Survey
+from .views import ProjectViews
+from .wells import Well, Wellbore
 
 
 @dataclass(frozen=True)
@@ -40,19 +48,88 @@ class Project:
 
     @staticmethod
     def platform_catalog() -> PlatformCatalog:
-        return PlatformCatalog.from_json(load_operation_catalog())
+        warnings.warn(
+            (
+                "'Project.platform_catalog()' is deprecated and will move after "
+                "the current preview cycle. Use "
+                "'ophiolite_sdk.platform.catalog()' instead."
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return load_platform_catalog()
 
     def summary(self) -> ProjectSummary:
         payload = self.app.project_summary(str(self.root))
         return ProjectSummary.from_json(payload)
 
-    def wells(self) -> list[WellSummary]:
+    def import_las(
+        self,
+        las_path: str | Path,
+        *,
+        binding: WellboreBinding | None = None,
+        collection_name: str | None = None,
+    ) -> LogAssetImportResult:
+        if binding is None:
+            payload = self.app.import_project_las(
+                str(self.root),
+                str(las_path),
+                collection_name,
+            )
+        else:
+            payload = self.app.import_project_las_with_binding(
+                str(self.root),
+                str(las_path),
+                binding.to_payload(),
+                collection_name,
+            )
+        return LogAssetImportResult.from_json(payload)
+
+    def import_tops_source(
+        self,
+        source_path: str | Path,
+        *,
+        binding: WellboreBinding,
+        collection_name: str | None = None,
+        depth_reference: str | None = None,
+    ) -> TopsSourceImportResult:
+        payload = self.app.import_project_tops_source_with_binding(
+            str(self.root),
+            str(source_path),
+            binding.to_payload(),
+            collection_name,
+            depth_reference,
+        )
+        return TopsSourceImportResult.from_json(payload)
+
+    def well_summaries(self) -> list[WellSummary]:
         payload = self.app.list_project_wells(str(self.root))
         return [WellSummary.from_json(item) for item in payload]
 
-    def wellbores(self, well_id: str) -> list[WellboreSummary]:
-        payload = self.app.list_project_wellbores(str(self.root), well_id)
+    def wells(self) -> list[Well]:
+        return [Well(project=self, summary_data=summary) for summary in self.well_summaries()]
+
+    def wellbore_summaries(self, well_id: str | Well) -> list[WellboreSummary]:
+        normalized_well_id = well_id.id if isinstance(well_id, Well) else well_id
+        payload = self.app.list_project_wellbores(str(self.root), normalized_well_id)
         return [WellboreSummary.from_json(item) for item in payload]
+
+    def wellbores(self, well_id: str | Well) -> list[Wellbore]:
+        return [
+            Wellbore(project=self, summary_data=summary)
+            for summary in self.wellbore_summaries(well_id)
+        ]
+
+    def survey_summaries(self) -> list[SurveySummary]:
+        payload = self.app.list_project_surveys(str(self.root))
+        return [SurveySummary.from_json(item) for item in payload]
+
+    def surveys(self) -> list[Survey]:
+        return [Survey(project=self, summary_data=summary) for summary in self.survey_summaries()]
+
+    @property
+    def views(self) -> ProjectViews:
+        return ProjectViews(self)
 
     def operator_lock(self) -> OperatorLock:
         payload = self.app.project_operator_lock(str(self.root))

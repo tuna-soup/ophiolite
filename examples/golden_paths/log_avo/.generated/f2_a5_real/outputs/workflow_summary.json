@@ -1,0 +1,239 @@
+{
+  "repo_root": "/Users/sc/dev/ophiolite",
+  "run_root": "/Users/sc/dev/ophiolite/examples/golden_paths/log_avo/.generated/f2_a5_real",
+  "project_root": "/Users/sc/dev/ophiolite/examples/golden_paths/log_avo/.generated/f2_a5_real/project",
+  "output_root": "/Users/sc/dev/ophiolite/examples/golden_paths/log_avo/.generated/f2_a5_real/outputs",
+  "project": {
+    "root": "/Users/sc/dev/ophiolite/examples/golden_paths/log_avo/.generated/f2_a5_real/project",
+    "summary": {
+      "well_count": 1,
+      "wellbore_count": 1,
+      "asset_collection_count": 3,
+      "asset_count": 3
+    }
+  },
+  "wellbore": {
+    "id": "wellbore_1776695956085761000_2",
+    "well_id": "well_1776695956082653000_1",
+    "name": "F2-A5"
+  },
+  "data": {
+    "data_mode": "real",
+    "dsi_las_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/f02a05_20030103-1-06_a5_main_log_dsi_030lup.las",
+    "density_las_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/f02a05_20030103-1-06_lwd2259a5rt.las",
+    "tops_source_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/lithostratigrafie.txt",
+    "tops_import": {
+      "source_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/lithostratigrafie.txt",
+      "source_name": "EINDSLIP",
+      "reported_well_name": "F02-A-05",
+      "reported_depth_reference": "Kelly Bushing",
+      "resolved_source_depth_reference": "Kelly Bushing",
+      "resolved_depth_domain": "md",
+      "resolved_depth_datum": "kb",
+      "source_row_count": 19,
+      "imported_row_count": 18,
+      "omitted_row_count": 1,
+      "collection_name": "lithostrat-tops",
+      "asset_id": "asset_1776695960192602000_3",
+      "issues": [
+        {
+          "severity": "warning",
+          "code": "tops.top_depth_missing",
+          "message": "A tops row is missing top depth and will be preview-only until the user supplements it.",
+          "slice": "tops_markers",
+          "sourcePath": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/lithostratigrafie.txt"
+        }
+      ],
+      "omissions": [
+        {
+          "kind": "tops_rows",
+          "slice": "tops_markers",
+          "reasonCode": "tops_rows_incomplete",
+          "message": "Some tops rows were omitted because they did not include both a stratigraphic name and a top depth.",
+          "sourcePath": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/lithostratigrafie.txt",
+          "rowCount": 1
+        }
+      ]
+    },
+    "imports": [
+      {
+        "asset_id": "asset_1776695956090203000_5",
+        "asset_label": "f02a05_20030103-1-06_a5_main_log_dsi_030lup.las",
+        "collection_name": "golden-path-dsi"
+      },
+      {
+        "asset_id": "asset_1776695960132697000_3",
+        "asset_label": "f02a05_20030103-1-06_lwd2259a5rt.las",
+        "collection_name": "golden-path-density"
+      }
+    ]
+  },
+  "public_surface": {
+    "bindings": {
+      "vp": "Dt",
+      "vs": "Dts",
+      "density": "Rho"
+    },
+    "available_log_types": [
+      "BulkDensity",
+      "CompressionalSlowness",
+      "GammaRay",
+      "NeutronPorosity",
+      "ShearSlowness"
+    ],
+    "available_top_sets": [
+      "lithostrat-tops"
+    ],
+    "available_marker_sets": [],
+    "experiment": {
+      "method": "zoeppritz",
+      "angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ]
+    },
+    "crossplot_experiment": {
+      "method": "shuey_two_term",
+      "angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ]
+    }
+  },
+  "elastic_channels": {
+    "vp": {
+      "semantic_type": "PVelocity",
+      "source_semantic_type": "Sonic",
+      "source_log_type": "CompressionalSlowness",
+      "source_asset_name": "golden-path-dsi",
+      "source_curve_name": "DTCO",
+      "source_mnemonic": "DTCO",
+      "source_unit": "US/F",
+      "derivation": "sonic_to_vp",
+      "depth_range_m": [
+        1876.806,
+        2702.3568
+      ],
+      "estimated_step_m": 0.15239999999994325
+    },
+    "vs": {
+      "semantic_type": "SVelocity",
+      "source_semantic_type": "ShearSonic",
+      "source_log_type": "ShearSlowness",
+      "source_asset_name": "golden-path-dsi",
+      "source_curve_name": "DTSM",
+      "source_mnemonic": "DTSM",
+      "source_unit": "US/F",
+      "derivation": "shear_sonic_to_vs",
+      "depth_range_m": [
+        1871.7768,
+        2702.3568
+      ],
+      "estimated_step_m": 0.15239999999994325
+    },
+    "density": {
+      "semantic_type": "BulkDensity",
+      "source_semantic_type": "BulkDensity",
+      "source_log_type": "BulkDensity",
+      "source_asset_name": "golden-path-density",
+      "source_curve_name": "BDCX",
+      "source_mnemonic": "BDCX",
+      "source_unit": "g/cc",
+      "derivation": null,
+      "depth_range_m": [
+        1881.25,
+        2245.75
+      ],
+      "estimated_step_m": 0.25
+    },
+    "materialized_outputs": {}
+  },
+  "top_sets": [
+    {
+      "asset_name": "lithostrat-tops",
+      "set_kind": "top_set",
+      "interval_labels": [
+        "NUMS",
+        "NUOT",
+        "NUBA",
+        "NMRF",
+        "NLFF",
+        "NLFFT",
+        "NLLF",
+        "NLLFC",
+        "CKEK",
+        "NLLFC",
+        "CKEK",
+        "NLLF",
+        "CKEK",
+        "NLLF",
+        "CKEK",
+        "NLLF",
+        "NLLFC",
+        "CKEK"
+      ],
+      "interval_selectors": [
+        "NUMS",
+        "NUOT",
+        "NUBA",
+        "NMRF",
+        "NLFF",
+        "NLFFT",
+        "NLLF#1",
+        "NLLFC#1",
+        "CKEK#1",
+        "NLLFC#2",
+        "CKEK#2",
+        "NLLF#2",
+        "CKEK#3",
+        "NLLF#3",
+        "CKEK#4",
+        "NLLF#4",
+        "NLLFC#3",
+        "CKEK#5"
+      ]
+    }
+  ],
+  "marker_sets": [],
+  "avo": {
+    "fixed_interval": {
+      "interval_thickness_m": 6.096,
+      "interface_count": 58,
+      "output_path": "/Users/sc/dev/ophiolite/examples/golden_paths/log_avo/.generated/f2_a5_real/outputs/avo_fixed_interval_source.json",
+      "crossplot_output_path": "/Users/sc/dev/ophiolite/examples/golden_paths/log_avo/.generated/f2_a5_real/outputs/avo_fixed_interval_crossplot.json"
+    },
+    "explicit_edges": {
+      "depth_edges_m": [
+        1881.25,
+        1887.346,
+        1893.442,
+        1899.538,
+        1905.634
+      ],
+      "interface_count": 3,
+      "output_path": "/Users/sc/dev/ophiolite/examples/golden_paths/log_avo/.generated/f2_a5_real/outputs/avo_explicit_edges_source.json"
+    },
+    "top_set": {
+      "asset_name": "lithostrat-tops",
+      "labels": [],
+      "selectors": [],
+      "interface_count": 1,
+      "output_path": "/Users/sc/dev/ophiolite/examples/golden_paths/log_avo/.generated/f2_a5_real/outputs/avo_top_set_source.json",
+      "error": null
+    }
+  }
+}

@@ -1,4 +1,5 @@
 import { createContext, tick } from "svelte";
+import { SvelteSet } from "svelte/reactivity";
 import type {
   SectionHorizonOverlay as ChartSectionHorizonOverlay,
   SectionScalarOverlay as ChartSectionScalarOverlay,
@@ -12,11 +13,13 @@ import type {
   ExportSegyResponse,
   ImportDatasetResponse,
   ImportedHorizonDescriptor,
+  ImportSegyWithPlanResponse,
   ResolvedSurveyMapSourceDto,
   SegyGeometryCandidate,
   SegyGeometryOverride,
   SegyHeaderField,
   SegyHeaderValueType,
+  SegyImportPlan,
   SectionAxis,
   SectionInteractionChanged,
   SectionHorizonOverlayView,
@@ -40,17 +43,25 @@ import type {
   AcceptProjectWellTieRequest,
   AcceptProjectWellTieResponse,
   AnalyzeProjectWellTieRequest,
+  ComputeProjectWellMarkerResidualRequest,
+  ComputeProjectWellMarkerResidualResponse,
   ProjectWellTieAnalysisResponse,
   CompileProjectWellTimeDepthAuthoredModelRequest,
   DatasetExportCapabilitiesResponse,
   DiagnosticsEvent,
   DiagnosticsStatus,
+  FrontendDiagnosticsEventRequest,
+  HorizonSourceImportCanonicalDraft,
   ExportZarrResponse,
   HorizonImportCoordinateReferenceOptions,
   ImportProjectWellTimeDepthAssetRequest,
+  CommitProjectWellTimeDepthImportRequest,
   ImportProjectWellTimeDepthModelRequest,
   ImportProjectWellTimeDepthModelResponse,
+  ProjectWellTimeDepthImportCanonicalDraft,
   ProjectSurveyAssetDescriptor,
+  ProjectWellMarkerDescriptor,
+  ProjectWellMarkerHorizonResidualDescriptor,
   ProjectSurveyDisplayCompatibility,
   ProjectDisplayCoordinateReference,
   ProjectGeospatialSettings,
@@ -62,7 +73,9 @@ import type {
   ProjectWellTimeDepthObservationDescriptor,
   TransportResolvedSectionDisplayView,
   TransportSectionScalarOverlayView,
-  TransportSectionView
+  TransportSectionTileView,
+  TransportSectionView,
+  TransportWindowedSectionView
 } from "./bridge";
 import {
   acceptProjectWellTie,
@@ -77,15 +90,22 @@ import {
   emitFrontendDiagnosticsEvent,
   fetchDepthConvertedSectionView,
   fetchResolvedSectionDisplay,
+  fetchSectionTileView,
   fetchSectionView,
   getDatasetExportCapabilities,
   getDiagnosticsStatus,
+  commitHorizonSourceImport,
   importDataset,
+  importSegyWithPlan,
   importHorizonXyz,
   importProjectWellTimeDepthAsset,
   importProjectWellTimeDepthModel,
   importVelocityFunctionsModel,
+  computeProjectWellMarkerResidual,
+  commitProjectWellTimeDepthImport,
   listProjectWellOverlayInventory,
+  listProjectSurveyHorizons,
+  listProjectWellMarkerResidualInventory,
   listProjectWellTimeDepthInventory,
   loadHorizonAssets,
   loadProjectGeospatialSettings,
@@ -105,7 +125,8 @@ import {
   setActiveDatasetEntry,
   setDatasetNativeCoordinateReference,
   upsertDatasetEntry,
-  setDiagnosticsVerbosity
+  setDiagnosticsVerbosity,
+  validateSegyImportPlan
 } from "./bridge";
 import {
   confirmOverwriteSegy,
@@ -115,6 +136,7 @@ import {
   pickZarrExportPath
 } from "./file-dialog";
 import { buildWorkspaceCoordinateReferenceWarnings } from "./coordinate-reference-warnings";
+import { shouldPromptForMissingNativeCoordinateReference } from "./missing-native-coordinate-reference-prompt";
 import {
   describeProjectDisplayCompatibilityBlockingReasonCode,
   describeProjectSurveyDisplayCompatibility,
@@ -122,8 +144,15 @@ import {
   projectSurveyDisplayCompatibilityStatusLabel,
   projectWellboreDisplayCompatibilityStatusLabel
 } from "./project-display-compatibility";
+import {
+  buildViewerSessionKey,
+  buildViewportMemoryKey,
+  resolveViewerResetReason,
+  type ViewerDisplayDomain,
+  type ViewerResetReason
+} from "./viewer-session-keys";
 
-type DisplaySectionView = SectionView | TransportSectionView;
+type DisplaySectionView = SectionView | TransportSectionView | TransportWindowedSectionView;
 type SectionDisplayDomain = "time" | "depth";
 type SampleDataFidelity =
   | DatasetSummary["descriptor"]["sample_data_fidelity"]
@@ -143,6 +172,36 @@ const PROJECT_SURVEY_SELECTION_GROUPS = [
   { key: "degraded", label: "Degraded" },
   { key: "unavailable", label: "Unavailable" }
 ] as const;
+const SECTION_TILE_CACHE_BUDGET_BYTES = 96 * 1024 * 1024;
+const SECTION_TILE_BUCKET_TRACES = 256;
+const SECTION_TILE_BUCKET_SAMPLES = 512;
+const SECTION_TILE_HALO_FACTOR = 0.35;
+const SECTION_TILE_VIEWPORT_DEBOUNCE_MS = 90;
+
+interface SectionTileWindowRequest {
+  traceRange: [number, number];
+  sampleRange: [number, number];
+  lod: number;
+}
+
+interface SectionTileCacheEntry {
+  key: string;
+  view: TransportWindowedSectionView;
+  bytes: number;
+  lastUsedAt: number;
+}
+
+interface SectionTileStats {
+  viewportRequests: number;
+  cacheHits: number;
+  fetches: number;
+  fetchErrors: number;
+  prefetchRequests: number;
+  prefetchCacheHits: number;
+  prefetchErrors: number;
+  evictions: number;
+  cachedBytes: number;
+}
 
 export interface ViewerActivity {
   id: number;
@@ -157,6 +216,25 @@ export interface ViewerModelOptions {
   tauriRuntime: boolean;
 }
 
+interface SetActiveDatasetNativeCoordinateReferenceResult {
+  applied: boolean;
+  requestedCoordinateReferenceId: string | null;
+  requestedCoordinateReferenceName: string | null;
+  effectiveCoordinateReferenceId: string | null;
+  effectiveCoordinateReferenceName: string | null;
+  exactMatch: boolean;
+  error: string | null;
+}
+
+interface MissingNativeCoordinateReferencePromptState {
+  storePath: string;
+  datasetDisplayName: string;
+  sourcePath: string | null;
+  displayCoordinateReferenceId: string | null;
+  displayCoordinateReferenceName: string | null;
+  triggeredBy: "open" | "import";
+}
+
 interface OpenDatasetOptions {
   entryId?: string | null;
   displayName?: string | null;
@@ -165,6 +243,7 @@ interface OpenDatasetOptions {
   activeSessionPipelineId?: string | null;
   makeActive?: boolean;
   loadSection?: boolean;
+  promptForMissingNativeCoordinateReference?: boolean;
 }
 
 interface ImportDatasetOptions extends OpenDatasetOptions {
@@ -364,6 +443,118 @@ function estimateSectionPayloadBytes(section: DisplaySectionView): number {
     bytePayloadLength(section.sample_axis_f32le) +
     bytePayloadLength(section.amplitudes_f32le)
   );
+}
+
+function isWindowedSectionView(section: DisplaySectionView | null): section is TransportWindowedSectionView {
+  return Boolean(section && "window" in section && section.window && "logical_dimensions" in section);
+}
+
+function sectionLogicalDimensions(
+  section: DisplaySectionView
+): { traces: number; samples: number } {
+  if (isWindowedSectionView(section)) {
+    return section.logical_dimensions;
+  }
+  return { traces: section.traces, samples: section.samples };
+}
+
+function clampRange(start: number, end: number, total: number): [number, number] {
+  const width = Math.max(1, Math.min(total, end - start));
+  const clampedStart = Math.max(0, Math.min(start, Math.max(0, total - width)));
+  return [clampedStart, clampedStart + width];
+}
+
+function expandAndSnapRange(
+  start: number,
+  end: number,
+  total: number,
+  bucket: number,
+  haloFactor: number
+): [number, number] {
+  const width = Math.max(1, end - start);
+  const halo = Math.max(1, Math.round(width * haloFactor));
+  const expandedStart = Math.max(0, start - halo);
+  const expandedEnd = Math.min(total, end + halo);
+  const snappedStart = Math.max(0, Math.floor(expandedStart / bucket) * bucket);
+  const snappedEnd = Math.min(total, Math.ceil(expandedEnd / bucket) * bucket);
+  return clampRange(snappedStart, snappedEnd, total);
+}
+
+function chooseSectionTileLod(
+  viewport: SectionViewportChanged["viewport"],
+  chartWidthPx = 1600,
+  chartHeightPx = 900
+): number {
+  const traceSpan = Math.max(1, viewport.trace_end - viewport.trace_start);
+  const sampleSpan = Math.max(1, viewport.sample_end - viewport.sample_start);
+  let lod = 0;
+  while (
+    lod < 6 &&
+    (traceSpan / Math.max(1, chartWidthPx) > 1.35 * (1 << lod) ||
+      sampleSpan / Math.max(1, chartHeightPx) > 1.35 * (1 << lod))
+  ) {
+    lod += 1;
+  }
+  return lod;
+}
+
+function buildSectionTileRequest(
+  section: DisplaySectionView,
+  viewport: SectionViewportChanged["viewport"]
+): SectionTileWindowRequest {
+  const logical = sectionLogicalDimensions(section);
+  return {
+    traceRange: expandAndSnapRange(
+      viewport.trace_start,
+      viewport.trace_end,
+      logical.traces,
+      SECTION_TILE_BUCKET_TRACES,
+      SECTION_TILE_HALO_FACTOR
+    ),
+    sampleRange: expandAndSnapRange(
+      viewport.sample_start,
+      viewport.sample_end,
+      logical.samples,
+      SECTION_TILE_BUCKET_SAMPLES,
+      SECTION_TILE_HALO_FACTOR
+    ),
+    lod: chooseSectionTileLod(viewport)
+  };
+}
+
+function tileCacheKey(
+  storePath: string,
+  axis: SectionAxis,
+  index: number,
+  request: SectionTileWindowRequest
+): string {
+  return [
+    storePath,
+    axis,
+    index,
+    request.traceRange[0],
+    request.traceRange[1],
+    request.sampleRange[0],
+    request.sampleRange[1],
+    request.lod
+  ].join(":");
+}
+
+function tileViewToWindowedSection(
+  tile: TransportSectionTileView,
+  logical: { traces: number; samples: number }
+): TransportWindowedSectionView {
+  return {
+    ...tile.section,
+    logical_dimensions: logical,
+    window: {
+      trace_start: tile.trace_range[0],
+      trace_end: tile.trace_range[1],
+      sample_start: tile.sample_range[0],
+      sample_end: tile.sample_range[1],
+      lod: tile.lod
+    }
+  };
 }
 
 function decodeF32Le(bytes: Array<number> | Uint8Array | null | undefined): Float32Array {
@@ -636,10 +827,31 @@ function uniqueStringsInOrder(values: string[]): string[] {
 }
 
 function coordinateReferenceSelectionId(selection: ProjectDisplayCoordinateReference): string | null {
-  if (selection.kind !== "coordinate_reference_id") {
+  if (selection.kind !== "authority_code") {
     return null;
   }
-  return normalizeCoordinateReferenceId(selection.coordinateReferenceId);
+  return normalizeCoordinateReferenceId(selection.authId);
+}
+
+function projectDisplaySelectionFromCoordinateReferenceId(
+  coordinateReferenceId: string | null,
+  name: string | null = null
+): ProjectDisplayCoordinateReference | null {
+  const normalizedCoordinateReferenceId = normalizeCoordinateReferenceId(coordinateReferenceId);
+  if (!normalizedCoordinateReferenceId) {
+    return null;
+  }
+  const [authority, code] = normalizedCoordinateReferenceId.split(":", 2);
+  if (!authority || !code) {
+    return null;
+  }
+  return {
+    kind: "authority_code",
+    authority: authority.trim().toUpperCase(),
+    code: code.trim(),
+    authId: normalizedCoordinateReferenceId.trim().toUpperCase(),
+    name: name?.trim() || null
+  };
 }
 
 function deriveStorePathFromInput(inputPath: string): string {
@@ -699,6 +911,32 @@ function fileExtension(filePath: string): string {
   const filename = separatorIndex >= 0 ? normalized.slice(separatorIndex + 1) : normalized;
   const extensionIndex = filename.lastIndexOf(".");
   return extensionIndex >= 0 ? filename.slice(extensionIndex).toLowerCase() : "";
+}
+
+function isSegyVolumeExtension(extension: string): boolean {
+  return extension === ".sgy" || extension === ".segy";
+}
+
+function isDirectImportVolumeExtension(extension: string): boolean {
+  return extension === ".zarr" || extension === ".mdio";
+}
+
+function isSupportedImportVolumeExtension(extension: string): boolean {
+  return isSegyVolumeExtension(extension) || isDirectImportVolumeExtension(extension);
+}
+
+function describeImportVolumeType(extension: string): string {
+  switch (extension) {
+    case ".mdio":
+      return "MDIO store";
+    case ".zarr":
+      return "Zarr store";
+    case ".sgy":
+    case ".segy":
+      return "SEG-Y survey";
+    default:
+      return "source volume";
+  }
 }
 
 function fileStem(filePath: string | null | undefined): string {
@@ -816,6 +1054,17 @@ function datasetGeometryFingerprint(dataset: DatasetSummary | null): string | nu
   return dataset?.descriptor.geometry?.fingerprint ?? null;
 }
 
+function cloneViewport(
+  viewport: SectionViewportChanged["viewport"]
+): SectionViewportChanged["viewport"] {
+  return {
+    trace_start: viewport.trace_start,
+    trace_end: viewport.trace_end,
+    sample_start: viewport.sample_start,
+    sample_end: viewport.sample_end
+  };
+}
+
 function compareCandidateReason(
   primary: DatasetSummary | null,
   candidate: DatasetSummary | null,
@@ -879,15 +1128,22 @@ export class ViewerModel {
   sectionHorizons = $state.raw<ChartSectionHorizonOverlay[]>([]);
   sectionWellOverlays = $state.raw<ChartSectionWellOverlay[]>([]);
   importedHorizons = $state.raw<ImportedHorizonDescriptor[]>([]);
+  projectSurveyHorizons = $state.raw<ImportedHorizonDescriptor[]>([]);
+  projectWellMarkers = $state.raw<ProjectWellMarkerDescriptor[]>([]);
+  projectResidualAssets = $state.raw<ProjectWellMarkerHorizonResidualDescriptor[]>([]);
   backgroundSection = $state.raw<DisplaySectionView | null>(null);
   showVelocityOverlay = $state(false);
   velocityOverlayOpacity = $state(0.52);
   velocityModelWorkbenchOpen = $state(false);
   velocityModelWorkbenchBuilding = $state(false);
   velocityModelWorkbenchError = $state<string | null>(null);
+  residualWorkbenchOpen = $state(false);
+  residualWorkbenchWorking = $state(false);
+  residualWorkbenchError = $state<string | null>(null);
   depthConversionWorkbenchOpen = $state(false);
   depthConversionWorkbenchWorking = $state(false);
   depthConversionWorkbenchError = $state<string | null>(null);
+  projectSettingsOpen = $state(false);
   wellTieWorkbenchOpen = $state(false);
   wellTieWorkbenchError = $state<string | null>(null);
   velocityModelsLoading = $state(false);
@@ -910,8 +1166,13 @@ export class ViewerModel {
   });
   chartTool = $state<SeismicChartTool>("crosshair");
   lastProbe = $state<SectionProbeChanged | null>(null);
-  lastViewport = $state<SectionViewportChanged | null>(null);
   lastInteraction = $state<SectionInteractionChanged | null>(null);
+  displayStorePath = $state("");
+  displayGeometryFingerprint = $state<string | null>(null);
+  displayAxis = $state<SectionAxis>("inline");
+  displayIndex = $state(0);
+  displayDomain = $state<SectionDisplayDomain>("time");
+  viewportMemoryRevision = $state(0);
   diagnosticsStatus = $state<DiagnosticsStatus | null>(null);
   verboseDiagnostics = $state(false);
   backendEvents = $state<DiagnosticsEvent[]>([]);
@@ -922,7 +1183,7 @@ export class ViewerModel {
   activeEntryId = $state<string | null>(null);
   selectedPresetId = $state<string | null>(null);
   displayCoordinateReferenceId = $state<string | null>(null);
-  projectDisplayCoordinateReferenceMode = $state<"native_engineering" | "coordinate_reference_id">(
+  projectDisplayCoordinateReferenceMode = $state<"native_engineering" | "authority_code">(
     "native_engineering"
   );
   projectDisplayCoordinateReferenceIdDraft = $state("");
@@ -950,26 +1211,52 @@ export class ViewerModel {
   projectSectionToleranceM = $state(12.5);
   selectedProjectWellTimeDepthModelAssetId = $state<string | null>(null);
   selectedProjectWellTieObservationAssetId = $state<string | null>(null);
+  selectedProjectWellMarkerName = $state("");
+  selectedProjectResidualAssetId = $state<string | null>(null);
+  selectedProjectHorizonId = $state("");
   projectWellTieDraftSeed = $state.raw<ProjectWellTieDraftSeed | null>(null);
   projectWellTieDraftSeedNonce = $state(0);
   nativeCoordinateReferenceOverrideIdDraft = $state("");
   nativeCoordinateReferenceOverrideNameDraft = $state("");
+  missingNativeCoordinateReferencePrompt =
+    $state.raw<MissingNativeCoordinateReferencePromptState | null>(null);
   workspaceReady = $state(false);
   restoringWorkspace = $state(false);
   compareBackgroundStorePath = $state<string | null>(null);
   compareSplitEnabled = $state(false);
   compareSplitPosition = $state(0.5);
+  sectionTileStats = $state<SectionTileStats>({
+    viewportRequests: 0,
+    cacheHits: 0,
+    fetches: 0,
+    fetchErrors: 0,
+    prefetchRequests: 0,
+    prefetchCacheHits: 0,
+    prefetchErrors: 0,
+    evictions: 0,
+    cachedBytes: 0
+  });
 
   #activityCounter = 0;
   #diagnosticsUnlisten: (() => void) | null = null;
   #outputPathSource: "auto" | "manual" = "auto";
   #backgroundLoadRequestId = 0;
   #backgroundSectionKey: string | null = null;
+  #sectionTileViewportTimer: ReturnType<typeof setTimeout> | null = null;
+  #sectionTileLoadRequestId = 0;
+  #sectionTilePrefetchRequestId = 0;
+  #sectionTileCache = new Map<string, SectionTileCacheEntry>();
+  #sectionTileCacheBytes = 0;
+  #viewportMemory = new Map<string, SectionViewportChanged["viewport"]>();
   #surveyMapRequestId = 0;
   #projectWellOverlayInventoryRequestId = 0;
   #projectWellTimeDepthModelsRequestId = 0;
+  #projectSurveyHorizonsRequestId = 0;
+  #projectWellMarkerResidualInventoryRequestId = 0;
   #copiedWorkspaceEntry: DatasetRegistryEntry | null = null;
   #workspaceEntryCounter = 0;
+  #acceptedNativeEngineeringStorePaths = new SvelteSet<string>();
+  #lastCoordinateReferenceWarningSignature = "";
 
   constructor(options: ViewerModelOptions) {
     this.tauriRuntime = options.tauriRuntime;
@@ -1010,6 +1297,37 @@ export class ViewerModel {
         this.compareSplitEnabled = false;
       }
     });
+
+    $effect(() => {
+      const storePath = trimPath(this.comparePrimaryStorePath ?? this.activeStorePath) || null;
+      const warnings = this.workspaceCoordinateReferenceWarnings;
+      const signature = JSON.stringify({ storePath, warnings });
+      if (signature === this.#lastCoordinateReferenceWarningSignature) {
+        return;
+      }
+      const previousSignature = this.#lastCoordinateReferenceWarningSignature;
+      this.#lastCoordinateReferenceWarningSignature = signature;
+      if (!this.tauriRuntime || !previousSignature) {
+        return;
+      }
+      if (warnings.length > 0) {
+        this.#emitCoordinateReferenceLifecycleDiagnostics(
+          "warn",
+          "Workspace CRS warning state changed.",
+          {
+            event: "crs_warning_emitted",
+            storePath,
+            warningCount: warnings.length,
+            warnings
+          }
+        );
+        return;
+      }
+      this.#emitCoordinateReferenceLifecycleDiagnostics("info", "Workspace CRS warnings cleared.", {
+        event: "crs_warning_cleared",
+        storePath
+      });
+    });
   }
 
   #nextActivityId(): number {
@@ -1036,6 +1354,165 @@ export class ViewerModel {
       24
     );
   };
+
+  #sectionTileDetail(request: SectionTileWindowRequest, sectionIndex: number = this.index): string {
+    return `${this.axis}:${sectionIndex} T[${request.traceRange[0]}, ${request.traceRange[1]}) S[${request.sampleRange[0]}, ${request.sampleRange[1]}) LOD ${request.lod}`;
+  }
+
+  #sectionTileFields(
+    request: SectionTileWindowRequest,
+    fields: Record<string, unknown> = {},
+    sectionIndex: number = this.index
+  ): Record<string, unknown> {
+    const viewport = this.displayedViewport;
+    return {
+      storePath: this.displayStorePath || this.activeStorePath,
+      axis: this.displayAxis,
+      index: sectionIndex,
+      traceRange: request.traceRange,
+      sampleRange: request.sampleRange,
+      lod: request.lod,
+      viewportTraceRange: viewport ? [viewport.trace_start, viewport.trace_end] : null,
+      viewportSampleRange: viewport ? [viewport.sample_start, viewport.sample_end] : null,
+      cacheBytes: this.#sectionTileCacheBytes,
+      cacheHits: this.sectionTileStats.cacheHits,
+      fetches: this.sectionTileStats.fetches,
+      prefetchRequests: this.sectionTileStats.prefetchRequests,
+      evictions: this.sectionTileStats.evictions,
+      ...fields
+    };
+  }
+
+  #emitSectionTileDiagnostics(
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    request: SectionTileWindowRequest,
+    fields: Record<string, unknown> = {},
+    options: {
+      sectionIndex?: number;
+      mirrorToActivity?: boolean;
+    } = {}
+  ): void {
+    if (!this.tauriRuntime) {
+      return;
+    }
+    const sectionIndex = options.sectionIndex ?? this.index;
+    const detail = this.#sectionTileDetail(request, sectionIndex);
+    if (options.mirrorToActivity) {
+      this.note(
+        message,
+        "backend",
+        level === "error" ? "error" : level === "warn" ? "warn" : "info",
+        detail
+      );
+    }
+    void emitFrontendDiagnosticsEvent({
+      stage: "section_tile",
+      level,
+      message,
+      fields: this.#sectionTileFields(request, fields, sectionIndex)
+    }).catch((error) => {
+      console.warn("Failed to record section tile diagnostics.", error);
+    });
+  }
+
+  #displayResetToken(): string {
+    return [
+      trimPath(this.activeStorePath) || "no-store",
+      this.sectionDomain,
+      this.activeVelocityModelAssetId ?? "global1d",
+      this.depthVelocityKind,
+      Math.round(this.depthVelocityMPerS),
+      this.showVelocityOverlay ? "overlay-on" : "overlay-off"
+    ].join(":");
+  }
+
+  #currentDisplayedIdentity(): {
+    storePath: string;
+    geometryFingerprint: string | null;
+    domain: ViewerDisplayDomain;
+  } | null {
+    const storePath = trimPath(this.displayStorePath);
+    if (!storePath) {
+      return null;
+    }
+    return {
+      storePath,
+      geometryFingerprint: this.displayGeometryFingerprint,
+      domain: this.displayDomain
+    };
+  }
+
+  #rememberDisplayedViewport(viewport: SectionViewportChanged["viewport"]): void {
+    const key = this.displayedViewportMemoryKey;
+    if (!key) {
+      return;
+    }
+    this.#viewportMemory.set(key, cloneViewport(viewport));
+    this.viewportMemoryRevision += 1;
+  }
+
+  #applyDisplayedSectionContext(
+    storePath: string,
+    section: DisplaySectionView,
+    domain: SectionDisplayDomain
+  ): ViewerResetReason | null {
+    const nextIdentity = {
+      storePath,
+      geometryFingerprint: datasetGeometryFingerprint(this.dataset),
+      domain
+    } satisfies {
+      storePath: string;
+      geometryFingerprint: string | null;
+      domain: ViewerDisplayDomain;
+    };
+    const reason = resolveViewerResetReason(this.#currentDisplayedIdentity(), nextIdentity);
+    this.displayStorePath = storePath;
+    this.displayGeometryFingerprint = nextIdentity.geometryFingerprint;
+    this.displayAxis = section.axis;
+    this.displayIndex = section.coordinate.index;
+    this.displayDomain = domain;
+    return reason;
+  }
+
+  #evictSectionTileCacheForStore(storePath: string): void {
+    const normalizedStorePath = trimPath(storePath);
+    if (!normalizedStorePath) {
+      return;
+    }
+    const prefix = `${normalizedStorePath}:`;
+    let freedBytes = 0;
+    let removedEntries = 0;
+    for (const [key, entry] of this.#sectionTileCache.entries()) {
+      if (!key.startsWith(prefix)) {
+        continue;
+      }
+      this.#sectionTileCache.delete(key);
+      this.#sectionTileCacheBytes -= entry.bytes;
+      freedBytes += entry.bytes;
+      removedEntries += 1;
+    }
+    if (removedEntries === 0) {
+      return;
+    }
+    this.sectionTileStats.cachedBytes = this.#sectionTileCacheBytes;
+    if (!this.tauriRuntime) {
+      return;
+    }
+    void emitFrontendDiagnosticsEvent({
+      stage: "section_tile",
+      level: "debug",
+      message: "Evicted cached section tiles for an inactive store.",
+      fields: {
+        storePath: normalizedStorePath,
+        removedEntries,
+        freedBytes,
+        cacheBytes: this.#sectionTileCacheBytes
+      }
+    }).catch((error) => {
+      console.warn("Failed to record section tile cache eviction diagnostics.", error);
+    });
+  }
 
   #notePotentiallyLossySampleData(
     fidelity: SampleDataFidelity | null | undefined,
@@ -1068,6 +1545,41 @@ export class ViewerModel {
       activeEntry?.imported_store_path ?? activeEntry?.preferred_store_path ?? this.activeStorePath ?? null,
       activeEntry?.entry_id ?? this.dataset?.descriptor.id ?? "dataset"
     );
+  }
+
+  get sectionTileStatsSnapshot(): SectionTileStats {
+    return { ...this.sectionTileStats };
+  }
+
+  get displayedViewport(): SectionViewportChanged["viewport"] | null {
+    this.viewportMemoryRevision;
+    const key = this.displayedViewportMemoryKey;
+    return key ? this.#viewportMemory.get(key) ?? null : null;
+  }
+
+  get displayedViewportMemoryKey(): string | null {
+    const storePath = trimPath(this.displayStorePath);
+    if (!storePath) {
+      return null;
+    }
+    return buildViewportMemoryKey({
+      storePath,
+      geometryFingerprint: this.displayGeometryFingerprint,
+      axis: this.displayAxis,
+      domain: this.displayDomain
+    });
+  }
+
+  get displayedViewerSessionKey(): string {
+    return buildViewerSessionKey({
+      storePath: trimPath(this.displayStorePath),
+      geometryFingerprint: this.displayGeometryFingerprint,
+      domain: this.displayDomain
+    });
+  }
+
+  get displayedViewId(): string {
+    return `${this.displayedViewerSessionKey}:${this.displayAxis}:${this.displayIndex}`;
   }
 
   get datasetSampleDataFidelity(): SampleDataFidelity | null {
@@ -1149,12 +1661,83 @@ export class ViewerModel {
     return this.importedHorizons;
   }
 
+  get projectSurveyHorizonAssets(): ImportedHorizonDescriptor[] {
+    return this.projectSurveyHorizons;
+  }
+
   get depthConversionHorizonAssets(): ImportedHorizonDescriptor[] {
     return this.importedHorizons;
   }
 
+  get selectedProjectHorizonAsset(): ImportedHorizonDescriptor | null {
+    const selectedProjectHorizonId = trimPath(this.selectedProjectHorizonId);
+    if (!selectedProjectHorizonId) {
+      return null;
+    }
+    return (
+      this.projectSurveyHorizons.find((horizon) => horizon.id === selectedProjectHorizonId) ?? null
+    );
+  }
+
+  get selectedProjectWellMarker(): ProjectWellMarkerDescriptor | null {
+    const selectedProjectWellMarkerName = trimPath(this.selectedProjectWellMarkerName);
+    if (!selectedProjectWellMarkerName) {
+      return null;
+    }
+    return (
+      this.projectWellMarkers.find(
+        (marker) => marker.name.trim() === selectedProjectWellMarkerName
+      ) ?? null
+    );
+  }
+
+  get selectedProjectResidualAsset(): ProjectWellMarkerHorizonResidualDescriptor | null {
+    if (!this.selectedProjectResidualAssetId) {
+      return null;
+    }
+    return (
+      this.projectResidualAssets.find((asset) => asset.assetId === this.selectedProjectResidualAssetId) ??
+      null
+    );
+  }
+
   get canOpenDepthConversionWorkbench(): boolean {
     return this.depthConversionBlocker === null;
+  }
+
+  get residualWorkbenchBlocker(): string | null {
+    if (!this.tauriRuntime) {
+      return "Residual computation is only available in the desktop runtime.";
+    }
+    if (!trimPath(this.projectRoot)) {
+      return "Set the project root before computing residuals.";
+    }
+    if (!trimPath(this.projectSurveyAssetId)) {
+      return "Select a project survey before computing residuals.";
+    }
+    if (!trimPath(this.projectWellboreId)) {
+      return "Select a project wellbore before computing residuals.";
+    }
+    if (this.projectSurveyHorizons.length === 0) {
+      return "Selected project survey does not have imported depth horizons.";
+    }
+    if (!this.selectedProjectHorizonAsset) {
+      return "Select a project survey horizon before computing residuals.";
+    }
+    if (this.selectedProjectHorizonAsset.vertical_domain !== "depth") {
+      return "Residual computation requires a depth-domain horizon.";
+    }
+    if (this.projectWellMarkers.length === 0) {
+      return "Selected wellbore does not have canonical markers.";
+    }
+    if (!this.selectedProjectWellMarker) {
+      return "Select a canonical well marker before computing residuals.";
+    }
+    return null;
+  }
+
+  get canOpenResidualWorkbench(): boolean {
+    return this.residualWorkbenchBlocker === null;
   }
 
   get canResolveConfiguredProjectSectionWellOverlays(): boolean {
@@ -1406,7 +1989,12 @@ export class ViewerModel {
   }
 
   get requiresProjectGeospatialSettingsSelection(): boolean {
-    return !!trimPath(this.projectRoot) && !this.projectGeospatialSettingsResolved;
+    return (
+      !!trimPath(this.projectRoot) &&
+      !this.projectGeospatialSettingsLoading &&
+      !this.projectGeospatialSettingsResolved &&
+      this.projectDisplayCoordinateReferenceMode === "authority_code"
+    );
   }
 
   get suggestedProjectDisplayCoordinateReferenceId(): string | null {
@@ -1786,12 +2374,18 @@ export class ViewerModel {
         selectedProjectWellboreCompatibility?.canResolveProjectMap ?? null,
       selectedProjectWellboreReason: this.selectedProjectWellboreDisplayCompatibilityMessage,
       hasActiveDataset: !!this.comparePrimaryDataset,
+      activeStoreAcceptedInNativeEngineering: this.activeStoreAcceptedInNativeEngineering,
       displayCoordinateReferenceId: this.displayCoordinateReferenceId,
       activeEffectiveNativeCoordinateReferenceId: this.activeEffectiveNativeCoordinateReferenceId,
       activeSurveyMapTransformStatus: this.activeSurveyMapSurvey?.transform_status ?? null,
       surveyMapError: this.surveyMapError,
       surveyMapWellTransformWarnings: this.surveyMapWellTransformWarnings
     });
+  }
+
+  get activeStoreAcceptedInNativeEngineering(): boolean {
+    const storePath = trimPath(this.comparePrimaryStorePath ?? this.activeStorePath);
+    return !!storePath && this.#acceptedNativeEngineeringStorePaths.has(storePath);
   }
 
   selectCompareBackground = (storePath: string | null): void => {
@@ -2017,14 +2611,26 @@ export class ViewerModel {
         this.clearProjectSectionWellOverlays();
       }
 
+      if (nextSurveyAssetId) {
+        await this.refreshProjectSurveyHorizons(normalizedProjectRoot, nextSurveyAssetId);
+      } else {
+        this.projectSurveyHorizons = [];
+        this.selectedProjectHorizonId = "";
+      }
+
       if (nextWellboreId) {
         await this.refreshProjectWellTimeDepthModels(normalizedProjectRoot, nextWellboreId);
+        await this.refreshProjectWellMarkerResidualInventory(normalizedProjectRoot, nextWellboreId);
       } else {
         this.projectWellTimeDepthObservationSets = [];
         this.projectWellTimeDepthAuthoredModels = [];
         this.projectWellTimeDepthModels = [];
         this.projectWellTimeDepthModelsError = null;
         this.selectedProjectWellTimeDepthModelAssetId = null;
+        this.projectWellMarkers = [];
+        this.projectResidualAssets = [];
+        this.selectedProjectWellMarkerName = "";
+        this.selectedProjectResidualAssetId = null;
       }
 
       if (
@@ -2042,11 +2648,17 @@ export class ViewerModel {
       this.projectWellOverlayInventory = null;
       this.projectSurveyAssetId = "";
       this.projectWellboreId = "";
+      this.projectSurveyHorizons = [];
+      this.selectedProjectHorizonId = "";
       this.projectWellTimeDepthObservationSets = [];
       this.projectWellTimeDepthAuthoredModels = [];
       this.projectWellTimeDepthModels = [];
       this.projectWellTimeDepthModelsError = null;
       this.selectedProjectWellTimeDepthModelAssetId = null;
+      this.projectWellMarkers = [];
+      this.projectResidualAssets = [];
+      this.selectedProjectWellMarkerName = "";
+      this.selectedProjectResidualAssetId = null;
       this.projectWellOverlayInventoryError = errorMessage(
         error,
         "Failed to load project well-overlay inventory."
@@ -2147,6 +2759,98 @@ export class ViewerModel {
     }
   };
 
+  refreshProjectSurveyHorizons = async (
+    projectRoot: string,
+    surveyAssetId: string
+  ): Promise<ImportedHorizonDescriptor[]> => {
+    if (!this.tauriRuntime || !trimPath(projectRoot) || !trimPath(surveyAssetId)) {
+      this.projectSurveyHorizons = [];
+      this.selectedProjectHorizonId = "";
+      return [];
+    }
+
+    const requestId = ++this.#projectSurveyHorizonsRequestId;
+    try {
+      const horizons = await listProjectSurveyHorizons(projectRoot, surveyAssetId);
+      if (requestId !== this.#projectSurveyHorizonsRequestId) {
+        return [];
+      }
+      this.projectSurveyHorizons = horizons;
+      if (!horizons.some((horizon) => horizon.id === this.selectedProjectHorizonId)) {
+        this.selectedProjectHorizonId =
+          horizons.find((horizon) => horizon.vertical_domain === "depth")?.id ??
+          horizons[0]?.id ??
+          "";
+      }
+      return horizons;
+    } catch (error) {
+      if (requestId !== this.#projectSurveyHorizonsRequestId) {
+        return [];
+      }
+      this.projectSurveyHorizons = [];
+      this.selectedProjectHorizonId = "";
+      this.note(
+        "Failed to load project survey horizons.",
+        "backend",
+        "warn",
+        errorMessage(error, "Unknown project survey horizon error")
+      );
+      return [];
+    }
+  };
+
+  refreshProjectWellMarkerResidualInventory = async (
+    projectRoot: string,
+    wellboreId: string
+  ): Promise<ProjectWellMarkerHorizonResidualDescriptor[]> => {
+    if (!this.tauriRuntime || !trimPath(projectRoot) || !trimPath(wellboreId)) {
+      this.projectWellMarkers = [];
+      this.projectResidualAssets = [];
+      this.selectedProjectWellMarkerName = "";
+      this.selectedProjectResidualAssetId = null;
+      return [];
+    }
+
+    const requestId = ++this.#projectWellMarkerResidualInventoryRequestId;
+    try {
+      const inventory = await listProjectWellMarkerResidualInventory(projectRoot, wellboreId);
+      if (requestId !== this.#projectWellMarkerResidualInventoryRequestId) {
+        return [];
+      }
+      this.projectWellMarkers = inventory.markers;
+      this.projectResidualAssets = inventory.residualAssets;
+      if (
+        !inventory.markers.some(
+          (marker) => marker.name.trim() === this.selectedProjectWellMarkerName.trim()
+        )
+      ) {
+        this.selectedProjectWellMarkerName = inventory.markers[0]?.name ?? "";
+      }
+      if (
+        this.selectedProjectResidualAssetId &&
+        !inventory.residualAssets.some((asset) => asset.assetId === this.selectedProjectResidualAssetId)
+      ) {
+        this.selectedProjectResidualAssetId = null;
+      }
+      return inventory.residualAssets;
+    } catch (error) {
+      if (requestId !== this.#projectWellMarkerResidualInventoryRequestId) {
+        return [];
+      }
+      this.projectWellMarkers = [];
+      this.projectResidualAssets = [];
+      this.selectedProjectWellMarkerName = "";
+      this.selectedProjectResidualAssetId = null;
+      this.note(
+        "Failed to load project marker/residual inventory.",
+        "backend",
+        "warn",
+        errorMessage(error, "Unknown project residual inventory error")
+      );
+      return [];
+    }
+  };
+
   refreshConfiguredProjectWellTimeDepthModels = async (): Promise<ProjectWellTimeDepthModelDescriptor[]> => {
     const projectRoot = trimPath(this.projectRoot);
     const wellboreId = trimPath(this.projectWellboreId);
@@ -2173,11 +2877,15 @@ export class ViewerModel {
     if (!this.projectRoot) {
       this.#projectWellOverlayInventoryRequestId += 1;
       this.#projectWellTimeDepthModelsRequestId += 1;
+      this.#projectSurveyHorizonsRequestId += 1;
+      this.#projectWellMarkerResidualInventoryRequestId += 1;
       this.projectWellOverlayInventory = null;
       this.projectWellOverlayInventoryError = null;
       this.projectWellOverlayInventoryLoading = false;
       this.projectSurveyAssetId = "";
       this.projectWellboreId = "";
+      this.projectSurveyHorizons = [];
+      this.selectedProjectHorizonId = "";
       this.projectWellTimeDepthObservationSets = [];
       this.projectWellTimeDepthAuthoredModels = [];
       this.projectWellTimeDepthModels = [];
@@ -2185,6 +2893,10 @@ export class ViewerModel {
       this.projectWellTimeDepthModelsLoading = false;
       this.selectedProjectWellTimeDepthModelAssetId = null;
       this.selectedProjectWellTieObservationAssetId = null;
+      this.projectWellMarkers = [];
+      this.projectResidualAssets = [];
+      this.selectedProjectWellMarkerName = "";
+      this.selectedProjectResidualAssetId = null;
       this.projectWellTieDraftSeed = null;
       this.projectWellTieDraftSeedNonce += 1;
       this.#applyTemporaryDisplaySelection(this.displayCoordinateReferenceId);
@@ -2204,14 +2916,22 @@ export class ViewerModel {
     const matchedWellboreId =
       this.projectSurveyAssets.find((survey) => survey.assetId === this.projectSurveyAssetId)?.wellboreId ?? "";
     const nextWellboreId = matchedWellboreId.trim();
+    const projectRoot = trimPath(this.projectRoot);
+    if (projectRoot && this.projectSurveyAssetId) {
+      void this.refreshProjectSurveyHorizons(projectRoot, this.projectSurveyAssetId);
+    } else {
+      this.projectSurveyHorizons = [];
+      this.selectedProjectHorizonId = "";
+    }
     if (nextWellboreId && nextWellboreId !== this.projectWellboreId) {
       this.projectWellboreId = nextWellboreId;
-      if (trimPath(this.projectRoot)) {
-        void this.refreshProjectWellTimeDepthModels(trimPath(this.projectRoot), nextWellboreId);
+      if (projectRoot) {
+        void this.refreshProjectWellTimeDepthModels(projectRoot, nextWellboreId);
+        void this.refreshProjectWellMarkerResidualInventory(projectRoot, nextWellboreId);
       }
     }
     this.clearProjectSectionWellOverlays();
-    if (trimPath(this.projectRoot)) {
+    if (projectRoot) {
       void this.refreshSurveyMap();
     }
     if (this.workspaceReady) {
@@ -2222,13 +2942,16 @@ export class ViewerModel {
   setProjectWellboreId = (wellboreId: string): void => {
     this.projectWellboreId = wellboreId.trim();
     this.clearProjectSectionWellOverlays();
-    if (trimPath(this.projectRoot)) {
+    const projectRoot = trimPath(this.projectRoot);
+    if (projectRoot) {
       void this.refreshSurveyMap();
     }
-    if (this.projectWellboreId && trimPath(this.projectRoot)) {
-      void this.refreshProjectWellTimeDepthModels(trimPath(this.projectRoot), this.projectWellboreId);
+    if (this.projectWellboreId && projectRoot) {
+      void this.refreshProjectWellTimeDepthModels(projectRoot, this.projectWellboreId);
+      void this.refreshProjectWellMarkerResidualInventory(projectRoot, this.projectWellboreId);
     } else {
       this.#projectWellTimeDepthModelsRequestId += 1;
+      this.#projectWellMarkerResidualInventoryRequestId += 1;
       this.projectWellTimeDepthObservationSets = [];
       this.projectWellTimeDepthAuthoredModels = [];
       this.projectWellTimeDepthModels = [];
@@ -2236,6 +2959,10 @@ export class ViewerModel {
       this.projectWellTimeDepthModelsLoading = false;
       this.selectedProjectWellTimeDepthModelAssetId = null;
       this.selectedProjectWellTieObservationAssetId = null;
+      this.projectWellMarkers = [];
+      this.projectResidualAssets = [];
+      this.selectedProjectWellMarkerName = "";
+      this.selectedProjectResidualAssetId = null;
       this.projectWellTieDraftSeed = null;
       this.projectWellTieDraftSeedNonce += 1;
     }
@@ -2335,6 +3062,19 @@ export class ViewerModel {
       "backend",
       "info",
       `${request.assetKind}:${response.assetId}`
+    );
+    return response;
+  };
+
+  importProjectWellTimeDepthDraft = async (
+    request: CommitProjectWellTimeDepthImportRequest
+  ): Promise<ImportProjectWellTimeDepthModelResponse> => {
+    const response = await commitProjectWellTimeDepthImport(request);
+    this.note(
+      "Imported project well time-depth asset.",
+      "backend",
+      "info",
+      `${request.draft.assetKind}:${response.assetId}`
     );
     return response;
   };
@@ -2686,6 +3426,48 @@ export class ViewerModel {
     this.velocityModelWorkbenchOpen = false;
   };
 
+  setSelectedProjectHorizonId = (horizonId: string): void => {
+    this.selectedProjectHorizonId = horizonId.trim();
+    if (this.workspaceReady) {
+      void this.persistWorkspaceSession();
+    }
+  };
+
+  setSelectedProjectWellMarkerName = (markerName: string): void => {
+    this.selectedProjectWellMarkerName = markerName.trim();
+    if (this.workspaceReady) {
+      void this.persistWorkspaceSession();
+    }
+  };
+
+  setSelectedProjectResidualAssetId = (assetId: string | null): void => {
+    this.selectedProjectResidualAssetId = assetId?.trim() || null;
+    if (this.workspaceReady) {
+      void this.persistWorkspaceSession();
+    }
+  };
+
+  openResidualWorkbench = (): void => {
+    const blocker = this.residualWorkbenchBlocker;
+    this.residualWorkbenchError = null;
+    this.residualWorkbenchOpen = true;
+    if (blocker) {
+      this.note(
+        "Opened the residual workbench with unresolved prerequisites.",
+        "ui",
+        "warn",
+        blocker
+      );
+      return;
+    }
+    this.note("Opened the residual workbench.", "ui", "info");
+  };
+
+  closeResidualWorkbench = (): void => {
+    this.residualWorkbenchError = null;
+    this.residualWorkbenchOpen = false;
+  };
+
   openDepthConversionWorkbench = (): void => {
     this.depthConversionWorkbenchError = null;
     this.depthConversionWorkbenchOpen = true;
@@ -2695,6 +3477,14 @@ export class ViewerModel {
   closeDepthConversionWorkbench = (): void => {
     this.depthConversionWorkbenchError = null;
     this.depthConversionWorkbenchOpen = false;
+  };
+
+  openProjectSettings = (): void => {
+    this.projectSettingsOpen = true;
+  };
+
+  closeProjectSettings = (): void => {
+    this.projectSettingsOpen = false;
   };
 
   openWellTieWorkbench = (): void => {
@@ -2760,6 +3550,42 @@ export class ViewerModel {
   closeWellTieWorkbench = (): void => {
     this.wellTieWorkbenchError = null;
     this.wellTieWorkbenchOpen = false;
+  };
+
+  computeProjectResidual = async (
+    request: ComputeProjectWellMarkerResidualRequest
+  ): Promise<ComputeProjectWellMarkerResidualResponse> => {
+    if (!this.tauriRuntime) {
+      throw new Error("Project residual computation is only available in the desktop runtime.");
+    }
+    this.residualWorkbenchWorking = true;
+    this.residualWorkbenchError = null;
+    try {
+      const response = await computeProjectWellMarkerResidual(request);
+      this.selectedProjectResidualAssetId = response.assetId;
+      await this.refreshProjectWellMarkerResidualInventory(request.projectRoot, request.wellboreId);
+      this.note(
+        "Computed and stored project residuals.",
+        "backend",
+        "info",
+        `${response.collectionName} (${response.pointCount} point${response.pointCount === 1 ? "" : "s"})`
+      );
+      return response;
+    } catch (error) {
+      this.residualWorkbenchError = errorMessage(
+        error,
+        "Failed to compute the selected project residual."
+      );
+      this.note(
+        "Failed to compute the selected project residual.",
+        "backend",
+        "warn",
+        this.residualWorkbenchError
+      );
+      throw error;
+    } finally {
+      this.residualWorkbenchWorking = false;
+    }
   };
 
   buildAuthoredVelocityModel = async (
@@ -2929,8 +3755,7 @@ export class ViewerModel {
     source: string | null
   ): void => {
     this.projectDisplayCoordinateReferenceMode = selection.kind;
-    this.projectDisplayCoordinateReferenceIdDraft =
-      selection.kind === "coordinate_reference_id" ? selection.coordinateReferenceId : "";
+    this.projectDisplayCoordinateReferenceIdDraft = coordinateReferenceSelectionId(selection) ?? "";
     this.projectGeospatialSettingsResolved = resolved;
     this.projectGeospatialSettingsSource = source;
     this.displayCoordinateReferenceId = resolved ? coordinateReferenceSelectionId(selection) : null;
@@ -2938,7 +3763,11 @@ export class ViewerModel {
 
   #applyProjectGeospatialSettings = (settings: ProjectGeospatialSettings | null): void => {
     if (!settings) {
-      this.#applyProjectDisplaySelection({ kind: "native_engineering" }, false, null);
+      this.#applyProjectDisplaySelection(
+        { kind: "native_engineering" },
+        true,
+        trimPath(this.projectRoot) ? "default_native_engineering" : "temporary_workspace"
+      );
       return;
     }
     this.#applyProjectDisplaySelection(settings.displayCoordinateReference, true, settings.source);
@@ -2946,13 +3775,9 @@ export class ViewerModel {
 
   #applyTemporaryDisplaySelection = (coordinateReferenceId: string | null): void => {
     const normalizedCoordinateReferenceId = normalizeCoordinateReferenceId(coordinateReferenceId);
+    const selection = projectDisplaySelectionFromCoordinateReferenceId(normalizedCoordinateReferenceId);
     this.#applyProjectDisplaySelection(
-      normalizedCoordinateReferenceId
-        ? {
-            kind: "coordinate_reference_id",
-            coordinateReferenceId: normalizedCoordinateReferenceId
-          }
-        : { kind: "native_engineering" },
+      selection ?? { kind: "native_engineering" },
       true,
       "temporary_workspace"
     );
@@ -2968,7 +3793,6 @@ export class ViewerModel {
       return true;
     }
 
-    const allowAutoSeed = options.allowAutoSeed !== false;
     const allowMigration = options.allowMigration !== false;
     this.projectGeospatialSettingsLoading = true;
 
@@ -2983,10 +3807,20 @@ export class ViewerModel {
         ? normalizeCoordinateReferenceId(this.displayCoordinateReferenceId)
         : null;
       if (legacyDisplayCoordinateReferenceId) {
-        await this.saveProjectDisplaySettings("migrated", {
-          kind: "coordinate_reference_id",
-          coordinateReferenceId: legacyDisplayCoordinateReferenceId
-        });
+        const legacySelection = projectDisplaySelectionFromCoordinateReferenceId(
+          legacyDisplayCoordinateReferenceId
+        );
+        if (!legacySelection) {
+          this.note(
+            "Legacy project display CRS could not be migrated because the identifier is malformed.",
+            "backend",
+            "warn",
+            legacyDisplayCoordinateReferenceId
+          );
+          this.#applyProjectGeospatialSettings(null);
+          return false;
+        }
+        await this.saveProjectDisplaySettings("migrated", legacySelection);
         this.note(
           "Migrated the project display CRS from the legacy workspace session into project settings.",
           "backend",
@@ -2996,31 +3830,8 @@ export class ViewerModel {
         return true;
       }
 
-      const suggestedCoordinateReferenceId = allowAutoSeed
-        ? normalizeCoordinateReferenceId(this.suggestedProjectDisplayCoordinateReferenceId)
-        : null;
-      if (suggestedCoordinateReferenceId) {
-        await this.saveProjectDisplaySettings("auto_seeded", {
-          kind: "coordinate_reference_id",
-          coordinateReferenceId: suggestedCoordinateReferenceId
-        });
-        this.note(
-          "Seeded the project display CRS from the active survey effective CRS.",
-          "backend",
-          "info",
-          suggestedCoordinateReferenceId
-        );
-        return true;
-      }
-
       this.#applyProjectGeospatialSettings(null);
-      this.note(
-        "Project geospatial settings require an explicit display-coordinate choice.",
-        "ui",
-        "warn",
-        normalizedProjectRoot
-      );
-      return false;
+      return true;
     } catch (error) {
       const message = errorMessage(error, "Failed to load the project geospatial settings.");
       this.#applyProjectGeospatialSettings(null);
@@ -3040,17 +3851,13 @@ export class ViewerModel {
   ): Promise<boolean> => {
     const nextSelection =
       selection ??
-      (this.projectDisplayCoordinateReferenceMode === "coordinate_reference_id"
-        ? {
-            kind: "coordinate_reference_id",
-            coordinateReferenceId: this.projectDisplayCoordinateReferenceIdDraft.trim()
-          }
+      (this.projectDisplayCoordinateReferenceMode === "authority_code"
+        ? projectDisplaySelectionFromCoordinateReferenceId(
+            this.projectDisplayCoordinateReferenceIdDraft.trim()
+          )
         : { kind: "native_engineering" });
 
-    if (
-      nextSelection.kind === "coordinate_reference_id" &&
-      !normalizeCoordinateReferenceId(nextSelection.coordinateReferenceId)
-    ) {
+    if (!nextSelection) {
       this.note("Enter a project display CRS identifier before applying it.", "ui", "warn");
       return false;
     }
@@ -3097,7 +3904,7 @@ export class ViewerModel {
   };
 
   setProjectDisplayCoordinateReferenceMode = (
-    mode: "native_engineering" | "coordinate_reference_id"
+    mode: "native_engineering" | "authority_code"
   ): void => {
     this.projectDisplayCoordinateReferenceMode = mode;
     if (mode === "native_engineering") {
@@ -3108,7 +3915,7 @@ export class ViewerModel {
   setDisplayCoordinateReferenceId = (coordinateReferenceId: string | null): void => {
     const normalizedCoordinateReferenceId = normalizeCoordinateReferenceId(coordinateReferenceId);
     this.projectDisplayCoordinateReferenceMode = normalizedCoordinateReferenceId
-      ? "coordinate_reference_id"
+      ? "authority_code"
       : "native_engineering";
     this.projectDisplayCoordinateReferenceIdDraft = normalizedCoordinateReferenceId ?? "";
     this.displayCoordinateReferenceId = normalizedCoordinateReferenceId;
@@ -3138,9 +3945,16 @@ export class ViewerModel {
         : 12.5;
     this.selectedProjectWellTimeDepthModelAssetId =
       session.selected_project_well_time_depth_model_asset_id ?? null;
+    this.#acceptedNativeEngineeringStorePaths = new SvelteSet(
+      (session.native_engineering_accepted_store_paths ?? [])
+        .map((value) => trimPath(value))
+        .filter((value, index, values) => !!value && values.indexOf(value) === index)
+    );
     if (!trimPath(this.projectRoot)) {
       this.#applyTemporaryDisplaySelection(session.display_coordinate_reference_id);
     } else {
+      this.projectDisplayCoordinateReferenceMode = "native_engineering";
+      this.projectDisplayCoordinateReferenceIdDraft = "";
       this.projectGeospatialSettingsResolved = false;
       this.projectGeospatialSettingsSource = null;
       this.displayCoordinateReferenceId = null;
@@ -3175,6 +3989,7 @@ export class ViewerModel {
   #clearLoadedDataset = (): void => {
     this.activeStorePath = "";
     this.dataset = null;
+    this.missingNativeCoordinateReferencePrompt = null;
     this.surveyMapSource = null;
     this.surveyMapError = null;
     this.surveyMapLoading = false;
@@ -3185,9 +4000,13 @@ export class ViewerModel {
     this.sectionWellOverlays = [];
     this.backgroundSection = null;
     this.lastProbe = null;
-    this.lastViewport = null;
     this.lastInteraction = null;
-    this.resetToken = `${this.axis}:${this.index}`;
+    this.displayStorePath = "";
+    this.displayGeometryFingerprint = null;
+    this.displayAxis = "inline";
+    this.displayIndex = 0;
+    this.displayDomain = "time";
+    this.resetToken = this.#displayResetToken();
     this.compareBackgroundStorePath = null;
     this.compareSplitEnabled = false;
     this.compareSplitPosition = 0.5;
@@ -3281,7 +4100,8 @@ export class ViewerModel {
             ? this.projectSectionToleranceM
             : null,
         selected_project_well_time_depth_model_asset_id:
-          this.selectedProjectWellTimeDepthModelAssetId
+          this.selectedProjectWellTimeDepthModelAssetId,
+        native_engineering_accepted_store_paths: [...this.#acceptedNativeEngineeringStorePaths]
       });
       this.#applyWorkspaceSession(response.session);
     } catch (error) {
@@ -3297,19 +4117,40 @@ export class ViewerModel {
   setActiveDatasetNativeCoordinateReference = async (
     coordinateReferenceId: string | null,
     coordinateReferenceName: string | null
-  ): Promise<void> => {
+  ): Promise<SetActiveDatasetNativeCoordinateReferenceResult> => {
     const storePath = this.comparePrimaryStorePath;
+    const normalizedCoordinateReferenceId = coordinateReferenceId?.trim() || null;
+    const normalizedCoordinateReferenceName = coordinateReferenceName?.trim() || null;
     if (!storePath) {
-      this.note("Native CRS override blocked because no active runtime store is available.", "ui", "warn");
-      return;
+      this.note("Survey CRS assignment blocked because no active runtime store is available.", "ui", "warn");
+      return {
+        applied: false,
+        requestedCoordinateReferenceId: normalizedCoordinateReferenceId,
+        requestedCoordinateReferenceName: normalizedCoordinateReferenceName,
+        effectiveCoordinateReferenceId: this.activeEffectiveNativeCoordinateReferenceId,
+        effectiveCoordinateReferenceName: this.activeEffectiveNativeCoordinateReferenceName,
+        exactMatch: false,
+        error: "Survey CRS assignment blocked because no active runtime store is available."
+      };
     }
+
+    this.#emitCoordinateReferenceLifecycleDiagnostics(
+      "info",
+      "Requested active dataset survey CRS assignment.",
+      {
+        event: "crs_assignment_requested",
+        storePath,
+        requestedCoordinateReferenceId: normalizedCoordinateReferenceId,
+        requestedCoordinateReferenceName: normalizedCoordinateReferenceName
+      }
+    );
 
     try {
       const response = await setDatasetNativeCoordinateReference({
         schema_version: 1,
         store_path: storePath,
-        coordinate_reference_id: coordinateReferenceId?.trim() || null,
-        coordinate_reference_name: coordinateReferenceName?.trim() || null
+        coordinate_reference_id: normalizedCoordinateReferenceId,
+        coordinate_reference_name: normalizedCoordinateReferenceName
       });
       this.dataset = response.dataset;
       const activeEntry = this.activeDatasetEntry;
@@ -3324,30 +4165,217 @@ export class ViewerModel {
         response.dataset.descriptor.coordinate_reference_binding?.effective?.id ?? "";
       this.nativeCoordinateReferenceOverrideNameDraft =
         response.dataset.descriptor.coordinate_reference_binding?.effective?.name ?? "";
+      const effectiveCoordinateReferenceId =
+        response.dataset.descriptor.coordinate_reference_binding?.effective?.id ?? null;
+      const effectiveCoordinateReferenceName =
+        response.dataset.descriptor.coordinate_reference_binding?.effective?.name ?? null;
+      const exactMatch =
+        normalizedCoordinateReferenceId === null
+          ? effectiveCoordinateReferenceId === null
+          : effectiveCoordinateReferenceId?.toLowerCase() ===
+              normalizedCoordinateReferenceId.toLowerCase();
       void this.refreshSurveyMap();
-      this.note(
-        coordinateReferenceId?.trim()
-          ? "Updated active dataset native CRS override."
-          : "Cleared active dataset native CRS override.",
-        "backend",
-        "info",
-        coordinateReferenceId?.trim() || null
-      );
+      if (!exactMatch && normalizedCoordinateReferenceId) {
+        this.note(
+          "Active dataset survey CRS assignment did not match the requested CRS.",
+          "backend",
+          "error",
+          `${normalizedCoordinateReferenceId} -> ${effectiveCoordinateReferenceId ?? effectiveCoordinateReferenceName ?? "unknown"}`
+        );
+        this.#emitCoordinateReferenceLifecycleDiagnostics(
+          "warn",
+          "Applied active dataset survey CRS assignment with a different effective CRS.",
+          {
+            event: "crs_assignment_mismatched",
+            storePath,
+            requestedCoordinateReferenceId: normalizedCoordinateReferenceId,
+            effectiveCoordinateReferenceId,
+            effectiveCoordinateReferenceName
+          }
+        );
+      } else {
+        this.note(
+          normalizedCoordinateReferenceId
+            ? "Updated active dataset survey CRS assignment."
+            : "Cleared active dataset survey CRS assignment.",
+          "backend",
+          "info",
+          normalizedCoordinateReferenceId || null
+        );
+        this.#emitCoordinateReferenceLifecycleDiagnostics(
+          "info",
+          normalizedCoordinateReferenceId
+            ? "Applied active dataset survey CRS assignment."
+            : "Cleared active dataset survey CRS assignment.",
+          {
+            event: normalizedCoordinateReferenceId
+              ? "crs_assignment_applied"
+              : "crs_assignment_cleared",
+            storePath,
+            requestedCoordinateReferenceId: normalizedCoordinateReferenceId,
+            effectiveCoordinateReferenceId,
+            effectiveCoordinateReferenceName
+          }
+        );
+      }
+      return {
+        applied: true,
+        requestedCoordinateReferenceId: normalizedCoordinateReferenceId,
+        requestedCoordinateReferenceName: normalizedCoordinateReferenceName,
+        effectiveCoordinateReferenceId,
+        effectiveCoordinateReferenceName,
+        exactMatch,
+        error: null
+      };
     } catch (error) {
+      const message = errorMessage(error, "Unknown survey CRS assignment error");
       this.note(
-        "Failed to update the active dataset native CRS override.",
+        "Failed to update the active dataset survey CRS assignment.",
         "backend",
         "error",
-        errorMessage(error, "Unknown CRS override error")
+        message
       );
+      this.#emitCoordinateReferenceLifecycleDiagnostics(
+        "error",
+        "Failed to update the active dataset survey CRS assignment.",
+        {
+          event: "crs_assignment_failed",
+          storePath,
+          requestedCoordinateReferenceId: normalizedCoordinateReferenceId,
+          requestedCoordinateReferenceName: normalizedCoordinateReferenceName,
+          error: message
+        }
+      );
+      return {
+        applied: false,
+        requestedCoordinateReferenceId: normalizedCoordinateReferenceId,
+        requestedCoordinateReferenceName: normalizedCoordinateReferenceName,
+        effectiveCoordinateReferenceId: this.activeEffectiveNativeCoordinateReferenceId,
+        effectiveCoordinateReferenceName: this.activeEffectiveNativeCoordinateReferenceName,
+        exactMatch: false,
+        error: message
+      };
     }
   };
+
+  dismissMissingNativeCoordinateReferencePrompt = (): void => {
+    const prompt = this.missingNativeCoordinateReferencePrompt;
+    if (!prompt) {
+      return;
+    }
+    this.#acceptedNativeEngineeringStorePaths.add(prompt.storePath);
+    this.missingNativeCoordinateReferencePrompt = null;
+    this.note(
+      "Continuing in native engineering coordinates for the active survey.",
+      "ui",
+      "info",
+      prompt.storePath
+    );
+    this.#emitCoordinateReferenceLifecycleDiagnostics(
+      "info",
+      "Accepted native engineering coordinates for the active survey in this workspace session.",
+      {
+        event: "crs_prompt_keep_native_engineering",
+        storePath: prompt.storePath,
+        displayCoordinateReferenceId: prompt.displayCoordinateReferenceId ?? null,
+        triggeredBy: prompt.triggeredBy
+      }
+    );
+    void this.persistWorkspaceSession();
+  };
+
+  applyMissingNativeCoordinateReferencePromptSelection = async (
+    coordinateReferenceId: string | null,
+    coordinateReferenceName: string | null = null
+  ): Promise<SetActiveDatasetNativeCoordinateReferenceResult> => {
+    const promptStorePath = this.missingNativeCoordinateReferencePrompt?.storePath ?? null;
+    const result = await this.setActiveDatasetNativeCoordinateReference(
+      coordinateReferenceId,
+      coordinateReferenceName
+    );
+    if (result.exactMatch) {
+      if (promptStorePath) {
+        this.#acceptedNativeEngineeringStorePaths.delete(promptStorePath);
+        void this.persistWorkspaceSession();
+      }
+      this.missingNativeCoordinateReferencePrompt = null;
+    }
+    return result;
+  };
+
+  #maybeQueueMissingNativeCoordinateReferencePrompt = (
+    dataset: DatasetSummary,
+    sourcePath: string | null,
+    trigger: "open" | "import",
+    options: {
+      makeActive: boolean;
+      promptRequested: boolean;
+      displayCoordinateReferenceName?: string | null;
+    }
+  ): void => {
+    const storePath = trimPath(dataset.store_path);
+    const effectiveCoordinateReference =
+      dataset.descriptor.coordinate_reference_binding?.effective ?? null;
+    const shouldPrompt = shouldPromptForMissingNativeCoordinateReference({
+      makeActive: options.makeActive,
+      promptRequested: options.promptRequested,
+      restoringWorkspace: this.restoringWorkspace,
+      storePath,
+      effectiveCoordinateReferenceId: effectiveCoordinateReference?.id ?? null,
+      effectiveCoordinateReferenceName: effectiveCoordinateReference?.name ?? null,
+      acceptedNativeEngineeringStorePaths: this.#acceptedNativeEngineeringStorePaths
+    });
+
+    if (!shouldPrompt) {
+      if (this.missingNativeCoordinateReferencePrompt?.storePath === storePath) {
+        this.missingNativeCoordinateReferencePrompt = null;
+      }
+      return;
+    }
+
+    this.missingNativeCoordinateReferencePrompt = {
+      storePath,
+      datasetDisplayName: this.activeDatasetDisplayName,
+      sourcePath: trimPath(sourcePath ?? "") || null,
+      displayCoordinateReferenceId: normalizeCoordinateReferenceId(this.displayCoordinateReferenceId),
+      displayCoordinateReferenceName: options.displayCoordinateReferenceName?.trim() || null,
+      triggeredBy: trigger
+    };
+    this.#emitCoordinateReferenceLifecycleDiagnostics(
+      "info",
+      "Queued survey CRS prompt for an active dataset with no effective CRS.",
+      {
+        event: "crs_prompt_queued",
+        storePath,
+        sourcePath: trimPath(sourcePath ?? "") || null,
+        displayCoordinateReferenceId: normalizeCoordinateReferenceId(this.displayCoordinateReferenceId),
+        triggeredBy: trigger
+      }
+    );
+  };
+
+  #emitCoordinateReferenceLifecycleDiagnostics(
+    level: FrontendDiagnosticsEventRequest["level"],
+    message: string,
+    fields: Record<string, unknown>
+  ): void {
+    if (!this.tauriRuntime) {
+      return;
+    }
+    void emitFrontendDiagnosticsEvent({
+      stage: "coordinate_reference",
+      level,
+      message,
+      fields
+    }).catch(() => {});
+  }
 
   setInputPath = (inputPath: string): void => {
     const normalizedPath = trimPath(inputPath);
     const previousInputPath = this.inputPath;
     const previousOutputStorePath = this.outputStorePath;
     const suggestedStorePath = deriveStorePathFromInput(normalizedPath);
+    const sourceVolumeType = describeImportVolumeType(fileExtension(normalizedPath));
     const shouldReplaceOutputPath =
       !previousOutputStorePath ||
       this.#outputPathSource === "auto" ||
@@ -3361,7 +4389,12 @@ export class ViewerModel {
     if (shouldReplaceOutputPath && suggestedStorePath && suggestedStorePath !== previousOutputStorePath) {
       this.outputStorePath = suggestedStorePath;
       this.#outputPathSource = "auto";
-      this.note("Suggested runtime store output path from the selected SEG-Y file.", "ui", "info", suggestedStorePath);
+      this.note(
+        "Suggested runtime store output path from the selected source volume.",
+        "ui",
+        "info",
+        suggestedStorePath
+      );
     }
 
     if (
@@ -3371,14 +4404,14 @@ export class ViewerModel {
       previousOutputStorePath === this.lastImportedStorePath
     ) {
       this.note(
-        "Replaced the previous active store path with a new suggested output path for the selected SEG-Y file.",
+        "Replaced the previous active store path with a new suggested output path for the selected source volume.",
         "ui",
         "info",
         `${previousOutputStorePath} -> ${this.outputStorePath}`
       );
     }
 
-    this.note("Selected SEG-Y input path.", "ui", "info", normalizedPath);
+    this.note(`Selected ${sourceVolumeType} path.`, "ui", "info", normalizedPath);
   };
 
   openVolumePath = async (volumePath: string): Promise<void> => {
@@ -3409,8 +4442,8 @@ export class ViewerModel {
       return;
     }
 
-    if (extension !== ".sgy" && extension !== ".segy" && extension !== ".zarr") {
-      this.error = "TraceBoost currently supports opening .tbvol, .zarr, .sgy, and .segy volumes.";
+    if (!isSupportedImportVolumeExtension(extension)) {
+      this.error = "TraceBoost currently supports opening .tbvol, .mdio, .zarr, .sgy, and .segy volumes.";
       this.note("Open-volume blocked because the selected file type is unsupported.", "ui", "error", normalizedPath);
       return;
     }
@@ -3431,11 +4464,16 @@ export class ViewerModel {
       return;
     }
 
-    if (extension === ".zarr") {
+    if (isDirectImportVolumeExtension(extension)) {
       const outputStorePath =
         trimPath(matchingEntry?.imported_store_path ?? matchingEntry?.preferred_store_path ?? "") ||
         (await defaultImportStorePath(normalizedPath));
-      this.note("Started one-shot Zarr import.", "ui", "info", normalizedPath);
+      this.note(
+        `Started one-shot import from ${describeImportVolumeType(extension).toLowerCase()}.`,
+        "ui",
+        "info",
+        normalizedPath
+      );
       await this.importDataset({
         inputPath: normalizedPath,
         outputStorePath,
@@ -3749,11 +4787,11 @@ export class ViewerModel {
 
   get importDisabledReason(): string | null {
     if (!trimPath(this.inputPath) || !trimPath(this.outputStorePath)) {
-      return "Select a SEG-Y file and output store path.";
+      return "Select a source volume path and output store path.";
     }
 
     if (this.importIsRedundant) {
-      return "This SEG-Y is already imported to the selected runtime store. Change the file or output path to import again.";
+      return "This source volume is already imported to the selected runtime store. Change the input or output path to import again.";
     }
 
     return null;
@@ -3805,7 +4843,8 @@ export class ViewerModel {
   };
 
   setViewport = (event: SectionViewportChanged): void => {
-    this.lastViewport = event;
+    this.#rememberDisplayedViewport(event.viewport);
+    this.scheduleSectionTileRefresh(event);
   };
 
   setInteraction = (event: SectionInteractionChanged): void => {
@@ -3815,6 +4854,258 @@ export class ViewerModel {
   setInteractionState = (state: SeismicChartInteractionState): void => {
     this.chartTool = state.tool;
   };
+
+  private canUseSectionTiles(): boolean {
+    return (
+      this.tauriRuntime &&
+      this.sectionDomain === "time" &&
+      !this.compareSplitEnabled &&
+      !this.showVelocityOverlay &&
+      this.sectionScalarOverlays.length === 0 &&
+      this.section !== null &&
+      trimPath(this.activeStorePath).length > 0
+    );
+  }
+
+  private scheduleSectionTileRefresh(event: SectionViewportChanged): void {
+    if (this.#sectionTileViewportTimer !== null) {
+      clearTimeout(this.#sectionTileViewportTimer);
+      this.#sectionTileViewportTimer = null;
+    }
+    if (!this.canUseSectionTiles()) {
+      return;
+    }
+    this.#sectionTileViewportTimer = setTimeout(() => {
+      this.#sectionTileViewportTimer = null;
+      void this.refreshSectionTileForViewport(event.viewport);
+    }, SECTION_TILE_VIEWPORT_DEBOUNCE_MS);
+  }
+
+  private async refreshSectionTileForViewport(
+    viewport: SectionViewportChanged["viewport"]
+  ): Promise<void> {
+    if (!this.canUseSectionTiles() || !this.section) {
+      return;
+    }
+
+    this.sectionTileStats.viewportRequests += 1;
+    const request = buildSectionTileRequest(this.section, viewport);
+    const cacheKey = tileCacheKey(this.activeStorePath, this.axis, this.index, request);
+    const cached = this.#sectionTileCache.get(cacheKey);
+    if (cached) {
+      cached.lastUsedAt = nowMs();
+      this.sectionTileStats.cacheHits += 1;
+      this.#emitSectionTileDiagnostics(
+        "debug",
+        "Viewport request satisfied from section tile cache.",
+        request,
+        {
+          source: "cache_hit",
+          cacheKey,
+          payloadBytes: cached.bytes,
+          hitRate:
+            this.sectionTileStats.cacheHits + this.sectionTileStats.fetches > 0
+              ? this.sectionTileStats.cacheHits / (this.sectionTileStats.cacheHits + this.sectionTileStats.fetches)
+              : null
+        }
+      );
+      this.section = cached.view;
+      void this.prefetchNeighborSectionTiles(request);
+      return;
+    }
+
+    const requestId = ++this.#sectionTileLoadRequestId;
+    const fetchStartedMs = nowMs();
+    try {
+      const logical = sectionLogicalDimensions(this.section);
+      this.sectionTileStats.fetches += 1;
+      const tile = await fetchSectionTileView(
+        this.activeStorePath,
+        this.axis,
+        this.index,
+        request.traceRange,
+        request.sampleRange,
+        request.lod
+      );
+      if (requestId !== this.#sectionTileLoadRequestId) {
+        return;
+      }
+      const windowed = tileViewToWindowedSection(tile, logical);
+      this.storeSectionTileCacheEntry(cacheKey, windowed);
+      this.section = windowed;
+      const elapsedMs = nowMs() - fetchStartedMs;
+      this.#emitSectionTileDiagnostics(
+        "info",
+        "Loaded section tile for the active viewport.",
+        request,
+        {
+          source: "viewport_fetch",
+          cacheKey,
+          elapsedMs,
+          payloadBytes: estimateSectionPayloadBytes(windowed),
+          traceStep: tile.trace_step,
+          sampleStep: tile.sample_step
+        },
+        { mirrorToActivity: true }
+      );
+      void this.prefetchNeighborSectionTiles(request);
+    } catch (error) {
+      this.sectionTileStats.fetchErrors += 1;
+      this.note(
+        "Section tile fetch fell back to the current section payload.",
+        "backend",
+        "warn",
+        error instanceof Error ? error.message : String(error)
+      );
+      this.#emitSectionTileDiagnostics(
+        "warn",
+        "Section tile fetch fell back to the current section payload.",
+        request,
+        {
+          source: "viewport_fetch_error",
+          error: error instanceof Error ? error.message : String(error)
+        }
+      );
+    }
+  }
+
+  private async prefetchNeighborSectionTiles(request: SectionTileWindowRequest): Promise<void> {
+    if (!this.canUseSectionTiles() || !this.section) {
+      return;
+    }
+    const logical = sectionLogicalDimensions(this.section);
+    const requestId = ++this.#sectionTilePrefetchRequestId;
+    const neighborIndices = [this.index - 1, this.index + 1].filter(
+      (candidate) => candidate >= 0 && candidate < this.sectionCountForAxis(this.axis)
+    );
+
+    for (const neighborIndex of neighborIndices) {
+      if (requestId !== this.#sectionTilePrefetchRequestId) {
+        return;
+      }
+      const cacheKey = tileCacheKey(this.activeStorePath, this.axis, neighborIndex, request);
+      if (this.#sectionTileCache.has(cacheKey)) {
+        this.sectionTileStats.prefetchCacheHits += 1;
+        this.#emitSectionTileDiagnostics(
+          "debug",
+          "Adjacent section tile already present in cache.",
+          request,
+          {
+            source: "prefetch_cache_hit",
+            cacheKey
+          },
+          {
+            sectionIndex: neighborIndex
+          }
+        );
+        continue;
+      }
+      try {
+        this.sectionTileStats.prefetchRequests += 1;
+        const prefetchStartedMs = nowMs();
+        const tile = await fetchSectionTileView(
+          this.activeStorePath,
+          this.axis,
+          neighborIndex,
+          request.traceRange,
+          request.sampleRange,
+          request.lod
+        );
+        const windowed = tileViewToWindowedSection(tile, logical);
+        this.storeSectionTileCacheEntry(cacheKey, windowed);
+        this.#emitSectionTileDiagnostics(
+          "debug",
+          "Prefetched adjacent section tile.",
+          request,
+          {
+            source: "prefetch_fetch",
+            cacheKey,
+            elapsedMs: nowMs() - prefetchStartedMs,
+            payloadBytes: estimateSectionPayloadBytes(windowed),
+            traceStep: tile.trace_step,
+            sampleStep: tile.sample_step
+          },
+          {
+            sectionIndex: neighborIndex
+          }
+        );
+      } catch (error) {
+        this.sectionTileStats.prefetchErrors += 1;
+        this.#emitSectionTileDiagnostics(
+          "debug",
+          "Adjacent section tile prefetch failed.",
+          request,
+          {
+            source: "prefetch_error",
+            error: error instanceof Error ? error.message : String(error)
+          },
+          {
+            sectionIndex: neighborIndex
+          }
+        );
+        return;
+      }
+    }
+  }
+
+  private sectionCountForAxis(axis: SectionAxis): number {
+    const summary = this.dataset?.descriptor;
+    return axis === "inline" ? summary?.shape[0] ?? 0 : summary?.shape[1] ?? 0;
+  }
+
+  private storeSectionTileCacheEntry(key: string, view: TransportWindowedSectionView): void {
+    const bytes = estimateSectionPayloadBytes(view);
+    const existing = this.#sectionTileCache.get(key);
+    if (existing) {
+      this.#sectionTileCacheBytes -= existing.bytes;
+    }
+    this.#sectionTileCache.set(key, {
+      key,
+      view,
+      bytes,
+      lastUsedAt: nowMs()
+    });
+    this.#sectionTileCacheBytes += bytes;
+    this.trimSectionTileCache();
+    this.sectionTileStats.cachedBytes = this.#sectionTileCacheBytes;
+  }
+
+  private trimSectionTileCache(): void {
+    if (this.#sectionTileCacheBytes <= SECTION_TILE_CACHE_BUDGET_BYTES) {
+      return;
+    }
+    const bytesBeforeTrim = this.#sectionTileCacheBytes;
+    let evictedEntries = 0;
+    const entries = [...this.#sectionTileCache.values()].sort((left, right) => left.lastUsedAt - right.lastUsedAt);
+    for (const entry of entries) {
+      if (this.#sectionTileCacheBytes <= SECTION_TILE_CACHE_BUDGET_BYTES) {
+        break;
+      }
+      this.#sectionTileCache.delete(entry.key);
+      this.#sectionTileCacheBytes -= entry.bytes;
+      this.sectionTileStats.evictions += 1;
+      evictedEntries += 1;
+    }
+    this.sectionTileStats.cachedBytes = this.#sectionTileCacheBytes;
+    if (evictedEntries > 0) {
+      const viewport = this.displayedViewport;
+      const request = viewport && this.section ? buildSectionTileRequest(this.section, viewport) : null;
+      if (request) {
+        this.#emitSectionTileDiagnostics(
+          "debug",
+          "Trimmed the section tile cache to the configured budget.",
+          request,
+          {
+            source: "cache_trim",
+            evictedEntries,
+            bytesBeforeTrim,
+            bytesAfterTrim: this.#sectionTileCacheBytes,
+            bytesFreed: bytesBeforeTrim - this.#sectionTileCacheBytes
+          }
+        );
+      }
+    }
+  }
 
   mountShell = (): (() => void) => {
     this.note(
@@ -3850,7 +5141,10 @@ export class ViewerModel {
           await this.openDatasetAt(
             workspace.session.active_store_path,
             workspace.session.active_axis,
-            workspace.session.active_index
+            workspace.session.active_index,
+            {
+              promptForMissingNativeCoordinateReference: false
+            }
           );
         } catch (error) {
           this.note(
@@ -4051,6 +5345,9 @@ export class ViewerModel {
       : this.activeDatasetEntry?.active_session_pipeline_id ?? null;
     const makeActive = options.makeActive ?? true;
     const loadSection = options.loadSection ?? makeActive;
+    const previousActiveStorePath = trimPath(this.activeStorePath);
+    const promptForMissingNativeCoordinateReference =
+      options.promptForMissingNativeCoordinateReference ?? true;
 
     try {
       const response = await openDataset(normalizedStorePath);
@@ -4078,6 +5375,12 @@ export class ViewerModel {
       this.refreshCompareSelection();
 
       if (makeActive) {
+        if (
+          previousActiveStorePath &&
+          previousActiveStorePath !== response.dataset.store_path
+        ) {
+          this.#evictSectionTileCacheForStore(previousActiveStorePath);
+        }
         this.dataset = response.dataset;
         this.activeStorePath = response.dataset.store_path;
         this.outputStorePath = response.dataset.store_path;
@@ -4090,19 +5393,28 @@ export class ViewerModel {
         await this.refreshHorizonAssets(response.dataset.store_path);
         void this.refreshSurveyMap();
 
-      this.note(
-        "Runtime store opened.",
-        "backend",
-        "info",
-        `${response.dataset.descriptor.label} @ ${response.dataset.store_path}`
-      );
-      this.#notePotentiallyLossySampleData(response.dataset.descriptor.sample_data_fidelity, "dataset");
-      if (loadSection) {
-        await this.load(axis, index, response.dataset.store_path);
-      } else {
+        this.note(
+          "Runtime store opened.",
+          "backend",
+          "info",
+          `${response.dataset.descriptor.label} @ ${response.dataset.store_path}`
+        );
+        this.#notePotentiallyLossySampleData(response.dataset.descriptor.sample_data_fidelity, "dataset");
+        if (loadSection) {
+          await this.load(axis, index, response.dataset.store_path);
+        } else {
           this.loading = false;
           this.busyLabel = null;
         }
+        this.#maybeQueueMissingNativeCoordinateReferencePrompt(
+          response.dataset,
+          trimPath(nextSourcePath) || null,
+          "open",
+          {
+            makeActive,
+            promptRequested: promptForMissingNativeCoordinateReference
+          }
+        );
       } else {
         this.loading = false;
         this.busyLabel = null;
@@ -4144,11 +5456,7 @@ export class ViewerModel {
 
   runPreflight = async (): Promise<void> => {
     const inputPath = this.inputPath.trim();
-    this.loading = true;
-    this.busyLabel = "Preflighting survey";
-    this.error = null;
-    this.note("Started survey preflight.", "ui", "info", inputPath || null);
-
+    const extension = fileExtension(inputPath);
     if (!inputPath) {
       this.loading = false;
       this.busyLabel = null;
@@ -4156,6 +5464,22 @@ export class ViewerModel {
       this.note("Preflight blocked because no SEG-Y path was provided.", "ui", "error");
       return;
     }
+    if (!isSegyVolumeExtension(extension)) {
+      const volumeType = describeImportVolumeType(extension);
+      this.error = `${volumeType} inputs do not use SEG-Y preflight. Import them directly.`;
+      this.note(
+        "Preflight blocked because the selected input is not a SEG-Y survey.",
+        "ui",
+        "warn",
+        inputPath
+      );
+      return;
+    }
+
+    this.loading = true;
+    this.busyLabel = "Preflighting survey";
+    this.error = null;
+    this.note("Started survey preflight.", "ui", "info", inputPath || null);
 
     try {
       const preflight = await preflightImport(inputPath);
@@ -4200,6 +5524,8 @@ export class ViewerModel {
       : this.activeDatasetEntry?.active_session_pipeline_id ?? null;
     const makeActive = options.makeActive ?? true;
     const loadSection = options.loadSection ?? makeActive;
+    const promptForMissingNativeCoordinateReference =
+      options.promptForMissingNativeCoordinateReference ?? true;
     const reuseExistingStore = options.reuseExistingStore ?? false;
     const geometryOverride = hasOwnOption("geometryOverride") ? options.geometryOverride ?? null : null;
     this.loading = true;
@@ -4215,7 +5541,7 @@ export class ViewerModel {
     if (!inputPath || !outputStorePath) {
       this.loading = false;
       this.busyLabel = null;
-      this.error = "Both input SEG-Y path and output store path are required.";
+      this.error = "Both input source volume path and output store path are required.";
       this.note("Import blocked because input or output path is missing.", "ui", "error");
       return;
     }
@@ -4236,7 +5562,7 @@ export class ViewerModel {
           this.busyLabel = null;
           this.error = null;
           this.note(
-            "An imported runtime store already exists for this SEG-Y file; reusing it instead of re-importing.",
+            "An imported runtime store already exists for this source volume; reusing it instead of re-importing.",
             "backend",
             "info",
             outputStorePath
@@ -4324,6 +5650,10 @@ export class ViewerModel {
         if (loadSection) {
           await this.load("inline", 0, response.dataset.store_path);
         }
+        this.#maybeQueueMissingNativeCoordinateReferencePrompt(response.dataset, inputPath, "import", {
+          makeActive,
+          promptRequested: promptForMissingNativeCoordinateReference
+        });
       } else {
         this.error = null;
         this.note(
@@ -4347,6 +5677,191 @@ export class ViewerModel {
     }
   };
 
+  importSegySurveyPlan = async (
+    plan: SegyImportPlan,
+    validationFingerprint: string,
+    options: ImportDatasetOptions = {}
+  ): Promise<void> => {
+    const hasOwnOption = (key: keyof ImportDatasetOptions): boolean =>
+      Object.prototype.hasOwnProperty.call(options, key);
+    const inputPath = trimPath(plan.input_path);
+    const outputStorePath = trimPath(plan.policy.output_store_path);
+    const nextEntryId: string | null = hasOwnOption("entryId") ? options.entryId ?? null : this.activeEntryId;
+    const nextSourcePath = hasOwnOption("sourcePath") ? options.sourcePath ?? inputPath : inputPath;
+    const nextSessionPipelines: WorkspacePipelineEntry[] | null = hasOwnOption("sessionPipelines")
+      ? cloneSessionPipelines(options.sessionPipelines)
+      : this.activeDatasetEntry?.session_pipelines ?? null;
+    const nextActiveSessionPipelineId: string | null = hasOwnOption("activeSessionPipelineId")
+      ? options.activeSessionPipelineId ?? null
+      : this.activeDatasetEntry?.active_session_pipeline_id ?? null;
+    const makeActive = options.makeActive ?? true;
+    const loadSection = options.loadSection ?? makeActive;
+    const promptForMissingNativeCoordinateReference =
+      options.promptForMissingNativeCoordinateReference ?? true;
+    const reuseExistingStore = options.reuseExistingStore ?? false;
+    this.loading = true;
+    this.busyLabel = "Importing survey";
+    this.error = null;
+    this.note(
+      "Started validated SEG-Y import.",
+      "ui",
+      "info",
+      `${inputPath || "(missing input)"} -> ${outputStorePath || "(missing output)"}`
+    );
+
+    if (!inputPath || !outputStorePath) {
+      this.loading = false;
+      this.busyLabel = null;
+      this.error = "Both input source volume path and output store path are required.";
+      this.note("Import blocked because input or output path is missing.", "ui", "error");
+      return;
+    }
+
+    try {
+      let response: ImportSegyWithPlanResponse;
+      let currentPlan = structuredClone(plan);
+      currentPlan.input_path = inputPath;
+      currentPlan.policy.output_store_path = outputStorePath;
+      let currentValidationFingerprint = validationFingerprint;
+
+      try {
+        response = await importSegyWithPlan(currentPlan, currentValidationFingerprint);
+      } catch (error) {
+        const message = errorMessage(error, "Unknown SEG-Y import error");
+        if (!isExistingStoreError(message)) {
+          throw error;
+        }
+
+        if (reuseExistingStore) {
+          this.loading = false;
+          this.busyLabel = null;
+          this.error = null;
+          this.note(
+            "An imported runtime store already exists for this source volume; reusing it instead of re-importing.",
+            "backend",
+            "info",
+            outputStorePath
+          );
+          await this.openDatasetAt(outputStorePath, "inline", 0, {
+            entryId: nextEntryId,
+            sourcePath: nextSourcePath,
+            sessionPipelines: nextSessionPipelines,
+            activeSessionPipelineId: nextActiveSessionPipelineId,
+            makeActive,
+            loadSection
+          });
+          return;
+        }
+
+        this.loading = false;
+        this.busyLabel = null;
+        this.error = message;
+        this.note(
+          "Runtime store already exists; waiting for overwrite confirmation.",
+          "backend",
+          "warn",
+          outputStorePath
+        );
+
+        const confirmed = await confirmOverwriteStore(outputStorePath);
+        if (!confirmed) {
+          this.error = "Import cancelled because the selected runtime store already exists.";
+          this.note(
+            "Overwrite of the existing runtime store was cancelled.",
+            "ui",
+            "warn",
+            outputStorePath
+          );
+          return;
+        }
+
+        this.loading = true;
+        this.busyLabel = "Overwriting runtime store";
+        this.error = null;
+        this.note("Confirmed overwrite of the existing runtime store.", "ui", "warn", outputStorePath);
+        currentPlan = {
+          ...currentPlan,
+          policy: {
+            ...currentPlan.policy,
+            overwrite_existing: true
+          }
+        };
+        const validated = await validateSegyImportPlan(currentPlan);
+        currentPlan = validated.validated_plan;
+        currentValidationFingerprint = validated.validation_fingerprint;
+        response = await importSegyWithPlan(currentPlan, currentValidationFingerprint);
+      }
+
+      this.loading = false;
+      this.busyLabel = null;
+      this.lastImportedInputPath = inputPath;
+      this.lastImportedStorePath = response.dataset.store_path;
+      const workspaceResponse = await upsertDatasetEntry({
+        schema_version: 1,
+        entry_id: nextEntryId,
+        display_name: userVisibleDatasetName(
+          response.dataset.descriptor.label,
+          trimPath(nextSourcePath) || null,
+          response.dataset.store_path,
+          nextEntryId ?? response.dataset.descriptor.id
+        ),
+        source_path: trimPath(nextSourcePath) || null,
+        preferred_store_path: response.dataset.store_path,
+        imported_store_path: response.dataset.store_path,
+        dataset: response.dataset,
+        session_pipelines: nextSessionPipelines,
+        active_session_pipeline_id: nextActiveSessionPipelineId,
+        make_active: makeActive
+      });
+      this.workspaceEntries = mergeWorkspaceEntry(this.workspaceEntries, workspaceResponse.entry);
+      this.refreshCompareSelection();
+      if (makeActive) {
+        this.dataset = response.dataset;
+        this.activeStorePath = response.dataset.store_path;
+        this.outputStorePath = response.dataset.store_path;
+        this.#outputPathSource = "manual";
+        this.inputPath = inputPath;
+        this.error = null;
+        this.activeEntryId = workspaceResponse.entry.entry_id;
+        this.#applyWorkspaceSession(workspaceResponse.session);
+        void this.refreshSurveyMap();
+        this.note(
+          "SEG-Y import completed.",
+          "backend",
+          "info",
+          `${response.dataset.descriptor.label} @ ${response.dataset.store_path}`
+        );
+        this.#notePotentiallyLossySampleData(response.dataset.descriptor.sample_data_fidelity, "dataset");
+        if (loadSection) {
+          await this.load("inline", 0, response.dataset.store_path);
+        }
+        this.#maybeQueueMissingNativeCoordinateReferencePrompt(response.dataset, inputPath, "import", {
+          makeActive,
+          promptRequested: promptForMissingNativeCoordinateReference
+        });
+      } else {
+        this.error = null;
+        this.note(
+          "SEG-Y import completed and the volume was added to the workspace without changing the active seismic view.",
+          "backend",
+          "info",
+          `${response.dataset.descriptor.label} @ ${response.dataset.store_path}`
+        );
+        this.#notePotentiallyLossySampleData(response.dataset.descriptor.sample_data_fidelity, "dataset");
+      }
+    } catch (error) {
+      this.loading = false;
+      this.busyLabel = null;
+      this.error = errorMessage(error, "Unknown SEG-Y import error");
+      this.note(
+        "SEG-Y import failed.",
+        "backend",
+        "error",
+        errorMessage(error, "Unknown SEG-Y import error")
+      );
+    }
+  };
+
   openDataset = async (): Promise<void> => {
     const storePath = this.outputStorePath.trim() || this.activeStorePath.trim();
     if (!storePath) {
@@ -4365,16 +5880,16 @@ export class ViewerModel {
   importHorizonFiles = async (
     inputPaths: string[],
     options: HorizonImportCoordinateReferenceOptions = {}
-  ): Promise<void> => {
+  ): Promise<ImportedHorizonDescriptor[] | null> => {
     const activeStorePath = this.activeStorePath.trim();
     const normalizedPaths = inputPaths.map(trimPath).filter((value) => value.length > 0);
     if (!activeStorePath) {
       this.error = "Open a runtime store before importing horizons.";
       this.note("Horizon import blocked because no active runtime store is open.", "ui", "error");
-      return;
+      return null;
     }
     if (normalizedPaths.length === 0) {
-      return;
+      return [];
     }
 
     this.horizonImporting = true;
@@ -4388,28 +5903,81 @@ export class ViewerModel {
 
     try {
       const response = await importHorizonXyz(activeStorePath, normalizedPaths, options);
-      await this.refreshHorizonAssets(activeStorePath);
-      const display = await this.loadResolvedSectionDisplay(activeStorePath, this.axis, this.index);
-      this.section = display.section;
-      this.timeDepthDiagnostics = display.time_depth_diagnostics;
-      this.sectionScalarOverlays = adaptSectionScalarOverlays(
-        display.scalar_overlays,
-        this.velocityOverlayOpacity
-      );
-      this.sectionHorizons = adaptSectionHorizonOverlays(display.horizon_overlays);
-      this.note(
-        "Imported horizon xyz files into the active runtime store.",
-        "backend",
-        "info",
-        response.imported.map((item) => item.name).join(", ")
-      );
+      return await this.#finalizeHorizonImport(activeStorePath, response.imported);
     } catch (error) {
       this.error = errorMessage(error, "Unknown horizon import error");
       this.note("Horizon import failed.", "backend", "error", this.error);
+      return null;
     } finally {
       this.horizonImporting = false;
     }
   };
+
+  importHorizonDraft = async (
+    draft: HorizonSourceImportCanonicalDraft
+  ): Promise<ImportedHorizonDescriptor[] | null> => {
+    const activeStorePath = this.activeStorePath.trim();
+    if (!activeStorePath) {
+      this.error = "Open a runtime store before importing horizons.";
+      this.note("Horizon import blocked because no active runtime store is open.", "ui", "error");
+      return null;
+    }
+
+    const selectedPaths = draft.selectedSourcePaths
+      .map(trimPath)
+      .filter((value) => value.length > 0);
+    if (selectedPaths.length === 0) {
+      return [];
+    }
+
+    this.horizonImporting = true;
+    this.error = null;
+    this.note(
+      "Started horizon source import.",
+      "ui",
+      "info",
+      `${selectedPaths.length} file${selectedPaths.length === 1 ? "" : "s"}`
+    );
+
+    try {
+      const response = await commitHorizonSourceImport({
+        storePath: activeStorePath,
+        draft: {
+          ...draft,
+          selectedSourcePaths: selectedPaths
+        }
+      });
+      return await this.#finalizeHorizonImport(activeStorePath, response.imported);
+    } catch (error) {
+      this.error = errorMessage(error, "Unknown horizon import error");
+      this.note("Horizon import failed.", "backend", "error", this.error);
+      return null;
+    } finally {
+      this.horizonImporting = false;
+    }
+  };
+
+  async #finalizeHorizonImport(
+    storePath: string,
+    imported: ImportedHorizonDescriptor[]
+  ): Promise<ImportedHorizonDescriptor[]> {
+    await this.refreshHorizonAssets(storePath);
+    const display = await this.loadResolvedSectionDisplay(storePath, this.axis, this.index);
+    this.section = display.section;
+    this.timeDepthDiagnostics = display.time_depth_diagnostics;
+    this.sectionScalarOverlays = adaptSectionScalarOverlays(
+      display.scalar_overlays,
+      this.velocityOverlayOpacity
+    );
+    this.sectionHorizons = adaptSectionHorizonOverlays(display.horizon_overlays);
+    this.note(
+      "Imported horizon xyz files into the active runtime store.",
+      "backend",
+      "info",
+      imported.map((item) => item.name).join(", ")
+    );
+    return imported;
+  }
 
   openActiveDatasetExportDialog = async (): Promise<void> => {
     await this.openDatasetExportDialog(this.activeEntryId);
@@ -4671,6 +6239,12 @@ export class ViewerModel {
     this.activeStorePath = storePathOverride ?? this.activeStorePath;
     this.axis = axis;
     this.index = index;
+    this.#sectionTileLoadRequestId += 1;
+    this.#sectionTilePrefetchRequestId += 1;
+    if (this.#sectionTileViewportTimer !== null) {
+      clearTimeout(this.#sectionTileViewportTimer);
+      this.#sectionTileViewportTimer = null;
+    }
     this.loading = true;
     this.busyLabel = this.sectionDomain === "depth" ? "Converting section to depth" : "Loading section";
     this.error = null;
@@ -4700,6 +6274,11 @@ export class ViewerModel {
       this.axis = axis;
       this.index = index;
       this.section = display.section;
+      const viewerResetReason = this.#applyDisplayedSectionContext(
+        activeStorePath,
+        display.section,
+        this.sectionDomain
+      );
       this.timeDepthDiagnostics = display.time_depth_diagnostics;
       this.sectionScalarOverlays = adaptSectionScalarOverlays(
         display.scalar_overlays,
@@ -4711,7 +6290,7 @@ export class ViewerModel {
       this.loading = false;
       this.busyLabel = null;
       this.error = null;
-      this.resetToken = `${axis}:${index}:${this.sectionDomain}:${this.activeVelocityModelAssetId ?? "global1d"}:${this.depthVelocityKind}:${Math.round(this.depthVelocityMPerS)}:${this.showVelocityOverlay ? "overlay-on" : "overlay-off"}`;
+      this.resetToken = this.#displayResetToken();
       await this.persistWorkspaceSession();
       const afterPersistMs = nowMs();
       await tick();
@@ -4742,6 +6321,8 @@ export class ViewerModel {
           frontendSecondFrameMs: afterSecondFrameMs - afterFirstFrameMs,
           frontendCommitToSecondFrameMs: afterSecondFrameMs - stateAssignedMs,
           frontendTotalMs: afterSecondFrameMs - loadStartedMs,
+          viewerResetReason,
+          viewerSessionKey: this.displayedViewerSessionKey,
           frontendStage: "viewer_load_section"
         }
       }).catch((error) => {

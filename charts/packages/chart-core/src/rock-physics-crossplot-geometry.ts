@@ -1,4 +1,6 @@
+import { resolveCartesianPresentationProfile, resolveCartesianStageLayout } from "./cartesian-presentation";
 import type {
+  RockPhysicsAxisDirection,
   RockPhysicsCrossplotModel,
   RockPhysicsCrossplotViewport
 } from "@ophiolite/charts-data-models";
@@ -15,23 +17,13 @@ export interface RockPhysicsDataPoint {
   y: number;
 }
 
-export const ROCK_PHYSICS_CROSSPLOT_MARGIN = {
-  top: 56,
-  right: 28,
-  bottom: 56,
-  left: 72
-} as const;
+export const ROCK_PHYSICS_CROSSPLOT_MARGIN = resolveCartesianPresentationProfile("rockPhysics").frame.plotInsets;
 
 export function getRockPhysicsCrossplotPlotRect(
   width: number,
   height: number
 ): RockPhysicsCrossplotRect {
-  return {
-    x: ROCK_PHYSICS_CROSSPLOT_MARGIN.left,
-    y: ROCK_PHYSICS_CROSSPLOT_MARGIN.top,
-    width: Math.max(1, width - ROCK_PHYSICS_CROSSPLOT_MARGIN.left - ROCK_PHYSICS_CROSSPLOT_MARGIN.right),
-    height: Math.max(1, height - ROCK_PHYSICS_CROSSPLOT_MARGIN.top - ROCK_PHYSICS_CROSSPLOT_MARGIN.bottom)
-  };
+  return resolveCartesianStageLayout(width, height, "rockPhysics").plotRect;
 }
 
 export function fitRockPhysicsViewport(
@@ -112,20 +104,27 @@ export function valueToRockPhysicsScreenX(
 export function valueToRockPhysicsScreenY(
   value: number,
   viewport: RockPhysicsCrossplotViewport,
-  plotRect: RockPhysicsCrossplotRect
+  plotRect: RockPhysicsCrossplotRect,
+  direction: RockPhysicsAxisDirection = "normal"
 ): number {
   const ratio = (value - viewport.yMin) / Math.max(1e-6, viewport.yMax - viewport.yMin);
-  return plotRect.y + plotRect.height - clamp(ratio, 0, 1) * plotRect.height;
+  return direction === "reversed"
+    ? plotRect.y + clamp(ratio, 0, 1) * plotRect.height
+    : plotRect.y + plotRect.height - clamp(ratio, 0, 1) * plotRect.height;
 }
 
 export function rockPhysicsScreenToValue(
   x: number,
   y: number,
   viewport: RockPhysicsCrossplotViewport,
-  plotRect: RockPhysicsCrossplotRect
+  plotRect: RockPhysicsCrossplotRect,
+  yDirection: RockPhysicsAxisDirection = "normal"
 ): RockPhysicsDataPoint {
   const xRatio = clamp((x - plotRect.x) / Math.max(1, plotRect.width), 0, 1);
-  const yRatio = clamp((plotRect.y + plotRect.height - y) / Math.max(1, plotRect.height), 0, 1);
+  const yRatio =
+    yDirection === "reversed"
+      ? clamp((y - plotRect.y) / Math.max(1, plotRect.height), 0, 1)
+      : clamp((plotRect.y + plotRect.height - y) / Math.max(1, plotRect.height), 0, 1);
   return {
     x: viewport.xMin + xRatio * (viewport.xMax - viewport.xMin),
     y: viewport.yMin + yRatio * (viewport.yMax - viewport.yMin)

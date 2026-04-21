@@ -4,12 +4,23 @@ use operation_catalog::operation_catalog;
 use ophiolite_core::{LasError, Result};
 use ophiolite_package::{StoredLasFile, write_bundle};
 use ophiolite_parser::{ReadOptions, import_las_file};
-use ophiolite_project::{AssetId, OphioliteProject, ProjectComputeRunRequest, WellId};
+use ophiolite_project::{
+    AssetBindingInput, AssetId, OphioliteProject, ProjectComputeRunRequest,
+    ProjectSurveyMapRequestDto, ProjectTopsSourceImportResult, SectionWellOverlayRequestDto,
+    VendorProjectBridgeCommitRequest, VendorProjectBridgeRunRequest, VendorProjectCommitRequest,
+    VendorProjectImportVendor, VendorProjectPlanRequest, VendorProjectRuntimeProbeRequest,
+    VendorProjectScanRequest, WellId, WellPanelRequestDto, WellboreId,
+    bridge_commit_vendor_project_object, commit_vendor_project_import, import_tops_source,
+    plan_vendor_project_import, preview_well_folder_import, preview_well_source_import_sources,
+    probe_vendor_project_runtime, run_vendor_project_bridge, scan_vendor_project,
+    vendor_project_bridge_capabilities, vendor_project_connector_contract,
+};
 use ophiolite_seismic::{
     AvoInterceptGradientAttributeRequest, AvoReflectivityRequest, RockPhysicsAttributeRequest,
 };
 use ophiolite_seismic_runtime::{
-    avo_intercept_gradient_attribute, avo_reflectivity, rock_physics_attribute,
+    avo_intercept_gradient_attribute, avo_reflectivity, inspect_horizon_xyz_files,
+    preview_horizon_source_import, rock_physics_attribute,
 };
 use serde_json::json;
 use std::env;
@@ -23,8 +34,16 @@ pub fn supported_cli_commands() -> &'static [&'static str] {
         "create-project",
         "open-project",
         "project-summary",
+        "import-las-asset",
+        "import-las-asset-with-binding",
+        "import-tops-source-with-binding",
         "list-project-wells",
         "list-project-wellbores",
+        "list-project-surveys",
+        "resolve-well-panel-source",
+        "resolve-survey-map-source",
+        "resolve-wellbore-trajectory",
+        "resolve-section-well-overlays",
         "project-operator-lock",
         "install-operator-package",
         "list-project-compute-catalog",
@@ -32,6 +51,18 @@ pub fn supported_cli_commands() -> &'static [&'static str] {
         "run-avo-reflectivity",
         "run-rock-physics-attribute",
         "run-avo-intercept-gradient-attribute",
+        "preview-well-folder-import",
+        "preview-well-source-import",
+        "vendor-scan",
+        "vendor-plan",
+        "vendor-commit",
+        "vendor-runtime-probe",
+        "vendor-connector-contract",
+        "vendor-bridge-capabilities",
+        "vendor-bridge-run",
+        "vendor-bridge-commit",
+        "inspect-horizon-xyz",
+        "preview-horizon-source-import",
         "import",
         "inspect-file",
         "summary",
@@ -71,15 +102,107 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
             let project = OphioliteProject::open(&args[2])?;
             println!("{}", serde_json::to_string_pretty(&project.summary()?)?);
         }
+        "import-las-asset" if args.len() == 4 || args.len() == 5 => {
+            let mut project = OphioliteProject::open(&args[2])?;
+            let collection_name = args.get(4).map(String::as_str);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &project.import_las(Path::new(&args[3]), collection_name)?
+                )?
+            );
+        }
+        "import-las-asset-with-binding" if args.len() == 5 || args.len() == 6 => {
+            let mut project = OphioliteProject::open(&args[2])?;
+            let binding_json = read_json_argument(&args[4])?;
+            let binding = serde_json::from_str::<AssetBindingInput>(&binding_json)?;
+            let collection_name = args.get(5).map(String::as_str);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.import_las_with_binding(
+                    Path::new(&args[3]),
+                    &binding,
+                    collection_name
+                )?)?
+            );
+        }
+        "import-tops-source-with-binding" if args.len() >= 5 && args.len() <= 7 => {
+            let mut project = OphioliteProject::open(&args[2])?;
+            let binding_json = read_json_argument(&args[4])?;
+            let binding = serde_json::from_str::<AssetBindingInput>(&binding_json)?;
+            let collection_name = args
+                .get(5)
+                .map(String::as_str)
+                .filter(|value| !value.is_empty());
+            let depth_reference = args.get(6).map(String::as_str);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&import_tops_source_with_binding(
+                    &mut project,
+                    Path::new(&args[3]),
+                    &binding,
+                    collection_name,
+                    depth_reference,
+                )?)?
+            );
+        }
         "list-project-wells" if args.len() == 3 => {
             let project = OphioliteProject::open(&args[2])?;
-            println!("{}", serde_json::to_string_pretty(&project.list_wells()?)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.well_summaries()?)?
+            );
         }
         "list-project-wellbores" if args.len() == 4 => {
             let project = OphioliteProject::open(&args[2])?;
             println!(
                 "{}",
-                serde_json::to_string_pretty(&project.list_wellbores(&WellId(args[3].clone()))?)?
+                serde_json::to_string_pretty(
+                    &project.wellbore_summaries(&WellId(args[3].clone()))?
+                )?
+            );
+        }
+        "list-project-surveys" if args.len() == 3 => {
+            let project = OphioliteProject::open(&args[2])?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.project_well_overlay_inventory()?.surveys)?
+            );
+        }
+        "resolve-well-panel-source" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request = serde_json::from_str::<WellPanelRequestDto>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.resolve_well_panel_source(&request)?)?
+            );
+        }
+        "resolve-survey-map-source" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request = serde_json::from_str::<ProjectSurveyMapRequestDto>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.resolve_survey_map_source(&request)?)?
+            );
+        }
+        "resolve-wellbore-trajectory" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &project.resolve_wellbore_trajectory(&WellboreId(args[3].clone()))?
+                )?
+            );
+        }
+        "resolve-section-well-overlays" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request = serde_json::from_str::<SectionWellOverlayRequestDto>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.resolve_section_well_overlays(&request)?)?
             );
         }
         "project-operator-lock" if args.len() == 3 => {
@@ -147,6 +270,100 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
                         .map_err(|error| LasError::Validation(error.to_string()))?
                 )?
             );
+        }
+        "preview-well-folder-import" if args.len() == 3 => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&preview_well_folder_import(Path::new(&args[2]))?)?
+            );
+        }
+        "preview-well-source-import" if args.len() >= 4 => {
+            let source_root = Path::new(&args[2]);
+            let source_paths = args[3..].iter().map(PathBuf::from).collect::<Vec<_>>();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&preview_well_source_import_sources(
+                    &source_paths,
+                    Some(source_root),
+                )?)?
+            );
+        }
+        "vendor-scan" if args.len() == 4 => {
+            let vendor = parse_vendor_arg(&args[2])?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&scan_vendor_project(&VendorProjectScanRequest {
+                    vendor,
+                    project_root: args[3].clone(),
+                })?)?
+            );
+        }
+        "vendor-plan" if args.len() == 3 => {
+            let request_json = read_json_argument(&args[2])?;
+            let request = serde_json::from_str::<VendorProjectPlanRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&plan_vendor_project_import(&request)?)?
+            );
+        }
+        "vendor-commit" if args.len() == 3 => {
+            let request_json = read_json_argument(&args[2])?;
+            let request = serde_json::from_str::<VendorProjectCommitRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&commit_vendor_project_import(&request)?)?
+            );
+        }
+        "vendor-runtime-probe" if args.len() == 3 => {
+            let request_json = read_json_argument(&args[2])?;
+            let request = serde_json::from_str::<VendorProjectRuntimeProbeRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&probe_vendor_project_runtime(&request)?)?
+            );
+        }
+        "vendor-connector-contract" if args.len() == 3 => {
+            let vendor = parse_vendor_arg(&args[2])?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&vendor_project_connector_contract(vendor))?
+            );
+        }
+        "vendor-bridge-capabilities" if args.len() == 3 => {
+            let vendor = parse_vendor_arg(&args[2])?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&vendor_project_bridge_capabilities(vendor))?
+            );
+        }
+        "vendor-bridge-run" if args.len() == 3 => {
+            let request_json = read_json_argument(&args[2])?;
+            let request = serde_json::from_str::<VendorProjectBridgeRunRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&run_vendor_project_bridge(&request)?)?
+            );
+        }
+        "vendor-bridge-commit" if args.len() == 3 => {
+            let request_json = read_json_argument(&args[2])?;
+            let request = serde_json::from_str::<VendorProjectBridgeCommitRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&bridge_commit_vendor_project_object(&request)?)?
+            );
+        }
+        "inspect-horizon-xyz" if args.len() >= 3 => {
+            let input_paths = args[2..].iter().map(Path::new).collect::<Vec<_>>();
+            let preview = inspect_horizon_xyz_files(&input_paths)
+                .map_err(|error| LasError::Validation(error.to_string()))?;
+            println!("{}", serde_json::to_string_pretty(&preview)?);
+        }
+        "preview-horizon-source-import" if args.len() >= 4 => {
+            let store_path = Path::new(&args[2]);
+            let input_paths = args[3..].iter().map(Path::new).collect::<Vec<_>>();
+            let preview = preview_horizon_source_import(store_path, &input_paths, None)
+                .map_err(|error| LasError::Validation(error.to_string()))?;
+            println!("{}", serde_json::to_string_pretty(&preview)?);
         }
         "import" if args.len() == 4 => {
             let file = import_las_file(&args[2])?;
@@ -279,8 +496,20 @@ fn print_usage() {
     eprintln!("  {binary} create-project <project_root>");
     eprintln!("  {binary} open-project <project_root>");
     eprintln!("  {binary} project-summary <project_root>");
+    eprintln!("  {binary} import-las-asset <project_root> <las_path> [collection_name]");
+    eprintln!(
+        "  {binary} import-las-asset-with-binding <project_root> <las_path> <binding_json_path|-> [collection_name]"
+    );
+    eprintln!(
+        "  {binary} import-tops-source-with-binding <project_root> <tops_source_path> <binding_json_path|-> [collection_name] [depth_reference]"
+    );
     eprintln!("  {binary} list-project-wells <project_root>");
     eprintln!("  {binary} list-project-wellbores <project_root> <well_id>");
+    eprintln!("  {binary} list-project-surveys <project_root>");
+    eprintln!("  {binary} resolve-well-panel-source <project_root> <request_json_path|->");
+    eprintln!("  {binary} resolve-survey-map-source <project_root> <request_json_path|->");
+    eprintln!("  {binary} resolve-wellbore-trajectory <project_root> <wellbore_id>");
+    eprintln!("  {binary} resolve-section-well-overlays <project_root> <request_json_path|->");
     eprintln!("  {binary} project-operator-lock <project_root>");
     eprintln!("  {binary} install-operator-package <project_root> <manifest_path>");
     eprintln!("  {binary} list-project-compute-catalog <project_root> <asset_id>");
@@ -288,11 +517,39 @@ fn print_usage() {
     eprintln!("  {binary} run-avo-reflectivity <request_json_path|->");
     eprintln!("  {binary} run-rock-physics-attribute <request_json_path|->");
     eprintln!("  {binary} run-avo-intercept-gradient-attribute <request_json_path|->");
+    eprintln!("  {binary} preview-well-folder-import <folder_path>");
+    eprintln!("  {binary} preview-well-source-import <source_root_path> <source_path>...");
+    eprintln!("  {binary} vendor-scan <vendor> <project_root>");
+    eprintln!("  {binary} vendor-plan <request_json_path|->");
+    eprintln!("  {binary} vendor-commit <request_json_path|->");
+    eprintln!("  {binary} vendor-runtime-probe <request_json_path|->");
+    eprintln!("  {binary} vendor-connector-contract <vendor>");
+    eprintln!("  {binary} vendor-bridge-capabilities <vendor>");
+    eprintln!("  {binary} vendor-bridge-run <request_json_path|->");
+    eprintln!("  {binary} vendor-bridge-commit <request_json_path|->");
+    eprintln!("  {binary} inspect-horizon-xyz <input.xyz>...");
+    eprintln!("  {binary} preview-horizon-source-import <store_path> <input.xyz>...");
     eprintln!("  {binary} import <input.las> <bundle_dir>");
     eprintln!("  {binary} inspect-file <input.las>");
     eprintln!("  {binary} summary <bundle_dir>");
     eprintln!("  {binary} list-curves <bundle_dir>");
     eprintln!("  {binary} generate-fixture-packages <input_root> <output_root>");
+}
+
+fn import_tops_source_with_binding(
+    project: &mut OphioliteProject,
+    source_path: &Path,
+    binding: &AssetBindingInput,
+    collection_name: Option<&str>,
+    depth_reference: Option<&str>,
+) -> Result<ProjectTopsSourceImportResult> {
+    import_tops_source(
+        project,
+        source_path,
+        binding,
+        collection_name,
+        depth_reference,
+    )
 }
 
 fn read_json_argument(argument: &str) -> Result<String> {
@@ -302,4 +559,14 @@ fn read_json_argument(argument: &str) -> Result<String> {
         return Ok(buffer);
     }
     Ok(fs::read_to_string(argument)?)
+}
+
+fn parse_vendor_arg(argument: &str) -> Result<VendorProjectImportVendor> {
+    match argument.trim().to_ascii_lowercase().as_str() {
+        "opendtect" => Ok(VendorProjectImportVendor::Opendtect),
+        "petrel" => Ok(VendorProjectImportVendor::Petrel),
+        _ => Err(LasError::Validation(format!(
+            "Unsupported vendor `{argument}`. Supported vendors: opendtect, petrel."
+        ))),
+    }
 }

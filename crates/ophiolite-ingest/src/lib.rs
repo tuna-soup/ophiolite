@@ -1,7 +1,7 @@
 use ophiolite_core::Result;
 use ophiolite_project::{
     AssetBindingInput, LogAssetImportResult, OphioliteProject, ProjectAssetImportResult,
-    SeismicAssetImportResult,
+    ProjectTopsSourceImportResult, SeismicAssetImportResult, import_tops_source,
 };
 use std::path::Path;
 
@@ -29,6 +29,31 @@ pub fn import_tops_csv_asset(
     collection_name: Option<&str>,
 ) -> Result<ProjectAssetImportResult> {
     project.import_tops_csv(csv_path, binding, collection_name)
+}
+
+pub fn import_tops_source_asset(
+    project: &mut OphioliteProject,
+    source_path: impl AsRef<Path>,
+    binding: &AssetBindingInput,
+    collection_name: Option<&str>,
+    depth_reference: Option<&str>,
+) -> Result<ProjectTopsSourceImportResult> {
+    import_tops_source(
+        project,
+        source_path.as_ref(),
+        binding,
+        collection_name,
+        depth_reference,
+    )
+}
+
+pub fn import_well_markers_csv_asset(
+    project: &mut OphioliteProject,
+    csv_path: impl AsRef<Path>,
+    binding: &AssetBindingInput,
+    collection_name: Option<&str>,
+) -> Result<ProjectAssetImportResult> {
+    project.import_well_markers_csv(csv_path, binding, collection_name)
 }
 
 pub fn import_pressure_csv_asset(

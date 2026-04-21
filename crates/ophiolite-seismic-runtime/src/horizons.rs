@@ -24,6 +24,8 @@ const PROJ_RESOURCE_PATH_ENV: &str = "OPHIOLITE_PROJ_RESOURCE_PATH";
 const HORIZON_TIME_UNIT_MS: &str = "ms";
 const HORIZON_DEPTH_UNIT_M: &str = "m";
 const FEET_TO_METERS: f32 = 0.3048;
+const MAX_HORIZON_PARSE_ISSUES: usize = 8;
+const SURVEY_LOCAL_COORDINATE_REFERENCE_NAME: &str = "Survey local engineering coordinates";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct HorizonStoreManifest {
@@ -83,6 +85,67 @@ struct HorizonImportCoordinateReferences {
     notes: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HorizonImportPreview {
+    pub files: Vec<HorizonImportPreviewFile>,
+    pub source_coordinate_reference: Option<CoordinateReferenceDescriptor>,
+    pub aligned_coordinate_reference: Option<CoordinateReferenceDescriptor>,
+    pub transformed: bool,
+    pub can_commit: bool,
+    pub notes: Vec<String>,
+    pub issues: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HorizonSourceImportCanonicalDraft {
+    pub selected_source_paths: Vec<String>,
+    pub vertical_domain: TimeDepthDomain,
+    pub vertical_unit: Option<String>,
+    pub source_coordinate_reference: Option<CoordinateReferenceDescriptor>,
+    pub assume_same_as_survey: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HorizonSourceImportPreview {
+    pub parsed: HorizonImportPreview,
+    pub suggested_draft: HorizonSourceImportCanonicalDraft,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HorizonImportPreviewFile {
+    pub source_path: String,
+    pub name: String,
+    pub parsed_point_count: usize,
+    pub invalid_row_count: usize,
+    pub x_min: Option<f64>,
+    pub x_max: Option<f64>,
+    pub y_min: Option<f64>,
+    pub y_max: Option<f64>,
+    pub z_min: Option<f64>,
+    pub z_max: Option<f64>,
+    pub estimated_mapped_point_count: Option<usize>,
+    pub estimated_missing_cell_count: Option<usize>,
+    pub can_commit: bool,
+    pub issues: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HorizonXyzFilePreview {
+    pub source_path: String,
+    pub name: String,
+    pub parsed_point_count: usize,
+    pub invalid_row_count: usize,
+    pub x_min: Option<f64>,
+    pub x_max: Option<f64>,
+    pub y_min: Option<f64>,
+    pub y_max: Option<f64>,
+    pub z_min: Option<f64>,
+    pub z_max: Option<f64>,
+    pub issues: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ImportedHorizonGrid {
     pub descriptor: ImportedHorizonDescriptor,
@@ -105,6 +168,35 @@ struct ResolvedHorizonVerticalSpec {
     notes: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ParsedHorizonXyzRow {
+    x: f64,
+    y: f64,
+    z: f32,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedHorizonXyzFile {
+    rows: Vec<ParsedHorizonXyzRow>,
+    invalid_row_count: usize,
+    issues: Vec<String>,
+    x_min: Option<f64>,
+    x_max: Option<f64>,
+    y_min: Option<f64>,
+    y_max: Option<f64>,
+    z_min: Option<f64>,
+    z_max: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+struct HorizonCoordinateReferencePreview {
+    source: Option<CoordinateReferenceDescriptor>,
+    aligned: Option<CoordinateReferenceDescriptor>,
+    transformed: bool,
+    notes: Vec<String>,
+    issues: Vec<String>,
+}
+
 pub fn import_horizon_xyzs<P: AsRef<Path>>(
     root: impl AsRef<Path>,
     input_paths: &[P],
@@ -121,6 +213,250 @@ pub fn import_horizon_xyzs<P: AsRef<Path>>(
         source_coordinate_reference_name,
         assume_same_as_survey,
     )
+}
+
+pub fn preview_horizon_xyzs<P: AsRef<Path>>(
+    root: impl AsRef<Path>,
+    input_paths: &[P],
+    source_coordinate_reference_id: Option<&str>,
+    source_coordinate_reference_name: Option<&str>,
+    assume_same_as_survey: bool,
+) -> Result<HorizonImportPreview, SeismicStoreError> {
+    preview_horizon_xyzs_with_vertical_domain(
+        root,
+        input_paths,
+        TimeDepthDomain::Time,
+        None,
+        source_coordinate_reference_id,
+        source_coordinate_reference_name,
+        assume_same_as_survey,
+    )
+}
+
+pub fn build_suggested_horizon_source_import_draft<P: AsRef<Path>>(
+    input_paths: &[P],
+    vertical_domain: TimeDepthDomain,
+    vertical_unit: Option<&str>,
+    source_coordinate_reference_id: Option<&str>,
+    source_coordinate_reference_name: Option<&str>,
+    assume_same_as_survey: bool,
+) -> HorizonSourceImportCanonicalDraft {
+    let selected_source_paths = input_paths
+        .iter()
+        .map(|value| value.as_ref().to_string_lossy().trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    let source_coordinate_reference = if assume_same_as_survey {
+        None
+    } else {
+        let id = normalize_optional_text(source_coordinate_reference_id);
+        let name = normalize_optional_text(source_coordinate_reference_name);
+        if id.is_some() || name.is_some() {
+            Some(CoordinateReferenceDescriptor {
+                id,
+                name,
+                geodetic_datum: None,
+                unit: None,
+            })
+        } else {
+            None
+        }
+    };
+
+    HorizonSourceImportCanonicalDraft {
+        selected_source_paths,
+        vertical_domain,
+        vertical_unit: normalize_optional_text(vertical_unit),
+        source_coordinate_reference,
+        assume_same_as_survey,
+    }
+}
+
+pub fn preview_horizon_source_import<P: AsRef<Path>>(
+    root: impl AsRef<Path>,
+    input_paths: &[P],
+    draft: Option<&HorizonSourceImportCanonicalDraft>,
+) -> Result<HorizonSourceImportPreview, SeismicStoreError> {
+    let suggested_draft = draft.cloned().unwrap_or_else(|| {
+        build_suggested_horizon_source_import_draft(
+            input_paths,
+            TimeDepthDomain::Time,
+            None,
+            None,
+            None,
+            true,
+        )
+    });
+    let parsed = preview_horizon_xyzs_with_vertical_domain(
+        root,
+        &suggested_draft.selected_source_paths,
+        suggested_draft.vertical_domain,
+        suggested_draft.vertical_unit.as_deref(),
+        suggested_draft
+            .source_coordinate_reference
+            .as_ref()
+            .and_then(|value| value.id.as_deref()),
+        suggested_draft
+            .source_coordinate_reference
+            .as_ref()
+            .and_then(|value| value.name.as_deref()),
+        suggested_draft.assume_same_as_survey,
+    )?;
+
+    Ok(HorizonSourceImportPreview {
+        parsed,
+        suggested_draft,
+    })
+}
+
+pub fn inspect_horizon_xyz_files<P: AsRef<Path>>(
+    input_paths: &[P],
+) -> Result<Vec<HorizonXyzFilePreview>, SeismicStoreError> {
+    input_paths
+        .iter()
+        .map(|input_path| {
+            let input_path = input_path.as_ref();
+            let parsed = parse_horizon_xyz_file(input_path)?;
+            Ok(HorizonXyzFilePreview {
+                source_path: input_path.to_string_lossy().into_owned(),
+                name: input_path
+                    .file_name()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| input_path.to_string_lossy().into_owned()),
+                parsed_point_count: parsed.rows.len(),
+                invalid_row_count: parsed.invalid_row_count,
+                x_min: parsed.x_min,
+                x_max: parsed.x_max,
+                y_min: parsed.y_min,
+                y_max: parsed.y_max,
+                z_min: parsed.z_min,
+                z_max: parsed.z_max,
+                issues: parsed.issues,
+            })
+        })
+        .collect()
+}
+
+pub fn preview_horizon_xyzs_with_vertical_domain<P: AsRef<Path>>(
+    root: impl AsRef<Path>,
+    input_paths: &[P],
+    vertical_domain: TimeDepthDomain,
+    vertical_unit: Option<&str>,
+    source_coordinate_reference_id: Option<&str>,
+    source_coordinate_reference_name: Option<&str>,
+    assume_same_as_survey: bool,
+) -> Result<HorizonImportPreview, SeismicStoreError> {
+    let root = root.as_ref();
+    let handle = open_store(root)?;
+    let shape = handle.manifest.volume.shape;
+    let inline_count = shape[0];
+    let xline_count = shape[1];
+    let transform = handle
+        .manifest
+        .volume
+        .spatial
+        .as_ref()
+        .and_then(|spatial| spatial.grid_transform.as_ref());
+    let coordinate_reference_preview = preview_horizon_import_coordinate_references(
+        handle.manifest.volume.coordinate_reference_binding.as_ref(),
+        source_coordinate_reference_id,
+        source_coordinate_reference_name,
+        assume_same_as_survey,
+    );
+    let vertical_spec = resolve_horizon_vertical_spec(vertical_domain, vertical_unit)?;
+    let mut issues = coordinate_reference_preview.issues.clone();
+    let mut notes = coordinate_reference_preview.notes.clone();
+    notes.extend(vertical_spec.notes.clone());
+    if transform.is_none() {
+        issues.push(String::from(
+            "active survey grid transform is unresolved; horizon XYZ files can be parsed, but grid alignment and import remain blocked",
+        ));
+    }
+    let resolved_coordinate_references =
+        coordinate_reference_preview.to_resolved_coordinate_references();
+    let mut can_commit = transform.is_some() && resolved_coordinate_references.is_some();
+    let mut files = Vec::with_capacity(input_paths.len());
+
+    for input_path in input_paths {
+        let input_path = input_path.as_ref();
+        let stem = input_path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("horizon");
+        let parsed = parse_horizon_xyz_file(input_path)?;
+        let mut file_issues = parsed.issues.clone();
+        let mut file_can_commit = false;
+        let mut estimated_mapped_point_count = None;
+        let mut estimated_missing_cell_count = None;
+
+        if parsed.rows.is_empty() {
+            file_issues.push(format!(
+                "no valid horizon xyz rows were parsed from {}",
+                input_path.display()
+            ));
+        } else if let (Some(transform), Some(coordinate_references)) =
+            (transform, resolved_coordinate_references.as_ref())
+        {
+            match analyze_parsed_xyz_grid(
+                &parsed.rows,
+                transform,
+                inline_count,
+                xline_count,
+                coordinate_references,
+            ) {
+                Ok(import) => {
+                    estimated_mapped_point_count = Some(import.mapped_point_count);
+                    estimated_missing_cell_count = Some(import.missing_cell_count);
+                    file_can_commit = true;
+                }
+                Err(error) => file_issues.push(error.to_string()),
+            }
+        }
+
+        if !file_can_commit && resolved_coordinate_references.is_none() {
+            file_issues.push(String::from(
+                "resolve the source CRS or explicitly assume the horizon coordinates already match the survey before importing",
+            ));
+        }
+        if !file_can_commit && transform.is_none() {
+            file_issues.push(String::from(
+                "assign or recover the survey grid transform before importing parsed horizon coordinates",
+            ));
+        }
+        can_commit &= file_can_commit;
+
+        files.push(HorizonImportPreviewFile {
+            source_path: input_path.to_string_lossy().into_owned(),
+            name: stem.trim().to_string(),
+            parsed_point_count: parsed.rows.len(),
+            invalid_row_count: parsed.invalid_row_count,
+            x_min: parsed.x_min,
+            x_max: parsed.x_max,
+            y_min: parsed.y_min,
+            y_max: parsed.y_max,
+            z_min: parsed
+                .z_min
+                .map(|value| value * f64::from(vertical_spec.value_scale)),
+            z_max: parsed
+                .z_max
+                .map(|value| value * f64::from(vertical_spec.value_scale)),
+            estimated_mapped_point_count,
+            estimated_missing_cell_count,
+            can_commit: file_can_commit,
+            issues: file_issues,
+        });
+    }
+
+    Ok(HorizonImportPreview {
+        files,
+        source_coordinate_reference: coordinate_reference_preview.source,
+        aligned_coordinate_reference: coordinate_reference_preview.aligned,
+        transformed: coordinate_reference_preview.transformed,
+        can_commit,
+        notes,
+        issues,
+    })
 }
 
 pub fn import_horizon_xyzs_with_vertical_domain<P: AsRef<Path>>(
@@ -188,7 +524,9 @@ pub fn import_horizon_xyzs_with_vertical_domain<P: AsRef<Path>>(
             .find(|entry| entry.id == id)
             .map(|entry| entry.style.clone())
             .unwrap_or_else(|| default_horizon_style(manifest.horizons.len() + imported.len()));
-        let import = import_xyz_grid(
+        let parsed = parse_horizon_xyz_file(input_path)?;
+        let import = import_parsed_xyz_grid(
+            &parsed.rows,
             input_path,
             transform,
             inline_count,
@@ -212,6 +550,13 @@ pub fn import_horizon_xyzs_with_vertical_domain<P: AsRef<Path>>(
             notes: {
                 let mut notes = coordinate_references.notes.clone();
                 notes.extend(vertical_spec.notes.clone());
+                if parsed.invalid_row_count > 0 {
+                    notes.push(format!(
+                        "Skipped {} invalid horizon XYZ row(s) while importing {}.",
+                        parsed.invalid_row_count,
+                        input_path.display()
+                    ));
+                }
                 notes
             },
             style: style.clone(),
@@ -234,6 +579,27 @@ pub fn import_horizon_xyzs_with_vertical_domain<P: AsRef<Path>>(
     });
     save_horizon_manifest(&horizons_root, &manifest)?;
     Ok(imported)
+}
+
+pub fn import_horizon_xyzs_from_draft(
+    root: impl AsRef<Path>,
+    draft: &HorizonSourceImportCanonicalDraft,
+) -> Result<Vec<ImportedHorizonDescriptor>, SeismicStoreError> {
+    import_horizon_xyzs_with_vertical_domain(
+        root,
+        &draft.selected_source_paths,
+        draft.vertical_domain,
+        draft.vertical_unit.as_deref(),
+        draft
+            .source_coordinate_reference
+            .as_ref()
+            .and_then(|value| value.id.as_deref()),
+        draft
+            .source_coordinate_reference
+            .as_ref()
+            .and_then(|value| value.name.as_deref()),
+        draft.assume_same_as_survey,
+    )
 }
 
 pub fn convert_horizon_vertical_domain_with_transform(
@@ -577,7 +943,165 @@ fn sample_index_for_value(sample_axis: &[f32], sample_value: f32) -> Option<usiz
     }
 }
 
-fn import_xyz_grid(
+impl HorizonCoordinateReferencePreview {
+    fn to_resolved_coordinate_references(&self) -> Option<HorizonImportCoordinateReferences> {
+        match (self.source.clone(), self.aligned.clone()) {
+            (Some(source), Some(aligned)) if self.issues.is_empty() => {
+                Some(HorizonImportCoordinateReferences {
+                    source,
+                    aligned,
+                    transformed: self.transformed,
+                    notes: self.notes.clone(),
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
+fn parse_horizon_xyz_file(input_path: &Path) -> Result<ParsedHorizonXyzFile, SeismicStoreError> {
+    let file = fs::File::open(input_path)?;
+    let reader = BufReader::new(file);
+    let mut rows = Vec::new();
+    let mut invalid_row_count = 0_usize;
+    let mut issues = Vec::new();
+    let mut x_min = None::<f64>;
+    let mut x_max = None::<f64>;
+    let mut y_min = None::<f64>;
+    let mut y_max = None::<f64>;
+    let mut z_min = None::<f64>;
+    let mut z_max = None::<f64>;
+
+    for (line_index, line) in reader.lines().enumerate() {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
+            continue;
+        }
+        let fields = trimmed
+            .split(|character: char| {
+                character.is_ascii_whitespace() || character == ',' || character == ';'
+            })
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>();
+        if fields.len() < 3 {
+            invalid_row_count += 1;
+            push_horizon_parse_issue(
+                &mut issues,
+                format!(
+                    "row {} in {} did not contain at least three coordinate columns and was skipped",
+                    line_index + 1,
+                    input_path.display()
+                ),
+            );
+            continue;
+        }
+
+        let Ok(x) = fields[0].parse::<f64>() else {
+            invalid_row_count += 1;
+            push_horizon_parse_issue(
+                &mut issues,
+                format!(
+                    "row {} in {} contained an invalid x coordinate and was skipped",
+                    line_index + 1,
+                    input_path.display()
+                ),
+            );
+            continue;
+        };
+        let Ok(y) = fields[1].parse::<f64>() else {
+            invalid_row_count += 1;
+            push_horizon_parse_issue(
+                &mut issues,
+                format!(
+                    "row {} in {} contained an invalid y coordinate and was skipped",
+                    line_index + 1,
+                    input_path.display()
+                ),
+            );
+            continue;
+        };
+        let Ok(z) = fields[2].parse::<f32>() else {
+            invalid_row_count += 1;
+            push_horizon_parse_issue(
+                &mut issues,
+                format!(
+                    "row {} in {} contained an invalid z coordinate and was skipped",
+                    line_index + 1,
+                    input_path.display()
+                ),
+            );
+            continue;
+        };
+        if !x.is_finite() || !y.is_finite() || !z.is_finite() {
+            invalid_row_count += 1;
+            push_horizon_parse_issue(
+                &mut issues,
+                format!(
+                    "row {} in {} contained non-finite coordinate values and was skipped",
+                    line_index + 1,
+                    input_path.display()
+                ),
+            );
+            continue;
+        }
+
+        rows.push(ParsedHorizonXyzRow { x, y, z });
+        x_min = Some(x_min.map_or(x, |value| value.min(x)));
+        x_max = Some(x_max.map_or(x, |value| value.max(x)));
+        y_min = Some(y_min.map_or(y, |value| value.min(y)));
+        y_max = Some(y_max.map_or(y, |value| value.max(y)));
+        let z = f64::from(z);
+        z_min = Some(z_min.map_or(z, |value| value.min(z)));
+        z_max = Some(z_max.map_or(z, |value| value.max(z)));
+    }
+
+    if invalid_row_count > MAX_HORIZON_PARSE_ISSUES {
+        issues.push(format!(
+            "{} additional invalid horizon XYZ row(s) were skipped",
+            invalid_row_count - MAX_HORIZON_PARSE_ISSUES
+        ));
+    }
+
+    Ok(ParsedHorizonXyzFile {
+        rows,
+        invalid_row_count,
+        issues,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        z_min,
+        z_max,
+    })
+}
+
+fn push_horizon_parse_issue(issues: &mut Vec<String>, issue: String) {
+    if issues.len() < MAX_HORIZON_PARSE_ISSUES {
+        issues.push(issue);
+    }
+}
+
+fn analyze_parsed_xyz_grid(
+    rows: &[ParsedHorizonXyzRow],
+    transform: &SurveyGridTransform,
+    inline_count: usize,
+    xline_count: usize,
+    coordinate_references: &HorizonImportCoordinateReferences,
+) -> Result<HorizonGridImport, SeismicStoreError> {
+    import_parsed_xyz_grid(
+        rows,
+        Path::new("preview://horizon"),
+        transform,
+        inline_count,
+        xline_count,
+        coordinate_references,
+        1.0,
+    )
+}
+
+fn import_parsed_xyz_grid(
+    rows: &[ParsedHorizonXyzRow],
     input_path: &Path,
     transform: &SurveyGridTransform,
     inline_count: usize,
@@ -586,11 +1110,8 @@ fn import_xyz_grid(
     value_scale: f32,
 ) -> Result<HorizonGridImport, SeismicStoreError> {
     let total_cells = inline_count * xline_count;
-    let file = fs::File::open(input_path)?;
-    let reader = BufReader::new(file);
     let mut values = vec![0.0_f32; total_cells];
     let mut validity = vec![0_u8; total_cells];
-    let mut point_count = 0_usize;
     let mut mapped_point_count = 0_usize;
     let transformer = coordinate_references
         .transformed
@@ -610,53 +1131,11 @@ fn import_xyz_grid(
         })
         .transpose()?;
 
-    for (line_index, line) in reader.lines().enumerate() {
-        let line = line?;
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
-            continue;
-        }
-        let fields = trimmed
-            .split(|character: char| {
-                character.is_ascii_whitespace() || character == ',' || character == ';'
-            })
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>();
-        if fields.len() < 3 {
-            return Err(SeismicStoreError::Message(format!(
-                "invalid horizon xyz row {} in {}",
-                line_index + 1,
-                input_path.display()
-            )));
-        }
-
-        let x = fields[0].parse::<f64>().map_err(|error| {
-            SeismicStoreError::Message(format!(
-                "invalid x coordinate at row {} in {}: {error}",
-                line_index + 1,
-                input_path.display()
-            ))
-        })?;
-        let y = fields[1].parse::<f64>().map_err(|error| {
-            SeismicStoreError::Message(format!(
-                "invalid y coordinate at row {} in {}: {error}",
-                line_index + 1,
-                input_path.display()
-            ))
-        })?;
-        let z = fields[2].parse::<f32>().map_err(|error| {
-            SeismicStoreError::Message(format!(
-                "invalid z coordinate at row {} in {}: {error}",
-                line_index + 1,
-                input_path.display()
-            ))
-        })?;
-        point_count += 1;
-
+    for row in rows {
         let (aligned_x, aligned_y) = if let Some(transformer) = transformer.as_ref() {
-            transform_projected_coordinate(transformer, x, y)?
+            transform_projected_coordinate(transformer, row.x, row.y)?
         } else {
-            (x, y)
+            (row.x, row.y)
         };
 
         let Some((inline_index, xline_index)) = snap_projected_point_to_grid(
@@ -672,13 +1151,14 @@ fn import_xyz_grid(
         if validity[offset] == 0 {
             mapped_point_count += 1;
         }
-        values[offset] = z * value_scale;
+        values[offset] = row.z * value_scale;
         validity[offset] = 1;
     }
 
+    let point_count = rows.len();
     if point_count == 0 {
         return Err(SeismicStoreError::Message(format!(
-            "no horizon xyz rows were parsed from {}",
+            "no valid horizon xyz rows were parsed from {}",
             input_path.display()
         )));
     }
@@ -710,26 +1190,32 @@ fn resolve_horizon_import_coordinate_references(
     source_coordinate_reference_name: Option<&str>,
     assume_same_as_survey: bool,
 ) -> Result<HorizonImportCoordinateReferences, SeismicStoreError> {
-    let aligned = binding
-        .and_then(|binding| binding.effective.clone())
-        .filter(|reference| {
-            reference
-                .id
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|value| !value.is_empty())
-        })
-        .ok_or_else(|| {
-            SeismicStoreError::Message(String::from(
-                "horizon import requires the active survey store to have an effective native CRS before imported horizons can be aligned",
-            ))
-        })?;
+    preview_horizon_import_coordinate_references(
+        binding,
+        source_coordinate_reference_id,
+        source_coordinate_reference_name,
+        assume_same_as_survey,
+    )
+    .to_resolved_coordinate_references()
+    .ok_or_else(|| {
+        SeismicStoreError::Message(String::from(
+            "horizon import requires either a resolvable source CRS or an explicit same-as-survey coordinate assumption",
+        ))
+    })
+}
+
+fn preview_horizon_import_coordinate_references(
+    binding: Option<&ophiolite_seismic::CoordinateReferenceBinding>,
+    source_coordinate_reference_id: Option<&str>,
+    source_coordinate_reference_name: Option<&str>,
+    assume_same_as_survey: bool,
+) -> HorizonCoordinateReferencePreview {
+    let aligned = binding.and_then(|binding| binding.effective.clone());
     let aligned_id = aligned
-        .id
-        .as_deref()
+        .as_ref()
+        .and_then(|reference| reference.id.as_deref())
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .expect("aligned CRS id should be present");
+        .filter(|value| !value.is_empty());
 
     let normalized_source_id = source_coordinate_reference_id
         .map(str::trim)
@@ -740,72 +1226,143 @@ fn resolve_horizon_import_coordinate_references(
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned);
 
-    let (source, notes) = match normalized_source_id {
+    let mut notes = Vec::new();
+    let mut issues = Vec::new();
+
+    let source = match normalized_source_id {
         Some(source_id) => {
-            let mut notes = Vec::new();
-            notes.push(format!(
-                "horizon source CRS resolved as {source_id} before alignment into survey CRS {aligned_id}"
-            ));
-            (
-                CoordinateReferenceDescriptor {
-                    id: Some(source_id),
-                    name: normalized_source_name,
-                    geodetic_datum: None,
-                    unit: None,
-                },
-                notes,
-            )
+            if let Some(aligned_id) = aligned_id {
+                notes.push(format!(
+                    "horizon source CRS resolved as {source_id} before alignment into survey CRS {aligned_id}"
+                ));
+            } else {
+                issues.push(String::from(
+                    "the active survey CRS is unresolved, so a custom horizon source CRS cannot be reprojected into the survey frame yet",
+                ));
+            }
+            Some(CoordinateReferenceDescriptor {
+                id: Some(source_id),
+                name: normalized_source_name,
+                geodetic_datum: None,
+                unit: None,
+            })
         }
         None if assume_same_as_survey => {
-            let mut notes = Vec::new();
-            notes.push(format!(
-                "horizon source CRS was explicitly assumed to match the survey effective native CRS {aligned_id}"
-            ));
-            (aligned.clone(), notes)
+            if let Some(aligned) = aligned.clone() {
+                if let Some(aligned_id) = aligned_id {
+                    notes.push(format!(
+                        "horizon source CRS was explicitly assumed to match the survey effective native CRS {aligned_id}"
+                    ));
+                } else {
+                    notes.push(String::from(
+                        "horizon coordinates were explicitly assumed to already match the survey local coordinate frame",
+                    ));
+                }
+                Some(aligned)
+            } else {
+                notes.push(String::from(
+                    "horizon coordinates were explicitly assumed to already match the survey local coordinate frame",
+                ));
+                Some(CoordinateReferenceDescriptor {
+                    id: None,
+                    name: Some(SURVEY_LOCAL_COORDINATE_REFERENCE_NAME.to_string()),
+                    geodetic_datum: None,
+                    unit: None,
+                })
+            }
         }
         None => {
-            return Err(SeismicStoreError::Message(String::from(
-                "horizon import requires either a source CRS identifier or an explicit same-as-survey assumption",
-            )));
+            issues.push(String::from(
+                "choose a source CRS or explicitly assume the horizon coordinates already match the survey before importing",
+            ));
+            None
         }
     };
 
-    let transformed = source
-        .id
-        .as_deref()
-        .map(str::trim)
-        .is_some_and(|value| !value.eq_ignore_ascii_case(aligned_id));
+    let aligned = aligned.or_else(|| {
+        assume_same_as_survey.then(|| CoordinateReferenceDescriptor {
+            id: None,
+            name: Some(SURVEY_LOCAL_COORDINATE_REFERENCE_NAME.to_string()),
+            geodetic_datum: None,
+            unit: None,
+        })
+    });
+
+    let transformed = match (source.as_ref(), aligned.as_ref()) {
+        (Some(source), Some(aligned)) => {
+            let source_id = source
+                .id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let aligned_id = aligned
+                .id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            match (source_id, aligned_id) {
+                (Some(source_id), Some(aligned_id)) => !source_id.eq_ignore_ascii_case(aligned_id),
+                _ => false,
+            }
+        }
+        _ => false,
+    };
+
     if transformed {
+        let aligned_id = aligned
+            .as_ref()
+            .and_then(|reference| reference.id.as_deref())
+            .unwrap_or_default();
+        let source_id = source
+            .as_ref()
+            .and_then(|reference| reference.id.as_deref())
+            .unwrap_or_default();
         if !is_supported_epsg_identifier(aligned_id) {
-            return Err(SeismicStoreError::Message(format!(
-                "survey effective native CRS '{aligned_id}' is not yet supported for horizon import reprojection; this path currently accepts only EPSG identifiers",
-            )));
+            issues.push(format!(
+                "survey effective native CRS '{aligned_id}' is not yet supported for horizon reprojection; this path currently accepts only EPSG identifiers",
+            ));
         }
-        let source_id = source.id.as_deref().unwrap_or_default();
         if !is_supported_epsg_identifier(source_id) {
-            return Err(SeismicStoreError::Message(format!(
+            issues.push(format!(
                 "horizon source CRS '{source_id}' is not yet supported for reprojection; this path currently accepts only EPSG identifiers",
-            )));
+            ));
         }
-    }
-    let mut notes = notes;
-    if transformed {
-        notes.push(format!(
-            "horizon XYZ coordinates will be reprojected from {} into survey CRS {aligned_id} before grid alignment",
-            source.id.as_deref().unwrap_or_default()
-        ));
-    } else {
-        notes.push(format!(
-            "horizon XYZ coordinates are already expressed in survey CRS {aligned_id}"
-        ));
+        if issues.is_empty() {
+            notes.push(format!(
+                "horizon XYZ coordinates will be reprojected from {source_id} into survey CRS {aligned_id} before grid alignment",
+            ));
+        }
+    } else if let Some(aligned_reference) = aligned.as_ref() {
+        if let Some(aligned_id) = aligned_reference
+            .id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            notes.push(format!(
+                "horizon XYZ coordinates are already expressed in survey CRS {aligned_id}"
+            ));
+        } else {
+            notes.push(String::from(
+                "horizon XYZ coordinates are being treated as survey-local coordinates without a resolved CRS identifier",
+            ));
+        }
     }
 
-    Ok(HorizonImportCoordinateReferences {
+    HorizonCoordinateReferencePreview {
         source,
         aligned,
         transformed,
         notes,
-    })
+        issues,
+    }
+}
+
+fn normalize_optional_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .map(str::to_owned)
 }
 
 fn is_supported_epsg_identifier(value: &str) -> bool {
@@ -1260,11 +1817,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [2, 3, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0],
-                    xlines: vec![200.0, 201.0, 202.0],
-                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0, 202.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {
@@ -1372,11 +1929,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [2, 3, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0],
-                    xlines: vec![200.0, 201.0, 202.0],
-                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0, 202.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {
@@ -1448,6 +2005,322 @@ mod tests {
     }
 
     #[test]
+    fn previews_xyz_horizon_with_unresolved_crs_without_losing_parse_details() {
+        let temp = tempdir().expect("tempdir");
+        let store_root = temp.path().join("demo-preview.tbvol");
+        let manifest = TbvolManifest::new(
+            VolumeMetadata {
+                kind: DatasetKind::Source,
+                store_id: String::from("store-demo-preview"),
+                source: SourceIdentity {
+                    source_path: std::path::PathBuf::from("demo-preview.segy"),
+                    file_size: 0,
+                    trace_count: 6,
+                    samples_per_trace: 4,
+                    sample_interval_us: 10_000,
+                    sample_format_code: 1,
+                    sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(1),
+                    endianness: String::from("big"),
+                    revision_raw: 0,
+                    fixed_length_trace_flag_raw: 1,
+                    extended_textual_headers: 0,
+                    geometry: crate::metadata::GeometryProvenance {
+                        inline_field: HeaderFieldSpec {
+                            name: String::from("INLINE_3D"),
+                            start_byte: 189,
+                            value_type: String::from("I32"),
+                        },
+                        crossline_field: HeaderFieldSpec {
+                            name: String::from("CROSSLINE_3D"),
+                            start_byte: 193,
+                            value_type: String::from("I32"),
+                        },
+                        third_axis_field: None,
+                    },
+                    regularization: None,
+                },
+                shape: [2, 3, 4],
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0, 202.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
+                segy_export: None,
+                coordinate_reference_binding: Some(CoordinateReferenceBinding {
+                    detected: Some(CoordinateReferenceDescriptor {
+                        id: Some(String::from("EPSG:3857")),
+                        name: Some(String::from("WGS 84 / Pseudo-Mercator")),
+                        geodetic_datum: None,
+                        unit: Some(String::from("metre")),
+                    }),
+                    effective: Some(CoordinateReferenceDescriptor {
+                        id: Some(String::from("EPSG:3857")),
+                        name: Some(String::from("WGS 84 / Pseudo-Mercator")),
+                        geodetic_datum: None,
+                        unit: Some(String::from("metre")),
+                    }),
+                    source: CoordinateReferenceSource::Header,
+                    notes: Vec::new(),
+                }),
+                spatial: Some(SurveySpatialDescriptor {
+                    coordinate_reference: Some(CoordinateReferenceDescriptor {
+                        id: Some(String::from("EPSG:3857")),
+                        name: Some(String::from("WGS 84 / Pseudo-Mercator")),
+                        geodetic_datum: None,
+                        unit: Some(String::from("metre")),
+                    }),
+                    grid_transform: Some(SurveyGridTransform {
+                        origin: ProjectedPoint2 {
+                            x: 1_000.0,
+                            y: 2_000.0,
+                        },
+                        inline_basis: ProjectedVector2 { x: 10.0, y: 0.0 },
+                        xline_basis: ProjectedVector2 { x: 0.0, y: 20.0 },
+                    }),
+                    footprint: None,
+                    availability: SurveySpatialAvailability::Available,
+                    notes: Vec::new(),
+                }),
+                created_by: String::from("test"),
+                processing_lineage: None,
+            },
+            [2, 3, 4],
+            false,
+        );
+        let data = Array3::<f32>::zeros((2, 3, 4));
+        create_tbvol_store(&store_root, manifest, &data, None).expect("create store");
+
+        let xyz_path = temp.path().join("preview.xyz");
+        fs::write(
+            &xyz_path,
+            ["1000 2000 10", "invalid row", "1000 2020 20"].join("\n"),
+        )
+        .expect("write xyz");
+
+        let preview =
+            preview_horizon_xyzs(&store_root, &[&xyz_path], None, None, false).expect("preview");
+        assert!(!preview.can_commit);
+        assert_eq!(preview.files.len(), 1);
+        assert_eq!(preview.files[0].parsed_point_count, 2);
+        assert_eq!(preview.files[0].invalid_row_count, 1);
+        assert!(!preview.files[0].can_commit);
+        assert!(!preview.files[0].issues.is_empty());
+    }
+
+    #[test]
+    fn preview_horizon_source_import_returns_suggested_draft_and_parse_details() {
+        let temp = tempdir().expect("tempdir");
+        let store_root = temp.path().join("demo-source-preview.tbvol");
+        let manifest = TbvolManifest::new(
+            VolumeMetadata {
+                kind: DatasetKind::Source,
+                store_id: String::from("store-demo-source-preview"),
+                source: SourceIdentity {
+                    source_path: std::path::PathBuf::from("demo-source-preview.segy"),
+                    file_size: 0,
+                    trace_count: 6,
+                    samples_per_trace: 4,
+                    sample_interval_us: 10_000,
+                    sample_format_code: 1,
+                    sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(1),
+                    endianness: String::from("big"),
+                    revision_raw: 0,
+                    fixed_length_trace_flag_raw: 1,
+                    extended_textual_headers: 0,
+                    geometry: crate::metadata::GeometryProvenance {
+                        inline_field: HeaderFieldSpec {
+                            name: String::from("INLINE_3D"),
+                            start_byte: 189,
+                            value_type: String::from("I32"),
+                        },
+                        crossline_field: HeaderFieldSpec {
+                            name: String::from("CROSSLINE_3D"),
+                            start_byte: 193,
+                            value_type: String::from("I32"),
+                        },
+                        third_axis_field: None,
+                    },
+                    regularization: None,
+                },
+                shape: [2, 3, 4],
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0, 202.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
+                segy_export: None,
+                coordinate_reference_binding: Some(CoordinateReferenceBinding {
+                    detected: Some(CoordinateReferenceDescriptor {
+                        id: Some(String::from("LOCAL:F3_GRID")),
+                        name: Some(String::from("F3 local projected grid")),
+                        geodetic_datum: None,
+                        unit: Some(String::from("metre")),
+                    }),
+                    effective: Some(CoordinateReferenceDescriptor {
+                        id: Some(String::from("LOCAL:F3_GRID")),
+                        name: Some(String::from("F3 local projected grid")),
+                        geodetic_datum: None,
+                        unit: Some(String::from("metre")),
+                    }),
+                    source: CoordinateReferenceSource::UserOverride,
+                    notes: Vec::new(),
+                }),
+                spatial: Some(SurveySpatialDescriptor {
+                    coordinate_reference: Some(CoordinateReferenceDescriptor {
+                        id: Some(String::from("LOCAL:F3_GRID")),
+                        name: Some(String::from("F3 local projected grid")),
+                        geodetic_datum: None,
+                        unit: Some(String::from("metre")),
+                    }),
+                    grid_transform: Some(SurveyGridTransform {
+                        origin: ProjectedPoint2 {
+                            x: 1_000.0,
+                            y: 2_000.0,
+                        },
+                        inline_basis: ProjectedVector2 { x: 10.0, y: 0.0 },
+                        xline_basis: ProjectedVector2 { x: 0.0, y: 20.0 },
+                    }),
+                    footprint: None,
+                    availability: SurveySpatialAvailability::Available,
+                    notes: Vec::new(),
+                }),
+                created_by: String::from("test"),
+                processing_lineage: None,
+            },
+            [2, 3, 4],
+            false,
+        );
+        let data = Array3::<f32>::zeros((2, 3, 4));
+        create_tbvol_store(&store_root, manifest, &data, None).expect("create store");
+
+        let xyz_path = temp.path().join("source-preview.xyz");
+        fs::write(
+            &xyz_path,
+            ["1010 2000 10", "1010 2020 20", "1010 2040 30"].join("\n"),
+        )
+        .expect("write xyz");
+
+        let draft = build_suggested_horizon_source_import_draft(
+            &[&xyz_path],
+            TimeDepthDomain::Depth,
+            Some("ft"),
+            None,
+            None,
+            true,
+        );
+        let preview = preview_horizon_source_import(&store_root, &[&xyz_path], Some(&draft))
+            .expect("preview");
+
+        assert_eq!(
+            preview.suggested_draft.selected_source_paths,
+            vec![xyz_path.display().to_string()]
+        );
+        assert_eq!(
+            preview.suggested_draft.vertical_domain,
+            TimeDepthDomain::Depth
+        );
+        assert_eq!(preview.suggested_draft.vertical_unit.as_deref(), Some("ft"));
+        assert!(preview.suggested_draft.assume_same_as_survey);
+        assert_eq!(preview.parsed.files.len(), 1);
+        assert_eq!(preview.parsed.files[0].parsed_point_count, 3);
+        assert!(preview.parsed.files[0].can_commit);
+        assert!(preview.parsed.can_commit);
+    }
+
+    #[test]
+    fn imports_xyz_horizon_when_survey_crs_id_is_unresolved_but_same_as_survey_is_explicit() {
+        let temp = tempdir().expect("tempdir");
+        let store_root = temp.path().join("demo-local-unresolved.tbvol");
+        let manifest = TbvolManifest::new(
+            VolumeMetadata {
+                kind: DatasetKind::Source,
+                store_id: String::from("store-demo-local-unresolved"),
+                source: SourceIdentity {
+                    source_path: std::path::PathBuf::from("demo-local-unresolved.segy"),
+                    file_size: 0,
+                    trace_count: 6,
+                    samples_per_trace: 4,
+                    sample_interval_us: 10_000,
+                    sample_format_code: 1,
+                    sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(1),
+                    endianness: String::from("big"),
+                    revision_raw: 0,
+                    fixed_length_trace_flag_raw: 1,
+                    extended_textual_headers: 0,
+                    geometry: crate::metadata::GeometryProvenance {
+                        inline_field: HeaderFieldSpec {
+                            name: String::from("INLINE_3D"),
+                            start_byte: 189,
+                            value_type: String::from("I32"),
+                        },
+                        crossline_field: HeaderFieldSpec {
+                            name: String::from("CROSSLINE_3D"),
+                            start_byte: 193,
+                            value_type: String::from("I32"),
+                        },
+                        third_axis_field: None,
+                    },
+                    regularization: None,
+                },
+                shape: [2, 3, 4],
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0, 202.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
+                segy_export: None,
+                coordinate_reference_binding: None,
+                spatial: Some(SurveySpatialDescriptor {
+                    coordinate_reference: None,
+                    grid_transform: Some(SurveyGridTransform {
+                        origin: ProjectedPoint2 {
+                            x: 1_000.0,
+                            y: 2_000.0,
+                        },
+                        inline_basis: ProjectedVector2 { x: 10.0, y: 0.0 },
+                        xline_basis: ProjectedVector2 { x: 0.0, y: 20.0 },
+                    }),
+                    footprint: None,
+                    availability: SurveySpatialAvailability::Available,
+                    notes: Vec::new(),
+                }),
+                created_by: String::from("test"),
+                processing_lineage: None,
+            },
+            [2, 3, 4],
+            false,
+        );
+        let data = Array3::<f32>::zeros((2, 3, 4));
+        create_tbvol_store(&store_root, manifest, &data, None).expect("create store");
+
+        let xyz_path = temp.path().join("local-unresolved.xyz");
+        fs::write(
+            &xyz_path,
+            ["1010 2000 10", "1010 2020 20", "1010 2040 30"].join("\n"),
+        )
+        .expect("write xyz");
+
+        let imported =
+            import_horizon_xyzs(&store_root, &[&xyz_path], None, None, true).expect("import");
+        assert_eq!(imported.len(), 1);
+        assert!(!imported[0].transformed);
+        assert_eq!(
+            imported[0]
+                .aligned_coordinate_reference
+                .as_ref()
+                .and_then(|reference| reference.id.as_deref()),
+            None
+        );
+        assert_eq!(
+            imported[0]
+                .aligned_coordinate_reference
+                .as_ref()
+                .and_then(|reference| reference.name.as_deref()),
+            Some(SURVEY_LOCAL_COORDINATE_REFERENCE_NAME)
+        );
+    }
+
+    #[test]
     fn converts_horizon_vertical_domain_with_transform() {
         let temp = tempdir().expect("tempdir");
         let store_root = temp.path().join("demo-convert.tbvol");
@@ -1483,11 +2356,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [1, 1, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0],
-                    xlines: vec![200.0],
-                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0],
+                    vec![200.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {
@@ -1667,11 +2540,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [2, 2, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0],
-                    xlines: vec![200.0, 201.0],
-                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {
@@ -1794,11 +2667,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [2, 3, 4],
-                axes: VolumeAxes {
-                    ilines: vec![100.0, 101.0],
-                    xlines: vec![200.0, 201.0, 202.0],
-                    sample_axis_ms: vec![0.0, 10.0, 20.0, 30.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![100.0, 101.0],
+                    vec![200.0, 201.0, 202.0],
+                    vec![0.0, 10.0, 20.0, 30.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: Some(CoordinateReferenceBinding {
                     detected: Some(CoordinateReferenceDescriptor {

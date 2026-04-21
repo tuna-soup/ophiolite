@@ -1,0 +1,2165 @@
+{
+  "schema_version": 1,
+  "id": "avo-fixed-interval",
+  "name": "F2-A5 Fixed Interval AVO",
+  "title": "Fixed Interval Zoeppritz AVO",
+  "subtitle": "F2-A5 fixed 6.096 m layering",
+  "x_axis": {
+    "label": "Incidence Angle",
+    "unit": "deg"
+  },
+  "y_axis": {
+    "label": "PP Reflectivity",
+    "unit": "ratio"
+  },
+  "interfaces": [
+    {
+      "id": "interface-1",
+      "label": "Interface 1",
+      "color": "#0B7285",
+      "reservoir_label": "1887.3 m"
+    },
+    {
+      "id": "interface-2",
+      "label": "Interface 2",
+      "color": "#D9480F",
+      "reservoir_label": "1893.4 m"
+    },
+    {
+      "id": "interface-3",
+      "label": "Interface 3",
+      "color": "#2B8A3E",
+      "reservoir_label": "1899.5 m"
+    },
+    {
+      "id": "interface-4",
+      "label": "Interface 4",
+      "color": "#C2255C",
+      "reservoir_label": "1905.6 m"
+    },
+    {
+      "id": "interface-5",
+      "label": "Interface 5",
+      "color": "#E67700",
+      "reservoir_label": "1911.7 m"
+    },
+    {
+      "id": "interface-6",
+      "label": "Interface 6",
+      "color": "#1C7ED6",
+      "reservoir_label": "1917.8 m"
+    },
+    {
+      "id": "interface-7",
+      "label": "Interface 7",
+      "color": "#0B7285",
+      "reservoir_label": "1923.9 m"
+    },
+    {
+      "id": "interface-8",
+      "label": "Interface 8",
+      "color": "#D9480F",
+      "reservoir_label": "1930.0 m"
+    },
+    {
+      "id": "interface-9",
+      "label": "Interface 9",
+      "color": "#2B8A3E",
+      "reservoir_label": "1936.1 m"
+    },
+    {
+      "id": "interface-10",
+      "label": "Interface 10",
+      "color": "#C2255C",
+      "reservoir_label": "1942.2 m"
+    },
+    {
+      "id": "interface-11",
+      "label": "Interface 11",
+      "color": "#E67700",
+      "reservoir_label": "1948.3 m"
+    },
+    {
+      "id": "interface-12",
+      "label": "Interface 12",
+      "color": "#1C7ED6",
+      "reservoir_label": "1954.4 m"
+    },
+    {
+      "id": "interface-13",
+      "label": "Interface 13",
+      "color": "#0B7285",
+      "reservoir_label": "1960.5 m"
+    },
+    {
+      "id": "interface-14",
+      "label": "Interface 14",
+      "color": "#D9480F",
+      "reservoir_label": "1966.6 m"
+    },
+    {
+      "id": "interface-15",
+      "label": "Interface 15",
+      "color": "#2B8A3E",
+      "reservoir_label": "1972.7 m"
+    },
+    {
+      "id": "interface-16",
+      "label": "Interface 16",
+      "color": "#C2255C",
+      "reservoir_label": "1978.8 m"
+    },
+    {
+      "id": "interface-17",
+      "label": "Interface 17",
+      "color": "#E67700",
+      "reservoir_label": "1984.9 m"
+    },
+    {
+      "id": "interface-18",
+      "label": "Interface 18",
+      "color": "#1C7ED6",
+      "reservoir_label": "1991.0 m"
+    },
+    {
+      "id": "interface-19",
+      "label": "Interface 19",
+      "color": "#0B7285",
+      "reservoir_label": "1997.1 m"
+    },
+    {
+      "id": "interface-20",
+      "label": "Interface 20",
+      "color": "#D9480F",
+      "reservoir_label": "2003.2 m"
+    },
+    {
+      "id": "interface-21",
+      "label": "Interface 21",
+      "color": "#2B8A3E",
+      "reservoir_label": "2009.3 m"
+    },
+    {
+      "id": "interface-22",
+      "label": "Interface 22",
+      "color": "#C2255C",
+      "reservoir_label": "2015.4 m"
+    },
+    {
+      "id": "interface-23",
+      "label": "Interface 23",
+      "color": "#E67700",
+      "reservoir_label": "2021.5 m"
+    },
+    {
+      "id": "interface-24",
+      "label": "Interface 24",
+      "color": "#1C7ED6",
+      "reservoir_label": "2027.6 m"
+    },
+    {
+      "id": "interface-25",
+      "label": "Interface 25",
+      "color": "#0B7285",
+      "reservoir_label": "2033.7 m"
+    },
+    {
+      "id": "interface-26",
+      "label": "Interface 26",
+      "color": "#D9480F",
+      "reservoir_label": "2039.7 m"
+    },
+    {
+      "id": "interface-27",
+      "label": "Interface 27",
+      "color": "#2B8A3E",
+      "reservoir_label": "2045.8 m"
+    },
+    {
+      "id": "interface-28",
+      "label": "Interface 28",
+      "color": "#C2255C",
+      "reservoir_label": "2051.9 m"
+    },
+    {
+      "id": "interface-29",
+      "label": "Interface 29",
+      "color": "#E67700",
+      "reservoir_label": "2058.0 m"
+    },
+    {
+      "id": "interface-30",
+      "label": "Interface 30",
+      "color": "#1C7ED6",
+      "reservoir_label": "2064.1 m"
+    },
+    {
+      "id": "interface-31",
+      "label": "Interface 31",
+      "color": "#0B7285",
+      "reservoir_label": "2070.2 m"
+    },
+    {
+      "id": "interface-32",
+      "label": "Interface 32",
+      "color": "#D9480F",
+      "reservoir_label": "2076.3 m"
+    },
+    {
+      "id": "interface-33",
+      "label": "Interface 33",
+      "color": "#2B8A3E",
+      "reservoir_label": "2082.4 m"
+    },
+    {
+      "id": "interface-34",
+      "label": "Interface 34",
+      "color": "#C2255C",
+      "reservoir_label": "2088.5 m"
+    },
+    {
+      "id": "interface-35",
+      "label": "Interface 35",
+      "color": "#E67700",
+      "reservoir_label": "2094.6 m"
+    },
+    {
+      "id": "interface-36",
+      "label": "Interface 36",
+      "color": "#1C7ED6",
+      "reservoir_label": "2100.7 m"
+    },
+    {
+      "id": "interface-37",
+      "label": "Interface 37",
+      "color": "#0B7285",
+      "reservoir_label": "2106.8 m"
+    },
+    {
+      "id": "interface-38",
+      "label": "Interface 38",
+      "color": "#D9480F",
+      "reservoir_label": "2112.9 m"
+    },
+    {
+      "id": "interface-39",
+      "label": "Interface 39",
+      "color": "#2B8A3E",
+      "reservoir_label": "2119.0 m"
+    },
+    {
+      "id": "interface-40",
+      "label": "Interface 40",
+      "color": "#C2255C",
+      "reservoir_label": "2125.1 m"
+    },
+    {
+      "id": "interface-41",
+      "label": "Interface 41",
+      "color": "#E67700",
+      "reservoir_label": "2131.2 m"
+    },
+    {
+      "id": "interface-42",
+      "label": "Interface 42",
+      "color": "#1C7ED6",
+      "reservoir_label": "2137.3 m"
+    },
+    {
+      "id": "interface-43",
+      "label": "Interface 43",
+      "color": "#0B7285",
+      "reservoir_label": "2143.4 m"
+    },
+    {
+      "id": "interface-44",
+      "label": "Interface 44",
+      "color": "#D9480F",
+      "reservoir_label": "2149.5 m"
+    },
+    {
+      "id": "interface-45",
+      "label": "Interface 45",
+      "color": "#2B8A3E",
+      "reservoir_label": "2155.6 m"
+    },
+    {
+      "id": "interface-46",
+      "label": "Interface 46",
+      "color": "#C2255C",
+      "reservoir_label": "2161.7 m"
+    },
+    {
+      "id": "interface-47",
+      "label": "Interface 47",
+      "color": "#E67700",
+      "reservoir_label": "2167.8 m"
+    },
+    {
+      "id": "interface-48",
+      "label": "Interface 48",
+      "color": "#1C7ED6",
+      "reservoir_label": "2173.9 m"
+    },
+    {
+      "id": "interface-49",
+      "label": "Interface 49",
+      "color": "#0B7285",
+      "reservoir_label": "2180.0 m"
+    },
+    {
+      "id": "interface-50",
+      "label": "Interface 50",
+      "color": "#D9480F",
+      "reservoir_label": "2186.1 m"
+    },
+    {
+      "id": "interface-51",
+      "label": "Interface 51",
+      "color": "#2B8A3E",
+      "reservoir_label": "2192.1 m"
+    },
+    {
+      "id": "interface-52",
+      "label": "Interface 52",
+      "color": "#C2255C",
+      "reservoir_label": "2198.2 m"
+    },
+    {
+      "id": "interface-53",
+      "label": "Interface 53",
+      "color": "#E67700",
+      "reservoir_label": "2204.3 m"
+    },
+    {
+      "id": "interface-54",
+      "label": "Interface 54",
+      "color": "#1C7ED6",
+      "reservoir_label": "2210.4 m"
+    },
+    {
+      "id": "interface-55",
+      "label": "Interface 55",
+      "color": "#0B7285",
+      "reservoir_label": "2216.5 m"
+    },
+    {
+      "id": "interface-56",
+      "label": "Interface 56",
+      "color": "#D9480F",
+      "reservoir_label": "2222.6 m"
+    },
+    {
+      "id": "interface-57",
+      "label": "Interface 57",
+      "color": "#2B8A3E",
+      "reservoir_label": "2228.7 m"
+    },
+    {
+      "id": "interface-58",
+      "label": "Interface 58",
+      "color": "#C2255C",
+      "reservoir_label": "2234.8 m"
+    }
+  ],
+  "series": [
+    {
+      "id": "interface-1-series",
+      "interface_id": "interface-1",
+      "label": "Interface 1",
+      "color": "#0B7285",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.006769448518753052,
+        0.006783053278923035,
+        0.006822893396019936,
+        0.0068860137835145,
+        0.006967374589294195,
+        0.007059629075229168,
+        0.007152707781642675,
+        0.007233033422380686,
+        0.007282058708369732
+      ]
+    },
+    {
+      "id": "interface-2-series",
+      "interface_id": "interface-2",
+      "label": "Interface 2",
+      "color": "#D9480F",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.3527549207210541,
+        -0.35323625802993774,
+        -0.35473722219467163,
+        -0.35742855072021484,
+        -0.361595094203949,
+        -0.3676362931728363,
+        -0.3760669529438019,
+        -0.38751843571662903,
+        -0.4027402400970459
+      ]
+    },
+    {
+      "id": "interface-3-series",
+      "interface_id": "interface-3",
+      "label": "Interface 3",
+      "color": "#2B8A3E",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.10189394652843475,
+        0.10160239785909653,
+        0.10074379295110703,
+        0.09936664253473282,
+        0.09755335003137589,
+        0.09542329609394073,
+        0.09313894808292389,
+        0.09091777354478836,
+        0.08905541896820068
+      ]
+    },
+    {
+      "id": "interface-4-series",
+      "interface_id": "interface-4",
+      "label": "Interface 4",
+      "color": "#C2255C",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.003078315407037735,
+        -0.0035320466849952936,
+        -0.00488529447466135,
+        -0.007114978972822428,
+        -0.0101852435618639,
+        -0.014051727019250393,
+        -0.018668383359909058,
+        -0.02399812638759613,
+        -0.0300297774374485
+      ]
+    },
+    {
+      "id": "interface-5-series",
+      "interface_id": "interface-5",
+      "label": "Interface 5",
+      "color": "#E67700",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.058811843395233154,
+        -0.05876859650015831,
+        -0.0586685985326767,
+        -0.058602649718523026,
+        -0.058727677911520004,
+        -0.05927649512887001,
+        -0.06057453528046608,
+        -0.06306765973567963,
+        -0.06736797094345093
+      ]
+    },
+    {
+      "id": "interface-6-series",
+      "interface_id": "interface-6",
+      "label": "Interface 6",
+      "color": "#1C7ED6",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.03105699084699154,
+        -0.030981501564383507,
+        -0.030754949897527695,
+        -0.030376818031072617,
+        -0.029845284298062325,
+        -0.029155591502785683,
+        -0.02829725109040737,
+        -0.027249358594417572,
+        -0.025972481817007065
+      ]
+    },
+    {
+      "id": "interface-7-series",
+      "interface_id": "interface-7",
+      "label": "Interface 7",
+      "color": "#0B7285",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.008943052962422371,
+        0.008730513043701649,
+        0.008093005046248436,
+        0.00703019555658102,
+        0.005539183970540762,
+        0.003610537853091955,
+        0.001221659709699452,
+        -0.001674069557338953,
+        -0.005165421403944492
+      ]
+    },
+    {
+      "id": "interface-8-series",
+      "interface_id": "interface-8",
+      "label": "Interface 8",
+      "color": "#D9480F",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.06073888763785362,
+        0.05939416587352753,
+        0.055435147136449814,
+        0.04909209534525871,
+        0.04076695069670677,
+        0.03106861375272274,
+        0.02088344842195511,
+        0.011518408544361591,
+        0.00500901322811842
+      ]
+    },
+    {
+      "id": "interface-9-series",
+      "interface_id": "interface-9",
+      "label": "Interface 9",
+      "color": "#2B8A3E",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.10697994381189346,
+        0.10602954775094986,
+        0.10329627990722656,
+        0.0991479679942131,
+        0.09425090253353119,
+        0.08967673778533936,
+        0.08712795376777649,
+        0.08944067358970642,
+        0.10184148699045181
+      ]
+    },
+    {
+      "id": "interface-10-series",
+      "interface_id": "interface-10",
+      "label": "Interface 10",
+      "color": "#C2255C",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.011471383273601532,
+        0.011393717490136623,
+        0.011170282028615475,
+        0.010830316692590714,
+        0.010424560867249966,
+        0.010028956457972527,
+        0.009751482866704464,
+        0.009744647890329361,
+        0.010228728875517845
+      ]
+    },
+    {
+      "id": "interface-11-series",
+      "interface_id": "interface-11",
+      "label": "Interface 11",
+      "color": "#E67700",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.011900978162884712,
+        -0.012019539251923561,
+        -0.012383503839373589,
+        -0.013018671423196793,
+        -0.013971438631415367,
+        -0.01531467866152525,
+        -0.017157843336462975,
+        -0.019663898274302483,
+        -0.02307804860174656
+      ]
+    },
+    {
+      "id": "interface-12-series",
+      "interface_id": "interface-12",
+      "label": "Interface 12",
+      "color": "#1C7ED6",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.0002269627439090982,
+        -1.8000642739934847e-05,
+        -0.0007470828131772578,
+        -0.0019431953551247716,
+        -0.0035790004767477512,
+        -0.005618719849735498,
+        -0.00802090484648943,
+        -0.010742545127868652,
+        -0.01374527346342802
+      ]
+    },
+    {
+      "id": "interface-13-series",
+      "interface_id": "interface-13",
+      "label": "Interface 13",
+      "color": "#0B7285",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.018615834414958954,
+        -0.01856607012450695,
+        -0.018423348665237427,
+        -0.018207717686891556,
+        -0.017953818663954735,
+        -0.01771312952041626,
+        -0.017558017745614052,
+        -0.01758894883096218,
+        -0.017947427928447723
+      ]
+    },
+    {
+      "id": "interface-14-series",
+      "interface_id": "interface-14",
+      "label": "Interface 14",
+      "color": "#D9480F",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.010187261737883091,
+        0.010264944285154343,
+        0.010502432473003864,
+        0.010913696140050888,
+        0.011524336412549019,
+        0.012375676073133945,
+        0.013532004319131374,
+        0.015093248337507248,
+        0.017217766493558884
+      ]
+    },
+    {
+      "id": "interface-15-series",
+      "interface_id": "interface-15",
+      "label": "Interface 15",
+      "color": "#2B8A3E",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.025806641206145287,
+        0.025339217856526375,
+        0.023957062512636185,
+        0.02172067202627659,
+        0.018731551244854927,
+        0.015133900567889214,
+        0.01111852377653122,
+        0.006931318901479244,
+        0.002890972653403878
+      ]
+    },
+    {
+      "id": "interface-16-series",
+      "interface_id": "interface-16",
+      "label": "Interface 16",
+      "color": "#C2255C",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.060090769082307816,
+        -0.05953827500343323,
+        -0.05792917311191559,
+        -0.05540967732667923,
+        -0.05222751200199127,
+        -0.04873933270573616,
+        -0.04542446881532669,
+        -0.042909108102321625,
+        -0.04200833663344383
+      ]
+    },
+    {
+      "id": "interface-17-series",
+      "interface_id": "interface-17",
+      "label": "Interface 17",
+      "color": "#E67700",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.03767867013812065,
+        0.03771204501390457,
+        0.03784003481268883,
+        0.0381491594016552,
+        0.03879427909851074,
+        0.040018197149038315,
+        0.04218824580311775,
+        0.0458647757768631,
+        0.05193500593304634
+      ]
+    },
+    {
+      "id": "interface-18-series",
+      "interface_id": "interface-18",
+      "label": "Interface 18",
+      "color": "#1C7ED6",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.03038141317665577,
+        0.03057568147778511,
+        0.031171271577477455,
+        0.032208435237407684,
+        0.03376113995909691,
+        0.03594936430454254,
+        0.03896135836839676,
+        0.0430937223136425,
+        0.04882632568478584
+      ]
+    },
+    {
+      "id": "interface-19-series",
+      "interface_id": "interface-19",
+      "label": "Interface 19",
+      "color": "#0B7285",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.0015668096020817757,
+        0.0014449608279392123,
+        0.0010869011748582125,
+        0.0005153055535629392,
+        -0.00023122505808714777,
+        -0.0010965929832309484,
+        -0.00200414820574224,
+        -0.0028508761897683144,
+        -0.003496291348710656
+      ]
+    },
+    {
+      "id": "interface-20-series",
+      "interface_id": "interface-20",
+      "label": "Interface 20",
+      "color": "#D9480F",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.017296362668275833,
+        0.01716999150812626,
+        0.016800472512841225,
+        0.01621696911752224,
+        0.015469474717974663,
+        0.014631456695497036,
+        0.013804849237203598,
+        0.01312937866896391,
+        0.01280017476528883
+      ]
+    },
+    {
+      "id": "interface-21-series",
+      "interface_id": "interface-21",
+      "label": "Interface 21",
+      "color": "#2B8A3E",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.03016682155430317,
+        0.029695507138967514,
+        0.028319096192717552,
+        0.02615225501358509,
+        0.02339377999305725,
+        0.02034119702875614,
+        0.01741882786154747,
+        0.015231682918965816,
+        0.014672297053039074
+      ]
+    },
+    {
+      "id": "interface-22-series",
+      "interface_id": "interface-22",
+      "label": "Interface 22",
+      "color": "#C2255C",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.022336525842547417,
+        0.022110827267169952,
+        0.021450530737638474,
+        0.02040673792362213,
+        0.019067194312810898,
+        0.0175611674785614,
+        0.016068750992417336,
+        0.014838364906609058,
+        0.014220211654901505
+      ]
+    },
+    {
+      "id": "interface-23-series",
+      "interface_id": "interface-23",
+      "label": "Interface 23",
+      "color": "#E67700",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.044677164405584335,
+        -0.04422227293252945,
+        -0.04289233312010765,
+        -0.04079237952828407,
+        -0.038100458681583405,
+        -0.03507338836789131,
+        -0.03205746039748192,
+        -0.029507972300052643,
+        -0.028024131432175636
+      ]
+    },
+    {
+      "id": "interface-24-series",
+      "interface_id": "interface-24",
+      "label": "Interface 24",
+      "color": "#1C7ED6",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.01742766797542572,
+        0.017394142225384712,
+        0.01729947328567505,
+        0.017161762341856956,
+        0.01701255328953266,
+        0.01689932495355606,
+        0.016890069469809532,
+        0.017081528902053833,
+        0.01761433854699135
+      ]
+    },
+    {
+      "id": "interface-25-series",
+      "interface_id": "interface-25",
+      "label": "Interface 25",
+      "color": "#0B7285",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.0020536265801638365,
+        -0.002028640592470765,
+        -0.0019576794002205133,
+        -0.0018529576482251287,
+        -0.0017356540774926543,
+        -0.001637396402657032,
+        -0.0016029514372348785,
+        -0.0016950034769251943,
+        -0.002002745633944869
+      ]
+    },
+    {
+      "id": "interface-26-series",
+      "interface_id": "interface-26",
+      "label": "Interface 26",
+      "color": "#D9480F",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.02227672003209591,
+        -0.022054973989725113,
+        -0.021403856575489044,
+        -0.020366033539175987,
+        -0.019013840705156326,
+        -0.01745164580643177,
+        -0.015820475295186043,
+        -0.01430671475827694,
+        -0.013158377259969711
+      ]
+    },
+    {
+      "id": "interface-27-series",
+      "interface_id": "interface-27",
+      "label": "Interface 27",
+      "color": "#2B8A3E",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.004688783548772335,
+        0.004595037549734116,
+        0.004321108106523752,
+        0.0038892128504812717,
+        0.003337468719109893,
+        0.0027219350449740887,
+        0.0021204727236181498,
+        0.0016399057349190116,
+        0.0014294732827693224
+      ]
+    },
+    {
+      "id": "interface-28-series",
+      "interface_id": "interface-28",
+      "label": "Interface 28",
+      "color": "#C2255C",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.018962733447551727,
+        0.018715467303991318,
+        0.017993129789829254,
+        0.016854990273714066,
+        0.01540311798453331,
+        0.013788591139018536,
+        0.01222328469157219,
+        0.011002018116414547,
+        0.010544991120696068
+      ]
+    },
+    {
+      "id": "interface-29-series",
+      "interface_id": "interface-29",
+      "label": "Interface 29",
+      "color": "#E67700",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.013782517053186893,
+        0.013632948510348797,
+        0.013192805461585522,
+        0.012487971223890781,
+        0.011562369763851166,
+        0.010479509830474854,
+        0.009325558319687843,
+        0.00821528211236,
+        0.007303536403924227
+      ]
+    },
+    {
+      "id": "interface-30-series",
+      "interface_id": "interface-30",
+      "label": "Interface 30",
+      "color": "#1C7ED6",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.02092779241502285,
+        0.020812463015317917,
+        0.020483722910284996,
+        0.019994456321001053,
+        0.019437013193964958,
+        0.018950950354337692,
+        0.01873740926384926,
+        0.019085628911852837,
+        0.020423056557774544
+      ]
+    },
+    {
+      "id": "interface-31-series",
+      "interface_id": "interface-31",
+      "label": "Interface 31",
+      "color": "#0B7285",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.019782736897468567,
+        0.019518505781888962,
+        0.01874266192317009,
+        0.017506323754787445,
+        0.015896795317530632,
+        0.01404164731502533,
+        0.012116617523133755,
+        0.010360665619373322,
+        0.009104987606406212
+      ]
+    },
+    {
+      "id": "interface-32-series",
+      "interface_id": "interface-32",
+      "label": "Interface 32",
+      "color": "#D9480F",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.06235617399215698,
+        -0.06170697137713432,
+        -0.05981000140309334,
+        -0.056818123906850815,
+        -0.05298956111073494,
+        -0.04869454726576805,
+        -0.04442789405584335,
+        -0.04083171486854553,
+        -0.03873573616147041
+      ]
+    },
+    {
+      "id": "interface-33-series",
+      "interface_id": "interface-33",
+      "label": "Interface 33",
+      "color": "#2B8A3E",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.01609126850962639,
+        -0.01586100272834301,
+        -0.01518081221729517,
+        -0.014082564041018486,
+        -0.012619605287909508,
+        -0.0108674056828022,
+        -0.008925153873860836,
+        -0.006919278297573328,
+        -0.0050107939168810844
+      ]
+    },
+    {
+      "id": "interface-34-series",
+      "interface_id": "interface-34",
+      "label": "Interface 34",
+      "color": "#C2255C",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.004515312146395445,
+        0.004446613136678934,
+        0.004243071191012859,
+        0.003912324085831642,
+        0.003467032453045249,
+        0.0029248211067169905,
+        0.0023083093110471964,
+        0.001645377604290843,
+        0.0009699760703369975
+      ]
+    },
+    {
+      "id": "interface-35-series",
+      "interface_id": "interface-35",
+      "label": "Interface 35",
+      "color": "#E67700",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.05464161932468414,
+        0.05450114235281944,
+        0.05411599203944206,
+        0.05359818413853645,
+        0.053146157413721085,
+        0.053066596388816833,
+        0.053815774619579315,
+        0.056078244000673294,
+        0.060923222452402115
+      ]
+    },
+    {
+      "id": "interface-36-series",
+      "interface_id": "interface-36",
+      "label": "Interface 36",
+      "color": "#1C7ED6",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.011269241571426392,
+        0.010890426114201546,
+        0.00977521575987339,
+        0.007987935096025467,
+        0.005638130474835634,
+        0.0028851511888206005,
+        -5.2802559366682544e-05,
+        -0.0028811844531446695,
+        -0.005194937810301781
+      ]
+    },
+    {
+      "id": "interface-37-series",
+      "interface_id": "interface-37",
+      "label": "Interface 37",
+      "color": "#0B7285",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.005217849742621183,
+        -0.005314478650689125,
+        -0.005607279483228922,
+        -0.0061055258847773075,
+        -0.0068265595473349094,
+        -0.007799050305038691,
+        -0.00906858779489994,
+        -0.010707089677453041,
+        -0.012828914448618889
+      ]
+    },
+    {
+      "id": "interface-38-series",
+      "interface_id": "interface-38",
+      "label": "Interface 38",
+      "color": "#D9480F",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.022456571459770203,
+        -0.022273359820246696,
+        -0.021742677316069603,
+        -0.020922111347317696,
+        -0.019910326227545738,
+        -0.018851973116397858,
+        -0.017946623265743256,
+        -0.01746460236608982,
+        -0.01777505874633789
+      ]
+    },
+    {
+      "id": "interface-39-series",
+      "interface_id": "interface-39",
+      "label": "Interface 39",
+      "color": "#2B8A3E",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.01819027215242386,
+        0.018242403864860535,
+        0.01841314509510994,
+        0.018747037276625633,
+        0.019323743879795074,
+        0.02026788517832756,
+        0.021766919642686844,
+        0.024103594943881035,
+        0.02771669067442417
+      ]
+    },
+    {
+      "id": "interface-40-series",
+      "interface_id": "interface-40",
+      "label": "Interface 40",
+      "color": "#C2255C",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.015224695205688477,
+        -0.015400182455778122,
+        -0.015930157154798508,
+        -0.0168259646743536,
+        -0.01810937561094761,
+        -0.019817480817437172,
+        -0.02201099693775177,
+        -0.02478807233273983,
+        -0.028307562693953514
+      ]
+    },
+    {
+      "id": "interface-41-series",
+      "interface_id": "interface-41",
+      "label": "Interface 41",
+      "color": "#E67700",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.014512662775814533,
+        0.014717889949679375,
+        0.015336905606091022,
+        0.01638074219226837,
+        0.017871422693133354,
+        0.019848328083753586,
+        0.022379307076334953,
+        0.025579968467354774,
+        0.02964816987514496
+      ]
+    },
+    {
+      "id": "interface-42-series",
+      "interface_id": "interface-42",
+      "label": "Interface 42",
+      "color": "#1C7ED6",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.008291881531476974,
+        0.008182964287698269,
+        0.007862155325710773,
+        0.007347403094172478,
+        0.006669086869806051,
+        0.00587095832452178,
+        0.005012040957808495,
+        0.004170339088886976,
+        0.003450054442510009
+      ]
+    },
+    {
+      "id": "interface-43-series",
+      "interface_id": "interface-43",
+      "label": "Interface 43",
+      "color": "#0B7285",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.00936963502317667,
+        -0.009423108771443367,
+        -0.009586023166775703,
+        -0.009866228327155113,
+        -0.010278109461069107,
+        -0.010844853706657887,
+        -0.011602375656366348,
+        -0.012605992145836353,
+        -0.013941976241767406
+      ]
+    },
+    {
+      "id": "interface-44-series",
+      "interface_id": "interface-44",
+      "label": "Interface 44",
+      "color": "#D9480F",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.027929913252592087,
+        -0.0276437159627676,
+        -0.026809487491846085,
+        -0.025501053780317307,
+        -0.02384420670568943,
+        -0.02202179841697216,
+        -0.02028319612145424,
+        -0.018961220979690552,
+        -0.018502458930015564
+      ]
+    },
+    {
+      "id": "interface-45-series",
+      "interface_id": "interface-45",
+      "label": "Interface 45",
+      "color": "#2B8A3E",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.06780420243740082,
+        0.067554771900177,
+        0.06685808300971985,
+        0.0658736377954483,
+        0.0648849681019783,
+        0.06433296203613281,
+        0.06488032639026642,
+        0.06753784418106079,
+        0.07392559200525284
+      ]
+    },
+    {
+      "id": "interface-46-series",
+      "interface_id": "interface-46",
+      "label": "Interface 46",
+      "color": "#C2255C",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.008132025599479675,
+        -0.007908189669251442,
+        -0.007244814652949572,
+        -0.0061661782674491405,
+        -0.004712371621280909,
+        -0.002938861260190606,
+        -0.0009161487687379122,
+        0.0012700919760391116,
+        0.003517680335789919
+      ]
+    },
+    {
+      "id": "interface-47-series",
+      "interface_id": "interface-47",
+      "label": "Interface 47",
+      "color": "#E67700",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.027466563507914543,
+        -0.027620192617177963,
+        -0.0280910637229681,
+        -0.028910282999277115,
+        -0.030133794993162155,
+        -0.03184943273663521,
+        -0.03418897092342377,
+        -0.037348173558712006,
+        -0.041620392352342606
+      ]
+    },
+    {
+      "id": "interface-48-series",
+      "interface_id": "interface-48",
+      "label": "Interface 48",
+      "color": "#1C7ED6",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.0002605650224722922,
+        0.0003200295032002032,
+        0.0004957258934155107,
+        0.000779549649450928,
+        0.0011579293059185147,
+        0.001611652784049511,
+        0.002115443581715226,
+        0.002637023339048028,
+        0.0031351547222584486
+      ]
+    },
+    {
+      "id": "interface-49-series",
+      "interface_id": "interface-49",
+      "label": "Interface 49",
+      "color": "#0B7285",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.02271464839577675,
+        0.02253168262541294,
+        0.022000517696142197,
+        0.021175289526581764,
+        0.020149698480963707,
+        0.019063493236899376,
+        0.018114637583494186,
+        0.01758195273578167,
+        0.01786813698709011
+      ]
+    },
+    {
+      "id": "interface-50-series",
+      "interface_id": "interface-50",
+      "label": "Interface 50",
+      "color": "#D9480F",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.0248329546302557,
+        -0.024988042190670967,
+        -0.025462841615080833,
+        -0.02628708817064762,
+        -0.027514351531863213,
+        -0.029228970408439636,
+        -0.031557854264974594,
+        -0.03469015285372734,
+        -0.038910239934921265
+      ]
+    },
+    {
+      "id": "interface-51-series",
+      "interface_id": "interface-51",
+      "label": "Interface 51",
+      "color": "#2B8A3E",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.005849150475114584,
+        -0.005787217989563942,
+        -0.005608356092125177,
+        -0.005333691835403442,
+        -0.004999615717679262,
+        -0.004659933503717184,
+        -0.004389801062643528,
+        -0.004292770754545927,
+        -0.0045134988613426685
+      ]
+    },
+    {
+      "id": "interface-52-series",
+      "interface_id": "interface-52",
+      "label": "Interface 52",
+      "color": "#C2255C",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.019156070426106453,
+        -0.01896214485168457,
+        -0.018394993618130684,
+        -0.017498919740319252,
+        -0.016349393874406815,
+        -0.015056141652166843,
+        -0.013768930919468403,
+        -0.012688192538917065,
+        -0.01208443008363247
+      ]
+    },
+    {
+      "id": "interface-53-series",
+      "interface_id": "interface-53",
+      "label": "Interface 53",
+      "color": "#E67700",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.03651012107729912,
+        0.036313802003860474,
+        0.03575492277741432,
+        0.0349259115755558,
+        0.03398899734020233,
+        0.03319140151143074,
+        0.03289395943284035,
+        0.03362509608268738,
+        0.0361861027777195
+      ]
+    },
+    {
+      "id": "interface-54-series",
+      "interface_id": "interface-54",
+      "label": "Interface 54",
+      "color": "#1C7ED6",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.04371154308319092,
+        0.04345589131116867,
+        0.04272625595331192,
+        0.041637495160102844,
+        0.040391553193330765,
+        0.03929721191525459,
+        0.03880757838487625,
+        0.039591655135154724,
+        0.042676568031311035
+      ]
+    },
+    {
+      "id": "interface-55-series",
+      "interface_id": "interface-55",
+      "label": "Interface 55",
+      "color": "#0B7285",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.02997325174510479,
+        -0.029976611956954002,
+        -0.03000066429376602,
+        -0.030088311061263084,
+        -0.03031456284224987,
+        -0.03079269267618656,
+        -0.03168501332402229,
+        -0.03322118520736694,
+        -0.03572959825396538
+      ]
+    },
+    {
+      "id": "interface-56-series",
+      "interface_id": "interface-56",
+      "label": "Interface 56",
+      "color": "#D9480F",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.0031326424796134233,
+        0.0036443378776311874,
+        0.005163900088518858,
+        0.007645342033356428,
+        0.011013968847692013,
+        0.015169338323175907,
+        0.019989492371678352,
+        0.025336647406220436,
+        0.031064778566360474
+      ]
+    },
+    {
+      "id": "interface-57-series",
+      "interface_id": "interface-57",
+      "label": "Interface 57",
+      "color": "#2B8A3E",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.015515206381678581,
+        -0.015612608753144741,
+        -0.015910759568214417,
+        -0.016428228467702866,
+        -0.01719861477613449,
+        -0.018275132402777672,
+        -0.019738521426916122,
+        -0.021710388362407684,
+        -0.024376004934310913
+      ]
+    },
+    {
+      "id": "interface-58-series",
+      "interface_id": "interface-58",
+      "label": "Interface 58",
+      "color": "#C2255C",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.004673201125115156,
+        0.004864183720201254,
+        0.005435471422970295,
+        0.0063826097175478935,
+        0.007700026500970125,
+        0.009384161792695522,
+        0.011438718996942043,
+        0.013883343897759914,
+        0.016768431290984154
+      ]
+    }
+  ]
+}

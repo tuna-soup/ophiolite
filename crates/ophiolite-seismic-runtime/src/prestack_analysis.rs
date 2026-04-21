@@ -395,11 +395,11 @@ mod tests {
                     regularization: None,
                 },
                 shape: [1, 1, 4],
-                axes: VolumeAxes {
-                    ilines: vec![1000.0],
-                    xlines: vec![2000.0],
-                    sample_axis_ms: vec![0.0, 4.0, 8.0, 12.0],
-                },
+                axes: VolumeAxes::from_time_axis(
+                    vec![1000.0],
+                    vec![2000.0],
+                    vec![0.0, 4.0, 8.0, 12.0],
+                ),
                 segy_export: None,
                 coordinate_reference_binding: None,
                 spatial: None,

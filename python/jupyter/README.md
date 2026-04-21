@@ -1,0 +1,33 @@
+# ophiolite-jupyter
+
+`ophiolite-jupyter` is the preview notebook integration package for Ophiolite chart-ready DTOs.
+
+It does not own subsurface meaning, compute, or rendering kernels:
+
+- `ophiolite_sdk` owns canonical domain and compute handoff
+- `Ophiolite Charts` owns rendering and chart validation
+- `ophiolite-jupyter` hosts those charts inside notebook environments
+
+## Scope
+
+Current widgets:
+
+- `AvoResponseWidget`
+- `AvoInterceptGradientCrossplotWidget`
+
+## Development
+
+Install the package from this directory:
+
+```bash
+python -m pip install -e .
+```
+
+Build the front-end assets from the repo root:
+
+```bash
+bun run --cwd ./charts --filter @ophiolite/charts-jupyter-host build
+```
+
+The build writes bundled AnyWidget front-end modules into
+`python/jupyter/src/ophiolite_jupyter/static/`.

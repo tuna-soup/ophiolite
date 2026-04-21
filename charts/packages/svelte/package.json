@@ -8,6 +8,9 @@
       "svelte": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./adapters/ophiolite": {
+      "default": "./src/adapters/ophiolite.ts"
+    },
     "./contracts": {
       "default": "./src/contracts.ts"
     },

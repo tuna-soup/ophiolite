@@ -1,7 +1,13 @@
 import {
   buildDepthBinnedCurveLod,
-  layoutWellCorrelationPanel,
+  buildWellCorrelationLayoutCache,
+  buildWellCorrelationHeaderRows,
+  chooseWellCorrelationDepthStep,
+  type CorrelationPanelLayout,
+  formatWellCorrelationAxisValue,
   mapNativeDepthToPanelDepth,
+  trackHitsForWell,
+  type WellCorrelationLayoutCache,
   type NormalizedCurveLayer,
   type NormalizedPointLayer,
   type NormalizedReferenceTrack,
@@ -14,11 +20,26 @@ import {
   type NormalizedTrack
 } from "@ophiolite/charts-core";
 import type { InteractionState, WellCorrelationViewport } from "@ophiolite/charts-data-models";
+import {
+  applyCanvasSurfaceTransform,
+  createRasterSurfaceMetrics,
+  resizeCanvasBackingStore
+} from "../internal/rasterSurface";
 import type { WellCorrelationRenderFrame, WellCorrelationRendererAdapter } from "./adapter";
+import {
+  createBaseRenderState,
+  createOverlayRenderState,
+  diffRenderStates,
+  type BaseRenderState,
+  type OverlayRenderState
+} from "./renderModel";
 
-const SCROLLBAR_WIDTH = 14;
 const SCROLLBAR_GUTTER = 18;
 const TRACK_ROW_HEIGHT = 20;
+
+interface WellCorrelationCanvasRendererOptions {
+  axisChrome?: "canvas" | "none";
+}
 
 interface Rect {
   x: number;
@@ -28,194 +49,221 @@ interface Rect {
 }
 
 export class WellCorrelationCanvasRenderer implements WellCorrelationRendererAdapter {
+  private container: HTMLElement | null = null;
   private host: HTMLDivElement | null = null;
-  private scrollHost: HTMLDivElement | null = null;
-  private canvas: HTMLCanvasElement | null = null;
-  private context: CanvasRenderingContext2D | null = null;
-  private scrollbarTrack: HTMLDivElement | null = null;
-  private scrollbarThumb: HTMLDivElement | null = null;
+  private baseCanvas: HTMLCanvasElement | null = null;
+  private overlayCanvas: HTMLCanvasElement | null = null;
+  private baseContext: CanvasRenderingContext2D | null = null;
+  private overlayContext: CanvasRenderingContext2D | null = null;
   private lastFrame: WellCorrelationRenderFrame | null = null;
-  private dragOffsetY = 0;
-  private draggingScrollbar = false;
+  private lastBaseState: BaseRenderState | null = null;
+  private lastOverlayState: OverlayRenderState | null = null;
+  private lastLayoutCache: WellCorrelationLayoutCache | null = null;
+  private readonly axisChrome: "canvas" | "none";
+
+  constructor(options: WellCorrelationCanvasRendererOptions = {}) {
+    this.axisChrome = options.axisChrome ?? "canvas";
+  }
 
   mount(container: HTMLElement): void {
+    this.container = container;
     this.host = document.createElement("div");
     this.host.style.position = "relative";
     this.host.style.width = "100%";
     this.host.style.height = "100%";
     this.host.style.overflow = "hidden";
 
-    this.scrollHost = document.createElement("div");
-    this.scrollHost.style.position = "absolute";
-    this.scrollHost.style.inset = "0 18px 0 0";
-    this.scrollHost.style.overflowX = "auto";
-    this.scrollHost.style.overflowY = "hidden";
-    this.scrollHost.style.scrollbarWidth = "thin";
+    this.baseCanvas = document.createElement("canvas");
+    this.baseCanvas.style.position = "absolute";
+    this.baseCanvas.style.inset = "0";
+    this.baseCanvas.style.width = "100%";
+    this.baseCanvas.style.height = "100%";
 
-    this.canvas = document.createElement("canvas");
-    this.canvas.style.display = "block";
-    this.canvas.style.height = "100%";
-    this.scrollHost.append(this.canvas);
+    this.overlayCanvas = document.createElement("canvas");
+    this.overlayCanvas.style.position = "absolute";
+    this.overlayCanvas.style.inset = "0";
+    this.overlayCanvas.style.width = "100%";
+    this.overlayCanvas.style.height = "100%";
+    this.overlayCanvas.style.pointerEvents = "none";
 
-    this.scrollbarTrack = document.createElement("div");
-    this.scrollbarTrack.style.position = "absolute";
-    this.scrollbarTrack.style.right = "2px";
-    this.scrollbarTrack.style.width = `${SCROLLBAR_WIDTH}px`;
-    this.scrollbarTrack.style.borderRadius = "999px";
-    this.scrollbarTrack.style.background = "rgba(122, 122, 122, 0.22)";
-    this.scrollbarTrack.style.cursor = "pointer";
-
-    this.scrollbarThumb = document.createElement("div");
-    this.scrollbarThumb.style.position = "absolute";
-    this.scrollbarThumb.style.left = "1px";
-    this.scrollbarThumb.style.width = `${SCROLLBAR_WIDTH - 2}px`;
-    this.scrollbarThumb.style.borderRadius = "999px";
-    this.scrollbarThumb.style.background = "rgba(37, 96, 187, 0.78)";
-    this.scrollbarThumb.style.cursor = "grab";
-    this.scrollbarTrack.append(this.scrollbarThumb);
-
-    this.host.append(this.scrollHost, this.scrollbarTrack);
+    this.host.append(this.baseCanvas, this.overlayCanvas);
     container.replaceChildren(this.host);
-    this.context = this.canvas.getContext("2d");
-
-    this.scrollbarTrack.addEventListener("pointerdown", (event) => {
-      if (event.target === this.scrollbarThumb) {
-        return;
-      }
-      this.jumpScrollbar(event.clientY);
-    });
-    this.scrollbarThumb.addEventListener("pointerdown", (event) => {
-      this.draggingScrollbar = true;
-      this.dragOffsetY = event.offsetY;
-      this.scrollbarThumb?.setPointerCapture(event.pointerId);
-      this.scrollbarThumb!.style.cursor = "grabbing";
-      event.preventDefault();
-    });
-    this.scrollbarThumb.addEventListener("pointermove", (event) => {
-      if (!this.draggingScrollbar) {
-        return;
-      }
-      this.dragScrollbar(event.clientY);
-      event.preventDefault();
-    });
-    this.scrollbarThumb.addEventListener("pointerup", (event) => {
-      this.draggingScrollbar = false;
-      this.scrollbarThumb?.releasePointerCapture(event.pointerId);
-      if (this.scrollbarThumb) {
-        this.scrollbarThumb.style.cursor = "grab";
-      }
-    });
+    this.baseContext = this.baseCanvas.getContext("2d");
+    this.overlayContext = this.overlayCanvas.getContext("2d");
   }
 
   render(frame: WellCorrelationRenderFrame): void {
-    if (!this.host || !this.scrollHost || !this.canvas || !this.context) {
+    const renderStart = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (
+      !this.host ||
+      !this.baseCanvas ||
+      !this.overlayCanvas ||
+      !this.baseContext ||
+      !this.overlayContext
+    ) {
       return;
     }
     this.lastFrame = frame;
-    const viewportWidth = Math.max(1, Math.round(this.host.clientWidth || 1));
+    const viewportWidth = Math.max(1, Math.round(resolveViewportWidth(this.host, this.container) || this.host.clientWidth || 1));
     const viewportHeight = Math.max(1, Math.round(this.host.clientHeight || 1));
-    const { panel, viewport, probe, correlationLines, previewCorrelationLines, interactions } = frame.state;
+    const baseState = createBaseRenderState(
+      frame,
+      viewportWidth,
+      viewportHeight,
+      window.devicePixelRatio || 1,
+      0,
+      viewportWidth
+    );
+    const overlayState = createOverlayRenderState(
+      frame,
+      viewportWidth,
+      viewportHeight,
+      window.devicePixelRatio || 1,
+      0,
+      viewportWidth
+    );
+    const invalidation = diffRenderStates(this.lastBaseState, baseState, this.lastOverlayState, overlayState);
+    const { panel, viewport } = frame.state;
     if (!panel || !viewport) {
-      this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      clearCanvas(this.baseContext, this.baseCanvas);
+      clearCanvas(this.overlayContext, this.overlayCanvas);
+      this.lastBaseState = baseState;
+      this.lastOverlayState = overlayState;
+      this.lastLayoutCache = null;
+      this.host.style.width = "100%";
       return;
     }
 
-    const layout = layoutWellCorrelationPanel(panel, viewportWidth, viewportHeight);
-    if (this.canvas.width !== layout.contentWidth || this.canvas.height !== viewportHeight) {
-      this.canvas.width = layout.contentWidth;
-      this.canvas.height = viewportHeight;
-      this.canvas.style.width = `${layout.contentWidth}px`;
+    if (invalidation.baseChanged || !this.lastLayoutCache) {
+      this.lastLayoutCache = buildWellCorrelationLayoutCache(panel, viewportWidth, viewportHeight);
     }
-    this.scrollHost.style.width = `${layout.viewportWidth}px`;
-    if (this.scrollbarTrack) {
-      this.scrollbarTrack.style.top = `${layout.scrollbarRect.y}px`;
-      this.scrollbarTrack.style.height = `${layout.scrollbarRect.height}px`;
-    }
+    const layoutCache = this.lastLayoutCache;
+    const layout = layoutCache.layout;
+    const visibleRect = visibleContentRect(layout.contentWidth, viewportHeight);
+    const surface = createRasterSurfaceMetrics(layout.contentWidth, viewportHeight);
+    resizeCanvasBackingStore(this.baseCanvas, surface);
+    resizeCanvasBackingStore(this.overlayCanvas, surface);
+    this.host.style.width = `${layout.contentWidth}px`;
+    this.baseCanvas.style.width = `${layout.contentWidth}px`;
+    this.overlayCanvas.style.width = `${layout.contentWidth}px`;
 
-    const context = this.context;
-    context.clearRect(0, 0, layout.contentWidth, viewportHeight);
-    context.fillStyle = panel.background ?? "#f8f5ef";
-    context.fillRect(0, 0, layout.contentWidth, viewportHeight);
-    this.host.style.cursor = cursorForInteractionState(interactions);
-    drawDepthGrid(context, layout.plotRect, viewport);
+    if (invalidation.baseChanged) {
+      const context = this.baseContext;
+      applyCanvasSurfaceTransform(context, surface);
+      context.clearRect(visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height);
+      context.fillStyle = panel.background ?? "#f8f5ef";
+      context.fillRect(visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height);
+      withHorizontalClip(context, visibleRect, () => {
+        drawDepthGrid(context, layout.plotRect, viewport);
+      });
 
-    for (const column of layout.columns) {
-      const well = panel.wells.find((candidate) => candidate.id === column.wellId);
-      if (!well) {
-        continue;
-      }
-      drawWellHeader(context, column.headerRect, well.name);
-      for (const trackFrame of column.trackFrames) {
-        const track = well.tracks.find((candidate) => candidate.id === trackFrame.trackId);
-        if (!track) {
+      for (const column of layout.columns) {
+        if (!rectIntersectsHorizontally(column.bodyRect, visibleRect)) {
           continue;
         }
-        drawTrackHeader(context, trackFrame.headerRect, track, well.nativeDepthDatum);
-        drawTrackBodyFrame(context, trackFrame.bodyRect);
-        drawTrack(context, track, well.panelDepthMapping, viewport, trackFrame.bodyRect);
+        const wellHits = trackHitsForWell(layoutCache, column.wellId);
+        if (wellHits.length === 0) {
+          continue;
+        }
+        const well = wellHits[0]!.well;
+        if (this.axisChrome === "canvas") {
+          drawWellHeader(context, column.headerRect, well.name);
+        }
+        for (const hit of wellHits) {
+          if (!rectIntersectsHorizontally(hit.trackFrame.bodyRect, visibleRect)) {
+            continue;
+          }
+          if (this.axisChrome === "canvas") {
+            drawTrackHeader(context, hit.trackFrame.headerRect, hit.track, well.nativeDepthDatum);
+          }
+          drawTrackBodyFrame(context, hit.trackFrame.bodyRect);
+          drawTrack(context, hit.track, well.panelDepthMapping, viewport, hit.trackFrame.bodyRect, this.axisChrome);
+        }
       }
     }
 
-    drawCorrelationLines(context, layout, previewCorrelationLines ?? correlationLines, viewport);
-    if (probe && interactions.modifiers.includes("crosshair")) {
-      drawProbeGuides(context, layout.plotRect, probe.screenX, probe.screenY);
+    if (invalidation.overlayNeedsDraw) {
+      const context = this.overlayContext;
+      applyCanvasSurfaceTransform(context, surface);
+      context.clearRect(visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height);
+      withHorizontalClip(context, visibleRect, () => {
+        drawCorrelationLines(context, layout, overlayState.previewCorrelationLines ?? overlayState.correlationLines, viewport);
+        if (overlayState.probe && overlayState.interactions.modifiers.includes("crosshair")) {
+          drawProbeGuides(context, layout.plotRect, overlayState.probe.screenX, overlayState.probe.screenY);
+        }
+        if (overlayState.interactions.session?.kind === "lasso") {
+          drawLassoOverlay(context, overlayState.interactions.session.points);
+        }
+      });
     }
-    if (interactions.session?.kind === "lasso") {
-      drawLassoOverlay(context, interactions.session.points);
-    }
-    updateScrollbarThumb(this.scrollbarThumb, panel.depthDomain.start, panel.depthDomain.end, viewport, layout.scrollbarRect);
+
+    this.host.style.cursor = cursorForInteractionState(overlayState.interactions);
+    this.lastBaseState = baseState;
+    this.lastOverlayState = overlayState;
+    this.host.dispatchEvent(new CustomEvent("ophiolite-charts:correlation-render-debug", {
+      bubbles: true,
+      detail: {
+        renderMs: (typeof performance !== "undefined" ? performance.now() : Date.now()) - renderStart,
+        baseChanged: invalidation.baseChanged,
+        overlayDraw: invalidation.overlayNeedsDraw,
+        contentWidth: layout.contentWidth,
+        viewportWidth: layout.viewportWidth
+      }
+    }));
   }
 
   dispose(): void {
     this.host?.remove();
+    this.container = null;
     this.host = null;
-    this.scrollHost = null;
-    this.canvas = null;
-    this.context = null;
-    this.scrollbarTrack = null;
-    this.scrollbarThumb = null;
+    this.baseCanvas = null;
+    this.overlayCanvas = null;
+    this.baseContext = null;
+    this.overlayContext = null;
     this.lastFrame = null;
+    this.lastBaseState = null;
+    this.lastOverlayState = null;
+    this.lastLayoutCache = null;
   }
+}
 
-  private jumpScrollbar(clientY: number): void {
-    if (!this.scrollbarTrack || !this.scrollbarThumb) {
-      return;
-    }
-    const trackRect = this.scrollbarTrack.getBoundingClientRect();
-    const thumbRect = this.scrollbarThumb.getBoundingClientRect();
-    this.requestViewportFromThumb(clientY - trackRect.top - thumbRect.height / 2, trackRect.height, thumbRect.height);
-  }
+function clearCanvas(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement): void {
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.clearRect(0, 0, canvas.width, canvas.height);
+}
 
-  private dragScrollbar(clientY: number): void {
-    if (!this.scrollbarTrack || !this.scrollbarThumb) {
-      return;
-    }
-    const trackRect = this.scrollbarTrack.getBoundingClientRect();
-    const thumbRect = this.scrollbarThumb.getBoundingClientRect();
-    this.requestViewportFromThumb(clientY - trackRect.top - this.dragOffsetY, trackRect.height, thumbRect.height);
+function resolveViewportWidth(host: HTMLDivElement, container: HTMLElement | null): number {
+  const scrollViewport = host.closest<HTMLElement>(".ophiolite-charts-correlation-scroll-viewport");
+  if (scrollViewport) {
+    return Math.max(1, scrollViewport.clientWidth + SCROLLBAR_GUTTER);
   }
+  return Math.max(1, container?.clientWidth ?? host.clientWidth);
+}
 
-  private requestViewportFromThumb(rawTop: number, trackHeight: number, thumbHeight: number): void {
-    if (!this.host || !this.lastFrame?.state.panel || !this.lastFrame.state.viewport) {
-      return;
-    }
-    const { panel, viewport } = this.lastFrame.state;
-    const fullStart = panel.depthDomain.start;
-    const fullEnd = panel.depthDomain.end;
-    const fullSpan = fullEnd - fullStart;
-    const viewportSpan = viewport.depthEnd - viewport.depthStart;
-    if (fullSpan <= viewportSpan) {
-      return;
-    }
-    const available = Math.max(1, trackHeight - thumbHeight);
-    const top = clamp(rawTop, 0, available);
-    const ratio = top / available;
-    const depthStart = fullStart + ratio * (fullSpan - viewportSpan);
-    this.host.dispatchEvent(new CustomEvent("ophiolite-charts:correlation-viewport-request", {
-      bubbles: true,
-      detail: { depthStart, depthEnd: depthStart + viewportSpan }
-    }));
-  }
+function visibleContentRect(contentWidth: number, viewportHeight: number): Rect {
+  return {
+    x: 0,
+    y: 0,
+    width: Math.max(1, contentWidth),
+    height: viewportHeight
+  };
+}
+
+function rectIntersectsHorizontally(rect: Rect, visibleRect: Rect): boolean {
+  return rect.x + rect.width >= visibleRect.x && rect.x <= visibleRect.x + visibleRect.width;
+}
+
+function withHorizontalClip(
+  context: CanvasRenderingContext2D,
+  visibleRect: Rect,
+  draw: () => void
+): void {
+  context.save();
+  context.beginPath();
+  context.rect(visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height);
+  context.clip();
+  draw();
+  context.restore();
 }
 
 function drawWellHeader(context: CanvasRenderingContext2D, rect: Rect, title: string): void {
@@ -234,7 +282,7 @@ function drawTrackHeader(context: CanvasRenderingContext2D, rect: Rect, track: N
   context.fillRect(rect.x, rect.y, rect.width, rect.height);
   context.strokeStyle = "#c8c1b8";
   context.strokeRect(rect.x, rect.y, rect.width, rect.height);
-  headerRowsForTrack(track, nativeDepthDatum).forEach((row, index) => {
+  buildWellCorrelationHeaderRows(track, nativeDepthDatum).forEach((row, index) => {
     const y = rect.y + 4 + index * TRACK_ROW_HEIGHT;
     context.fillStyle = row.color;
     context.font = "600 10px Segoe UI";
@@ -246,9 +294,9 @@ function drawTrackHeader(context: CanvasRenderingContext2D, rect: Rect, track: N
     context.fillStyle = "#6b6b6b";
     context.font = "10px Segoe UI";
     context.textAlign = "left";
-    context.fillText(formatAxisValue(row.axis.min), rect.x + 4, y + 17);
+    context.fillText(formatWellCorrelationAxisValue(row.axis.min), rect.x + 4, y + 17);
     context.textAlign = "right";
-    context.fillText(formatAxisValue(row.axis.max), rect.x + rect.width - 4, y + 17);
+    context.fillText(formatWellCorrelationAxisValue(row.axis.max), rect.x + rect.width - 4, y + 17);
   });
 }
 
@@ -264,10 +312,11 @@ function drawTrack(
   track: NormalizedTrack,
   mapping: Array<{ nativeDepth: number; panelDepth: number }>,
   viewport: WellCorrelationViewport,
-  rect: Rect
+  rect: Rect,
+  axisChrome: "canvas" | "none"
 ): void {
   if (track.kind === "reference") {
-    drawReferenceTrack(context, track, rect, viewport);
+    drawReferenceTrack(context, track, rect, viewport, axisChrome);
     return;
   }
   if (track.kind === "scalar") {
@@ -281,20 +330,28 @@ function drawTrack(
   drawSeismicSectionTrack(context, track, viewport, rect);
 }
 
-function drawReferenceTrack(context: CanvasRenderingContext2D, track: NormalizedReferenceTrack, rect: Rect, viewport: WellCorrelationViewport): void {
-  const step = chooseDepthStep(viewport.depthEnd - viewport.depthStart);
-  const firstTick = Math.ceil(viewport.depthStart / step) * step;
-  context.strokeStyle = "#767676";
-  context.fillStyle = "#404040";
-  context.font = "11px Segoe UI";
-  context.textAlign = "right";
-  for (let depth = firstTick; depth <= viewport.depthEnd; depth += step) {
-    const y = depthToScreenY(rect, viewport, depth);
-    context.beginPath();
-    context.moveTo(rect.x + rect.width - 12, y);
-    context.lineTo(rect.x + rect.width, y);
-    context.stroke();
-    context.fillText(depth.toFixed(0), rect.x + rect.width - 16, y + 3);
+function drawReferenceTrack(
+  context: CanvasRenderingContext2D,
+  track: NormalizedReferenceTrack,
+  rect: Rect,
+  viewport: WellCorrelationViewport,
+  axisChrome: "canvas" | "none"
+): void {
+  if (axisChrome === "canvas") {
+    const step = chooseWellCorrelationDepthStep(viewport.depthEnd - viewport.depthStart);
+    const firstTick = Math.ceil(viewport.depthStart / step) * step;
+    context.strokeStyle = "#767676";
+    context.fillStyle = "#404040";
+    context.font = "11px Segoe UI";
+    context.textAlign = "right";
+    for (let depth = firstTick; depth <= viewport.depthEnd; depth += step) {
+      const y = depthToScreenY(rect, viewport, depth);
+      context.beginPath();
+      context.moveTo(rect.x + rect.width - 12, y);
+      context.lineTo(rect.x + rect.width, y);
+      context.stroke();
+      context.fillText(depth.toFixed(0), rect.x + rect.width - 16, y + 3);
+    }
   }
   drawTopOverlays(context, track.topOverlays, rect, viewport);
 }
@@ -600,7 +657,12 @@ function drawTopOverlays(context: CanvasRenderingContext2D, overlays: Normalized
   }
 }
 
-function drawCorrelationLines(context: CanvasRenderingContext2D, layout: ReturnType<typeof layoutWellCorrelationPanel>, lines: WellCorrelationRenderFrame["state"]["correlationLines"], viewport: WellCorrelationViewport): void {
+function drawCorrelationLines(
+  context: CanvasRenderingContext2D,
+  layout: CorrelationPanelLayout,
+  lines: WellCorrelationRenderFrame["state"]["correlationLines"],
+  viewport: WellCorrelationViewport
+): void {
   for (const line of lines) {
     const points = line.points.map((point) => {
       const column = layout.columns.find((candidate) => candidate.wellId === point.wellId);
@@ -654,7 +716,7 @@ function drawLassoOverlay(context: CanvasRenderingContext2D, points: Array<{ x: 
 }
 
 function drawDepthGrid(context: CanvasRenderingContext2D, plotRect: Rect, viewport: WellCorrelationViewport): void {
-  const majorStep = chooseDepthStep(viewport.depthEnd - viewport.depthStart);
+  const majorStep = chooseWellCorrelationDepthStep(viewport.depthEnd - viewport.depthStart);
   const firstTick = Math.ceil(viewport.depthStart / majorStep) * majorStep;
   context.strokeStyle = "rgba(130, 130, 130, 0.35)";
   for (let depth = firstTick; depth <= viewport.depthEnd; depth += majorStep) {
@@ -664,41 +726,6 @@ function drawDepthGrid(context: CanvasRenderingContext2D, plotRect: Rect, viewpo
     context.lineTo(plotRect.x + plotRect.width, y);
     context.stroke();
   }
-}
-
-function updateScrollbarThumb(thumb: HTMLDivElement | null, fullStart: number, fullEnd: number, viewport: WellCorrelationViewport, scrollbarRect: Rect): void {
-  if (!thumb) {
-    return;
-  }
-  const fullSpan = Math.max(1e-6, fullEnd - fullStart);
-  const viewportSpan = viewport.depthEnd - viewport.depthStart;
-  const thumbHeight = Math.max(28, scrollbarRect.height * (viewportSpan / fullSpan));
-  const available = Math.max(1, scrollbarRect.height - thumbHeight);
-  const offset = ((viewport.depthStart - fullStart) / Math.max(1e-6, fullSpan - viewportSpan)) * available;
-  thumb.style.top = `${clamp(offset, 0, available)}px`;
-  thumb.style.height = `${thumbHeight}px`;
-}
-
-function headerRowsForTrack(track: NormalizedTrack, nativeDepthDatum: string): Array<{ label: string; color: string; axis?: { min: number; max: number } }> {
-  if (track.kind === "reference") {
-    return track.topOverlays.length > 0 ? [{ label: track.topOverlays[0]!.name, color: track.topOverlays[0]!.style.color }] : [{ label: nativeDepthDatum.toUpperCase(), color: "#444444" }];
-  }
-  if (track.kind === "scalar") {
-    return track.layers.filter((layer) => layer.kind !== "top-overlay").map((layer) => {
-      if (layer.kind === "curve") {
-        const axis = layer.series.axis ?? track.xAxis;
-        return { label: layer.name, color: layer.series.color, axis: { min: axis.min, max: axis.max } };
-      }
-      if (layer.kind === "point-observation") {
-        return { label: layer.name, color: layer.style.fillColor, axis: { min: layer.axis.min, max: layer.axis.max } };
-      }
-      return { label: layer.name, color: "#555555", axis: { min: track.xAxis.min, max: track.xAxis.max } };
-    });
-  }
-  if (track.kind === "seismic-trace") {
-    return track.layers.filter((layer): layer is NormalizedSeismicTraceLayer => layer.kind === "seismic-trace").flatMap((layer) => layer.traces.map((trace) => ({ label: trace.name, color: trace.style.positiveFill })));
-  }
-  return track.layers.filter((layer): layer is NormalizedSeismicSectionLayer => layer.kind === "seismic-section").map((layer) => ({ label: `${layer.name} (${layer.style.renderMode})`, color: layer.style.renderMode === "wiggle" ? "#9c2d2d" : "#4b4b4b" }));
 }
 
 function drawSymbol(context: CanvasRenderingContext2D, x: number, y: number, shape: "circle" | "square" | "diamond" | "triangle" | "cross" | "x", size: number): void {
@@ -714,13 +741,6 @@ function drawSymbol(context: CanvasRenderingContext2D, x: number, y: number, sha
   }
   context.fill();
   context.stroke();
-}
-
-function chooseDepthStep(span: number): number {
-  if (span <= 100) return 10;
-  if (span <= 250) return 25;
-  if (span <= 500) return 50;
-  return 100;
 }
 
 function valueToTrackX(value: number, axis: { min: number; max: number; scale?: "linear" | "log" }, rect: Rect): number {
@@ -753,12 +773,6 @@ function buildLogTicks(min: number, max: number): number[] {
     }
   }
   return ticks;
-}
-
-function formatAxisValue(value: number): string {
-  if (Math.abs(value) >= 100) return value.toFixed(0);
-  if (Math.abs(value) >= 10) return value.toFixed(1);
-  return value.toFixed(2);
 }
 
 function maxAmplitude(values: number[]): number {

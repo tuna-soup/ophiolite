@@ -1,0 +1,94 @@
+{
+  "asset_kind": "Log",
+  "asset_schema_version": "0.1.0",
+  "logical_asset_id": "logical_1776695956089811000_4",
+  "storage_asset_id": "asset_1776695956090203000_5",
+  "well_id": "well_1776695956082653000_1",
+  "wellbore_id": "wellbore_1776695956085761000_2",
+  "asset_collection_id": "collection_1776695956089807000_3",
+  "source_artifacts": [
+    {
+      "source_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/f02a05_20030103-1-06_a5_main_log_dsi_030lup.las",
+      "original_filename": "f02a05_20030103-1-06_a5_main_log_dsi_030lup.las",
+      "source_fingerprint": "04af530e8da8c012"
+    }
+  ],
+  "provenance": {
+    "source_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/F02_wells_data/F02-A-05/f02a05_20030103-1-06_a5_main_log_dsi_030lup.las",
+    "original_filename": "f02a05_20030103-1-06_a5_main_log_dsi_030lup.las",
+    "source_fingerprint": "04af530e8da8c012",
+    "imported_at_unix_seconds": 1776695951
+  },
+  "diagnostics": [],
+  "extents": {
+    "index_kind": "Depth",
+    "start": 2702.3568,
+    "stop": 1871.7768,
+    "row_count": 5451
+  },
+  "bulk_data_descriptors": [
+    {
+      "relative_path": "metadata.json",
+      "media_type": "application/json",
+      "role": "metadata"
+    },
+    {
+      "relative_path": "curves.parquet",
+      "media_type": "application/vnd.apache.parquet",
+      "role": "curve_samples"
+    }
+  ],
+  "reference_metadata": {
+    "identifiers": {
+      "primary_name": "F2-A5",
+      "uwi": null,
+      "api": null,
+      "operator_aliases": [
+        "Veba Oil and Gas Nederland B.V."
+      ]
+    },
+    "coordinate_reference": null,
+    "vertical_datum": null,
+    "depth_reference": "MeasuredDepth",
+    "unit_system": {
+      "depth_unit": "M",
+      "coordinate_unit": null,
+      "pressure_unit": null
+    }
+  },
+  "created_at_unix_seconds": 1776695956,
+  "imported_at_unix_seconds": 1776695956,
+  "supersedes": null,
+  "derived_from": null,
+  "curve_semantics": [
+    {
+      "curve_name": "DEPT",
+      "original_mnemonic": "DEPT",
+      "unit": "M",
+      "semantic_type": "Depth",
+      "source": "Derived"
+    },
+    {
+      "curve_name": "DTCO",
+      "original_mnemonic": "DTCO",
+      "unit": "US/F",
+      "semantic_type": "Sonic",
+      "source": "Derived"
+    },
+    {
+      "curve_name": "DTSM",
+      "original_mnemonic": "DTSM",
+      "unit": "US/F",
+      "semantic_type": "ShearSonic",
+      "source": "Derived"
+    },
+    {
+      "curve_name": "GR",
+      "original_mnemonic": "GR",
+      "unit": "GAPI",
+      "semantic_type": "GammaRay",
+      "source": "Derived"
+    }
+  ],
+  "compute_manifest": null
+}

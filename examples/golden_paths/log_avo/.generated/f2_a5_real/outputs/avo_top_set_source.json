@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "id": "avo-top-set",
+  "name": "F2-A5 Top-Set AVO",
+  "title": "Top-Set Zoeppritz AVO",
+  "subtitle": "F2-A5 interval layers from tops",
+  "x_axis": {
+    "label": "Incidence Angle",
+    "unit": "deg"
+  },
+  "y_axis": {
+    "label": "PP Reflectivity",
+    "unit": "ratio"
+  },
+  "interfaces": [
+    {
+      "id": "interface-1",
+      "label": "Interface 1",
+      "color": "#0B7285",
+      "reservoir_label": "1883.5 m"
+    }
+  ],
+  "series": [
+    {
+      "id": "interface-1-series",
+      "interface_id": "interface-1",
+      "label": "Interface 1",
+      "color": "#0B7285",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.11064784228801727,
+        -0.1123727485537529,
+        -0.11755826324224472,
+        -0.1262391209602356,
+        -0.13848116993904114,
+        -0.15439367294311523,
+        -0.17414703965187073,
+        -0.1979968100786209,
+        -0.22631408274173737
+      ]
+    }
+  ]
+}

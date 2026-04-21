@@ -8,9 +8,9 @@ import vtkImageData from "@kitware/vtk.js/Common/DataModel/ImageData";
 import vtkPiecewiseFunction from "@kitware/vtk.js/Common/DataModel/PiecewiseFunction";
 import vtkPolyData from "@kitware/vtk.js/Common/DataModel/PolyData";
 import vtkTubeFilter from "@kitware/vtk.js/Filters/General/TubeFilter";
-import vtkCubeSource from "@kitware/vtk.js/Filters/Sources/CubeSource";
 import vtkSphereSource from "@kitware/vtk.js/Filters/Sources/SphereSource";
 import vtkActor from "@kitware/vtk.js/Rendering/Core/Actor";
+import vtkCellPicker from "@kitware/vtk.js/Rendering/Core/CellPicker";
 import vtkColorTransferFunction from "@kitware/vtk.js/Rendering/Core/ColorTransferFunction";
 import vtkImageMapper from "@kitware/vtk.js/Rendering/Core/ImageMapper";
 import vtkMapper from "@kitware/vtk.js/Rendering/Core/Mapper";
@@ -30,23 +30,27 @@ import type {
   VolumeInterpretationSlicePlane,
   VolumeInterpretationView,
   VolumeInterpretationVolume,
-  VolumeInterpretationWellTrajectory
+  VolumeInterpretationWellTrajectory,
 } from "@ophiolite/charts-data-models";
 import type {
+  VolumeInterpretationPickDebugCandidate,
+  VolumeInterpretationPickDebugSnapshot,
   VolumeInterpretationPickResult,
   VolumeInterpretationRenderFrame,
-  VolumeInterpretationRendererAdapter
+  VolumeInterpretationRendererAdapter,
 } from "./adapter";
 
 interface Point2D {
   x: number;
   y: number;
+  depth: number;
 }
 
 interface ProjectedPolygonTarget {
   type: "polygon";
   pick: VolumeInterpretationPickResult;
   points: Point2D[];
+  depth: number;
 }
 
 interface ProjectedPolylineTarget {
@@ -54,6 +58,7 @@ interface ProjectedPolylineTarget {
   pick: VolumeInterpretationPickResult;
   points: Point2D[];
   strokeWidth: number;
+  depth: number;
 }
 
 interface ProjectedPointTarget {
@@ -61,9 +66,13 @@ interface ProjectedPointTarget {
   pick: VolumeInterpretationPickResult;
   point: Point2D;
   radius: number;
+  depth: number;
 }
 
-type ProjectedTarget = ProjectedPolygonTarget | ProjectedPolylineTarget | ProjectedPointTarget;
+type ProjectedTarget =
+  | ProjectedPolygonTarget
+  | ProjectedPolylineTarget
+  | ProjectedPointTarget;
 
 interface HighlightableEntry {
   itemId: string;
@@ -75,16 +84,46 @@ interface SyntheticVolumeResource {
   range: [number, number];
 }
 
-const BG_COLOR: [number, number, number] = [13 / 255, 24 / 255, 34 / 255];
+interface PickableEntry {
+  prop: unknown;
+  mapper: unknown;
+  resolvePick(context: PickContext): VolumeInterpretationPickResult;
+}
 
-export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRendererAdapter {
+interface RenderMetrics {
+  cssWidth: number;
+  cssHeight: number;
+  renderWidth: number;
+  renderHeight: number;
+  scaleX: number;
+  scaleY: number;
+}
+
+interface PickContext {
+  worldPosition: [number, number, number];
+  screenX: number;
+  screenY: number;
+  cellIJK: number[];
+  pCoords: number[];
+}
+
+const BG_COLOR: [number, number, number] = [13 / 255, 24 / 255, 34 / 255];
+const SELECTED_OUTLINE_COLOR: [number, number, number] = [0.39, 0.72, 1];
+
+export class VolumeInterpretationVtkRenderer
+  implements VolumeInterpretationRendererAdapter
+{
   private container: HTMLElement | null = null;
   private host: HTMLDivElement | null = null;
   private genericRenderWindow: vtkGenericRenderWindow | null = null;
   private renderer: vtkRenderer | null = null;
   private projectedTargets: ProjectedTarget[] = [];
   private highlightables: HighlightableEntry[] = [];
+  private pickableEntries: PickableEntry[] = [];
   private lastModel: VolumeInterpretationModel | null = null;
+  private readonly cellPicker = vtkCellPicker.newInstance({
+    opacityThreshold: 0.0015,
+  });
   private readonly volumeResources = new Map<string, SyntheticVolumeResource>();
 
   mount(container: HTMLElement): void {
@@ -97,11 +136,15 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
 
     this.genericRenderWindow = vtkGenericRenderWindow.newInstance({
       background: BG_COLOR,
-      listenWindowResize: false
+      listenWindowResize: false,
     });
     this.genericRenderWindow.setContainer(this.host);
     this.genericRenderWindow.resize();
     this.renderer = this.genericRenderWindow.getRenderer();
+    this.genericRenderWindow.getInteractor().unbindEvents();
+    this.cellPicker.setPickFromList(true);
+    this.cellPicker.initializePickList();
+    this.cellPicker.setTolerance(0.035);
   }
 
   render(frame: VolumeInterpretationRenderFrame): void {
@@ -130,25 +173,64 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
     this.projectedTargets = this.buildProjectedTargets(model);
   }
 
-  pick(screenX: number, screenY: number): VolumeInterpretationPickResult | null {
-    let best: { pick: VolumeInterpretationPickResult; score: number } | null = null;
-    for (const target of this.projectedTargets) {
-      const score = pickScore(target, screenX, screenY);
-      if (score === null) {
-        continue;
-      }
-      if (!best || score < best.score) {
-        best = {
-          pick: {
-            ...target.pick,
-            screenX,
-            screenY
-          },
-          score
-        };
-      }
+  pick(
+    screenX: number,
+    screenY: number,
+  ): VolumeInterpretationPickResult | null {
+    return this.actualPick(screenX, screenY, this.getRenderMetrics()).result;
+  }
+
+  projectWorldToScreen(
+    worldX: number,
+    worldY: number,
+    worldZ: number,
+  ): Point2D | null {
+    if (!this.renderer || !this.host) {
+      return null;
     }
-    return best?.pick ?? null;
+    const width = Math.max(1, this.host.clientWidth);
+    const height = Math.max(1, this.host.clientHeight);
+    return projectPoint(this.renderer, width, height, worldX, worldY, worldZ);
+  }
+
+  debugPick(
+    screenX: number,
+    screenY: number,
+  ): VolumeInterpretationPickDebugSnapshot {
+    const metrics = this.getRenderMetrics();
+    const ranked = rankProjectedTargets(
+      this.projectedTargets,
+      screenX,
+      screenY,
+    );
+    const actualWinner = this.actualPick(screenX, screenY, metrics);
+    const syntheticWinnerTarget =
+      ranked.find((candidate) => candidate.hit)?.target ?? null;
+    const syntheticWinner = syntheticWinnerTarget
+      ? {
+          ...syntheticWinnerTarget.pick,
+          screenX,
+          screenY,
+        }
+      : null;
+    return {
+      pointerX: screenX,
+      pointerY: screenY,
+      renderPointerX: screenX * metrics.scaleX,
+      renderPointerY: screenY * metrics.scaleY,
+      renderScaleX: metrics.scaleX,
+      renderScaleY: metrics.scaleY,
+      actualWinner: actualWinner?.result ?? null,
+      actualPickedCount: actualWinner?.pickedCount ?? 0,
+      actualMatchedBy: actualWinner?.matchedBy ?? null,
+      syntheticWinner,
+      winner: actualWinner?.result ?? null,
+      candidates: ranked
+        .slice(0, 8)
+        .map((candidate) =>
+          toDebugCandidate(candidate.target, candidate.hit, candidate.score),
+        ),
+    };
   }
 
   dispose(): void {
@@ -175,6 +257,8 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
     this.renderer.removeAllViewProps();
     this.highlightables = [];
     this.projectedTargets = [];
+    this.pickableEntries = [];
+    this.cellPicker.initializePickList();
 
     if (!model) {
       return;
@@ -183,11 +267,9 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
     const primaryVolume = model.volumes[0] ?? null;
     if (primaryVolume) {
       const resource = this.getOrCreateVolumeResource(primaryVolume);
-      this.renderer.addActor(createBoundsActor(primaryVolume.bounds, [0.84, 0.9, 0.94], 0.3));
-      if (model.cropBox) {
-        this.renderer.addActor(createBoundsActor(model.cropBox, [1, 0.85, 0.45], 0.55));
+      if (model.capabilities.canRenderVolume) {
+        this.renderer.addVolume(createVolumeActor(primaryVolume, resource));
       }
-      this.renderer.addVolume(createVolumeActor(primaryVolume, resource));
 
       for (const plane of model.slicePlanes) {
         if (!plane.visible || plane.volumeId !== primaryVolume.id) {
@@ -196,13 +278,42 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
         const slice = createSliceActor(plane, primaryVolume, resource);
         this.renderer.addActor(slice.actor);
         this.renderer.addActor(slice.borderActor);
+        this.registerPickable(
+          slice.actor,
+          slice.actor.getMapper(),
+          (context) => {
+            const worldPosition = resolveSlicePickWorldPosition(
+              plane,
+              primaryVolume,
+              context,
+            );
+            return {
+            kind: "slice-plane",
+            itemId: plane.id,
+            itemName: plane.name,
+            worldX: worldPosition[0],
+            worldY: worldPosition[1],
+            worldZ: worldPosition[2],
+            screenX: context.screenX,
+            screenY: context.screenY,
+          };
+          },
+        );
         this.highlightables.push({
           itemId: plane.id,
           apply: (selected) => {
-            slice.actor.getProperty().setOpacity(selected ? Math.min(1, plane.style.opacity + 0.08) : plane.style.opacity);
-            slice.borderActor.getProperty().setColor(selected ? [1, 0.82, 0.38] : [0.95, 0.97, 0.99]);
-            slice.borderActor.getProperty().setLineWidth(selected ? 3 : 1.4);
-          }
+            slice.actor
+              .getProperty()
+              .setOpacity(
+                selected
+                  ? Math.min(1, plane.style.opacity + 0.08)
+                  : plane.style.opacity,
+              );
+            slice.borderActor
+              .getProperty()
+              .setColor(selected ? SELECTED_OUTLINE_COLOR : [0.95, 0.97, 0.99]);
+            slice.borderActor.getProperty().setLineWidth(selected ? 5.2 : 1.4);
+          },
         });
       }
     }
@@ -214,13 +325,55 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
       const surface = createHorizonActors(horizon);
       this.renderer.addActor(surface.fillActor);
       this.renderer.addActor(surface.wireActor);
+        this.registerPickable(
+          surface.fillActor,
+          surface.fillActor.getMapper(),
+          (context) => ({
+            kind: "horizon-surface",
+            itemId: horizon.id,
+            itemName: horizon.name,
+            worldX: context.worldPosition[0],
+            worldY: context.worldPosition[1],
+            worldZ: context.worldPosition[2],
+            screenX: context.screenX,
+            screenY: context.screenY,
+          }),
+        );
+        this.registerPickable(
+          surface.wireActor,
+          surface.wireActor.getMapper(),
+          (context) => ({
+            kind: "horizon-contour",
+            itemId: horizon.id,
+            itemName: horizon.name,
+            worldX: context.worldPosition[0],
+            worldY: context.worldPosition[1],
+            worldZ: context.worldPosition[2],
+            screenX: context.screenX,
+            screenY: context.screenY,
+          }),
+        );
       this.highlightables.push({
         itemId: horizon.id,
         apply: (selected) => {
-          surface.wireActor.getProperty().setColor(selected ? [1, 0.8, 0.34] : colorToRgb(horizon.style.edgeColor ?? "#173042"));
-          surface.wireActor.getProperty().setLineWidth(selected ? 3 : horizon.style.edgeWidth ?? 1.2);
-          surface.fillActor.getProperty().setOpacity(selected ? Math.min(1, horizon.style.fillOpacity + 0.1) : horizon.style.fillOpacity);
-        }
+          surface.wireActor
+            .getProperty()
+            .setColor(
+              selected
+                ? SELECTED_OUTLINE_COLOR
+                : colorToRgb(horizon.style.edgeColor ?? "#173042"),
+            );
+          surface.wireActor
+            .getProperty()
+            .setLineWidth(selected ? 4.8 : (horizon.style.edgeWidth ?? 1.2));
+          surface.fillActor
+            .getProperty()
+            .setOpacity(
+              selected
+                ? Math.min(1, horizon.style.fillOpacity + 0.1)
+                : horizon.style.fillOpacity,
+            );
+        },
       });
     }
 
@@ -230,12 +383,36 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
       }
       const actor = createWellActor(well);
       this.renderer.addActor(actor);
+      this.registerPickable(
+        actor,
+        actor.getMapper(),
+        (context) => ({
+          kind: "well-trajectory",
+          itemId: well.id,
+          itemName: well.name,
+          worldX: context.worldPosition[0],
+          worldY: context.worldPosition[1],
+          worldZ: context.worldPosition[2],
+          screenX: context.screenX,
+          screenY: context.screenY,
+        }),
+      );
       this.highlightables.push({
         itemId: well.id,
         apply: (selected) => {
-          actor.getProperty().setColor(selected ? [1, 0.82, 0.4] : colorToRgb(well.style.color));
-          actor.getProperty().setLineWidth(selected ? Math.max(4, well.style.width + 2) : Math.max(2, well.style.width));
-        }
+          actor
+            .getProperty()
+            .setColor(
+              selected ? SELECTED_OUTLINE_COLOR : colorToRgb(well.style.color),
+            );
+          actor
+            .getProperty()
+            .setLineWidth(
+              selected
+                ? Math.max(6, well.style.width + 3)
+                : Math.max(2, well.style.width),
+            );
+        },
       });
     }
 
@@ -245,12 +422,34 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
       }
       const actor = createMarkerActor(marker);
       this.renderer.addActor(actor);
+      this.registerPickable(
+        actor,
+        actor.getMapper(),
+        (context) => ({
+          kind: "well-marker",
+          itemId: marker.id,
+          itemName: marker.name,
+          worldX: context.worldPosition[0],
+          worldY: context.worldPosition[1],
+          worldZ: context.worldPosition[2],
+          screenX: context.screenX,
+          screenY: context.screenY,
+        }),
+      );
       this.highlightables.push({
         itemId: marker.id,
         apply: (selected) => {
-          actor.getProperty().setColor(selected ? [1, 0.83, 0.4] : colorToRgb(marker.color));
-          actor.setScale(selected ? 1.3 : 1, selected ? 1.3 : 1, selected ? 1.3 : 1);
-        }
+          actor
+            .getProperty()
+            .setColor(
+              selected ? SELECTED_OUTLINE_COLOR : colorToRgb(marker.color),
+            );
+          actor.setScale(
+            selected ? 1.45 : 1,
+            selected ? 1.45 : 1,
+            selected ? 1.45 : 1,
+          );
+        },
       });
     }
 
@@ -260,23 +459,51 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
       }
       const actor = createAnnotationActor(annotation);
       this.renderer.addActor(actor);
+      this.registerPickable(
+        actor,
+        actor.getMapper(),
+        (context) => ({
+          kind: "annotation",
+          itemId: annotation.id,
+          itemName: annotation.text,
+          worldX: context.worldPosition[0],
+          worldY: context.worldPosition[1],
+          worldZ: context.worldPosition[2],
+          screenX: context.screenX,
+          screenY: context.screenY,
+        }),
+      );
       this.highlightables.push({
         itemId: annotation.id,
         apply: (selected) => {
-          actor.getProperty().setColor(selected ? [1, 0.83, 0.4] : colorToRgb(annotation.color ?? "#ddeaf0"));
-          actor.setScale(selected ? 1.3 : 1, selected ? 1.3 : 1, selected ? 1.3 : 1);
-        }
+          actor
+            .getProperty()
+            .setColor(
+              selected
+                ? SELECTED_OUTLINE_COLOR
+                : colorToRgb(annotation.color ?? "#ddeaf0"),
+            );
+          actor.setScale(
+            selected ? 1.45 : 1,
+            selected ? 1.45 : 1,
+            selected ? 1.45 : 1,
+          );
+        },
       });
     }
   }
 
-  private applySelection(selection: VolumeInterpretationSelection | null): void {
+  private applySelection(
+    selection: VolumeInterpretationSelection | null,
+  ): void {
     for (const highlightable of this.highlightables) {
       highlightable.apply(selection?.itemId === highlightable.itemId);
     }
   }
 
-  private getOrCreateVolumeResource(volume: VolumeInterpretationVolume): SyntheticVolumeResource {
+  private getOrCreateVolumeResource(
+    volume: VolumeInterpretationVolume,
+  ): SyntheticVolumeResource {
     const signature = `${volume.id}:${volume.dimensions.inline}:${volume.dimensions.xline}:${volume.dimensions.sample}`;
     const cached = this.volumeResources.get(signature);
     if (cached) {
@@ -285,62 +512,87 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
 
     const values = synthesizeVolumeValues(volume);
     const imageData = vtkImageData.newInstance();
-    imageData.setDimensions(volume.dimensions.inline, volume.dimensions.xline, volume.dimensions.sample);
-    imageData.setOrigin([volume.bounds.minX, volume.bounds.minY, volume.bounds.minZ]);
+    imageData.setDimensions(
+      volume.dimensions.inline,
+      volume.dimensions.xline,
+      volume.dimensions.sample,
+    );
+    imageData.setOrigin([
+      volume.bounds.minX,
+      volume.bounds.minY,
+      volume.bounds.minZ,
+    ]);
     imageData.setSpacing([
       span(volume.bounds.minX, volume.bounds.maxX, volume.dimensions.inline),
       span(volume.bounds.minY, volume.bounds.maxY, volume.dimensions.xline),
-      span(volume.bounds.minZ, volume.bounds.maxZ, volume.dimensions.sample)
+      span(volume.bounds.minZ, volume.bounds.maxZ, volume.dimensions.sample),
     ]);
     imageData.getPointData().setScalars(
       vtkDataArray.newInstance({
         name: `${volume.id}-amplitude`,
         values,
-        numberOfComponents: 1
-      })
+        numberOfComponents: 1,
+      }),
     );
 
     const resource: SyntheticVolumeResource = {
       imageData,
-      range: minMax(values)
+      range: minMax(values),
     };
     this.volumeResources.set(signature, resource);
     return resource;
   }
 
-  private buildProjectedTargets(model: VolumeInterpretationModel): ProjectedTarget[] {
+  private buildProjectedTargets(
+    model: VolumeInterpretationModel,
+  ): ProjectedTarget[] {
     if (!this.renderer || !this.host) {
       return [];
     }
 
     const width = Math.max(1, this.host.clientWidth);
     const height = Math.max(1, this.host.clientHeight);
-    const project = (x: number, y: number, z: number): Point2D => projectPoint(this.renderer!, width, height, x, y, z);
+    const project = (x: number, y: number, z: number): Point2D =>
+      projectPoint(this.renderer!, width, height, x, y, z);
     const targets: ProjectedTarget[] = [];
 
     for (const plane of model.slicePlanes) {
       if (!plane.visible) {
         continue;
       }
-      const volume = model.volumes.find((candidate) => candidate.id === plane.volumeId);
+      const volume = model.volumes.find(
+        (candidate) => candidate.id === plane.volumeId,
+      );
       if (!volume) {
         continue;
       }
-      const corners = slicePlaneCorners(plane, volume).map((point) => project(point.x, point.y, point.z));
+      const corners = slicePlaneCorners(plane, volume).map((point) =>
+        project(point.x, point.y, point.z),
+      );
       const center = polygonCenter(corners);
       targets.push({
         type: "polygon",
         points: corners,
+        depth: center.depth,
         pick: {
           kind: "slice-plane",
           itemId: plane.id,
           itemName: plane.name,
-          worldX: plane.axis === "inline" ? plane.position : (volume.bounds.minX + volume.bounds.maxX) / 2,
-          worldY: plane.axis === "xline" ? plane.position : (volume.bounds.minY + volume.bounds.maxY) / 2,
-          worldZ: plane.axis === "sample" ? plane.position : (volume.bounds.minZ + volume.bounds.maxZ) / 2,
+          worldX:
+            plane.axis === "inline"
+              ? plane.position
+              : (volume.bounds.minX + volume.bounds.maxX) / 2,
+          worldY:
+            plane.axis === "xline"
+              ? plane.position
+              : (volume.bounds.minY + volume.bounds.maxY) / 2,
+          worldZ:
+            plane.axis === "sample"
+              ? plane.position
+              : (volume.bounds.minZ + volume.bounds.maxZ) / 2,
           screenX: center.x,
-          screenY: center.y
-        }
+          screenY: center.y,
+        },
       });
     }
 
@@ -348,16 +600,19 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
       if (!horizon.visible || horizon.points.length < 12) {
         continue;
       }
-      const perimeter = horizonPerimeter(horizon).map((point) => project(point.x, point.y, point.z));
+      const perimeter = horizonPerimeter(horizon).map((point) =>
+        project(point.x, point.y, point.z),
+      );
       const centerIndex = Math.floor((horizon.rows * horizon.columns) / 2);
       const center = project(
         horizon.points[centerIndex * 3]!,
         horizon.points[centerIndex * 3 + 1]!,
-        horizon.points[centerIndex * 3 + 2]!
+        horizon.points[centerIndex * 3 + 2]!,
       );
       targets.push({
         type: "polygon",
         points: perimeter,
+        depth: center.depth,
         pick: {
           kind: "horizon-surface",
           itemId: horizon.id,
@@ -366,8 +621,8 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
           worldY: horizon.points[centerIndex * 3 + 1]!,
           worldZ: horizon.points[centerIndex * 3 + 2]!,
           screenX: center.x,
-          screenY: center.y
-        }
+          screenY: center.y,
+        },
       });
     }
 
@@ -377,12 +632,21 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
       }
       const points: Point2D[] = [];
       for (let index = 0; index < well.points.length; index += 3) {
-        points.push(project(well.points[index]!, well.points[index + 1]!, well.points[index + 2]!));
+        points.push(
+          project(
+            well.points[index]!,
+            well.points[index + 1]!,
+            well.points[index + 2]!,
+          ),
+        );
       }
       targets.push({
         type: "polyline",
         points,
         strokeWidth: Math.max(3, well.style.width),
+        depth:
+          points.reduce((sum, point) => sum + point.depth, 0) /
+          Math.max(1, points.length),
         pick: {
           kind: "well-trajectory",
           itemId: well.id,
@@ -391,8 +655,8 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
           worldY: well.points[1]!,
           worldZ: well.points[2]!,
           screenX: points[0]!.x,
-          screenY: points[0]!.y
-        }
+          screenY: points[0]!.y,
+        },
       });
     }
 
@@ -405,6 +669,7 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
         type: "point",
         point,
         radius: Math.max(10, marker.size + 6),
+        depth: point.depth,
         pick: {
           kind: "well-marker",
           itemId: marker.id,
@@ -413,8 +678,8 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
           worldY: marker.y,
           worldZ: marker.z,
           screenX: point.x,
-          screenY: point.y
-        }
+          screenY: point.y,
+        },
       });
     }
 
@@ -427,6 +692,7 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
         type: "point",
         point,
         radius: 14,
+        depth: point.depth,
         pick: {
           kind: "annotation",
           itemId: annotation.id,
@@ -435,18 +701,181 @@ export class VolumeInterpretationVtkRenderer implements VolumeInterpretationRend
           worldY: annotation.y,
           worldZ: annotation.z,
           screenX: point.x,
-          screenY: point.y
-        }
+          screenY: point.y,
+        },
       });
     }
 
     return targets;
   }
+
+  private registerPickable(
+    prop: unknown,
+    mapper: unknown,
+    resolvePick: PickableEntry["resolvePick"],
+  ): void {
+    if (!prop || !mapper) {
+      return;
+    }
+    this.cellPicker.addPickList(prop as never);
+    this.pickableEntries.push({
+      prop,
+      mapper,
+      resolvePick,
+    });
+  }
+
+  private actualPick(
+    screenX: number,
+    screenY: number,
+    metrics: RenderMetrics,
+  ): {
+    result: VolumeInterpretationPickResult | null;
+    pickedCount: number;
+    matchedBy: "prop" | "mapper" | null;
+  } {
+    if (!this.renderer || !this.host) {
+      return { result: null, pickedCount: 0, matchedBy: null };
+    }
+    this.cellPicker.pick(
+      [screenX * metrics.scaleX, (metrics.cssHeight - screenY) * metrics.scaleY, 0],
+      this.renderer,
+    );
+    const pickedProps = this.cellPicker.getActors() ?? [];
+    const mapper = this.cellPicker.getMapper();
+    const byProp = pickedProps
+      .map(
+        (prop) =>
+          this.pickableEntries.find((candidate) => candidate.prop === prop) ??
+          null,
+      )
+      .find((candidate) => candidate !== null);
+    const entry =
+      byProp ??
+      (mapper
+        ? (this.pickableEntries.find(
+            (candidate) => candidate.mapper === mapper,
+          ) ?? null)
+        : null);
+    if (!entry) {
+      return {
+        result: null,
+        pickedCount: pickedProps.length,
+        matchedBy: null,
+      };
+    }
+    const [worldX, worldY, worldZ] = this.cellPicker.getPickPosition();
+    const cellIJK = this.cellPicker.getCellIJK() ?? [];
+    const pCoords = this.cellPicker.getPCoords() ?? [];
+    return {
+      result: entry.resolvePick({
+        worldPosition: [worldX, worldY, worldZ],
+        screenX,
+        screenY,
+        cellIJK,
+        pCoords,
+      }),
+      pickedCount: pickedProps.length,
+      matchedBy: byProp ? "prop" : "mapper",
+    };
+  }
+
+  private getRenderMetrics(): RenderMetrics {
+    const cssWidth = Math.max(1, this.host?.clientWidth ?? 1);
+    const cssHeight = Math.max(1, this.host?.clientHeight ?? 1);
+    const renderWindow = this.renderer?.getRenderWindow();
+    const views = renderWindow ? renderWindow.getViews() : [];
+    const view = views[0];
+    const viewSize =
+      typeof view?.getSize === "function" ? view.getSize() : [cssWidth, cssHeight];
+    const renderWidth = Math.max(1, viewSize[0] ?? cssWidth);
+    const renderHeight = Math.max(1, viewSize[1] ?? cssHeight);
+    return {
+      cssWidth,
+      cssHeight,
+      renderWidth,
+      renderHeight,
+      scaleX: renderWidth / cssWidth,
+      scaleY: renderHeight / cssHeight,
+    };
+  }
+}
+
+function resolveSlicePickWorldPosition(
+  plane: VolumeInterpretationSlicePlane,
+  volume: VolumeInterpretationVolume,
+  context: PickContext,
+): [number, number, number] {
+  if (context.cellIJK.length < 3) {
+    return context.worldPosition;
+  }
+  const inlineIndex = continuousSliceIndex(
+    context.cellIJK[0] ?? 0,
+    context.pCoords[0] ?? 0,
+    volume.dimensions.inline,
+  );
+  const xlineIndex = continuousSliceIndex(
+    context.cellIJK[1] ?? 0,
+    context.pCoords[1] ?? 0,
+    volume.dimensions.xline,
+  );
+  const sampleIndex = continuousSliceIndex(
+    context.cellIJK[2] ?? 0,
+    context.pCoords[2] ?? 0,
+    volume.dimensions.sample,
+  );
+  return [
+    plane.axis === "inline"
+      ? plane.position
+      : indexToWorldCoordinate(
+          volume.bounds.minX,
+          volume.bounds.maxX,
+          volume.dimensions.inline,
+          inlineIndex,
+        ),
+    plane.axis === "xline"
+      ? plane.position
+      : indexToWorldCoordinate(
+          volume.bounds.minY,
+          volume.bounds.maxY,
+          volume.dimensions.xline,
+          xlineIndex,
+        ),
+    plane.axis === "sample"
+      ? plane.position
+      : indexToWorldCoordinate(
+          volume.bounds.minZ,
+          volume.bounds.maxZ,
+          volume.dimensions.sample,
+          sampleIndex,
+        ),
+  ];
+}
+
+function continuousSliceIndex(
+  index: number,
+  parametricOffset: number,
+  count: number,
+): number {
+  return clamp(index + parametricOffset, 0, Math.max(0, count - 1));
+}
+
+function indexToWorldCoordinate(
+  minValue: number,
+  maxValue: number,
+  count: number,
+  index: number,
+): number {
+  return minValue + span(minValue, maxValue, count) * index;
+}
+
+function clamp(value: number, minValue: number, maxValue: number): number {
+  return Math.max(minValue, Math.min(maxValue, value));
 }
 
 function createVolumeActor(
   volume: VolumeInterpretationVolume,
-  resource: SyntheticVolumeResource
+  resource: SyntheticVolumeResource,
 ): vtkVolume {
   const mapper = vtkVolumeMapper.newInstance();
   mapper.setInputData(resource.imageData);
@@ -454,8 +883,8 @@ function createVolumeActor(
     Math.max(
       span(volume.bounds.minX, volume.bounds.maxX, volume.dimensions.inline),
       span(volume.bounds.minY, volume.bounds.maxY, volume.dimensions.xline),
-      span(volume.bounds.minZ, volume.bounds.maxZ, volume.dimensions.sample)
-    ) * 0.75
+      span(volume.bounds.minZ, volume.bounds.maxZ, volume.dimensions.sample),
+    ) * 0.75,
   );
 
   const actor = vtkVolume.newInstance();
@@ -464,13 +893,23 @@ function createVolumeActor(
   const colorTransfer = createColorTransferFunction(
     volume.displayDefaults?.colormap ?? "red-white-blue",
     resource.range[0],
-    resource.range[1]
+    resource.range[1],
   );
   const opacityTransfer = vtkPiecewiseFunction.newInstance();
   opacityTransfer.addPoint(resource.range[0], 0);
-  opacityTransfer.addPoint(resource.range[0] * 0.35, volume.displayDefaults?.opacity ? volume.displayDefaults.opacity * 0.025 : 0.02);
+  opacityTransfer.addPoint(
+    resource.range[0] * 0.35,
+    volume.displayDefaults?.opacity
+      ? volume.displayDefaults.opacity * 0.025
+      : 0.02,
+  );
   opacityTransfer.addPoint(0, 0);
-  opacityTransfer.addPoint(resource.range[1] * 0.35, volume.displayDefaults?.opacity ? volume.displayDefaults.opacity * 0.025 : 0.02);
+  opacityTransfer.addPoint(
+    resource.range[1] * 0.35,
+    volume.displayDefaults?.opacity
+      ? volume.displayDefaults.opacity * 0.025
+      : 0.02,
+  );
   opacityTransfer.addPoint(resource.range[1], 0);
 
   actor.getProperty().setRGBTransferFunction(0, colorTransfer);
@@ -483,7 +922,7 @@ function createVolumeActor(
 function createSliceActor(
   plane: VolumeInterpretationSlicePlane,
   volume: VolumeInterpretationVolume,
-  resource: SyntheticVolumeResource
+  resource: SyntheticVolumeResource,
 ): { actor: vtkImageSlice; borderActor: vtkActor } {
   const mapper = vtkImageMapper.newInstance();
   mapper.setInputData(resource.imageData);
@@ -501,10 +940,16 @@ function createSliceActor(
   actor.getProperty().setInterpolationTypeToLinear();
   actor.getProperty().setOpacity(plane.style.opacity);
   actor.getProperty().setUseLookupTableScalarRange(true);
-  actor.getProperty().setRGBTransferFunction(
-    0,
-    createColorTransferFunction(plane.style.colormap, resource.range[0], resource.range[1])
-  );
+  actor
+    .getProperty()
+    .setRGBTransferFunction(
+      0,
+      createColorTransferFunction(
+        plane.style.colormap,
+        resource.range[0],
+        resource.range[1],
+      ),
+    );
 
   const borderActor = createPlaneBorderActor(plane, volume);
   return { actor, borderActor };
@@ -512,13 +957,13 @@ function createSliceActor(
 
 function createPlaneBorderActor(
   plane: VolumeInterpretationSlicePlane,
-  volume: VolumeInterpretationVolume
+  volume: VolumeInterpretationVolume,
 ): vtkActor {
   const corners = slicePlaneCorners(plane, volume);
   const points = vtkPoints.newInstance();
   points.setData(
     new Float32Array(corners.flatMap((point) => [point.x, point.y, point.z])),
-    3
+    3,
   );
 
   const lines = vtkCellArray.newInstance();
@@ -541,9 +986,10 @@ function createPlaneBorderActor(
   return actor;
 }
 
-function createHorizonActors(
-  horizon: VolumeInterpretationHorizonSurface
-): { fillActor: vtkActor; wireActor: vtkActor } {
+function createHorizonActors(horizon: VolumeInterpretationHorizonSurface): {
+  fillActor: vtkActor;
+  wireActor: vtkActor;
+} {
   const points = vtkPoints.newInstance();
   points.setData(horizon.points, 3);
 
@@ -568,8 +1014,8 @@ function createHorizonActors(
       vtkDataArray.newInstance({
         name: `${horizon.id}-scalar`,
         values: horizon.colorValues,
-        numberOfComponents: 1
-      })
+        numberOfComponents: 1,
+      }),
     );
   }
 
@@ -587,7 +1033,9 @@ function createHorizonActors(
 
   const fillActor = vtkActor.newInstance();
   fillActor.setMapper(fillMapper);
-  fillActor.getProperty().setColor(colorToRgb(horizon.style.fillColor ?? "#4cc9f0"));
+  fillActor
+    .getProperty()
+    .setColor(colorToRgb(horizon.style.fillColor ?? "#4cc9f0"));
   fillActor.getProperty().setOpacity(horizon.style.fillOpacity);
   fillActor.getProperty().setAmbient(0.35);
   fillActor.getProperty().setDiffuse(0.75);
@@ -599,7 +1047,9 @@ function createHorizonActors(
   const wireActor = vtkActor.newInstance();
   wireActor.setMapper(wireMapper);
   wireActor.getProperty().setRepresentationToWireframe();
-  wireActor.getProperty().setColor(colorToRgb(horizon.style.edgeColor ?? "#173042"));
+  wireActor
+    .getProperty()
+    .setColor(colorToRgb(horizon.style.edgeColor ?? "#173042"));
   wireActor.getProperty().setOpacity(horizon.style.showContours ? 0.82 : 0.48);
   wireActor.getProperty().setLineWidth(horizon.style.edgeWidth ?? 1.2);
   wireActor.getProperty().setLighting(false);
@@ -611,7 +1061,10 @@ function createWellActor(well: VolumeInterpretationWellTrajectory): vtkActor {
   const points = vtkPoints.newInstance();
   points.setData(well.points, 3);
 
-  const lineIds = Array.from({ length: well.points.length / 3 }, (_, index) => index);
+  const lineIds = Array.from(
+    { length: well.points.length / 3 },
+    (_, index) => index,
+  );
   const lines = vtkCellArray.newInstance();
   lines.insertNextCell(lineIds);
 
@@ -626,7 +1079,7 @@ function createWellActor(well: VolumeInterpretationWellTrajectory): vtkActor {
     const tube = vtkTubeFilter.newInstance({
       radius: Math.max(4, well.style.width * 2.2),
       numberOfSides: 16,
-      capping: true
+      capping: true,
     });
     tube.setInputData(polyData);
     mapper.setInputConnection(tube.getOutputPort());
@@ -647,7 +1100,7 @@ function createMarkerActor(marker: VolumeInterpretationMarker): vtkActor {
     center: [marker.x, marker.y, marker.z],
     radius: Math.max(10, marker.size * 1.8),
     thetaResolution: 18,
-    phiResolution: 18
+    phiResolution: 18,
   });
   const mapper = vtkMapper.newInstance();
   mapper.setInputConnection(sphere.getOutputPort());
@@ -660,12 +1113,14 @@ function createMarkerActor(marker: VolumeInterpretationMarker): vtkActor {
   return actor;
 }
 
-function createAnnotationActor(annotation: VolumeInterpretationAnnotation): vtkActor {
+function createAnnotationActor(
+  annotation: VolumeInterpretationAnnotation,
+): vtkActor {
   const sphere = vtkSphereSource.newInstance({
     center: [annotation.x, annotation.y, annotation.z],
     radius: 12,
     thetaResolution: 14,
-    phiResolution: 14
+    phiResolution: 14,
   });
   const mapper = vtkMapper.newInstance();
   mapper.setInputConnection(sphere.getOutputPort());
@@ -678,48 +1133,32 @@ function createAnnotationActor(annotation: VolumeInterpretationAnnotation): vtkA
   return actor;
 }
 
-function createBoundsActor(
+function updateCamera(
+  renderer: vtkRenderer,
   bounds: VolumeInterpretationBounds,
-  color: [number, number, number],
-  opacity: number
-): vtkActor {
-  const cube = vtkCubeSource.newInstance({
-    center: [
-      (bounds.minX + bounds.maxX) / 2,
-      (bounds.minY + bounds.maxY) / 2,
-      (bounds.minZ + bounds.maxZ) / 2
-    ],
-    xLength: bounds.maxX - bounds.minX,
-    yLength: bounds.maxY - bounds.minY,
-    zLength: bounds.maxZ - bounds.minZ
-  });
-
-  const mapper = vtkMapper.newInstance();
-  mapper.setInputConnection(cube.getOutputPort());
-
-  const actor = vtkActor.newInstance();
-  actor.setMapper(mapper);
-  actor.getProperty().setRepresentationToWireframe();
-  actor.getProperty().setColor(color);
-  actor.getProperty().setOpacity(opacity);
-  actor.getProperty().setLineWidth(1.2);
-  actor.getProperty().setLighting(false);
-  actor.setPickable(false);
-  return actor;
-}
-
-function updateCamera(renderer: vtkRenderer, bounds: VolumeInterpretationBounds, view: VolumeInterpretationView): void {
+  view: VolumeInterpretationView,
+): void {
   const camera = renderer.getActiveCamera();
   const yaw = (view.yawDeg * Math.PI) / 180;
   const pitch = (view.pitchDeg * Math.PI) / 180;
   const radius =
-    Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, bounds.maxZ - bounds.minZ, 1) * (2.15 / Math.max(0.35, view.zoom));
+    Math.max(
+      bounds.maxX - bounds.minX,
+      bounds.maxY - bounds.minY,
+      bounds.maxZ - bounds.minZ,
+      1,
+    ) *
+    (2.15 / Math.max(0.35, view.zoom));
 
   const offsetX = Math.cos(yaw) * Math.cos(pitch) * radius;
   const offsetY = Math.sin(yaw) * Math.cos(pitch) * radius;
   const offsetZ = Math.sin(pitch) * radius;
 
-  camera.setPosition(view.focusX + offsetX, view.focusY + offsetY, view.focusZ + offsetZ);
+  camera.setPosition(
+    view.focusX + offsetX,
+    view.focusY + offsetY,
+    view.focusZ + offsetZ,
+  );
   camera.setFocalPoint(view.focusX, view.focusY, view.focusZ);
   camera.setViewUp(0, 0, 1);
 }
@@ -730,16 +1169,24 @@ function projectPoint(
   height: number,
   x: number,
   y: number,
-  z: number
+  z: number,
 ): Point2D {
-  const [displayX, displayY] = renderer.worldToNormalizedDisplay(x, y, z, width / Math.max(1, height));
+  const [displayX, displayY, displayZ = 1] = renderer.worldToNormalizedDisplay(
+    x,
+    y,
+    z,
+    width / Math.max(1, height),
+  );
   return {
     x: displayX * width,
-    y: (1 - displayY) * height
+    y: (1 - displayY) * height,
+    depth: displayZ,
   };
 }
 
-function synthesizeVolumeValues(volume: VolumeInterpretationVolume): Float32Array {
+function synthesizeVolumeValues(
+  volume: VolumeInterpretationVolume,
+): Float32Array {
   const { inline, xline, sample } = volume.dimensions;
   const values = new Float32Array(inline * xline * sample);
   let offset = 0;
@@ -752,9 +1199,18 @@ function synthesizeVolumeValues(volume: VolumeInterpretationVolume): Float32Arra
         const xn = inline > 1 ? i / (inline - 1) - 0.5 : 0;
         const folded = Math.sin(zn * 28 + xn * 6 + Math.sin(yn * 7) * 1.8);
         const stratigraphy = Math.sin(zn * 44 + xn * 9 - yn * 5);
-        const channel = Math.exp(-((xn - yn * 0.18) * (xn - yn * 0.18) * 22 + (zn + 0.12) * (zn + 0.12) * 85));
-        const diapir = Math.exp(-((xn + 0.05) * (xn + 0.05) * 36 + (yn - 0.08) * (yn - 0.08) * 28)) * Math.cos(zn * 18);
-        values[offset] = folded * 0.55 + stratigraphy * 0.32 - channel * 0.65 + diapir * 0.42;
+        const channel = Math.exp(
+          -(
+            (xn - yn * 0.18) * (xn - yn * 0.18) * 22 +
+            (zn + 0.12) * (zn + 0.12) * 85
+          ),
+        );
+        const diapir =
+          Math.exp(
+            -((xn + 0.05) * (xn + 0.05) * 36 + (yn - 0.08) * (yn - 0.08) * 28),
+          ) * Math.cos(zn * 18);
+        values[offset] =
+          folded * 0.55 + stratigraphy * 0.32 - channel * 0.65 + diapir * 0.42;
         offset += 1;
       }
     }
@@ -766,7 +1222,7 @@ function synthesizeVolumeValues(volume: VolumeInterpretationVolume): Float32Arra
 function createColorTransferFunction(
   colorMap: VolumeInterpretationColorMap,
   minValue: number,
-  maxValue: number
+  maxValue: number,
 ): vtkColorTransferFunction {
   const transfer = vtkColorTransferFunction.newInstance();
   if (colorMap === "grayscale") {
@@ -781,11 +1237,24 @@ function createColorTransferFunction(
   return transfer;
 }
 
-function createSurfaceLookupTable(minValue: number, maxValue: number): vtkColorTransferFunction {
+function createSurfaceLookupTable(
+  minValue: number,
+  maxValue: number,
+): vtkColorTransferFunction {
   const transfer = vtkColorTransferFunction.newInstance();
   transfer.addRGBPoint(minValue, 0.82, 0.05, 0.12);
-  transfer.addRGBPoint(minValue + (maxValue - minValue) * 0.33, 0.92, 0.72, 0.12);
-  transfer.addRGBPoint(minValue + (maxValue - minValue) * 0.66, 0.18, 0.78, 0.46);
+  transfer.addRGBPoint(
+    minValue + (maxValue - minValue) * 0.33,
+    0.92,
+    0.72,
+    0.12,
+  );
+  transfer.addRGBPoint(
+    minValue + (maxValue - minValue) * 0.66,
+    0.18,
+    0.78,
+    0.46,
+  );
   transfer.addRGBPoint(maxValue, 0.08, 0.34, 0.88);
   return transfer;
 }
@@ -799,7 +1268,7 @@ function colorToRgb(color: string): [number, number, number] {
     return [
       parseInt(normalized.slice(1, 3), 16) / 255,
       parseInt(normalized.slice(3, 5), 16) / 255,
-      parseInt(normalized.slice(5, 7), 16) / 255
+      parseInt(normalized.slice(5, 7), 16) / 255,
     ];
   }
   return [0.8, 0.86, 0.9];
@@ -812,7 +1281,7 @@ function span(min: number, max: number, count: number): number {
 function worldToIndex(
   axis: VolumeInterpretationSlicePlane["axis"],
   worldPosition: number,
-  volume: VolumeInterpretationVolume
+  volume: VolumeInterpretationVolume,
 ): number {
   const bounds =
     axis === "inline"
@@ -827,7 +1296,7 @@ function worldToIndex(
 
 function slicePlaneCorners(
   plane: VolumeInterpretationSlicePlane,
-  volume: VolumeInterpretationVolume
+  volume: VolumeInterpretationVolume,
 ): Array<{ x: number; y: number; z: number }> {
   switch (plane.axis) {
     case "inline":
@@ -835,27 +1304,27 @@ function slicePlaneCorners(
         { x: plane.position, y: volume.bounds.minY, z: volume.bounds.minZ },
         { x: plane.position, y: volume.bounds.maxY, z: volume.bounds.minZ },
         { x: plane.position, y: volume.bounds.maxY, z: volume.bounds.maxZ },
-        { x: plane.position, y: volume.bounds.minY, z: volume.bounds.maxZ }
+        { x: plane.position, y: volume.bounds.minY, z: volume.bounds.maxZ },
       ];
     case "xline":
       return [
         { x: volume.bounds.minX, y: plane.position, z: volume.bounds.minZ },
         { x: volume.bounds.maxX, y: plane.position, z: volume.bounds.minZ },
         { x: volume.bounds.maxX, y: plane.position, z: volume.bounds.maxZ },
-        { x: volume.bounds.minX, y: plane.position, z: volume.bounds.maxZ }
+        { x: volume.bounds.minX, y: plane.position, z: volume.bounds.maxZ },
       ];
     default:
       return [
         { x: volume.bounds.minX, y: volume.bounds.minY, z: plane.position },
         { x: volume.bounds.maxX, y: volume.bounds.minY, z: plane.position },
         { x: volume.bounds.maxX, y: volume.bounds.maxY, z: plane.position },
-        { x: volume.bounds.minX, y: volume.bounds.maxY, z: plane.position }
+        { x: volume.bounds.minX, y: volume.bounds.maxY, z: plane.position },
       ];
   }
 }
 
 function horizonPerimeter(
-  horizon: VolumeInterpretationHorizonSurface
+  horizon: VolumeInterpretationHorizonSurface,
 ): Array<{ x: number; y: number; z: number }> {
   const points: Array<{ x: number; y: number; z: number }> = [];
   for (let column = 0; column < horizon.columns; column += 1) {
@@ -876,13 +1345,13 @@ function horizonPerimeter(
 function horizonPoint(
   horizon: VolumeInterpretationHorizonSurface,
   row: number,
-  column: number
+  column: number,
 ): { x: number; y: number; z: number } {
   const index = row * horizon.columns + column;
   return {
     x: horizon.points[index * 3]!,
     y: horizon.points[index * 3 + 1]!,
-    z: horizon.points[index * 3 + 2]!
+    z: horizon.points[index * 3 + 2]!,
   };
 }
 
@@ -890,13 +1359,15 @@ function polygonCenter(points: Point2D[]): Point2D {
   const total = points.reduce(
     (accumulator, point) => ({
       x: accumulator.x + point.x,
-      y: accumulator.y + point.y
+      y: accumulator.y + point.y,
+      depth: accumulator.depth + point.depth,
     }),
-    { x: 0, y: 0 }
+    { x: 0, y: 0, depth: 0 },
   );
   return {
     x: total.x / Math.max(1, points.length),
-    y: total.y / Math.max(1, points.length)
+    y: total.y / Math.max(1, points.length),
+    depth: total.depth / Math.max(1, points.length),
   };
 }
 
@@ -910,9 +1381,16 @@ function minMax(values: Float32Array): [number, number] {
   return [min, max];
 }
 
-function pickScore(target: ProjectedTarget, screenX: number, screenY: number): number | null {
+function pickScore(
+  target: ProjectedTarget,
+  screenX: number,
+  screenY: number,
+): number | null {
   if (target.type === "point") {
-    const distance = Math.hypot(target.point.x - screenX, target.point.y - screenY);
+    const distance = Math.hypot(
+      target.point.x - screenX,
+      target.point.y - screenY,
+    );
     return distance <= target.radius ? distance : null;
   }
   if (target.type === "polyline") {
@@ -926,10 +1404,69 @@ function pickScore(target: ProjectedTarget, screenX: number, screenY: number): n
   return distance <= 8 ? distance : null;
 }
 
+function rankProjectedTargets(
+  targets: ProjectedTarget[],
+  screenX: number,
+  screenY: number,
+): Array<{ target: ProjectedTarget; hit: boolean; score: number | null }> {
+  return targets
+    .map((target) => {
+      const score = pickScore(target, screenX, screenY);
+      return {
+        target,
+        hit: score !== null,
+        score,
+      };
+    })
+    .sort((left, right) => compareCandidateRank(left, right));
+}
+
+function compareCandidateRank(
+  left: { target: ProjectedTarget; hit: boolean; score: number | null },
+  right: { target: ProjectedTarget; hit: boolean; score: number | null },
+): number {
+  if (left.hit !== right.hit) {
+    return left.hit ? -1 : 1;
+  }
+  const leftScore = left.score ?? Number.POSITIVE_INFINITY;
+  const rightScore = right.score ?? Number.POSITIVE_INFINITY;
+  if (Math.abs(leftScore - rightScore) > 1e-6) {
+    return leftScore - rightScore;
+  }
+  if (Math.abs(left.target.depth - right.target.depth) > 1e-6) {
+    return left.target.depth - right.target.depth;
+  }
+  return left.target.pick.itemId.localeCompare(right.target.pick.itemId);
+}
+
+function toDebugCandidate(
+  target: ProjectedTarget,
+  hit: boolean,
+  score: number | null,
+): VolumeInterpretationPickDebugCandidate {
+  return {
+    targetType: target.type,
+    kind: target.pick.kind,
+    itemId: target.pick.itemId,
+    itemName: target.pick.itemName,
+    hit,
+    score,
+    depth: target.depth,
+    screenX: target.pick.screenX,
+    screenY: target.pick.screenY,
+    worldX: target.pick.worldX,
+    worldY: target.pick.worldY,
+    worldZ: target.pick.worldZ,
+  };
+}
+
 function polylineDistance(points: Point2D[], x: number, y: number): number {
   let best = Number.POSITIVE_INFINITY;
   for (let index = 0; index < points.length - 1; index += 1) {
-    best = Math.min(best, segmentDistance(points[index]!, points[index + 1]!, x, y));
+    best = Math.min(
+      best,
+      segmentDistance(points[index]!, points[index + 1]!, x, y),
+    );
   }
   return best;
 }
@@ -938,7 +1475,10 @@ function polygonDistance(points: Point2D[], x: number, y: number): number {
   let best = Number.POSITIVE_INFINITY;
   for (let index = 0; index < points.length; index += 1) {
     const nextIndex = (index + 1) % points.length;
-    best = Math.min(best, segmentDistance(points[index]!, points[nextIndex]!, x, y));
+    best = Math.min(
+      best,
+      segmentDistance(points[index]!, points[nextIndex]!, x, y),
+    );
   }
   return best;
 }
@@ -950,7 +1490,10 @@ function segmentDistance(a: Point2D, b: Point2D, x: number, y: number): number {
   if (lengthSquared <= 1e-6) {
     return Math.hypot(x - a.x, y - a.y);
   }
-  const ratio = Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / lengthSquared));
+  const ratio = Math.max(
+    0,
+    Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / lengthSquared),
+  );
   const projectedX = a.x + ratio * dx;
   const projectedY = a.y + ratio * dy;
   return Math.hypot(x - projectedX, y - projectedY);
@@ -958,12 +1501,19 @@ function segmentDistance(a: Point2D, b: Point2D, x: number, y: number): number {
 
 function pointInPolygon(points: Point2D[], x: number, y: number): boolean {
   let inside = false;
-  for (let left = 0, right = points.length - 1; left < points.length; right = left++) {
+  for (
+    let left = 0, right = points.length - 1;
+    left < points.length;
+    right = left++
+  ) {
     const pointLeft = points[left]!;
     const pointRight = points[right]!;
     const intersects =
       pointLeft.y > y !== pointRight.y > y &&
-      x < ((pointRight.x - pointLeft.x) * (y - pointLeft.y)) / Math.max(1e-6, pointRight.y - pointLeft.y) + pointLeft.x;
+      x <
+        ((pointRight.x - pointLeft.x) * (y - pointLeft.y)) /
+          Math.max(1e-6, pointRight.y - pointLeft.y) +
+          pointLeft.x;
     if (intersects) {
       inside = !inside;
     }

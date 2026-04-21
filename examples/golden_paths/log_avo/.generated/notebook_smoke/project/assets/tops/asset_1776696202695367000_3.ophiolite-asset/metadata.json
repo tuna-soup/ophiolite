@@ -1,0 +1,63 @@
+{
+  "schema_version": "0.1.0",
+  "asset_kind": "TopSet",
+  "row_count": 18,
+  "columns": [
+    {
+      "name": "name",
+      "data_type": "Utf8",
+      "unit": null,
+      "description": null,
+      "nullable": true,
+      "is_index": false
+    },
+    {
+      "name": "top_depth",
+      "data_type": "Float64",
+      "unit": null,
+      "description": null,
+      "nullable": true,
+      "is_index": false
+    },
+    {
+      "name": "base_depth",
+      "data_type": "Float64",
+      "unit": null,
+      "description": null,
+      "nullable": false,
+      "is_index": false
+    },
+    {
+      "name": "source",
+      "data_type": "Utf8",
+      "unit": null,
+      "description": null,
+      "nullable": false,
+      "is_index": false
+    },
+    {
+      "name": "source_depth_reference",
+      "data_type": "Utf8",
+      "unit": null,
+      "description": null,
+      "nullable": false,
+      "is_index": false
+    },
+    {
+      "name": "depth_domain",
+      "data_type": "Utf8",
+      "unit": null,
+      "description": null,
+      "nullable": false,
+      "is_index": false
+    },
+    {
+      "name": "depth_datum",
+      "data_type": "Utf8",
+      "unit": null,
+      "description": null,
+      "nullable": false,
+      "is_index": false
+    }
+  ]
+}

@@ -547,7 +547,7 @@ function mockAxisRanges(templateId: RockPhysicsTemplateId): { xMin: number; xMax
     case "lambda-rho-vs-mu-rho":
       return { xMin: -30, xMax: 180, yMin: 10, yMax: 130 };
     case "neutron-porosity-vs-bulk-density":
-      return { xMin: -5, xMax: 60, yMin: 1.9, yMax: 3.0 };
+      return { xMin: -5, xMax: 50, yMin: 1.9, yMax: 3.0 };
     case "phi-vs-ai":
       return { xMin: 5_500, xMax: 11_000, yMin: 0, yMax: 40 };
     case "pr-vs-ai":

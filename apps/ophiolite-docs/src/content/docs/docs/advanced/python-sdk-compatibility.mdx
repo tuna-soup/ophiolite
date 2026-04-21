@@ -1,0 +1,60 @@
+---
+title: Python SDK Compatibility
+description: Public compatibility and deprecation expectations for the Python surface.
+draft: false
+---
+
+**Audience:** SDK users and maintainers  
+**Status:** Preview
+
+The Python SDK is still preview-stage, but it should not change randomly.
+
+## What should be treated as more stable
+
+These parts should move slowly and deliberately:
+
+- top-level domain nouns such as `Project`, `Survey`, `Well`, and `Wellbore`
+- typed workflow helpers that express real user tasks
+- advanced namespace boundaries
+- operator authoring entrypoints in `ophiolite_sdk.operators`
+
+Even in preview, these are part of the public identity of the product.
+
+## What can evolve faster
+
+These parts can widen or move more freely:
+
+- lower-level transport models
+- preview convenience helpers
+- app-facing integration adapters
+- incomplete wrapper coverage around deeper Rust capabilities
+
+## Deprecation rule
+
+When a public Python name needs to move:
+
+1. keep a compatibility alias for at least the current preview cycle
+2. emit a deprecation warning from the old name
+3. update all public docs and examples in the same change
+4. prefer moving the symbol into an explicit advanced namespace instead of deleting the concept
+
+## Documentation rule
+
+The docs should always reflect the preferred public surface, not just the existence of compatibility shims.
+
+That means:
+
+- examples should teach the current preferred names
+- reference pages should call out advanced namespaces explicitly
+- deprecated names can be noted, but they should not lead the story
+
+## Current guidance
+
+- keep the top-level package small
+- prefer typed workflow composition for built-in capabilities
+- keep charts, widgets, and app wrappers out of the core Python identity
+- keep extension plumbing visible but separate
+
+This is how the Python surface becomes easier to trust without pretending it is fully frozen yet.
+
+Next: [Public surface policy](/docs/advanced/public-surface-policy/)

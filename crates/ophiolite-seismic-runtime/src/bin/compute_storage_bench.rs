@@ -1668,11 +1668,11 @@ fn synthetic_dataset(ilines: usize, xlines: usize, samples: usize) -> BenchmarkD
         let smp = sample as f32 / samples.max(1) as f32;
         ((il * 17.0).sin() + (xl * 11.0).cos()) * (1.0 - smp) + (smp * 31.0).sin() * 0.35
     });
-    let axes = VolumeAxes {
-        ilines: (0..ilines).map(|value| value as f64).collect(),
-        xlines: (0..xlines).map(|value| value as f64).collect(),
-        sample_axis_ms: (0..samples).map(|value| value as f32 * 2.0).collect(),
-    };
+    let axes = VolumeAxes::from_time_axis(
+        (0..ilines).map(|value| value as f64).collect(),
+        (0..xlines).map(|value| value as f64).collect(),
+        (0..samples).map(|value| value as f32 * 2.0).collect(),
+    );
     let source = SourceIdentity {
         source_path: PathBuf::from(format!("synthetic://{ilines}x{xlines}x{samples}")),
         file_size: (ilines * xlines * samples * std::mem::size_of::<f32>()) as u64,

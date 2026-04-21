@@ -9,18 +9,14 @@ scripts, notebooks, and local automation can reuse the same platform-owned opera
 
 Current wrapped platform operations:
 
-- `operation-catalog`
-- `create-project`
-- `open-project`
-- `project-summary`
-- `list-project-wells`
-- `list-project-wellbores`
-- `import`
-- `inspect-file`
-- `summary`
-- `list-curves`
-- `examples`
-- `generate-fixture-packages`
+- project lifecycle and inventory
+- well, wellbore, and survey discovery
+- well-panel, survey-map, trajectory, and section-overlay resolution
+- operator lock inspection and operator package installation
+- compute catalog lookup and compute execution
+- import preview, vendor bridge, and fixture-generation utilities
+
+The Python wrapper stays checked against the platform operation catalog, so the wrapped CLI surface does not drift silently.
 
 ## Usage
 

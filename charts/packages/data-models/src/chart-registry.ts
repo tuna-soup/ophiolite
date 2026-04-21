@@ -84,7 +84,7 @@ export type ChartInteractionToolId =
   | "crop"
   | "select"
   | "interpret-seed";
-export type ChartInteractionActionId = "fitToData" | "resetView" | "centerSelection";
+export type ChartInteractionActionId = "fitToData" | "topView" | "sideView" | "centerSelection";
 
 export interface ChartInteractionProfile {
   tools: readonly ChartInteractionToolId[];
@@ -141,8 +141,8 @@ const AVO_INTERACTION_PROFILE = {
 } as const satisfies ChartInteractionProfile;
 
 const VOLUME_INTERPRETATION_INTERACTION_PROFILE = {
-  tools: ["pointer", "orbit", "pan", "slice-drag", "crop", "select", "interpret-seed"],
-  actions: ["fitToData", "resetView", "centerSelection"]
+  tools: ["pointer", "orbit", "pan", "interpret-seed"],
+  actions: ["fitToData", "topView", "sideView", "centerSelection"]
 } as const satisfies ChartInteractionProfile;
 
 export const CHART_DEFINITIONS = [

@@ -5,6 +5,8 @@ export interface WorkerSectionPayload {
   axis: SectionPayload["axis"];
   coordinate: SectionPayload["coordinate"];
   dimensions: SectionPayload["dimensions"];
+  logicalDimensions?: SectionPayload["logicalDimensions"];
+  window?: SectionPayload["window"];
   amplitudesBuffer: ArrayBuffer;
   horizontalAxisBuffer: ArrayBuffer;
   inlineAxisBuffer?: ArrayBuffer;
@@ -23,8 +25,11 @@ export interface WorkerOverlayPayload {
 }
 
 export interface WorkerBaseStatePayload {
-  width: number;
-  height: number;
+  cssWidth: number;
+  cssHeight: number;
+  pixelRatio: number;
+  pixelWidth: number;
+  pixelHeight: number;
   plotRect: PlotRect;
 }
 
@@ -95,6 +100,8 @@ export function cloneSectionForWorker(section: SectionPayload): {
       axis: section.axis,
       coordinate: { ...section.coordinate },
       dimensions: { ...section.dimensions },
+      logicalDimensions: section.logicalDimensions ? { ...section.logicalDimensions } : undefined,
+      window: section.window ? { ...section.window } : undefined,
       amplitudesBuffer: amplitudes.buffer,
       horizontalAxisBuffer: horizontalAxis.buffer,
       inlineAxisBuffer: inlineAxis?.buffer,

@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "id": "avo-explicit-edges",
+  "name": "F2-A5 Explicit Edge AVO",
+  "title": "Explicit Edge Zoeppritz AVO",
+  "subtitle": "F2-A5 user-defined interval edges",
+  "x_axis": {
+    "label": "Incidence Angle",
+    "unit": "deg"
+  },
+  "y_axis": {
+    "label": "PP Reflectivity",
+    "unit": "ratio"
+  },
+  "interfaces": [
+    {
+      "id": "interface-1",
+      "label": "Interface 1",
+      "color": "#0B7285",
+      "reservoir_label": "1887.3 m"
+    },
+    {
+      "id": "interface-2",
+      "label": "Interface 2",
+      "color": "#D9480F",
+      "reservoir_label": "1893.4 m"
+    },
+    {
+      "id": "interface-3",
+      "label": "Interface 3",
+      "color": "#2B8A3E",
+      "reservoir_label": "1899.5 m"
+    }
+  ],
+  "series": [
+    {
+      "id": "interface-1-series",
+      "interface_id": "interface-1",
+      "label": "Interface 1",
+      "color": "#0B7285",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.006769448518753052,
+        0.006783053278923035,
+        0.006822893396019936,
+        0.0068860137835145,
+        0.006967374589294195,
+        0.007059629075229168,
+        0.007152707781642675,
+        0.007233033422380686,
+        0.007282058708369732
+      ]
+    },
+    {
+      "id": "interface-2-series",
+      "interface_id": "interface-2",
+      "label": "Interface 2",
+      "color": "#D9480F",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        -0.3527549207210541,
+        -0.35323625802993774,
+        -0.35473722219467163,
+        -0.35742855072021484,
+        -0.361595094203949,
+        -0.3676362931728363,
+        -0.3760669529438019,
+        -0.38751843571662903,
+        -0.4027402400970459
+      ]
+    },
+    {
+      "id": "interface-3-series",
+      "interface_id": "interface-3",
+      "label": "Interface 3",
+      "color": "#2B8A3E",
+      "style": "solid",
+      "reflectivity_model": "zoeppritz",
+      "anisotropy_mode": "isotropic",
+      "incidence_angles_deg": [
+        0.0,
+        5.0,
+        10.0,
+        15.0,
+        20.0,
+        25.0,
+        30.0,
+        35.0,
+        40.0
+      ],
+      "values": [
+        0.10189394652843475,
+        0.10160239785909653,
+        0.10074379295110703,
+        0.09936664253473282,
+        0.09755335003137589,
+        0.09542329609394073,
+        0.09313894808292389,
+        0.09091777354478836,
+        0.08905541896820068
+      ]
+    }
+  ]
+}

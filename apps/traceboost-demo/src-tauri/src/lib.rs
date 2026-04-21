@@ -1,9 +1,11 @@
 mod app_paths;
+mod crs_registry;
 mod diagnostics;
 mod preview_session;
 mod processing;
 mod processing_cache;
 mod project_settings;
+mod segy_import_recipes;
 mod workspace;
 
 #[cfg(test)]
@@ -12,10 +14,12 @@ mod preview_session_bench;
 mod processing_cache_bench;
 
 use ophiolite::{
-    AssetBindingInput, AssetKind, AssetStatus, OphioliteProject, ProjectSurveyMapRequestDto,
-    ResolveSectionWellOverlaysResponse, SURVEY_MAP_CONTRACT_VERSION, SectionWellOverlayRequestDto,
-    SurveyMapTransformStatusDto, WellTieAnalysis1D, WellTieObservationSet1D, WellTimeDepthModel1D,
-    resolve_dataset_summary_survey_map_source,
+    AssetBindingInput, AssetKind, AssetStatus, CheckshotVspObservationSet1D, ComputeParameterValue,
+    ManualTimeDepthPickSet1D, OphioliteProject, ProjectComputeRunRequest,
+    ProjectSurveyMapRequestDto, ResolveSectionWellOverlaysResponse, SURVEY_MAP_CONTRACT_VERSION,
+    SectionWellOverlayRequestDto, SurveyMapTransformStatusDto,
+    WellMarkerHorizonResidualPointRecord, WellTieAnalysis1D, WellTieObservationSet1D,
+    WellTimeDepthAuthoredModel1D, WellTimeDepthModel1D, resolve_dataset_summary_survey_map_source,
 };
 use seis_contracts_operations::datasets::{
     LoadWorkspaceStateResponse, OpenDatasetRequest, OpenDatasetResponse, RemoveDatasetEntryRequest,
@@ -23,10 +27,14 @@ use seis_contracts_operations::datasets::{
     UpsertDatasetEntryRequest, UpsertDatasetEntryResponse,
 };
 use seis_contracts_operations::import_ops::{
-    ExportSegyRequest, ExportSegyResponse, ImportDatasetRequest, ImportDatasetResponse,
-    ImportHorizonXyzRequest, ImportHorizonXyzResponse, ImportPrestackOffsetDatasetRequest,
-    ImportPrestackOffsetDatasetResponse, LoadSectionHorizonsResponse, SurveyPreflightRequest,
-    SurveyPreflightResponse,
+    DeleteSegyImportRecipeRequest, DeleteSegyImportRecipeResponse, ExportSegyRequest,
+    ExportSegyResponse, ImportDatasetRequest, ImportDatasetResponse, ImportHorizonXyzRequest,
+    ImportHorizonXyzResponse, ImportPrestackOffsetDatasetRequest,
+    ImportPrestackOffsetDatasetResponse, ImportSegyWithPlanRequest,
+    ImportSegyWithPlanResponse, ListSegyImportRecipesRequest, ListSegyImportRecipesResponse,
+    LoadSectionHorizonsResponse, SaveSegyImportRecipeRequest, SaveSegyImportRecipeResponse,
+    ScanSegyImportRequest, SegyImportScanResponse, SegyImportValidationResponse,
+    SurveyPreflightRequest, SurveyPreflightResponse, ValidateSegyImportPlanRequest,
 };
 use seis_contracts_operations::processing_ops::{
     AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, CancelProcessingJobRequest,
@@ -42,17 +50,18 @@ use seis_contracts_operations::processing_ops::{
 };
 use seis_contracts_operations::resolve::{
     BuildSurveyTimeDepthTransformRequest, IPC_SCHEMA_VERSION, ResolveSurveyMapRequest,
-    ResolveSurveyMapResponse, SetDatasetNativeCoordinateReferenceRequest,
-    SetDatasetNativeCoordinateReferenceResponse,
+    ResolveSurveyMapResponse, SetDatasetNativeCoordinateReferenceResponse,
 };
 use seis_contracts_operations::workspace::{
-    LoadVelocityModelsResponse, SaveWorkspaceSessionRequest, SaveWorkspaceSessionResponse,
+    DescribeVelocityVolumeRequest, DescribeVelocityVolumeResponse, IngestVelocityVolumeRequest,
+    IngestVelocityVolumeResponse, LoadVelocityModelsResponse, SaveWorkspaceSessionRequest,
+    SaveWorkspaceSessionResponse,
 };
 use seis_runtime::{
-    MaterializeOptions, ProcessingArtifactRole, ProcessingJobArtifact, ProcessingJobArtifactKind,
-    ProcessingPipelineSpec, SectionAxis, SectionHorizonOverlayView, SectionView,
-    SubvolumeProcessingPipeline, TbvolManifest, TimeDepthDomain, TraceLocalProcessingPipeline,
-    VelocityFunctionSource, VelocityQuantityKind,
+    ImportedHorizonDescriptor, MaterializeOptions, ProcessingArtifactRole, ProcessingJobArtifact,
+    ProcessingJobArtifactKind, ProcessingPipelineSpec, SectionAxis, SectionHorizonOverlayView,
+    SectionTileView, SectionView, SubvolumeProcessingPipeline, TbvolManifest, TimeDepthDomain,
+    TraceLocalProcessingPipeline, VelocityFunctionSource, VelocityQuantityKind,
     materialize_gather_processing_store_with_progress, materialize_processing_volume_with_progress,
     materialize_subvolume_processing_volume_with_progress, open_store,
     set_any_store_native_coordinate_reference,
@@ -79,7 +88,12 @@ use traceboost_app::{
     run_velocity_scan,
 };
 
-use crate::app_paths::AppPaths;
+use crate::app_paths::{AppPaths, preferred_traceboost_logs_dir};
+use crate::crs_registry::{
+    CoordinateReferenceCatalogEntry, ResolveCoordinateReferenceRequest,
+    SearchCoordinateReferencesRequest, SearchCoordinateReferencesResponse,
+    resolve_coordinate_reference, search_coordinate_references,
+};
 use crate::diagnostics::{DiagnosticsState, ExportBundleResponse, build_fields, json_value};
 use crate::preview_session::PreviewSessionState;
 use crate::processing::{JobRecord, ProcessingState};
@@ -88,6 +102,7 @@ use crate::project_settings::{
     ProjectDisplayCoordinateReference, ProjectGeospatialSettings, load_project_geospatial_settings,
     save_project_geospatial_settings,
 };
+use crate::segy_import_recipes::SegyImportRecipeState;
 use crate::workspace::WorkspaceState;
 
 const FILE_OPEN_VOLUME_MENU_ID: &str = "file.open_volume";
@@ -96,6 +111,8 @@ const APP_SETTINGS_MENU_ID: &str = "app.settings";
 const APP_SETTINGS_MENU_EVENT: &str = "menu:app-settings";
 const APP_VELOCITY_MODEL_MENU_ID: &str = "app.velocity_model";
 const APP_VELOCITY_MODEL_MENU_EVENT: &str = "menu:app-velocity-model";
+const APP_RESIDUALS_MENU_ID: &str = "app.residuals";
+const APP_RESIDUALS_MENU_EVENT: &str = "menu:app-residuals";
 const APP_DEPTH_CONVERSION_MENU_ID: &str = "app.depth_conversion";
 const APP_DEPTH_CONVERSION_MENU_EVENT: &str = "menu:app-depth-conversion";
 const APP_WELL_TIE_MENU_ID: &str = "app.well_tie";
@@ -104,6 +121,8 @@ const FILE_IMPORT_SEISMIC_MENU_ID: &str = "file.import_seismic";
 const FILE_IMPORT_SEISMIC_MENU_EVENT: &str = "menu:file-import-seismic";
 const FILE_IMPORT_HORIZONS_MENU_ID: &str = "file.import_horizons";
 const FILE_IMPORT_HORIZONS_MENU_EVENT: &str = "menu:file-import-horizons";
+const FILE_IMPORT_WELL_SOURCES_MENU_ID: &str = "file.import_well_sources";
+const FILE_IMPORT_WELL_SOURCES_MENU_EVENT: &str = "menu:file-import-well-sources";
 const FILE_IMPORT_VELOCITY_FUNCTIONS_MENU_ID: &str = "file.import_velocity_functions";
 const FILE_IMPORT_VELOCITY_FUNCTIONS_MENU_EVENT: &str = "menu:file-import-velocity-functions";
 const FILE_IMPORT_CHECKSHOT_MENU_ID: &str = "file.import_checkshot";
@@ -123,6 +142,7 @@ fn workflow_service() -> TraceBoostWorkflowService {
 }
 const PACKED_PREVIEW_MAGIC: &[u8; 8] = b"TBPRV001";
 const PACKED_SECTION_MAGIC: &[u8; 8] = b"TBSEC001";
+const PACKED_SECTION_TILE_MAGIC: &[u8; 8] = b"TBTIL001";
 const PACKED_SECTION_DISPLAY_MAGIC: &[u8; 8] = b"TBSDP001";
 
 #[derive(Debug, Deserialize)]
@@ -132,6 +152,62 @@ struct FrontendDiagnosticsEventRequest {
     level: String,
     message: String,
     fields: Option<Map<String, Value>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunSectionBrowsingBenchmarkRequest {
+    store_path: String,
+    axis: SectionAxis,
+    section_index: usize,
+    trace_range: [usize; 2],
+    sample_range: [usize; 2],
+    lod: u8,
+    iterations: Option<usize>,
+    include_full_section_baseline: Option<bool>,
+    step_offsets: Option<Vec<isize>>,
+    switch_axis: Option<SectionAxis>,
+    switch_section_index: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SectionBrowsingBenchmarkCase {
+    scenario: String,
+    axis: String,
+    index: usize,
+    trace_range: [usize; 2],
+    sample_range: [usize; 2],
+    lod: u8,
+    trace_step: usize,
+    sample_step: usize,
+    output_traces: usize,
+    output_samples: usize,
+    payload_bytes: u64,
+    iteration_ms: Vec<f64>,
+    median_ms: f64,
+    mean_ms: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RunSectionBrowsingBenchmarkResponse {
+    session_log_path: String,
+    store_path: String,
+    dataset_id: String,
+    shape: [usize; 3],
+    tile_shape: [usize; 3],
+    axis: String,
+    section_index: usize,
+    trace_range: [usize; 2],
+    sample_range: [usize; 2],
+    lod: u8,
+    iterations: usize,
+    include_full_section_baseline: bool,
+    step_offsets: Vec<isize>,
+    switch_axis: Option<String>,
+    switch_section_index: Option<usize>,
+    cases: Vec<SectionBrowsingBenchmarkCase>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -178,6 +254,14 @@ struct LoadProjectGeospatialSettingsResponse {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct SetDatasetNativeCoordinateReferenceSelectionRequest {
+    store_path: String,
+    coordinate_reference_id: Option<String>,
+    coordinate_reference_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ProjectAssetRequest {
     project_root: String,
     asset_id: String,
@@ -212,9 +296,147 @@ struct ImportProjectWellTimeDepthModelRequest {
 struct ImportProjectWellTimeDepthAssetRequest {
     project_root: String,
     json_path: String,
+    json_payload: Option<String>,
     binding: AssetBindingInput,
     collection_name: Option<String>,
     asset_kind: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewProjectWellTimeDepthAssetRequest {
+    json_path: String,
+    json_payload: Option<String>,
+    asset_kind: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectWellTimeDepthImportCanonicalDraft {
+    asset_kind: String,
+    json_payload: String,
+    collection_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewProjectWellTimeDepthImportRequest {
+    json_path: String,
+    draft: Option<ProjectWellTimeDepthImportCanonicalDraft>,
+    asset_kind: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommitProjectWellTimeDepthImportRequest {
+    project_root: String,
+    json_path: String,
+    binding: AssetBindingInput,
+    draft: ProjectWellTimeDepthImportCanonicalDraft,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewProjectWellImportRequest {
+    folder_path: String,
+    source_paths: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewProjectWellSourceImportRequest {
+    source_root_path: String,
+    source_paths: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PreviewHorizonSourceImportRequest {
+    store_path: String,
+    input_paths: Vec<String>,
+    draft: Option<seis_runtime::HorizonSourceImportCanonicalDraft>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommitHorizonSourceImportRequest {
+    store_path: String,
+    draft: seis_runtime::HorizonSourceImportCanonicalDraft,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectWellSourceImportTopsCanonicalDraft {
+    depth_reference: Option<String>,
+    rows: Vec<ophiolite::WellSourceTopDraftRow>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectWellSourceImportTrajectoryCanonicalDraft {
+    enabled: bool,
+    rows: Option<Vec<ophiolite::WellSourceTrajectoryDraftRow>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectWellSourceImportPlanCanonicalDraft {
+    selected_log_source_paths: Option<Vec<String>>,
+    ascii_log_imports: Option<Vec<ophiolite::WellSourceAsciiLogImportRequest>>,
+    tops_markers: Option<ProjectWellSourceImportTopsCanonicalDraft>,
+    trajectory: Option<ProjectWellSourceImportTrajectoryCanonicalDraft>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectWellSourceImportCanonicalDraft {
+    binding: AssetBindingInput,
+    source_coordinate_reference: ophiolite::WellSourceCoordinateReferenceSelection,
+    well_metadata: Option<ophiolite::WellMetadata>,
+    wellbore_metadata: Option<ophiolite::WellboreMetadata>,
+    import_plan: ProjectWellSourceImportPlanCanonicalDraft,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommitProjectWellImportRequest {
+    project_root: String,
+    folder_path: String,
+    source_paths: Option<Vec<String>>,
+    draft: Option<ProjectWellSourceImportCanonicalDraft>,
+    binding: AssetBindingInput,
+    well_metadata: Option<ophiolite::WellMetadata>,
+    wellbore_metadata: Option<ophiolite::WellboreMetadata>,
+    source_coordinate_reference: ophiolite::WellFolderCoordinateReferenceSelection,
+    import_logs: bool,
+    selected_log_source_paths: Option<Vec<String>>,
+    import_tops_markers: bool,
+    import_trajectory: bool,
+    tops_depth_reference: Option<String>,
+    tops_rows: Option<Vec<ophiolite::WellFolderTopDraftRow>>,
+    trajectory_rows: Option<Vec<ophiolite::WellFolderTrajectoryDraftRow>>,
+    ascii_log_imports: Option<Vec<ophiolite::WellFolderAsciiLogImportRequest>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CommitProjectWellSourceImportRequest {
+    project_root: String,
+    source_root_path: String,
+    source_paths: Option<Vec<String>>,
+    draft: Option<ProjectWellSourceImportCanonicalDraft>,
+    binding: Option<AssetBindingInput>,
+    well_metadata: Option<ophiolite::WellMetadata>,
+    wellbore_metadata: Option<ophiolite::WellboreMetadata>,
+    source_coordinate_reference: Option<ophiolite::WellSourceCoordinateReferenceSelection>,
+    import_logs: Option<bool>,
+    selected_log_source_paths: Option<Vec<String>>,
+    import_tops_markers: Option<bool>,
+    import_trajectory: Option<bool>,
+    tops_depth_reference: Option<String>,
+    tops_rows: Option<Vec<ophiolite::WellSourceTopDraftRow>>,
+    trajectory_rows: Option<Vec<ophiolite::WellSourceTrajectoryDraftRow>>,
+    ascii_log_imports: Option<Vec<ophiolite::WellSourceAsciiLogImportRequest>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1141,6 +1363,58 @@ struct ProjectWellTimeDepthInventoryResponse {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct ProjectWellMarkerDescriptor {
+    name: String,
+    marker_kind: Option<String>,
+    source_asset_id: Option<String>,
+    top_depth: f64,
+    base_depth: Option<f64>,
+    depth_reference: Option<String>,
+    source: Option<String>,
+    note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectWellMarkerHorizonResidualPointDescriptor {
+    marker_name: String,
+    marker_kind: Option<String>,
+    x: f64,
+    y: f64,
+    z: f64,
+    horizon_depth: f64,
+    residual: f64,
+    status: String,
+    note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectWellMarkerHorizonResidualDescriptor {
+    asset_id: String,
+    source_asset_id: Option<String>,
+    survey_asset_id: Option<String>,
+    horizon_id: Option<String>,
+    marker_name: Option<String>,
+    well_id: String,
+    wellbore_id: String,
+    status: String,
+    name: String,
+    row_count: usize,
+    point_count: usize,
+    marker_names: Vec<String>,
+    points: Vec<ProjectWellMarkerHorizonResidualPointDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectWellMarkerResidualInventoryResponse {
+    markers: Vec<ProjectWellMarkerDescriptor>,
+    residual_assets: Vec<ProjectWellMarkerHorizonResidualDescriptor>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ImportProjectWellTimeDepthModelResponse {
     asset_id: String,
     well_id: String,
@@ -1252,6 +1526,30 @@ struct ProjectWellOverlayInventoryResponse {
     surveys: Vec<ProjectSurveyAssetDescriptor>,
     wellbores: Vec<ProjectWellboreInventoryItem>,
     display_compatibility: ProjectMapDisplayCompatibilitySummary,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ComputeProjectWellMarkerResidualRequest {
+    project_root: String,
+    wellbore_id: String,
+    survey_asset_id: String,
+    horizon_id: String,
+    marker_name: String,
+    output_collection_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComputeProjectWellMarkerResidualResponse {
+    asset_id: String,
+    collection_id: String,
+    collection_name: String,
+    well_id: String,
+    wellbore_id: String,
+    marker_name: String,
+    horizon_id: String,
+    point_count: usize,
 }
 
 fn asset_status_label(status: &AssetStatus) -> &'static str {
@@ -1770,6 +2068,123 @@ fn project_well_time_depth_authored_model_descriptors(
         .collect()
 }
 
+fn project_well_marker_descriptors(
+    project: &OphioliteProject,
+    wellbore_id: &str,
+) -> Result<Vec<ProjectWellMarkerDescriptor>, String> {
+    Ok(project
+        .list_well_markers(&ophiolite::WellboreId(wellbore_id.to_string()))
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|marker| ProjectWellMarkerDescriptor {
+            name: marker.name,
+            marker_kind: marker.marker_kind,
+            source_asset_id: marker.source_asset_id.map(|asset_id| asset_id.0),
+            top_depth: marker.top_measurement.value,
+            base_depth: marker.base_measurement.map(|measurement| measurement.value),
+            depth_reference: marker.depth_reference,
+            source: marker.source,
+            note: marker
+                .notes
+                .into_iter()
+                .find(|value| !value.trim().is_empty()),
+        })
+        .collect::<Vec<_>>())
+}
+
+fn project_well_marker_horizon_residual_point_descriptors(
+    points: Vec<WellMarkerHorizonResidualPointRecord>,
+) -> Vec<ProjectWellMarkerHorizonResidualPointDescriptor> {
+    points
+        .into_iter()
+        .map(|point| ProjectWellMarkerHorizonResidualPointDescriptor {
+            marker_name: point.marker_name,
+            marker_kind: point.marker_kind,
+            x: point.x,
+            y: point.y,
+            z: point.z,
+            horizon_depth: point.horizon_depth,
+            residual: point.residual,
+            status: point.status,
+            note: point.note,
+        })
+        .collect()
+}
+
+fn compute_manifest_string_parameter(asset: &ophiolite::AssetRecord, name: &str) -> Option<String> {
+    asset
+        .manifest
+        .compute_manifest
+        .as_ref()?
+        .parameters
+        .get(name)
+        .and_then(ComputeParameterValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn project_well_marker_horizon_residual_descriptors(
+    project: &OphioliteProject,
+    wellbore_id: &str,
+) -> Result<Vec<ProjectWellMarkerHorizonResidualDescriptor>, String> {
+    let collection_names = project
+        .list_asset_collections(&ophiolite::WellboreId(wellbore_id.to_string()))
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|collection| (collection.id.0, collection.name))
+        .collect::<std::collections::HashMap<_, _>>();
+    let assets = project
+        .list_assets(
+            &ophiolite::WellboreId(wellbore_id.to_string()),
+            Some(AssetKind::WellMarkerHorizonResidualSet),
+        )
+        .map_err(|error| error.to_string())?;
+
+    assets
+        .into_iter()
+        .map(|asset| {
+            let rows = project
+                .read_well_marker_horizon_residual_rows(&asset.id)
+                .map_err(|error| error.to_string())?;
+            let points = project_well_marker_horizon_residual_point_descriptors(
+                project
+                    .read_well_marker_horizon_residual_points(&asset.id)
+                    .map_err(|error| error.to_string())?,
+            );
+            let mut marker_names = rows
+                .iter()
+                .map(|row| row.marker_name.clone())
+                .collect::<Vec<_>>();
+            marker_names.sort();
+            marker_names.dedup();
+            Ok(ProjectWellMarkerHorizonResidualDescriptor {
+                asset_id: asset.id.0.clone(),
+                source_asset_id: asset
+                    .manifest
+                    .compute_manifest
+                    .as_ref()
+                    .map(|manifest| manifest.source_asset_id.clone())
+                    .filter(|value| !value.trim().is_empty()),
+                survey_asset_id: compute_manifest_string_parameter(&asset, "survey_asset_id"),
+                horizon_id: compute_manifest_string_parameter(&asset, "horizon_id"),
+                marker_name: compute_manifest_string_parameter(&asset, "marker_name"),
+                well_id: asset.well_id.0,
+                wellbore_id: asset.wellbore_id.0,
+                status: asset_status_label(&asset.status).to_string(),
+                name: collection_names
+                    .get(&asset.collection_id.0)
+                    .cloned()
+                    .unwrap_or_else(|| asset.id.0.clone()),
+                row_count: rows.len(),
+                point_count: points.len(),
+                marker_names,
+                points,
+            })
+        })
+        .collect()
+}
+
 fn well_time_depth_import_response(
     result: ophiolite::ProjectAssetImportResult,
 ) -> ImportProjectWellTimeDepthModelResponse {
@@ -1794,6 +2209,17 @@ struct PackedPreviewResponseHeader {
 #[serde(rename_all = "camelCase")]
 struct PackedSectionResponseHeader {
     section: PackedSectionHeader,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PackedSectionTileResponseHeader {
+    section: PackedSectionHeader,
+    trace_range: [usize; 2],
+    sample_range: [usize; 2],
+    lod: u8,
+    trace_step: usize,
+    sample_step: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -1863,6 +2289,172 @@ fn align_up(value: usize, alignment: usize) -> usize {
     } else {
         value + (alignment - remainder)
     }
+}
+
+fn section_payload_bytes(section: &SectionView) -> u64 {
+    (section.horizontal_axis_f64le.len()
+        + section
+            .inline_axis_f64le
+            .as_ref()
+            .map(Vec::len)
+            .unwrap_or_default()
+        + section
+            .xline_axis_f64le
+            .as_ref()
+            .map(Vec::len)
+            .unwrap_or_default()
+        + section.sample_axis_f32le.len()
+        + section.amplitudes_f32le.len()) as u64
+}
+
+fn section_tile_payload_bytes(tile: &SectionTileView) -> u64 {
+    section_payload_bytes(&tile.section)
+}
+
+fn median_f64(values: &[f64]) -> f64 {
+    let mut ordered = values.to_vec();
+    ordered.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    ordered[ordered.len() / 2]
+}
+
+fn mean_f64(values: &[f64]) -> f64 {
+    values.iter().sum::<f64>() / values.len() as f64
+}
+
+fn validate_benchmark_range(
+    range: [usize; 2],
+    total: usize,
+    label: &str,
+) -> Result<[usize; 2], String> {
+    if range[0] >= range[1] || range[1] > total {
+        return Err(format!(
+            "invalid {label} range [{}, {}) for total length {total}",
+            range[0], range[1]
+        ));
+    }
+    Ok(range)
+}
+
+fn clamp_window_to_total(range: [usize; 2], total: usize) -> [usize; 2] {
+    let width = (range[1].saturating_sub(range[0])).max(1).min(total.max(1));
+    let start = range[0].min(total.saturating_sub(width));
+    [start, start + width]
+}
+
+fn stepped_section_index(current: usize, offset: isize, axis_length: usize) -> usize {
+    if axis_length <= 1 {
+        return 0;
+    }
+    let max_index = axis_length - 1;
+    if offset >= 0 {
+        current.saturating_add(offset as usize).min(max_index)
+    } else {
+        current.saturating_sub(offset.unsigned_abs())
+    }
+}
+
+fn axis_name(axis: SectionAxis) -> String {
+    format!("{axis:?}").to_ascii_lowercase()
+}
+
+fn benchmark_iterations(requested: Option<usize>) -> usize {
+    requested.unwrap_or(5).clamp(1, 50)
+}
+
+fn benchmark_step_offsets(requested: Option<Vec<isize>>) -> Vec<isize> {
+    let offsets = requested.unwrap_or_else(|| vec![1, 1, -1]);
+    if offsets.is_empty() {
+        vec![1, 1, -1]
+    } else {
+        offsets
+    }
+}
+
+fn measure_full_section_case(
+    handle: &seis_runtime::StoreHandle,
+    axis: SectionAxis,
+    index: usize,
+    iterations: usize,
+) -> Result<SectionBrowsingBenchmarkCase, String> {
+    let mut iteration_ms = Vec::with_capacity(iterations);
+    let mut output_traces = 0usize;
+    let mut output_samples = 0usize;
+    let mut payload_bytes = 0u64;
+    for _ in 0..iterations {
+        let started = Instant::now();
+        let section = handle
+            .section_view(axis, index)
+            .map_err(|error| error.to_string())?;
+        iteration_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        output_traces = section.traces;
+        output_samples = section.samples;
+        payload_bytes = section_payload_bytes(&section);
+    }
+
+    Ok(SectionBrowsingBenchmarkCase {
+        scenario: "full_section_baseline".to_string(),
+        axis: axis_name(axis),
+        index,
+        trace_range: [0, section_axis_length(handle, axis)],
+        sample_range: [0, handle.manifest.volume.shape[2]],
+        lod: 0,
+        trace_step: 1,
+        sample_step: 1,
+        output_traces,
+        output_samples,
+        payload_bytes,
+        median_ms: median_f64(&iteration_ms),
+        mean_ms: mean_f64(&iteration_ms),
+        iteration_ms,
+    })
+}
+
+fn measure_section_tile_case(
+    handle: &seis_runtime::StoreHandle,
+    scenario: String,
+    axis: SectionAxis,
+    index: usize,
+    trace_range: [usize; 2],
+    sample_range: [usize; 2],
+    lod: u8,
+    iterations: usize,
+) -> Result<SectionBrowsingBenchmarkCase, String> {
+    let mut iteration_ms = Vec::with_capacity(iterations);
+    let mut trace_step = 1usize;
+    let mut sample_step = 1usize;
+    let mut output_traces = 0usize;
+    let mut output_samples = 0usize;
+    let mut payload_bytes = 0u64;
+
+    for _ in 0..iterations {
+        let started = Instant::now();
+        let tile = handle
+            .section_tile_view(axis, index, trace_range, sample_range, lod)
+            .map_err(|error| error.to_string())?;
+        iteration_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        trace_step = tile.trace_step;
+        sample_step = tile.sample_step;
+        output_traces = tile.section.traces;
+        output_samples = tile.section.samples;
+        payload_bytes = section_tile_payload_bytes(&tile);
+    }
+
+    Ok(SectionBrowsingBenchmarkCase {
+        scenario,
+        axis: axis_name(axis),
+        index,
+        trace_range,
+        sample_range,
+        lod,
+        trace_step,
+        sample_step,
+        output_traces,
+        output_samples,
+        payload_bytes,
+        median_ms: median_f64(&iteration_ms),
+        mean_ms: mean_f64(&iteration_ms),
+        iteration_ms,
+    })
 }
 
 fn pack_preview_section_response(
@@ -1950,6 +2542,54 @@ fn pack_section_response(section: SectionView) -> Result<Response, String> {
     }
     bytes.extend_from_slice(&section.sample_axis_f32le);
     bytes.extend_from_slice(&section.amplitudes_f32le);
+    Ok(Response::new(bytes))
+}
+
+fn pack_section_tile_response(tile: SectionTileView) -> Result<Response, String> {
+    let header = PackedSectionTileResponseHeader {
+        section: packed_section_header(&tile.section),
+        trace_range: tile.trace_range,
+        sample_range: tile.sample_range,
+        lod: tile.lod,
+        trace_step: tile.trace_step,
+        sample_step: tile.sample_step,
+    };
+
+    let header_bytes = serde_json::to_vec(&header).map_err(|error| error.to_string())?;
+    let header_end = 16 + header_bytes.len();
+    let data_offset = align_up(header_end, 8);
+    let total_len = data_offset
+        + tile.section.horizontal_axis_f64le.len()
+        + tile
+            .section
+            .inline_axis_f64le
+            .as_ref()
+            .map(Vec::len)
+            .unwrap_or_default()
+        + tile
+            .section
+            .xline_axis_f64le
+            .as_ref()
+            .map(Vec::len)
+            .unwrap_or_default()
+        + tile.section.sample_axis_f32le.len()
+        + tile.section.amplitudes_f32le.len();
+
+    let mut bytes = Vec::with_capacity(total_len);
+    bytes.extend_from_slice(PACKED_SECTION_TILE_MAGIC);
+    bytes.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
+    bytes.extend_from_slice(&(data_offset as u32).to_le_bytes());
+    bytes.extend_from_slice(&header_bytes);
+    bytes.resize(data_offset, 0);
+    bytes.extend_from_slice(&tile.section.horizontal_axis_f64le);
+    if let Some(inline_axis) = tile.section.inline_axis_f64le.as_ref() {
+        bytes.extend_from_slice(inline_axis);
+    }
+    if let Some(xline_axis) = tile.section.xline_axis_f64le.as_ref() {
+        bytes.extend_from_slice(xline_axis);
+    }
+    bytes.extend_from_slice(&tile.section.sample_axis_f32le);
+    bytes.extend_from_slice(&tile.section.amplitudes_f32le);
     Ok(Response::new(bytes))
 }
 
@@ -3019,6 +3659,13 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R
         true,
         None::<&str>,
     )?;
+    let residuals = MenuItem::with_id(
+        app,
+        APP_RESIDUALS_MENU_ID,
+        "&Residuals...",
+        true,
+        None::<&str>,
+    )?;
     let depth_conversion = MenuItem::with_id(
         app,
         APP_DEPTH_CONVERSION_MENU_ID,
@@ -3051,6 +3698,13 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R
         app,
         FILE_IMPORT_HORIZONS_MENU_ID,
         "&Horizons...",
+        true,
+        None::<&str>,
+    )?;
+    let import_well_sources = MenuItem::with_id(
+        app,
+        FILE_IMPORT_WELL_SOURCES_MENU_ID,
+        "Well &Files...",
         true,
         None::<&str>,
     )?;
@@ -3099,6 +3753,7 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R
         &[
             &import_seismic,
             &import_horizons,
+            &import_well_sources,
             &import_velocity_functions,
             &import_separator,
             &import_checkshot,
@@ -3115,7 +3770,13 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R
                 app,
                 "&TraceBoost",
                 true,
-                &[&settings, &velocity_model, &depth_conversion, &well_tie],
+                &[
+                    &settings,
+                    &velocity_model,
+                    &residuals,
+                    &depth_conversion,
+                    &well_tie,
+                ],
             )?,
             &Submenu::with_items(
                 app,
@@ -3190,6 +3851,174 @@ fn preflight_import_command(
                 "Survey preflight failed",
                 Some(build_fields([
                     ("stage", json_value("inspect_segy")),
+                    ("error", json_value(&message)),
+                ])),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+fn scan_segy_import_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    input_path: String,
+) -> Result<SegyImportScanResponse, String> {
+    let operation = diagnostics.start_operation(
+        &app,
+        "scan_segy_import",
+        "Starting SEG-Y import scan",
+        Some(build_fields([
+            ("inputPath", json_value(&input_path)),
+            ("stage", json_value("scan_input")),
+        ])),
+    );
+    diagnostics.progress(
+        &app,
+        &operation,
+        "Inspecting SEG-Y layout and candidate mappings",
+        Some(build_fields([("stage", json_value("inspect_segy"))])),
+    );
+
+    let result = workflow_service().scan_segy_import(ScanSegyImportRequest {
+        schema_version: IPC_SCHEMA_VERSION,
+        input_path,
+    });
+
+    match result {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "SEG-Y import scan completed",
+                Some(build_fields([
+                    ("stage", json_value("summarize")),
+                    ("traceCount", json_value(response.trace_count)),
+                    ("candidateCount", json_value(response.candidate_plans.len())),
+                    (
+                        "recommendedNextStage",
+                        json_value(format!("{:?}", response.recommended_next_stage)),
+                    ),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            diagnostics.fail(
+                &app,
+                &operation,
+                "SEG-Y import scan failed",
+                Some(build_fields([("error", json_value(&message))])),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+fn validate_segy_import_plan_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    request: ValidateSegyImportPlanRequest,
+) -> Result<SegyImportValidationResponse, String> {
+    let operation = diagnostics.start_operation(
+        &app,
+        "validate_segy_import_plan",
+        "Validating SEG-Y import plan",
+        Some(build_fields([
+            ("inputPath", json_value(&request.plan.input_path)),
+            ("stage", json_value("validate_plan")),
+        ])),
+    );
+    diagnostics.progress(
+        &app,
+        &operation,
+        "Re-running SEG-Y validation with the selected plan",
+        Some(build_fields([("stage", json_value("inspect_segy"))])),
+    );
+
+    let result = workflow_service().validate_segy_import_plan(request);
+    match result {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "SEG-Y import plan validated",
+                Some(build_fields([
+                    ("stage", json_value("summarize")),
+                    ("canImport", json_value(response.can_import)),
+                    (
+                        "requiresAcknowledgement",
+                        json_value(response.requires_acknowledgement),
+                    ),
+                    ("issueCount", json_value(response.issues.len())),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            diagnostics.fail(
+                &app,
+                &operation,
+                "SEG-Y import validation failed",
+                Some(build_fields([("error", json_value(&message))])),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+fn import_segy_with_plan_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    request: ImportSegyWithPlanRequest,
+) -> Result<ImportSegyWithPlanResponse, String> {
+    let operation = diagnostics.start_operation(
+        &app,
+        "import_segy_with_plan",
+        "Starting SEG-Y import from validated plan",
+        Some(build_fields([
+            ("inputPath", json_value(&request.plan.input_path)),
+            (
+                "outputStorePath",
+                json_value(&request.plan.policy.output_store_path),
+            ),
+            ("stage", json_value("read_input")),
+        ])),
+    );
+    diagnostics.progress(
+        &app,
+        &operation,
+        "Reading SEG-Y input and building runtime store",
+        Some(build_fields([("stage", json_value("read_input"))])),
+    );
+
+    let result = workflow_service().import_segy_with_plan(request);
+    match result {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "SEG-Y import completed",
+                Some(build_fields([
+                    ("stage", json_value("persist_store")),
+                    ("storePath", json_value(&response.dataset.store_path)),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            diagnostics.fail(
+                &app,
+                &operation,
+                "SEG-Y import failed",
+                Some(build_fields([
+                    ("stage", json_value("read_input")),
                     ("error", json_value(&message)),
                 ])),
             );
@@ -3284,6 +4113,39 @@ fn import_dataset_command(
             Err(message)
         }
     }
+}
+
+#[tauri::command]
+fn list_segy_import_recipes_command(
+    recipes: State<SegyImportRecipeState>,
+    request: ListSegyImportRecipesRequest,
+) -> Result<ListSegyImportRecipesResponse, String> {
+    Ok(ListSegyImportRecipesResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        recipes: recipes.list_recipes(request.source_fingerprint.as_deref())?,
+    })
+}
+
+#[tauri::command]
+fn save_segy_import_recipe_command(
+    recipes: State<SegyImportRecipeState>,
+    request: SaveSegyImportRecipeRequest,
+) -> Result<SaveSegyImportRecipeResponse, String> {
+    Ok(SaveSegyImportRecipeResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        recipe: recipes.save_recipe(request.recipe)?,
+    })
+}
+
+#[tauri::command]
+fn delete_segy_import_recipe_command(
+    recipes: State<SegyImportRecipeState>,
+    request: DeleteSegyImportRecipeRequest,
+) -> Result<DeleteSegyImportRecipeResponse, String> {
+    Ok(DeleteSegyImportRecipeResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        deleted: recipes.delete_recipe(&request.recipe_id)?,
+    })
 }
 
 #[tauri::command]
@@ -3694,6 +4556,129 @@ fn import_velocity_functions_model_command(
 }
 
 #[tauri::command]
+fn describe_velocity_volume_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    request: DescribeVelocityVolumeRequest,
+) -> Result<DescribeVelocityVolumeResponse, String> {
+    let operation = diagnostics.start_operation(
+        &app,
+        "describe_velocity_volume",
+        "Describing velocity volume store",
+        Some(build_fields([
+            ("storePath", json_value(&request.store_path)),
+            (
+                "velocityKind",
+                json_value(format!("{:?}", request.velocity_kind).to_ascii_lowercase()),
+            ),
+            (
+                "verticalDomain",
+                json_value(
+                    request
+                        .vertical_domain
+                        .map(|domain| format!("{domain:?}").to_ascii_lowercase()),
+                ),
+            ),
+            ("stage", json_value("describe_velocity_volume")),
+        ])),
+    );
+
+    match workflow_service().describe_velocity_volume(request.clone()) {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Velocity volume described",
+                Some(build_fields([
+                    ("storePath", json_value(&request.store_path)),
+                    (
+                        "sampleCount",
+                        json_value(response.volume.vertical_axis.count),
+                    ),
+                    ("stage", json_value("complete")),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Describing velocity volume failed",
+                Some(build_fields([
+                    ("storePath", json_value(&request.store_path)),
+                    ("stage", json_value("describe_velocity_volume")),
+                    ("error", json_value(&message)),
+                ])),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+fn ingest_velocity_volume_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    request: IngestVelocityVolumeRequest,
+) -> Result<IngestVelocityVolumeResponse, String> {
+    let operation = diagnostics.start_operation(
+        &app,
+        "ingest_velocity_volume",
+        "Ingesting velocity volume into tbvol",
+        Some(build_fields([
+            ("inputPath", json_value(&request.input_path)),
+            ("outputStorePath", json_value(&request.output_store_path)),
+            (
+                "velocityKind",
+                json_value(format!("{:?}", request.velocity_kind).to_ascii_lowercase()),
+            ),
+            (
+                "deleteInputOnSuccess",
+                json_value(request.delete_input_on_success),
+            ),
+            ("stage", json_value("ingest_velocity_volume")),
+        ])),
+    );
+
+    match workflow_service().ingest_velocity_volume_request(request.clone()) {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Velocity volume ingested",
+                Some(build_fields([
+                    ("storePath", json_value(&response.store_path)),
+                    ("deletedInput", json_value(response.deleted_input)),
+                    (
+                        "sampleCount",
+                        json_value(response.volume.vertical_axis.count),
+                    ),
+                    ("stage", json_value("complete")),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Ingesting velocity volume failed",
+                Some(build_fields([
+                    ("inputPath", json_value(&request.input_path)),
+                    ("outputStorePath", json_value(&request.output_store_path)),
+                    ("stage", json_value("ingest_velocity_volume")),
+                    ("error", json_value(&message)),
+                ])),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
 fn build_velocity_model_transform_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
@@ -3918,11 +4903,293 @@ fn get_dataset_export_capabilities_command(
 }
 
 #[tauri::command]
+fn preview_horizon_xyz_import_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    store_path: String,
+    input_paths: Vec<String>,
+    vertical_domain: Option<TimeDepthDomain>,
+    vertical_unit: Option<String>,
+    source_coordinate_reference_id: Option<String>,
+    source_coordinate_reference_name: Option<String>,
+    assume_same_as_survey: bool,
+) -> Result<seis_runtime::HorizonImportPreview, String> {
+    let operation = diagnostics.start_operation(
+        &app,
+        "preview_horizon_xyz_import",
+        "Previewing horizon xyz import",
+        Some(build_fields([
+            ("storePath", json_value(&store_path)),
+            ("inputPathCount", json_value(input_paths.len())),
+            (
+                "verticalDomain",
+                json_value(vertical_domain.as_ref().map(|value| format!("{value:?}"))),
+            ),
+            ("verticalUnit", json_value(vertical_unit.as_deref())),
+            (
+                "sourceCoordinateReferenceId",
+                json_value(source_coordinate_reference_id.as_deref()),
+            ),
+            ("assumeSameAsSurvey", json_value(assume_same_as_survey)),
+            ("stage", json_value("validate_input")),
+        ])),
+    );
+
+    let result = workflow_service().preview_horizon_xyz_import(ImportHorizonXyzRequest {
+        schema_version: IPC_SCHEMA_VERSION,
+        store_path,
+        input_paths,
+        vertical_domain,
+        vertical_unit,
+        source_coordinate_reference_id,
+        source_coordinate_reference_name,
+        assume_same_as_survey,
+    });
+
+    match result {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Horizon xyz import preview ready",
+                Some(build_fields([
+                    ("stage", json_value("preview_horizons")),
+                    ("fileCount", json_value(response.files.len())),
+                    ("canCommit", json_value(response.can_commit)),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Horizon xyz import preview failed",
+                Some(build_fields([
+                    ("stage", json_value("preview_horizons")),
+                    ("error", json_value(&message)),
+                ])),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+fn preview_horizon_source_import_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    request: PreviewHorizonSourceImportRequest,
+) -> Result<seis_runtime::HorizonSourceImportPreview, String> {
+    let operation = diagnostics.start_operation(
+        &app,
+        "preview_horizon_source_import",
+        "Previewing horizon source import",
+        Some(build_fields([
+            ("storePath", json_value(&request.store_path)),
+            ("inputPathCount", json_value(request.input_paths.len())),
+            (
+                "selectedSourcePathCount",
+                json_value(
+                    request
+                        .draft
+                        .as_ref()
+                        .map(|draft| draft.selected_source_paths.len()),
+                ),
+            ),
+            (
+                "verticalDomain",
+                json_value(
+                    request
+                        .draft
+                        .as_ref()
+                        .map(|draft| format!("{:?}", draft.vertical_domain)),
+                ),
+            ),
+            (
+                "assumeSameAsSurvey",
+                json_value(
+                    request
+                        .draft
+                        .as_ref()
+                        .map(|draft| draft.assume_same_as_survey),
+                ),
+            ),
+            ("stage", json_value("preview_horizons")),
+        ])),
+    );
+
+    let input_paths = request
+        .input_paths
+        .iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    let result = seis_runtime::preview_horizon_source_import(
+        &request.store_path,
+        &input_paths,
+        request.draft.as_ref(),
+    );
+
+    match result {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Horizon source import preview ready",
+                Some(build_fields([
+                    ("stage", json_value("preview_horizons")),
+                    ("fileCount", json_value(response.parsed.files.len())),
+                    ("canCommit", json_value(response.parsed.can_commit)),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Horizon source import preview failed",
+                Some(build_fields([
+                    ("stage", json_value("preview_horizons")),
+                    ("error", json_value(&message)),
+                ])),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+fn inspect_horizon_xyz_files_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    input_paths: Vec<String>,
+) -> Result<Vec<ophiolite::HorizonXyzFilePreview>, String> {
+    let operation = diagnostics.start_operation(
+        &app,
+        "inspect_horizon_xyz_files",
+        "Inspecting horizon xyz files",
+        Some(build_fields([
+            ("inputPathCount", json_value(input_paths.len())),
+            ("stage", json_value("preview_horizons")),
+        ])),
+    );
+    let resolved_paths = input_paths
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    let result =
+        ophiolite::inspect_horizon_xyz_files(&resolved_paths).map_err(|error| error.to_string());
+    match result {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Horizon xyz inspection ready",
+                Some(build_fields([
+                    ("stage", json_value("preview_horizons")),
+                    ("fileCount", json_value(response.len())),
+                    (
+                        "invalidRowCount",
+                        json_value(
+                            response
+                                .iter()
+                                .map(|file| file.invalid_row_count)
+                                .sum::<usize>(),
+                        ),
+                    ),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(message) => {
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Horizon xyz inspection failed",
+                Some(build_fields([
+                    ("stage", json_value("preview_horizons")),
+                    ("error", json_value(&message)),
+                ])),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+fn commit_horizon_source_import_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    request: CommitHorizonSourceImportRequest,
+) -> Result<ImportHorizonXyzResponse, String> {
+    let operation = diagnostics.start_operation(
+        &app,
+        "commit_horizon_source_import",
+        "Importing horizons from source draft",
+        Some(build_fields([
+            ("storePath", json_value(&request.store_path)),
+            (
+                "selectedSourcePathCount",
+                json_value(request.draft.selected_source_paths.len()),
+            ),
+            (
+                "verticalDomain",
+                json_value(format!("{:?}", request.draft.vertical_domain)),
+            ),
+            (
+                "assumeSameAsSurvey",
+                json_value(request.draft.assume_same_as_survey),
+            ),
+            ("stage", json_value("import_horizons")),
+        ])),
+    );
+
+    let result = seis_runtime::import_horizon_xyzs_from_draft(&request.store_path, &request.draft)
+        .map(|imported| ImportHorizonXyzResponse {
+            schema_version: IPC_SCHEMA_VERSION,
+            imported,
+        });
+
+    match result {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Horizon source import completed",
+                Some(build_fields([
+                    ("stage", json_value("import_horizons")),
+                    ("importedCount", json_value(response.imported.len())),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Horizon source import failed",
+                Some(build_fields([
+                    ("stage", json_value("import_horizons")),
+                    ("error", json_value(&message)),
+                ])),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
 fn import_horizon_xyz_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
     store_path: String,
     input_paths: Vec<String>,
+    vertical_domain: Option<TimeDepthDomain>,
+    vertical_unit: Option<String>,
     source_coordinate_reference_id: Option<String>,
     source_coordinate_reference_name: Option<String>,
     assume_same_as_survey: bool,
@@ -3934,6 +5201,11 @@ fn import_horizon_xyz_command(
         Some(build_fields([
             ("storePath", json_value(&store_path)),
             ("inputPathCount", json_value(input_paths.len())),
+            (
+                "verticalDomain",
+                json_value(vertical_domain.as_ref().map(|value| format!("{value:?}"))),
+            ),
+            ("verticalUnit", json_value(vertical_unit.as_deref())),
             (
                 "sourceCoordinateReferenceId",
                 json_value(source_coordinate_reference_id.as_deref()),
@@ -3947,8 +5219,8 @@ fn import_horizon_xyz_command(
         schema_version: IPC_SCHEMA_VERSION,
         store_path,
         input_paths,
-        vertical_domain: None,
-        vertical_unit: None,
+        vertical_domain,
+        vertical_unit,
         source_coordinate_reference_id,
         source_coordinate_reference_name,
         assume_same_as_survey,
@@ -4242,6 +5514,118 @@ fn load_section_binary_command(
                 &operation,
                 "Loading section view (binary) failed",
                 Some(build_fields(failure_fields)),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+fn load_section_tile_binary_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    store_path: String,
+    axis: SectionAxis,
+    index: usize,
+    trace_range: [usize; 2],
+    sample_range: [usize; 2],
+    lod: u8,
+) -> Result<Response, String> {
+    let axis_name = format!("{axis:?}").to_ascii_lowercase();
+    let handle = open_store(&store_path).ok();
+    let mut start_fields = vec![
+        ("storePath", json_value(&store_path)),
+        ("axis", json_value(&axis_name)),
+        ("index", json_value(index)),
+        ("traceRange", json_value(trace_range)),
+        ("sampleRange", json_value(sample_range)),
+        ("lod", json_value(lod)),
+        ("stage", json_value("validate_input")),
+    ];
+    if let Some(handle) = handle.as_ref() {
+        start_fields.push(("datasetId", json_value(&handle.dataset_id().0)));
+        start_fields.push(("shape", json_value(handle.manifest.volume.shape)));
+        append_section_debug_fields(
+            &mut start_fields,
+            handle,
+            axis,
+            index,
+            "axisLength",
+            "axisRange",
+            "requestedCoordinateValue",
+        );
+    }
+    let operation = diagnostics.start_operation(
+        &app,
+        "load_section_tile_binary",
+        "Loading section tile view (binary)",
+        Some(build_fields(start_fields)),
+    );
+    diagnostics.progress(
+        &app,
+        &operation,
+        "Opening runtime store for binary section tile load",
+        Some(build_fields([("stage", json_value("open_store"))])),
+    );
+
+    let result = match handle {
+        Some(handle) => handle.section_tile_view(axis, index, trace_range, sample_range, lod),
+        None => open_store(store_path.clone()).and_then(|handle| {
+            handle.section_tile_view(axis, index, trace_range, sample_range, lod)
+        }),
+    };
+    match result {
+        Ok(tile) => {
+            let payload_bytes = tile.section.horizontal_axis_f64le.len()
+                + tile
+                    .section
+                    .inline_axis_f64le
+                    .as_ref()
+                    .map(Vec::len)
+                    .unwrap_or_default()
+                + tile
+                    .section
+                    .xline_axis_f64le
+                    .as_ref()
+                    .map(Vec::len)
+                    .unwrap_or_default()
+                + tile.section.sample_axis_f32le.len()
+                + tile.section.amplitudes_f32le.len();
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Section tile view loaded (binary)",
+                Some(build_fields([
+                    ("stage", json_value("load_section_tile_binary")),
+                    ("axis", json_value(&axis_name)),
+                    ("index", json_value(index)),
+                    ("traceRange", json_value(tile.trace_range)),
+                    ("sampleRange", json_value(tile.sample_range)),
+                    ("lod", json_value(tile.lod)),
+                    ("traceStep", json_value(tile.trace_step)),
+                    ("sampleStep", json_value(tile.sample_step)),
+                    ("traces", json_value(tile.section.traces)),
+                    ("samples", json_value(tile.section.samples)),
+                    ("payloadBytes", json_value(payload_bytes)),
+                ])),
+            );
+            pack_section_tile_response(tile)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Loading section tile view (binary) failed",
+                Some(build_fields([
+                    ("stage", json_value("load_section_tile_binary")),
+                    ("axis", json_value(&axis_name)),
+                    ("index", json_value(index)),
+                    ("traceRange", json_value(trace_range)),
+                    ("sampleRange", json_value(sample_range)),
+                    ("lod", json_value(lod)),
+                    ("error", json_value(&message)),
+                ])),
             );
             Err(message)
         }
@@ -5414,13 +6798,49 @@ fn save_project_geospatial_settings_command(
 }
 
 #[tauri::command]
+fn search_coordinate_references_command(
+    request: SearchCoordinateReferencesRequest,
+) -> Result<SearchCoordinateReferencesResponse, String> {
+    search_coordinate_references(request)
+}
+
+#[tauri::command]
+fn resolve_coordinate_reference_command(
+    request: ResolveCoordinateReferenceRequest,
+) -> Result<CoordinateReferenceCatalogEntry, String> {
+    resolve_coordinate_reference(request)
+}
+
+#[tauri::command]
 fn set_dataset_native_coordinate_reference_command(
-    request: SetDatasetNativeCoordinateReferenceRequest,
+    request: SetDatasetNativeCoordinateReferenceSelectionRequest,
 ) -> Result<SetDatasetNativeCoordinateReferenceResponse, String> {
+    let normalized_id = request
+        .coordinate_reference_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let normalized_name = request
+        .coordinate_reference_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let resolved = if let Some(auth_id) = normalized_id {
+        let entry = resolve_coordinate_reference(ResolveCoordinateReferenceRequest {
+            authority: None,
+            code: None,
+            auth_id: Some(auth_id.to_string()),
+        })?;
+        (Some(entry.auth_id), Some(entry.name))
+    } else if let Some(label) = normalized_name {
+        (None, Some(label.to_string()))
+    } else {
+        (None, None)
+    };
     set_any_store_native_coordinate_reference(
         &request.store_path,
-        request.coordinate_reference_id.as_deref(),
-        request.coordinate_reference_name.as_deref(),
+        resolved.0.as_deref(),
+        resolved.1.as_deref(),
     )
     .map_err(|error| error.to_string())?;
     let response = open_dataset_summary(OpenDatasetRequest {
@@ -5636,6 +7056,125 @@ fn list_project_well_overlay_inventory_command(
 }
 
 #[tauri::command]
+fn list_project_survey_horizons_command(
+    request: ProjectAssetRequest,
+) -> Result<Vec<ImportedHorizonDescriptor>, String> {
+    let project = OphioliteProject::open(Path::new(&request.project_root))
+        .map_err(|error| error.to_string())?;
+    let asset = project
+        .asset_by_id(&ophiolite::AssetId(request.asset_id))
+        .map_err(|error| error.to_string())?;
+    if asset.asset_kind != AssetKind::SeismicTraceData {
+        return Err(format!(
+            "asset '{}' is not a seismic survey asset",
+            asset.id.0
+        ));
+    }
+    let store_path = Path::new(&asset.package_path).join("store");
+    load_horizon_assets(store_path.to_string_lossy().to_string()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn list_project_well_marker_residual_inventory_command(
+    request: ProjectWellboreRequest,
+) -> Result<ProjectWellMarkerResidualInventoryResponse, String> {
+    let project = OphioliteProject::open(Path::new(&request.project_root))
+        .map_err(|error| error.to_string())?;
+    Ok(ProjectWellMarkerResidualInventoryResponse {
+        markers: project_well_marker_descriptors(&project, &request.wellbore_id)?,
+        residual_assets: project_well_marker_horizon_residual_descriptors(
+            &project,
+            &request.wellbore_id,
+        )?,
+    })
+}
+
+#[tauri::command]
+fn scan_vendor_project_command(
+    request: ophiolite::VendorProjectScanRequest,
+) -> Result<ophiolite::VendorProjectScanResponse, String> {
+    ophiolite::scan_vendor_project(&request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn plan_vendor_project_import_command(
+    request: ophiolite::VendorProjectPlanRequest,
+) -> Result<ophiolite::VendorProjectPlanResponse, String> {
+    ophiolite::plan_vendor_project_import(&request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn commit_vendor_project_import_command(
+    request: ophiolite::VendorProjectCommitRequest,
+) -> Result<ophiolite::VendorProjectCommitResponse, String> {
+    ophiolite::commit_vendor_project_import(&request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn compute_project_well_marker_residual_command(
+    request: ComputeProjectWellMarkerResidualRequest,
+) -> Result<ComputeProjectWellMarkerResidualResponse, String> {
+    let mut project = OphioliteProject::open(Path::new(&request.project_root))
+        .map_err(|error| error.to_string())?;
+    let wellbore_id = ophiolite::WellboreId(request.wellbore_id.clone());
+    let source_asset_id = project
+        .definitive_marker_source_asset_id(&wellbore_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            format!(
+                "wellbore '{}' does not have a definitive marker-set or top-set source",
+                request.wellbore_id
+            )
+        })?;
+    let marker_name = request.marker_name.trim();
+    if marker_name.is_empty() {
+        return Err("marker_name is required".to_string());
+    }
+    let result = project
+        .run_compute(&ProjectComputeRunRequest {
+            source_asset_id,
+            function_id: "well_markers:depth_horizon_residuals".to_string(),
+            curve_bindings: std::collections::BTreeMap::new(),
+            parameters: std::collections::BTreeMap::from([
+                (
+                    "survey_asset_id".to_string(),
+                    ComputeParameterValue::String(request.survey_asset_id.clone()),
+                ),
+                (
+                    "horizon_id".to_string(),
+                    ComputeParameterValue::String(request.horizon_id.clone()),
+                ),
+                (
+                    "marker_name".to_string(),
+                    ComputeParameterValue::String(marker_name.to_string()),
+                ),
+            ]),
+            output_collection_name: request.output_collection_name.clone().or_else(|| {
+                Some(format!(
+                    "{} | {} Residual",
+                    request.horizon_id.trim(),
+                    marker_name
+                ))
+            }),
+            output_mnemonic: None,
+        })
+        .map_err(|error| error.to_string())?;
+    let points = project
+        .read_well_marker_horizon_residual_points(&result.asset.id)
+        .map_err(|error| error.to_string())?;
+    Ok(ComputeProjectWellMarkerResidualResponse {
+        asset_id: result.asset.id.0,
+        collection_id: result.collection.id.0,
+        collection_name: result.collection.name,
+        well_id: result.asset.well_id.0,
+        wellbore_id: result.asset.wellbore_id.0,
+        marker_name: marker_name.to_string(),
+        horizon_id: request.horizon_id,
+        point_count: points.len(),
+    })
+}
+
+#[tauri::command]
 fn set_project_active_well_time_depth_model_command(
     request: SetProjectWellTimeDepthModelRequest,
 ) -> Result<(), String> {
@@ -5672,54 +7211,629 @@ fn import_project_well_time_depth_model_command(
 }
 
 #[tauri::command]
+fn preview_project_well_time_depth_asset_command(
+    request: PreviewProjectWellTimeDepthAssetRequest,
+) -> Result<ophiolite::ProjectWellTimeDepthAssetPreview, String> {
+    let asset_kind = match request.asset_kind.as_str() {
+        "checkshot_vsp_observation_set" => ophiolite::AssetKind::CheckshotVspObservationSet,
+        "manual_time_depth_pick_set" => ophiolite::AssetKind::ManualTimeDepthPickSet,
+        "well_tie_observation_set" => ophiolite::AssetKind::WellTieObservationSet,
+        "well_time_depth_authored_model" => ophiolite::AssetKind::WellTimeDepthAuthoredModel,
+        "well_time_depth_model" => ophiolite::AssetKind::WellTimeDepthModel,
+        other => return Err(format!("unsupported well time-depth asset kind '{other}'")),
+    };
+    if let Some(json_payload) = request.json_payload.as_deref() {
+        ophiolite::preview_well_time_depth_json_payload(
+            Path::new(&request.json_path),
+            json_payload,
+            asset_kind,
+        )
+        .map_err(|error| error.to_string())
+    } else {
+        ophiolite::preview_well_time_depth_json_asset(Path::new(&request.json_path), asset_kind)
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[tauri::command]
+fn preview_project_well_time_depth_import_command(
+    request: PreviewProjectWellTimeDepthImportRequest,
+) -> Result<ophiolite::ProjectWellTimeDepthImportPreview, String> {
+    let asset_kind = match request.asset_kind.as_str() {
+        "checkshot_vsp_observation_set" => ophiolite::AssetKind::CheckshotVspObservationSet,
+        "manual_time_depth_pick_set" => ophiolite::AssetKind::ManualTimeDepthPickSet,
+        "well_tie_observation_set" => ophiolite::AssetKind::WellTieObservationSet,
+        "well_time_depth_authored_model" => ophiolite::AssetKind::WellTimeDepthAuthoredModel,
+        "well_time_depth_model" => ophiolite::AssetKind::WellTimeDepthModel,
+        other => return Err(format!("unsupported well time-depth asset kind '{other}'")),
+    };
+    let draft = request.draft.as_ref();
+    ophiolite::preview_well_time_depth_import_draft(
+        Path::new(&request.json_path),
+        draft.map(|value| value.json_payload.as_str()),
+        asset_kind,
+        draft.and_then(|value| value.collection_name.as_deref()),
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn preview_project_well_sources_command(
+    app: AppHandle,
+    diagnostics: State<'_, DiagnosticsState>,
+    request: PreviewProjectWellSourceImportRequest,
+) -> Result<ophiolite::ProjectWellSourceImportPreview, String> {
+    let selected_source_path_count = request
+        .source_paths
+        .as_ref()
+        .map(|paths| paths.len())
+        .unwrap_or(0);
+    let operation = diagnostics.start_operation(
+        &app,
+        "preview_project_well_sources",
+        "Previewing well source import",
+        Some(build_fields([
+            ("sourceRootPath", json_value(&request.source_root_path)),
+            (
+                "selectedSourcePathCount",
+                json_value(selected_source_path_count),
+            ),
+            (
+                "selectionMode",
+                json_value(if selected_source_path_count > 0 {
+                    "selected_sources"
+                } else {
+                    "source_root_scan"
+                }),
+            ),
+            ("stage", json_value("preview_well_sources")),
+        ])),
+    );
+
+    let result = if let Some(source_paths) = request.source_paths.filter(|paths| !paths.is_empty())
+    {
+        let normalized_paths = source_paths
+            .into_iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        ophiolite::preview_well_source_import_sources(
+            &normalized_paths,
+            Some(Path::new(&request.source_root_path)),
+        )
+        .map_err(|error| error.to_string())
+    } else {
+        ophiolite::preview_well_source_import(Path::new(&request.source_root_path))
+            .map_err(|error| error.to_string())
+    };
+
+    match result {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Well source import preview ready",
+                Some(build_fields([
+                    ("stage", json_value("preview_well_sources")),
+                    ("folderName", json_value(&response.parsed.folder_name)),
+                    ("issueCount", json_value(response.parsed.issues.len())),
+                    (
+                        "blockingIssueCount",
+                        json_value(
+                            response
+                                .parsed
+                                .issues
+                                .iter()
+                                .filter(|issue| {
+                                    issue.severity
+                                        == ophiolite::WellFolderImportIssueSeverity::Blocking
+                                })
+                                .count(),
+                        ),
+                    ),
+                    ("logFileCount", json_value(response.parsed.logs.files.len())),
+                    (
+                        "asciiLogFileCount",
+                        json_value(response.parsed.ascii_logs.files.len()),
+                    ),
+                    (
+                        "topsRowCount",
+                        json_value(response.parsed.tops_markers.row_count),
+                    ),
+                    (
+                        "trajectoryRowCount",
+                        json_value(response.parsed.trajectory.row_count),
+                    ),
+                    (
+                        "unsupportedSourceCount",
+                        json_value(response.parsed.unsupported_sources.len()),
+                    ),
+                    (
+                        "sourceCrsCandidateCount",
+                        json_value(response.parsed.source_coordinate_reference.candidates.len()),
+                    ),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(message) => {
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Well source import preview failed",
+                Some(build_fields([
+                    ("stage", json_value("preview_well_sources")),
+                    ("error", json_value(&message)),
+                ])),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+fn preview_project_well_import_command(
+    app: AppHandle,
+    diagnostics: State<'_, DiagnosticsState>,
+    request: PreviewProjectWellImportRequest,
+) -> Result<ophiolite::ProjectWellFolderImportPreview, String> {
+    let selected_source_path_count = request
+        .source_paths
+        .as_ref()
+        .map(|paths| paths.len())
+        .unwrap_or(0);
+    let operation = diagnostics.start_operation(
+        &app,
+        "preview_project_well_import",
+        "Previewing well import",
+        Some(build_fields([
+            ("sourceRootPath", json_value(&request.folder_path)),
+            (
+                "selectedSourcePathCount",
+                json_value(selected_source_path_count),
+            ),
+            (
+                "selectionMode",
+                json_value(if selected_source_path_count > 0 {
+                    "selected_sources"
+                } else {
+                    "source_root_scan"
+                }),
+            ),
+            ("stage", json_value("preview_well_sources")),
+        ])),
+    );
+
+    let result = if let Some(source_paths) = request.source_paths.filter(|paths| !paths.is_empty())
+    {
+        let normalized_paths = source_paths
+            .into_iter()
+            .map(PathBuf::from)
+            .collect::<Vec<_>>();
+        ophiolite::preview_well_import_sources(
+            &normalized_paths,
+            Some(Path::new(&request.folder_path)),
+        )
+        .map_err(|error| error.to_string())
+    } else {
+        ophiolite::preview_well_folder_import(Path::new(&request.folder_path))
+            .map_err(|error| error.to_string())
+    };
+
+    match result {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Well import preview ready",
+                Some(build_fields([
+                    ("stage", json_value("preview_well_sources")),
+                    ("folderName", json_value(&response.folder_name)),
+                    ("issueCount", json_value(response.issues.len())),
+                    (
+                        "blockingIssueCount",
+                        json_value(
+                            response
+                                .issues
+                                .iter()
+                                .filter(|issue| {
+                                    issue.severity
+                                        == ophiolite::WellFolderImportIssueSeverity::Blocking
+                                })
+                                .count(),
+                        ),
+                    ),
+                    ("logFileCount", json_value(response.logs.files.len())),
+                    (
+                        "asciiLogFileCount",
+                        json_value(response.ascii_logs.files.len()),
+                    ),
+                    ("topsRowCount", json_value(response.tops_markers.row_count)),
+                    (
+                        "trajectoryRowCount",
+                        json_value(response.trajectory.row_count),
+                    ),
+                    (
+                        "unsupportedSourceCount",
+                        json_value(response.unsupported_sources.len()),
+                    ),
+                    (
+                        "sourceCrsCandidateCount",
+                        json_value(response.source_coordinate_reference.candidates.len()),
+                    ),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(message) => {
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Well import preview failed",
+                Some(build_fields([
+                    ("stage", json_value("preview_well_sources")),
+                    ("error", json_value(&message)),
+                ])),
+            );
+            Err(message)
+        }
+    }
+}
+
+fn resolve_project_well_source_commit_request(
+    request: CommitProjectWellSourceImportRequest,
+) -> Result<(String, ophiolite::ProjectWellSourceImportCommitRequest), String> {
+    let commit_request = if let Some(draft) = request.draft {
+        let selected_log_source_paths = draft.import_plan.selected_log_source_paths;
+        let ascii_log_imports = draft.import_plan.ascii_log_imports;
+        let tops_markers = draft.import_plan.tops_markers;
+        let trajectory = draft.import_plan.trajectory;
+        let import_trajectory = trajectory
+            .as_ref()
+            .map(|value| value.enabled)
+            .unwrap_or(false);
+        let trajectory_rows = trajectory.as_ref().and_then(|value| value.rows.clone());
+        ophiolite::ProjectWellSourceImportCommitRequest {
+            folder_path: request.source_root_path,
+            source_paths: request.source_paths,
+            binding: draft.binding,
+            well_metadata: draft.well_metadata,
+            wellbore_metadata: draft.wellbore_metadata,
+            source_coordinate_reference: draft.source_coordinate_reference,
+            import_logs: selected_log_source_paths
+                .as_ref()
+                .map(|paths| !paths.is_empty())
+                .unwrap_or(false)
+                || ascii_log_imports
+                    .as_ref()
+                    .map(|imports| !imports.is_empty())
+                    .unwrap_or(false),
+            selected_log_source_paths,
+            import_tops_markers: tops_markers.is_some(),
+            import_trajectory,
+            tops_depth_reference: tops_markers
+                .as_ref()
+                .and_then(|value| value.depth_reference.clone()),
+            tops_rows: tops_markers.map(|value| value.rows),
+            trajectory_rows,
+            ascii_log_imports,
+        }
+    } else {
+        ophiolite::ProjectWellSourceImportCommitRequest {
+            folder_path: request.source_root_path,
+            source_paths: request.source_paths,
+            binding: request.binding.ok_or_else(|| {
+                "well-source import requires either a draft or binding data".to_string()
+            })?,
+            well_metadata: request.well_metadata,
+            wellbore_metadata: request.wellbore_metadata,
+            source_coordinate_reference: request.source_coordinate_reference.ok_or_else(|| {
+                "well-source import requires either a draft or source CRS selection data"
+                    .to_string()
+            })?,
+            import_logs: request.import_logs.unwrap_or(false),
+            selected_log_source_paths: request.selected_log_source_paths,
+            import_tops_markers: request.import_tops_markers.unwrap_or(false),
+            import_trajectory: request.import_trajectory.unwrap_or(false),
+            tops_depth_reference: request.tops_depth_reference,
+            tops_rows: request.tops_rows,
+            trajectory_rows: request.trajectory_rows,
+            ascii_log_imports: request.ascii_log_imports,
+        }
+    };
+    Ok((request.project_root, commit_request))
+}
+
+#[tauri::command]
+fn commit_project_well_sources_command(
+    app: AppHandle,
+    diagnostics: State<'_, DiagnosticsState>,
+    request: CommitProjectWellSourceImportRequest,
+) -> Result<ophiolite::ProjectWellSourceImportCommitResponse, String> {
+    let source_root_path = request.source_root_path.clone();
+    let selected_source_path_count = request
+        .source_paths
+        .as_ref()
+        .map(|paths| paths.len())
+        .unwrap_or(0);
+    let (project_root, commit_request) = resolve_project_well_source_commit_request(request)?;
+    let operation = diagnostics.start_operation(
+        &app,
+        "commit_project_well_sources",
+        "Importing well sources into project storage",
+        Some(build_fields([
+            ("projectRoot", json_value(&project_root)),
+            ("sourceRootPath", json_value(&source_root_path)),
+            (
+                "selectedSourcePathCount",
+                json_value(selected_source_path_count),
+            ),
+            ("importLogs", json_value(commit_request.import_logs)),
+            (
+                "selectedLogSourcePathCount",
+                json_value(
+                    commit_request
+                        .selected_log_source_paths
+                        .as_ref()
+                        .map(|paths| paths.len())
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "asciiLogImportCount",
+                json_value(
+                    commit_request
+                        .ascii_log_imports
+                        .as_ref()
+                        .map(|imports| imports.len())
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "topsRowCount",
+                json_value(
+                    commit_request
+                        .tops_rows
+                        .as_ref()
+                        .map(|rows| rows.len())
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "importTrajectory",
+                json_value(commit_request.import_trajectory),
+            ),
+            (
+                "trajectoryRowCount",
+                json_value(
+                    commit_request
+                        .trajectory_rows
+                        .as_ref()
+                        .map(|rows| rows.len())
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "sourceCrsMode",
+                json_value(
+                    format!("{:?}", commit_request.source_coordinate_reference.mode)
+                        .to_ascii_lowercase(),
+                ),
+            ),
+            ("stage", json_value("commit_well_sources")),
+        ])),
+    );
+    let mut project =
+        OphioliteProject::open(Path::new(&project_root)).map_err(|error| error.to_string())?;
+    let result = ophiolite::commit_well_source_import(&mut project, &commit_request)
+        .map_err(|error| error.to_string());
+    match result {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Well source import committed",
+                Some(build_fields([
+                    ("stage", json_value("commit_well_sources")),
+                    ("wellId", json_value(&response.well_id)),
+                    ("wellboreId", json_value(&response.wellbore_id)),
+                    ("createdWell", json_value(response.created_well)),
+                    ("createdWellbore", json_value(response.created_wellbore)),
+                    (
+                        "importedAssetCount",
+                        json_value(response.imported_assets.len()),
+                    ),
+                    ("omissionCount", json_value(response.omissions.len())),
+                    ("issueCount", json_value(response.issues.len())),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(message) => {
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Well source import failed",
+                Some(build_fields([
+                    ("stage", json_value("commit_well_sources")),
+                    ("projectRoot", json_value(&project_root)),
+                    ("error", json_value(&message)),
+                ])),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
+fn commit_project_well_import_command(
+    app: AppHandle,
+    diagnostics: State<'_, DiagnosticsState>,
+    request: CommitProjectWellImportRequest,
+) -> Result<ophiolite::ProjectWellFolderImportCommitResponse, String> {
+    commit_project_well_sources_command(
+        app,
+        diagnostics,
+        CommitProjectWellSourceImportRequest {
+            project_root: request.project_root,
+            source_root_path: request.folder_path,
+            source_paths: request.source_paths,
+            draft: request.draft,
+            binding: Some(request.binding),
+            well_metadata: request.well_metadata,
+            wellbore_metadata: request.wellbore_metadata,
+            source_coordinate_reference: Some(request.source_coordinate_reference),
+            import_logs: Some(request.import_logs),
+            selected_log_source_paths: request.selected_log_source_paths,
+            import_tops_markers: Some(request.import_tops_markers),
+            import_trajectory: Some(request.import_trajectory),
+            tops_depth_reference: request.tops_depth_reference,
+            tops_rows: request.tops_rows,
+            trajectory_rows: request.trajectory_rows,
+            ascii_log_imports: request.ascii_log_imports,
+        },
+    )
+}
+
+#[tauri::command]
 fn import_project_well_time_depth_asset_command(
     request: ImportProjectWellTimeDepthAssetRequest,
 ) -> Result<ImportProjectWellTimeDepthModelResponse, String> {
     let mut project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
-    let result = match request.asset_kind.as_str() {
-        "checkshot_vsp_observation_set" => project.import_checkshot_vsp_observation_set_json(
-            Path::new(&request.json_path),
-            request.binding,
-            request.collection_name.as_deref(),
-        ),
-        "manual_time_depth_pick_set" => project.import_manual_time_depth_pick_set_json(
-            Path::new(&request.json_path),
-            request.binding,
-            request.collection_name.as_deref(),
-        ),
-        "well_tie_observation_set" => {
-            let observation_set: WellTieObservationSet1D = serde_json::from_slice(
-                &fs::read(Path::new(&request.json_path)).map_err(|error| error.to_string())?,
-            )
-            .map_err(|error| {
-                format!(
-                    "failed to parse well tie observation json '{}': {error}",
-                    request.json_path
-                )
-            })?;
-            project.create_well_tie_observation_set(
-                Path::new(&request.json_path),
+    let source_path = Path::new(&request.json_path);
+    let result = match (request.asset_kind.as_str(), request.json_payload.as_deref()) {
+        ("checkshot_vsp_observation_set", Some(json_payload)) => {
+            let observation_set: CheckshotVspObservationSet1D = serde_json::from_str(json_payload)
+                .map_err(|error| {
+                    format!(
+                        "failed to parse checkshot/VSP observation json '{}': {error}",
+                        request.json_path
+                    )
+                })?;
+            project.create_checkshot_vsp_observation_set(
+                source_path,
                 request.binding,
                 request.collection_name.as_deref(),
                 &observation_set,
             )
         }
-        "well_time_depth_authored_model" => project.import_well_time_depth_authored_model_json(
-            Path::new(&request.json_path),
+        ("checkshot_vsp_observation_set", None) => project
+            .import_checkshot_vsp_observation_set_json(
+                source_path,
+                request.binding,
+                request.collection_name.as_deref(),
+            ),
+        ("manual_time_depth_pick_set", Some(json_payload)) => {
+            let pick_set: ManualTimeDepthPickSet1D =
+                serde_json::from_str(json_payload).map_err(|error| {
+                    format!(
+                        "failed to parse manual time-depth pick json '{}': {error}",
+                        request.json_path
+                    )
+                })?;
+            project.create_manual_time_depth_pick_set(
+                source_path,
+                request.binding,
+                request.collection_name.as_deref(),
+                &pick_set,
+            )
+        }
+        ("manual_time_depth_pick_set", None) => project.import_manual_time_depth_pick_set_json(
+            source_path,
             request.binding,
             request.collection_name.as_deref(),
         ),
-        "well_time_depth_model" => project.import_well_time_depth_model_json(
-            Path::new(&request.json_path),
+        ("well_tie_observation_set", Some(json_payload)) => {
+            let observation_set: WellTieObservationSet1D = serde_json::from_str(json_payload)
+                .map_err(|error| {
+                    format!(
+                        "failed to parse well tie observation json '{}': {error}",
+                        request.json_path
+                    )
+                })?;
+            project.create_well_tie_observation_set(
+                source_path,
+                request.binding,
+                request.collection_name.as_deref(),
+                &observation_set,
+            )
+        }
+        ("well_tie_observation_set", None) => {
+            let observation_set: WellTieObservationSet1D =
+                serde_json::from_slice(&fs::read(source_path).map_err(|error| error.to_string())?)
+                    .map_err(|error| {
+                        format!(
+                            "failed to parse well tie observation json '{}': {error}",
+                            request.json_path
+                        )
+                    })?;
+            project.create_well_tie_observation_set(
+                source_path,
+                request.binding,
+                request.collection_name.as_deref(),
+                &observation_set,
+            )
+        }
+        ("well_time_depth_authored_model", Some(json_payload)) => {
+            let model: WellTimeDepthAuthoredModel1D =
+                serde_json::from_str(json_payload).map_err(|error| {
+                    format!(
+                        "failed to parse well time-depth authored model json '{}': {error}",
+                        request.json_path
+                    )
+                })?;
+            project.create_well_time_depth_authored_model(
+                source_path,
+                request.binding,
+                request.collection_name.as_deref(),
+                &model,
+            )
+        }
+        ("well_time_depth_authored_model", None) => project
+            .import_well_time_depth_authored_model_json(
+                source_path,
+                request.binding,
+                request.collection_name.as_deref(),
+            ),
+        ("well_time_depth_model", Some(json_payload)) => {
+            let model: WellTimeDepthModel1D =
+                serde_json::from_str(json_payload).map_err(|error| {
+                    format!(
+                        "failed to parse well time-depth model json '{}': {error}",
+                        request.json_path
+                    )
+                })?;
+            project.create_well_time_depth_model(
+                source_path,
+                request.binding,
+                request.collection_name.as_deref(),
+                &model,
+            )
+        }
+        ("well_time_depth_model", None) => project.import_well_time_depth_model_json(
+            source_path,
             request.binding,
             request.collection_name.as_deref(),
         ),
-        other => return Err(format!("unsupported well time-depth asset kind '{other}'")),
+        (other, _) => return Err(format!("unsupported well time-depth asset kind '{other}'")),
     }
     .map_err(|error| error.to_string())?;
 
     Ok(well_time_depth_import_response(result))
+}
+
+#[tauri::command]
+fn commit_project_well_time_depth_import_command(
+    request: CommitProjectWellTimeDepthImportRequest,
+) -> Result<ImportProjectWellTimeDepthModelResponse, String> {
+    import_project_well_time_depth_asset_command(ImportProjectWellTimeDepthAssetRequest {
+        project_root: request.project_root,
+        json_path: request.json_path,
+        json_payload: Some(request.draft.json_payload),
+        binding: request.binding,
+        collection_name: request.draft.collection_name,
+        asset_kind: request.draft.asset_kind,
+    })
 }
 
 #[tauri::command]
@@ -7198,6 +9312,207 @@ fn emit_frontend_diagnostics_event_command(
     Ok(())
 }
 
+#[tauri::command]
+fn run_section_browsing_benchmark_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    request: RunSectionBrowsingBenchmarkRequest,
+) -> Result<RunSectionBrowsingBenchmarkResponse, String> {
+    let store_path = request.store_path.trim().to_string();
+    if store_path.is_empty() {
+        return Err("Store path is required.".to_string());
+    }
+
+    let iterations = benchmark_iterations(request.iterations);
+    let include_full_section_baseline = request.include_full_section_baseline.unwrap_or(true);
+    let step_offsets = benchmark_step_offsets(request.step_offsets);
+    let primary_axis_name = axis_name(request.axis);
+
+    let handle = open_store(&store_path).map_err(|error| error.to_string())?;
+    if request.section_index >= section_axis_length(&handle, request.axis) {
+        return Err(format!(
+            "section index {} exceeds axis length {}",
+            request.section_index,
+            section_axis_length(&handle, request.axis)
+        ));
+    }
+
+    let trace_range = validate_benchmark_range(
+        request.trace_range,
+        section_axis_length(&handle, request.axis),
+        "trace",
+    )?;
+    let sample_range = validate_benchmark_range(
+        request.sample_range,
+        handle.manifest.volume.shape[2],
+        "sample",
+    )?;
+
+    let operation = diagnostics.start_operation(
+        &app,
+        "run_section_browsing_benchmark",
+        "Running section browsing benchmark scenario",
+        Some(build_fields([
+            ("storePath", json_value(&store_path)),
+            ("datasetId", json_value(&handle.dataset_id().0)),
+            ("shape", json_value(handle.manifest.volume.shape)),
+            ("tileShape", json_value(handle.manifest.tile_shape)),
+            ("axis", json_value(&primary_axis_name)),
+            ("sectionIndex", json_value(request.section_index)),
+            ("traceRange", json_value(trace_range)),
+            ("sampleRange", json_value(sample_range)),
+            ("lod", json_value(request.lod)),
+            ("iterations", json_value(iterations)),
+            (
+                "includeFullSectionBaseline",
+                json_value(include_full_section_baseline),
+            ),
+            ("stepOffsets", json_value(&step_offsets)),
+        ])),
+    );
+
+    let mut cases = Vec::new();
+    if include_full_section_baseline {
+        let case =
+            measure_full_section_case(&handle, request.axis, request.section_index, iterations)?;
+        diagnostics.progress(
+            &app,
+            &operation,
+            "Measured full-section baseline",
+            Some(build_fields([
+                ("scenario", json_value(&case.scenario)),
+                ("axis", json_value(&case.axis)),
+                ("index", json_value(case.index)),
+                ("payloadBytes", json_value(case.payload_bytes)),
+                ("medianMs", json_value(case.median_ms)),
+            ])),
+        );
+        cases.push(case);
+    }
+
+    let active_case = measure_section_tile_case(
+        &handle,
+        "active_viewport_tile".to_string(),
+        request.axis,
+        request.section_index,
+        trace_range,
+        sample_range,
+        request.lod,
+        iterations,
+    )?;
+    diagnostics.progress(
+        &app,
+        &operation,
+        "Measured active viewport tile case",
+        Some(build_fields([
+            ("scenario", json_value(&active_case.scenario)),
+            ("axis", json_value(&active_case.axis)),
+            ("index", json_value(active_case.index)),
+            ("payloadBytes", json_value(active_case.payload_bytes)),
+            ("medianMs", json_value(active_case.median_ms)),
+        ])),
+    );
+    cases.push(active_case);
+
+    let mut current_index = request.section_index;
+    let axis_length = section_axis_length(&handle, request.axis);
+    for (position, offset) in step_offsets.iter().enumerate() {
+        current_index = stepped_section_index(current_index, *offset, axis_length);
+        let case = measure_section_tile_case(
+            &handle,
+            format!("neighbor_step_{}_offset_{}", position + 1, offset),
+            request.axis,
+            current_index,
+            trace_range,
+            sample_range,
+            request.lod,
+            iterations,
+        )?;
+        diagnostics.progress(
+            &app,
+            &operation,
+            "Measured neighboring section tile case",
+            Some(build_fields([
+                ("scenario", json_value(&case.scenario)),
+                ("axis", json_value(&case.axis)),
+                ("index", json_value(case.index)),
+                ("payloadBytes", json_value(case.payload_bytes)),
+                ("medianMs", json_value(case.median_ms)),
+            ])),
+        );
+        cases.push(case);
+    }
+
+    let mut switch_axis_name = None;
+    let mut switch_section_index = None;
+    if let Some(switch_axis) = request.switch_axis {
+        let target_axis_length = section_axis_length(&handle, switch_axis);
+        let target_index = request
+            .switch_section_index
+            .unwrap_or(current_index)
+            .min(target_axis_length.saturating_sub(1));
+        let switch_trace_range = clamp_window_to_total(trace_range, target_axis_length);
+        let case = measure_section_tile_case(
+            &handle,
+            "axis_switch_tile".to_string(),
+            switch_axis,
+            target_index,
+            switch_trace_range,
+            sample_range,
+            request.lod,
+            iterations,
+        )?;
+        diagnostics.progress(
+            &app,
+            &operation,
+            "Measured switched-axis section tile case",
+            Some(build_fields([
+                ("scenario", json_value(&case.scenario)),
+                ("axis", json_value(&case.axis)),
+                ("index", json_value(case.index)),
+                ("traceRange", json_value(case.trace_range)),
+                ("payloadBytes", json_value(case.payload_bytes)),
+                ("medianMs", json_value(case.median_ms)),
+            ])),
+        );
+        switch_axis_name = Some(axis_name(switch_axis));
+        switch_section_index = Some(target_index);
+        cases.push(case);
+    }
+
+    let response = RunSectionBrowsingBenchmarkResponse {
+        session_log_path: diagnostics.session_log_path().display().to_string(),
+        store_path,
+        dataset_id: handle.dataset_id().0.clone(),
+        shape: handle.manifest.volume.shape,
+        tile_shape: handle.manifest.tile_shape,
+        axis: primary_axis_name,
+        section_index: request.section_index,
+        trace_range,
+        sample_range,
+        lod: request.lod,
+        iterations,
+        include_full_section_baseline,
+        step_offsets,
+        switch_axis: switch_axis_name,
+        switch_section_index,
+        cases,
+    };
+
+    diagnostics.complete(
+        &app,
+        &operation,
+        "Section browsing benchmark scenario completed",
+        Some(build_fields([
+            ("datasetId", json_value(&response.dataset_id)),
+            ("caseCount", json_value(response.cases.len())),
+            ("sessionLogPath", json_value(&response.session_log_path)),
+        ])),
+    );
+
+    Ok(response)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let session_basename = DiagnosticsState::session_basename();
@@ -7211,7 +9526,7 @@ pub fn run() {
             })
             .unwrap_or(false);
 
-    let log_plugin = tauri_plugin_log::Builder::default()
+    let log_plugin_builder = tauri_plugin_log::Builder::default()
         .clear_targets()
         .level(log::LevelFilter::Info)
         .level_for("traceboost_desktop_lib", log::LevelFilter::Debug)
@@ -7223,13 +9538,22 @@ pub fn run() {
         .level_for("seis_runtime", log::LevelFilter::Info)
         .target(tauri_plugin_log::Target::new(
             tauri_plugin_log::TargetKind::Stdout,
+        ));
+    let log_plugin_builder = if let Some(logs_dir) = preferred_traceboost_logs_dir() {
+        log_plugin_builder.target(tauri_plugin_log::Target::new(
+            tauri_plugin_log::TargetKind::Folder {
+                path: logs_dir,
+                file_name: Some(session_basename.clone()),
+            },
         ))
-        .target(tauri_plugin_log::Target::new(
+    } else {
+        log_plugin_builder.target(tauri_plugin_log::Target::new(
             tauri_plugin_log::TargetKind::LogDir {
                 file_name: Some(session_basename.clone()),
             },
         ))
-        .build();
+    };
+    let log_plugin = log_plugin_builder.build();
 
     let builder = tauri::Builder::default()
         .menu(build_app_menu)
@@ -7242,6 +9566,11 @@ pub fn run() {
             APP_VELOCITY_MODEL_MENU_ID => {
                 if let Err(error) = app.emit(APP_VELOCITY_MODEL_MENU_EVENT, ()) {
                     log::warn!("failed to emit native velocity-model menu event: {error}");
+                }
+            }
+            APP_RESIDUALS_MENU_ID => {
+                if let Err(error) = app.emit(APP_RESIDUALS_MENU_EVENT, ()) {
+                    log::warn!("failed to emit native residuals menu event: {error}");
                 }
             }
             APP_DEPTH_CONVERSION_MENU_ID => {
@@ -7267,6 +9596,11 @@ pub fn run() {
             FILE_IMPORT_HORIZONS_MENU_ID => {
                 if let Err(error) = app.emit(FILE_IMPORT_HORIZONS_MENU_EVENT, ()) {
                     log::warn!("failed to emit native import-horizons menu event: {error}");
+                }
+            }
+            FILE_IMPORT_WELL_SOURCES_MENU_ID => {
+                if let Err(error) = app.emit(FILE_IMPORT_WELL_SOURCES_MENU_EVENT, ()) {
+                    log::warn!("failed to emit native import-well-sources menu event: {error}");
                 }
             }
             FILE_IMPORT_VELOCITY_FUNCTIONS_MENU_ID => {
@@ -7308,6 +9642,8 @@ pub fn run() {
             let diagnostics =
                 DiagnosticsState::initialize(app_paths.logs_dir(), session_basename.clone())?;
             let processing = ProcessingState::initialize(app_paths.pipeline_presets_dir())?;
+            let segy_import_recipes =
+                SegyImportRecipeState::initialize(app_paths.segy_import_recipes_dir())?;
             fs::create_dir_all(app_paths.map_transform_cache_dir())
                 .map_err(|error| error.to_string())?;
             let processing_cache = ProcessingCacheState::initialize(
@@ -7336,6 +9672,7 @@ pub fn run() {
             );
             app.manage(diagnostics);
             app.manage(processing);
+            app.manage(segy_import_recipes);
             app.manage(processing_cache);
             app.manage(preview_sessions);
             app.manage(workspace);
@@ -7343,11 +9680,16 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             preflight_import_command,
+            scan_segy_import_command,
+            validate_segy_import_plan_command,
+            import_segy_with_plan_command,
             import_dataset_command,
             import_prestack_offset_dataset_command,
             open_dataset_command,
             ensure_demo_survey_time_depth_transform_command,
             load_velocity_models_command,
+            describe_velocity_volume_command,
+            ingest_velocity_volume_command,
             load_horizon_assets_command,
             import_velocity_functions_model_command,
             build_velocity_model_transform_command,
@@ -7355,10 +9697,15 @@ pub fn run() {
             get_dataset_export_capabilities_command,
             export_dataset_segy_command,
             export_dataset_zarr_command,
+            preview_horizon_xyz_import_command,
+            preview_horizon_source_import_command,
+            inspect_horizon_xyz_files_command,
+            commit_horizon_source_import_command,
             import_horizon_xyz_command,
             load_section_horizons_command,
             load_section_command,
             load_section_binary_command,
+            load_section_tile_binary_command,
             load_depth_converted_section_binary_command,
             load_resolved_section_display_binary_command,
             load_gather_command,
@@ -7377,6 +9724,9 @@ pub fn run() {
             list_pipeline_presets_command,
             save_pipeline_preset_command,
             delete_pipeline_preset_command,
+            list_segy_import_recipes_command,
+            save_segy_import_recipe_command,
+            delete_segy_import_recipe_command,
             load_workspace_state_command,
             upsert_dataset_entry_command,
             remove_dataset_entry_command,
@@ -7384,15 +9734,30 @@ pub fn run() {
             save_workspace_session_command,
             load_project_geospatial_settings_command,
             save_project_geospatial_settings_command,
+            search_coordinate_references_command,
+            resolve_coordinate_reference_command,
             set_dataset_native_coordinate_reference_command,
             resolve_survey_map_command,
             resolve_project_survey_map_command,
+            list_project_survey_horizons_command,
             list_project_well_overlay_inventory_command,
+            list_project_well_marker_residual_inventory_command,
+            scan_vendor_project_command,
+            plan_vendor_project_import_command,
+            commit_vendor_project_import_command,
             list_project_well_time_depth_models_command,
             list_project_well_time_depth_inventory_command,
+            compute_project_well_marker_residual_command,
             set_project_active_well_time_depth_model_command,
             import_project_well_time_depth_model_command,
+            preview_project_well_time_depth_asset_command,
+            preview_project_well_time_depth_import_command,
+            preview_project_well_sources_command,
+            preview_project_well_import_command,
+            commit_project_well_sources_command,
+            commit_project_well_import_command,
             import_project_well_time_depth_asset_command,
+            commit_project_well_time_depth_import_command,
             analyze_project_well_tie_command,
             accept_project_well_tie_command,
             compile_project_well_time_depth_authored_model_command,
@@ -7406,7 +9771,8 @@ pub fn run() {
             get_diagnostics_status_command,
             set_diagnostics_verbosity_command,
             export_diagnostics_bundle_command,
-            emit_frontend_diagnostics_event_command
+            emit_frontend_diagnostics_event_command,
+            run_section_browsing_benchmark_command
         ]);
 
     #[cfg(debug_assertions)]

@@ -14,6 +14,12 @@ Regenerate from the repo root with:
 .\scripts\generate-ts-contracts.ps1
 ```
 
+The TraceBoost package itself is emitted by:
+
+```sh
+cargo run -p traceboost-contracts-export
+```
+
 Consumers should treat this package as the frontend contract surface for
 TraceBoost demo IPC payloads, shared dataset/view models, desktop
 workspace/session DTOs, and survey preflight metadata such as resolved stacking

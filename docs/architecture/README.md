@@ -45,6 +45,7 @@ Current properties:
 - seismic CRS identity, native/effective CRS binding, and display-CRS resolution are defined in `ADR-0014-seismic-crs-native-effective-display-boundary.md`
 - canonical wellbore geometry, resolved trajectory, well time/depth authored models, and section well overlays are defined in `ADR-0016-canonical-wellbore-geometry-and-resolved-trajectory-boundary.md`, `ADR-0017-well-time-depth-source-assets-authored-models-and-compiled-runtime-output.md`, and `ADR-0018-project-aware-well-on-section-overlay-dtos-and-backend-projection-rules.md`
 - chart-kernel direction, rock-physics crossplot DTO guidance, the first point-cloud spike, and the AVO chart-family analysis boundary are defined in `ADR-0019-chart-kernels-rock-physics-crossplot-and-point-cloud-spike.md` and `ADR-0020-avo-chart-family-analysis-contracts-and-initial-rendering-plan.md`
+- the domain-first Python SDK surface and advanced namespace rule are defined in `ADR-0028-domain-first-python-sdk-surface-and-advanced-namespaces.md`
 
 ## Layered Architecture
 

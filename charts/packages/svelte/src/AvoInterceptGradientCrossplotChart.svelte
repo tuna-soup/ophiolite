@@ -3,10 +3,19 @@
 <script lang="ts">
   import {
     AVO_CROSSPLOT_MARGIN,
+    applyViewportToAxisOverrides,
     avoCrossplotScreenToValue,
+    buildCartesianTicks,
     clampAvoCrossplotViewport,
+    cloneCartesianAxisOverrides,
+    formatCartesianCanvasFont,
+    formatCartesianTick,
     fitAvoCrossplotViewport,
-    getAvoCrossplotPlotRect,
+    hitTestCartesianAxisBand,
+    resolveCartesianAxisTitle,
+    resolveCartesianPresentationProfile,
+    resolveCartesianStageLayout,
+    resolveCartesianTickCount,
     valueToAvoCrossplotScreenX,
     valueToAvoCrossplotScreenY
   } from "@ophiolite/charts-core";
@@ -14,9 +23,11 @@
     AvoCartesianViewport,
     AvoCrossplotProbe,
     AvoInterfaceDescriptor,
+    CartesianAxisOverrides,
     InteractionEvent,
     InteractionTarget
   } from "@ophiolite/charts-data-models";
+  import ProbePanel from "./ProbePanel.svelte";
   import { scaleAvoStageSize, resolveAvoStageSize } from "./avo-stage";
   import {
     AVO_CHART_INTERACTION_CAPABILITIES,
@@ -31,11 +42,17 @@
 
   const POINT_RADIUS_PX = 2.3;
   const HIT_RADIUS_PX = 10;
+  const PRESENTATION = resolveCartesianPresentationProfile("avo");
+  const TICK_FONT = formatCartesianCanvasFont(PRESENTATION.typography.tick);
+  const TITLE_FONT = formatCartesianCanvasFont(PRESENTATION.typography.title);
+  const SUBTITLE_FONT = formatCartesianCanvasFont(PRESENTATION.typography.subtitle);
+  const AXIS_LABEL_FONT = formatCartesianCanvasFont(PRESENTATION.typography.axisLabel);
 
   let {
     chartId,
     model = null,
     viewport = null,
+    axisOverrides = undefined,
     interactions = undefined,
     loading = false,
     emptyMessage = "No AVO crossplot selected.",
@@ -50,22 +67,39 @@
     onViewportChange,
     onProbeChange,
     onInteractionStateChange,
-    onInteractionEvent
+    onInteractionEvent,
+    onAxisOverridesChange,
+    onAxisContextRequest
   }: AvoInterceptGradientCrossplotChartProps = $props();
 
   let host = $state.raw<HTMLDivElement | null>(null);
   let canvas = $state.raw<HTMLCanvasElement | null>(null);
   let currentViewport = $state.raw<AvoCartesianViewport | null>(null);
   let currentProbe = $state.raw<AvoCrossplotProbe | null>(null);
+  let currentAxisOverrides = $state.raw<CartesianAxisOverrides>({});
   let activePointerId = $state.raw<number | null>(null);
+  let activeDragKind = $state<"pan" | "zoomRect" | null>(null);
   let lastPanPoint = $state.raw<ScreenPoint | null>(null);
+  let zoomRectSession = $state.raw<{ origin: ScreenPoint; current: ScreenPoint } | null>(null);
   let lastModel = $state.raw<AvoInterceptGradientCrossplotChartProps["model"]>(null);
   let lastResetToken = $state.raw<string | number | null>(null);
   let lastInteractionStateKey = "";
   let lastHoverKey = "";
+  let lastAxisOverridesKey = "";
+  let lastRequestedAxisOverridesKey = "";
   let stageSize = $derived(scaleAvoStageSize(resolveAvoStageSize(), stageScale));
   let requestedTool = $derived(interactions?.tool ?? "crosshair");
-  let plotRect = $derived(getAvoCrossplotPlotRect(stageSize.width, stageSize.height));
+  let layout = $derived(resolveCartesianStageLayout(stageSize.width, stageSize.height, PRESENTATION));
+  let plotRect = $derived(layout.plotRect);
+  let hostCursor = $derived.by(() => {
+    if (activeDragKind === "zoomRect") {
+      return "crosshair";
+    }
+    if (requestedTool === "pan") {
+      return activePointerId == null ? "grab" : "grabbing";
+    }
+    return "crosshair";
+  });
 
   $effect(() => {
     const nextViewport = viewport ?? fitAvoCrossplotViewport(model);
@@ -73,6 +107,7 @@
     lastResetToken = resetToken;
     if (shouldReset) {
       lastModel = model;
+      currentAxisOverrides = cloneCartesianAxisOverrides(axisOverrides);
       setViewportState(nextViewport, false);
       currentProbe = null;
       notifyProbeChange();
@@ -80,6 +115,22 @@
     }
     if (viewport && !sameViewport(viewport, currentViewport)) {
       setViewportState(viewport, false);
+    }
+  });
+
+  $effect(() => {
+    const requested = cloneCartesianAxisOverrides(axisOverrides);
+    const key = JSON.stringify(requested);
+    if (key === lastRequestedAxisOverridesKey) {
+      return;
+    }
+    lastRequestedAxisOverridesKey = key;
+    const baseViewport = currentViewport ?? fitAvoCrossplotViewport(model);
+    const nextViewport = !viewport ? viewportFromAxisOverrides(baseViewport, requested) : baseViewport;
+    currentAxisOverrides = nextViewport ? applyViewportToAxisOverrides(requested, nextViewport) : requested;
+    notifyAxisOverridesChange();
+    if (!viewport && nextViewport && !sameViewport(nextViewport, currentViewport)) {
+      setViewportState(clampAvoCrossplotViewport(model, nextViewport), true, false);
     }
   });
 
@@ -150,17 +201,49 @@
       return;
     }
     host.focus();
+    const point = pointerPoint(event);
+    if (event.button !== 0) {
+      return;
+    }
+    if (event.shiftKey && pointInPlot(point)) {
+      activePointerId = event.pointerId;
+      activeDragKind = "zoomRect";
+      zoomRectSession = { origin: point, current: point };
+      lastPanPoint = null;
+      currentProbe = null;
+      notifyProbeChange();
+      emitHoverTarget(null);
+      host.setPointerCapture(event.pointerId);
+      emitInteractionEvent({
+        type: "zoomRectStart",
+        session: { kind: "zoomRect", origin: point, current: point }
+      });
+      return;
+    }
     if (requestedTool !== "pan") {
       updateProbeFromPointer(event);
       return;
     }
     activePointerId = event.pointerId;
-    lastPanPoint = pointerPoint(event);
+    activeDragKind = "pan";
+    lastPanPoint = point;
     host.setPointerCapture(event.pointerId);
   }
 
   function handlePointerMove(event: PointerEvent): void {
     if (!host) {
+      return;
+    }
+    if (activeDragKind === "zoomRect" && activePointerId === event.pointerId && zoomRectSession) {
+      const point = clampPointToPlot(pointerPoint(event));
+      zoomRectSession = {
+        origin: zoomRectSession.origin,
+        current: point
+      };
+      emitInteractionEvent({
+        type: "zoomRectPreview",
+        session: { kind: "zoomRect", origin: zoomRectSession.origin, current: point }
+      });
       return;
     }
     if (requestedTool === "pan" && activePointerId === event.pointerId && lastPanPoint && currentViewport) {
@@ -178,6 +261,28 @@
     if (!host) {
       return;
     }
+    if (activeDragKind === "zoomRect" && zoomRectSession) {
+      const session = zoomRectSession;
+      const nextViewport = viewportFromZoomRect(session);
+      activeDragKind = null;
+      zoomRectSession = null;
+      releasePointerCapture(event.pointerId);
+      lastPanPoint = null;
+      if (nextViewport) {
+        setViewportState(clampAvoCrossplotViewport(model, nextViewport), true);
+        emitInteractionEvent({
+          type: "zoomRectCommit",
+          session: { kind: "zoomRect", origin: session.origin, current: session.current }
+        });
+      } else {
+        emitInteractionEvent({
+          type: "zoomRectCancel",
+          session: { kind: "zoomRect", origin: session.origin, current: session.current }
+        });
+      }
+      return;
+    }
+    activeDragKind = null;
     releasePointerCapture(event.pointerId);
     lastPanPoint = null;
   }
@@ -186,17 +291,31 @@
     if (!host) {
       return;
     }
+    if (activeDragKind === "zoomRect" && zoomRectSession) {
+      emitInteractionEvent({
+        type: "zoomRectCancel",
+        session: { kind: "zoomRect", origin: zoomRectSession.origin, current: zoomRectSession.current }
+      });
+    }
+    activeDragKind = null;
+    zoomRectSession = null;
     releasePointerCapture(event.pointerId);
     lastPanPoint = null;
   }
 
   function handlePointerLeave(): void {
+    if (activeDragKind) {
+      return;
+    }
     currentProbe = null;
     notifyProbeChange();
     emitHoverTarget(null);
   }
 
   function handleWheel(event: WheelEvent): void {
+    if (activeDragKind === "zoomRect") {
+      return;
+    }
     if (!currentViewport) {
       return;
     }
@@ -214,6 +333,14 @@
       return;
     }
     if (event.key === "Escape") {
+      if (activeDragKind === "zoomRect" && zoomRectSession) {
+        emitInteractionEvent({
+          type: "zoomRectCancel",
+          session: { kind: "zoomRect", origin: zoomRectSession.origin, current: zoomRectSession.current }
+        });
+      }
+      activeDragKind = null;
+      zoomRectSession = null;
       currentProbe = null;
       notifyProbeChange();
       emitHoverTarget(null);
@@ -242,7 +369,7 @@
     }
   }
 
-  function updateProbeFromPointer(event: PointerEvent | WheelEvent): void {
+  function updateProbeFromPointer(event: PointerEvent | WheelEvent | MouseEvent): void {
     if (!model || !currentViewport) {
       return;
     }
@@ -305,16 +432,27 @@
       if (currentProbe && requestedTool === "crosshair") {
         drawProbe(context, currentViewport);
       }
+      if (zoomRectSession) {
+        drawZoomRectOverlay(context, zoomRectSession);
+      }
     }
   }
 
   function drawCrossplotGrid(context: CanvasRenderingContext2D, viewportState: AvoCartesianViewport): void {
-    const xTicks = buildTicks(viewportState.xMin, viewportState.xMax, 6);
-    const yTicks = buildTicks(viewportState.yMin, viewportState.yMax, 6);
+    const xTicks = buildCartesianTicks(
+      viewportState.xMin,
+      viewportState.xMax,
+      resolveCartesianTickCount(currentAxisOverrides.x)
+    );
+    const yTicks = buildCartesianTicks(
+      viewportState.yMin,
+      viewportState.yMax,
+      resolveCartesianTickCount(currentAxisOverrides.y)
+    );
     context.save();
     context.strokeStyle = "rgba(130, 148, 166, 0.18)";
     context.fillStyle = "#5b6d7f";
-    context.font = "500 10px sans-serif";
+    context.font = TICK_FONT;
 
     for (const tick of xTicks) {
       const x = valueToAvoCrossplotScreenX(tick, viewportState, plotRect);
@@ -323,7 +461,7 @@
       context.lineTo(x, plotRect.y + plotRect.height);
       context.stroke();
       context.textAlign = "center";
-      context.fillText(formatTick(tick), x, plotRect.y + plotRect.height + 22);
+      context.fillText(formatCartesianTick(tick, currentAxisOverrides.x?.tickFormat), x, layout.xTickY);
     }
 
     for (const tick of yTicks) {
@@ -333,7 +471,7 @@
       context.lineTo(plotRect.x + plotRect.width, y);
       context.stroke();
       context.textAlign = "right";
-      context.fillText(formatTick(tick), plotRect.x - 10, y + 4);
+      context.fillText(formatCartesianTick(tick, currentAxisOverrides.y?.tickFormat), layout.yTickX, y + 4);
     }
     context.restore();
   }
@@ -436,12 +574,12 @@
     }
     context.save();
     context.fillStyle = "#324355";
-    context.font = "600 14px sans-serif";
-    context.fillText(model.title, plotRect.x, 30);
+    context.font = TITLE_FONT;
+    context.fillText(model.title, layout.title.x, layout.title.y);
     if (model.subtitle) {
       context.fillStyle = "#6c7f91";
-      context.font = "500 11px sans-serif";
-      context.fillText(model.subtitle, plotRect.x, 48);
+      context.font = SUBTITLE_FONT;
+      context.fillText(model.subtitle, layout.subtitle.x, layout.subtitle.y);
     }
     context.restore();
   }
@@ -452,12 +590,41 @@
     }
     context.save();
     context.fillStyle = "#425567";
-    context.font = "600 11px sans-serif";
+    context.font = AXIS_LABEL_FONT;
     context.textAlign = "center";
-    context.fillText(`${model.xAxis.label ?? "Intercept"}${model.xAxis.unit ? ` (${model.xAxis.unit})` : ""}`, plotRect.x + plotRect.width / 2, stageSize.height - 10);
-    context.translate(20, plotRect.y + plotRect.height / 2);
+    context.fillText(
+      resolveCartesianAxisTitle("Intercept", model.xAxis.label, model.xAxis.unit, currentAxisOverrides.x),
+      plotRect.x + plotRect.width / 2,
+      layout.xAxisLabelY
+    );
+    context.translate(layout.yAxisLabelX, plotRect.y + plotRect.height / 2);
     context.rotate(-Math.PI / 2);
-    context.fillText(`${model.yAxis.label ?? "Gradient"}${model.yAxis.unit ? ` (${model.yAxis.unit})` : ""}`, 0, 0);
+    context.fillText(
+      resolveCartesianAxisTitle("Gradient", model.yAxis.label, model.yAxis.unit, currentAxisOverrides.y),
+      0,
+      0
+    );
+    context.restore();
+  }
+
+  function drawZoomRectOverlay(
+    context: CanvasRenderingContext2D,
+    session: { origin: ScreenPoint; current: ScreenPoint }
+  ): void {
+    const left = Math.max(plotRect.x, Math.min(session.origin.x, session.current.x));
+    const right = Math.min(plotRect.x + plotRect.width, Math.max(session.origin.x, session.current.x));
+    const top = Math.max(plotRect.y, Math.min(session.origin.y, session.current.y));
+    const bottom = Math.min(plotRect.y + plotRect.height, Math.max(session.origin.y, session.current.y));
+    if (right <= left || bottom <= top) {
+      return;
+    }
+    context.save();
+    context.fillStyle = "rgba(58, 120, 180, 0.16)";
+    context.strokeStyle = "rgba(58, 120, 180, 0.9)";
+    context.setLineDash([6, 4]);
+    context.lineWidth = 1;
+    context.fillRect(left, top, right - left, bottom - top);
+    context.strokeRect(left, top, right - left, bottom - top);
     context.restore();
   }
 
@@ -505,23 +672,6 @@
     };
   }
 
-  function buildTicks(min: number, max: number, count: number): number[] {
-    if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min || count <= 1) {
-      return [min];
-    }
-    return Array.from({ length: count }, (_, index) => min + ((max - min) * index) / (count - 1));
-  }
-
-  function formatTick(value: number): string {
-    if (Math.abs(value) >= 10) {
-      return value.toFixed(0);
-    }
-    if (Math.abs(value) >= 1) {
-      return value.toFixed(2);
-    }
-    return value.toFixed(3);
-  }
-
   function notifyProbeChange(): void {
     onProbeChange?.({
       chartId,
@@ -529,8 +679,39 @@
     });
   }
 
-  function setViewportState(nextViewport: AvoCartesianViewport | null, notify = true): void {
+  function avoCrossplotProbeRows(): Array<{ label: string; value: string }> {
+    if (!currentProbe) {
+      return [];
+    }
+
+    const rows = [
+      { label: "interface", value: currentProbe.interfaceLabel },
+      { label: "intercept", value: currentProbe.intercept.toFixed(3) },
+      { label: "gradient", value: currentProbe.gradient.toFixed(3) }
+    ];
+
+    if (currentProbe.chiProjection !== undefined && Number.isFinite(currentProbe.chiProjection)) {
+      rows.push({
+        label: "chi",
+        value: currentProbe.chiProjection.toFixed(3)
+      });
+    }
+
+    if (currentProbe.simulationId !== undefined && currentProbe.simulationId > 0) {
+      rows.push({
+        label: "simulation",
+        value: String(currentProbe.simulationId)
+      });
+    }
+
+    return rows;
+  }
+
+  function setViewportState(nextViewport: AvoCartesianViewport | null, notify = true, syncAxis = true): void {
     currentViewport = nextViewport;
+    if (syncAxis) {
+      syncAxisOverridesWithViewport();
+    }
     if (notify) {
       onViewportChange?.({
         chartId,
@@ -556,6 +737,23 @@
       chartId,
       event
     });
+  }
+
+  function notifyAxisOverridesChange(): void {
+    const key = JSON.stringify(currentAxisOverrides);
+    if (key === lastAxisOverridesKey) {
+      return;
+    }
+    lastAxisOverridesKey = key;
+    onAxisOverridesChange?.({
+      chartId,
+      axisOverrides: currentAxisOverrides
+    });
+  }
+
+  function syncAxisOverridesWithViewport(): void {
+    currentAxisOverrides = applyViewportToAxisOverrides(currentAxisOverrides, currentViewport);
+    notifyAxisOverridesChange();
   }
 
   function zoomAround(x: number, y: number, factor: number): void {
@@ -595,7 +793,14 @@
     );
   }
 
-  function pointerPoint(event: PointerEvent | WheelEvent): ScreenPoint {
+  function clampPointToPlot(point: ScreenPoint): ScreenPoint {
+    return {
+      x: clamp(point.x, plotRect.x, plotRect.x + plotRect.width),
+      y: clamp(point.y, plotRect.y, plotRect.y + plotRect.height)
+    };
+  }
+
+  function pointerPoint(event: PointerEvent | WheelEvent | MouseEvent): ScreenPoint {
     const rect = host?.getBoundingClientRect();
     if (!rect) {
       return { x: 0, y: 0 };
@@ -615,6 +820,68 @@
     }
   }
 
+  function handleContextMenu(event: MouseEvent): void {
+    const point = pointerPoint(event);
+    const axis = hitTestCartesianAxisBand(point.x, point.y, plotRect, stageSize.width, stageSize.height);
+    if (axis) {
+      onAxisContextRequest?.({
+        chartId,
+        axis,
+        trigger: "contextmenu",
+        clientX: event.clientX,
+        clientY: event.clientY,
+        stageX: point.x,
+        stageY: point.y
+      });
+      event.preventDefault();
+      return;
+    }
+    if (!currentViewport || !pointInPlot(point)) {
+      return;
+    }
+    const value = avoCrossplotScreenToValue(point.x, point.y, currentViewport, plotRect);
+    zoomAround(value.x, value.y, 0.7);
+    updateProbeFromPointer(event);
+    event.preventDefault();
+  }
+
+  function viewportFromAxisOverrides(
+    source: AvoCartesianViewport | null,
+    overrides: CartesianAxisOverrides
+  ): AvoCartesianViewport | null {
+    if (!source) {
+      return null;
+    }
+    return {
+      xMin: overrides.x?.min ?? source.xMin,
+      xMax: overrides.x?.max ?? source.xMax,
+      yMin: overrides.y?.min ?? source.yMin,
+      yMax: overrides.y?.max ?? source.yMax
+    };
+  }
+
+  function viewportFromZoomRect(session: { origin: ScreenPoint; current: ScreenPoint }): AvoCartesianViewport | null {
+    const viewportState = currentViewport;
+    if (!viewportState) {
+      return null;
+    }
+    const left = Math.min(session.origin.x, session.current.x);
+    const right = Math.max(session.origin.x, session.current.x);
+    const top = Math.min(session.origin.y, session.current.y);
+    const bottom = Math.max(session.origin.y, session.current.y);
+    if (right - left < 4 || bottom - top < 4) {
+      return null;
+    }
+    const topLeft = avoCrossplotScreenToValue(left, top, viewportState, plotRect);
+    const bottomRight = avoCrossplotScreenToValue(right, bottom, viewportState, plotRect);
+    return {
+      xMin: topLeft.x,
+      xMax: bottomRight.x,
+      yMin: bottomRight.y,
+      yMax: topLeft.y
+    };
+  }
+
   function sameViewport(left: AvoCartesianViewport | null, right: AvoCartesianViewport | null): boolean {
     return (
       left?.xMin === right?.xMin &&
@@ -622,6 +889,10 @@
       left?.yMin === right?.yMin &&
       left?.yMax === right?.yMax
     );
+  }
+
+  function clamp(value: number, min: number, max: number): number {
+    return Math.min(Math.max(value, min), max);
   }
 </script>
 
@@ -645,7 +916,7 @@
         role="application"
         aria-label="AVO intercept-gradient crossplot"
         aria-busy={loading}
-        style:cursor={requestedTool === "pan" ? (activePointerId == null ? "grab" : "grabbing") : "crosshair"}
+        style:cursor={hostCursor}
         onpointerdown={handlePointerDown}
         onpointermove={handlePointerMove}
         onpointerup={handlePointerUp}
@@ -653,6 +924,7 @@
         onpointerleave={handlePointerLeave}
         onwheel={handleWheel}
         onkeydown={handleKeyDown}
+        oncontextmenu={handleContextMenu}
       >
         <canvas bind:this={canvas} class="ophiolite-charts-avo-canvas"></canvas>
       </div>
@@ -666,7 +938,7 @@
       {/if}
 
       {#if model}
-        <div class="ophiolite-charts-legend" style:right={`${AVO_CROSSPLOT_MARGIN.right + 10}px`} style:top={`${AVO_CROSSPLOT_MARGIN.top + 10}px`}>
+        <div class="ophiolite-charts-legend" style:right={`${layout.legendRight}px`} style:top={`${layout.legendTop}px`}>
           {#each model.interfaces as entry (entry.id)}
             <div class="ophiolite-charts-legend-row">
               <span class="swatch" style:background={entry.color}></span>
@@ -713,32 +985,13 @@
       {/if}
 
       {#if currentProbe && !loading && !errorMessage}
-        <div class="ophiolite-charts-probe-panel" style:left={`${AVO_CROSSPLOT_MARGIN.left + 10}px`} style:bottom={`${AVO_CROSSPLOT_MARGIN.bottom + 10}px`}>
-          <div class="ophiolite-charts-probe-panel-row">
-            <span>interface</span>
-            <span>{currentProbe.interfaceLabel}</span>
-          </div>
-          <div class="ophiolite-charts-probe-panel-row">
-            <span>intercept</span>
-            <span>{currentProbe.intercept.toFixed(3)}</span>
-          </div>
-          <div class="ophiolite-charts-probe-panel-row">
-            <span>gradient</span>
-            <span>{currentProbe.gradient.toFixed(3)}</span>
-          </div>
-          {#if currentProbe.chiProjection !== undefined && Number.isFinite(currentProbe.chiProjection)}
-            <div class="ophiolite-charts-probe-panel-row">
-              <span>chi</span>
-              <span>{currentProbe.chiProjection.toFixed(3)}</span>
-            </div>
-          {/if}
-          {#if currentProbe.simulationId !== undefined && currentProbe.simulationId > 0}
-            <div class="ophiolite-charts-probe-panel-row">
-              <span>simulation</span>
-              <span>{currentProbe.simulationId}</span>
-            </div>
-          {/if}
-        </div>
+        <ProbePanel
+          theme="light"
+          size="standard"
+          left={`${layout.plotRect.x + layout.probePanelInset}px`}
+          bottom={`${AVO_CROSSPLOT_MARGIN.bottom + layout.probePanelInset}px`}
+          rows={avoCrossplotProbeRows()}
+        />
       {/if}
     </div>
   </div>
@@ -861,31 +1114,4 @@
     border-radius: 2px;
   }
 
-  .ophiolite-charts-probe-panel {
-    position: absolute;
-    z-index: 3;
-    padding: 8px 10px;
-    border: 1px solid rgba(123, 142, 161, 0.24);
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 10px 24px rgba(27, 39, 54, 0.12);
-    color: #324355;
-    pointer-events: none;
-  }
-
-  .ophiolite-charts-probe-panel-row {
-    display: grid;
-    grid-template-columns: 72px auto;
-    column-gap: 8px;
-    align-items: baseline;
-    font: 500 12px/1.25 sans-serif;
-    white-space: nowrap;
-  }
-
-  .ophiolite-charts-probe-panel-row span:first-child {
-    color: #708396;
-  }
-
-  .ophiolite-charts-probe-panel-row span:last-child {
-    color: #233445;
-  }
 </style>

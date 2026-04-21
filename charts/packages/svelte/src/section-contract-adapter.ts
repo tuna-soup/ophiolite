@@ -10,6 +10,7 @@ import type {
 } from "@ophiolite/contracts";
 import {
   adaptOphioliteSectionViewToPayload,
+  resolveLogicalSectionDimensions,
   type CursorProbe,
   type SectionPayload,
   type SectionViewport as InternalViewport
@@ -97,21 +98,28 @@ export function interactionToContract(
   };
 }
 
-export function isCompatibleSectionIdentity(previous: SectionViewLike | null, next: SectionViewLike | null): boolean {
+export function canReuseSectionViewport(previous: SectionViewLike | null, next: SectionViewLike | null): boolean {
   if (!previous || !next) {
     return false;
   }
-  return (
-    previous.axis === next.axis &&
-    previous.coordinate.index === next.coordinate.index &&
-    Math.abs(previous.coordinate.value - next.coordinate.value) <= 1e-6 &&
-    previous.traces === next.traces &&
-    previous.samples === next.samples &&
-    previous.horizontal_axis_f64le.length === next.horizontal_axis_f64le.length &&
-    (previous.inline_axis_f64le?.length ?? 0) === (next.inline_axis_f64le?.length ?? 0) &&
-    (previous.xline_axis_f64le?.length ?? 0) === (next.xline_axis_f64le?.length ?? 0) &&
-    previous.sample_axis_f32le.length === next.sample_axis_f32le.length
-  );
+  const previousLogical = resolveLogicalSectionDimensions(decodeSectionView(previous));
+  const nextLogical = resolveLogicalSectionDimensions(decodeSectionView(next));
+  return previousLogical.traces === nextLogical.traces && previousLogical.samples === nextLogical.samples;
+}
+
+export function shouldIgnoreExternalSectionViewport(
+  previous: SectionViewLike | null,
+  next: SectionViewLike | null,
+  viewportKey: string | null,
+  ignoredViewportKey: string | null
+): boolean {
+  if (!viewportKey) {
+    return false;
+  }
+  if (ignoredViewportKey === viewportKey) {
+    return true;
+  }
+  return !!previous && previous !== next && !canReuseSectionViewport(previous, next);
 }
 
 export function mergeDisplayTransform(

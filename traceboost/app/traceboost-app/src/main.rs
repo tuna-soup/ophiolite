@@ -1,8 +1,11 @@
 mod operation_catalog;
 
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
-use traceboost_app::{PrepareSurveyDemoRequest, TraceBoostWorkflowService, import_horizon_xyz};
+use traceboost_app::{
+    PrepareSurveyDemoRequest, TraceBoostWorkflowService, apply_processing, import_horizon_xyz,
+    preview_processing,
+};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use operation_catalog::operation_catalog;
@@ -11,8 +14,14 @@ use seis_contracts_operations::import_ops::{
     ExportSegyRequest, ImportDatasetRequest, ImportHorizonXyzRequest, LoadSectionHorizonsRequest,
     SegyGeometryOverride, SegyHeaderField, SegyHeaderValueType, SurveyPreflightRequest,
 };
+use seis_contracts_operations::processing_ops::{
+    PreviewTraceLocalProcessingRequest, RunTraceLocalProcessingRequest,
+};
 use seis_contracts_operations::resolve::{
     IPC_SCHEMA_VERSION, ResolveSurveyMapRequest, SetDatasetNativeCoordinateReferenceRequest,
+};
+use seis_contracts_operations::workspace::{
+    DescribeVelocityVolumeRequest, IngestVelocityVolumeRequest,
 };
 use seis_runtime::{
     IngestOptions, SeisGeometryOptions, SparseSurveyPolicy, TimeDepthDomain, ValidationOptions,
@@ -155,6 +164,12 @@ enum Command {
         axis: SectionAxisArg,
         index: usize,
     },
+    PreviewProcessing {
+        request_json: String,
+    },
+    RunProcessing {
+        request_json: String,
+    },
     ViewSectionHorizons {
         store: PathBuf,
         #[arg(value_enum)]
@@ -201,6 +216,49 @@ enum Command {
         input: PathBuf,
         #[arg(long, value_enum, default_value_t = VelocityKindArg::Interval)]
         velocity_kind: VelocityKindArg,
+    },
+    DescribeVelocityVolume {
+        store: PathBuf,
+        #[arg(long, value_enum, default_value_t = VelocityKindArg::Interval)]
+        velocity_kind: VelocityKindArg,
+        #[arg(long, value_enum)]
+        vertical_domain: Option<VerticalDomainArg>,
+        #[arg(long)]
+        vertical_unit: Option<String>,
+        #[arg(long)]
+        vertical_start: Option<f32>,
+        #[arg(long)]
+        vertical_step: Option<f32>,
+    },
+    IngestVelocityVolume {
+        input: PathBuf,
+        output: PathBuf,
+        #[arg(long, value_enum, default_value_t = VelocityKindArg::Interval)]
+        velocity_kind: VelocityKindArg,
+        #[arg(long)]
+        inline_byte: Option<u16>,
+        #[arg(long, value_enum, default_value_t = HeaderTypeArg::I32)]
+        inline_type: HeaderTypeArg,
+        #[arg(long)]
+        crossline_byte: Option<u16>,
+        #[arg(long, value_enum, default_value_t = HeaderTypeArg::I32)]
+        crossline_type: HeaderTypeArg,
+        #[arg(long)]
+        third_axis_byte: Option<u16>,
+        #[arg(long, value_enum, default_value_t = HeaderTypeArg::I32)]
+        third_axis_type: HeaderTypeArg,
+        #[arg(long, value_enum, default_value_t = VerticalDomainArg::Time)]
+        vertical_domain: VerticalDomainArg,
+        #[arg(long)]
+        vertical_unit: Option<String>,
+        #[arg(long)]
+        vertical_start: Option<f32>,
+        #[arg(long)]
+        vertical_step: Option<f32>,
+        #[arg(long, default_value_t = false)]
+        overwrite_existing: bool,
+        #[arg(long, default_value_t = false)]
+        delete_input_on_success: bool,
     },
 }
 
@@ -450,6 +508,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let view = open_store(store)?.section_view(axis.into(), index)?;
             println!("{}", serde_json::to_string(&view)?);
         }
+        Command::PreviewProcessing { request_json } => {
+            let request: PreviewTraceLocalProcessingRequest = read_json_arg(&request_json)?;
+            let response = preview_processing(request)?;
+            println!("{}", serde_json::to_string(&response)?);
+        }
+        Command::RunProcessing { request_json } => {
+            let request: RunTraceLocalProcessingRequest = read_json_arg(&request_json)?;
+            let response = apply_processing(request)?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
         Command::ViewSectionHorizons { store, axis, index } => {
             let response = workflows.load_section_horizons(LoadSectionHorizonsRequest {
                 schema_version: IPC_SCHEMA_VERSION,
@@ -524,6 +592,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
             println!("{}", serde_json::to_string_pretty(&response)?);
         }
+        Command::DescribeVelocityVolume {
+            store,
+            velocity_kind,
+            vertical_domain,
+            vertical_unit,
+            vertical_start,
+            vertical_step,
+        } => {
+            let response = workflows.describe_velocity_volume(DescribeVelocityVolumeRequest {
+                schema_version: IPC_SCHEMA_VERSION,
+                store_path: store.to_string_lossy().into_owned(),
+                velocity_kind: velocity_kind.into(),
+                vertical_domain: vertical_domain.map(Into::into),
+                vertical_unit,
+                vertical_start,
+                vertical_step,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        Command::IngestVelocityVolume {
+            input,
+            output,
+            velocity_kind,
+            inline_byte,
+            inline_type,
+            crossline_byte,
+            crossline_type,
+            third_axis_byte,
+            third_axis_type,
+            vertical_domain,
+            vertical_unit,
+            vertical_start,
+            vertical_step,
+            overwrite_existing,
+            delete_input_on_success,
+        } => {
+            let response =
+                workflows.ingest_velocity_volume_request(IngestVelocityVolumeRequest {
+                    schema_version: IPC_SCHEMA_VERSION,
+                    input_path: input.to_string_lossy().into_owned(),
+                    output_store_path: output.to_string_lossy().into_owned(),
+                    velocity_kind: velocity_kind.into(),
+                    vertical_domain: vertical_domain.into(),
+                    vertical_unit,
+                    vertical_start,
+                    vertical_step,
+                    overwrite_existing,
+                    delete_input_on_success,
+                    geometry_override: build_geometry_override(
+                        inline_byte,
+                        inline_type,
+                        crossline_byte,
+                        crossline_type,
+                        third_axis_byte,
+                        third_axis_type,
+                    ),
+                })?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
     }
 
     Ok(())
@@ -562,6 +689,22 @@ fn parse_chunk_shape(values: &[usize]) -> [usize; 3] {
         [a, b, c] => [*a, *b, *c],
         _ => [0, 0, 0],
     }
+}
+
+fn read_json_arg<T>(path_or_stdin: &str) -> Result<T, Box<dyn std::error::Error>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let text = if path_or_stdin == "-" {
+        use std::io::Read;
+
+        let mut buffer = String::new();
+        std::io::stdin().read_to_string(&mut buffer)?;
+        buffer
+    } else {
+        fs::read_to_string(path_or_stdin)?
+    };
+    Ok(serde_json::from_str(&text)?)
 }
 
 fn build_ingest_geometry(

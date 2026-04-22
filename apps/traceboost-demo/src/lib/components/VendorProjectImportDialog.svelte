@@ -19,9 +19,11 @@
   interface Props {
     openSettings: () => void;
     close: () => void;
+    embedded?: boolean;
+    initialProjectRoot?: string | null;
   }
 
-  let { openSettings, close }: Props = $props();
+  let { openSettings, close, embedded = false, initialProjectRoot = null }: Props = $props();
 
   const viewerModel = getViewerModelContext();
   let vendorProjectRoot = $state("");
@@ -34,6 +36,17 @@
   let planLoading = $state(false);
   let commitLoading = $state(false);
   let error = $state<string | null>(null);
+
+  $effect(() => {
+    const normalizedProjectRoot = initialProjectRoot?.trim() ?? "";
+    if (!normalizedProjectRoot || normalizedProjectRoot === vendorProjectRoot) {
+      return;
+    }
+    vendorProjectRoot = normalizedProjectRoot;
+    scanResponse = null;
+    selectedVendorObjectIds = [];
+    resetPlanAndCommit();
+  });
 
   const targetProjectRoot = $derived(viewerModel.projectRoot.trim());
   const selectedProjectSurvey = $derived(viewerModel.selectedProjectSurveyAsset);
@@ -239,21 +252,25 @@
 </script>
 
 <div
-  class="vendor-import-backdrop"
+  class={["vendor-import-backdrop", embedded && "embedded"]}
   role="presentation"
   tabindex="-1"
-  onclick={close}
+  onclick={() => {
+    if (!embedded) {
+      close();
+    }
+  }}
   onkeydown={(event) => {
-    if (event.key === "Escape") {
+    if (!embedded && event.key === "Escape") {
       close();
     }
   }}
 >
   <div
-    class="vendor-import-dialog"
+    class={["vendor-import-dialog", embedded && "embedded"]}
     role="dialog"
     tabindex="0"
-    aria-modal="true"
+    aria-modal={!embedded}
     aria-label="Import Petrel project exports"
     onclick={(event) => event.stopPropagation()}
     onkeydown={(event) => event.stopPropagation()}
@@ -511,6 +528,13 @@
     backdrop-filter: blur(3px);
   }
 
+  .vendor-import-backdrop.embedded {
+    position: static;
+    padding: 0;
+    background: transparent;
+    backdrop-filter: none;
+  }
+
   .vendor-import-dialog {
     width: min(1040px, 100%);
     max-height: calc(100vh - 48px);
@@ -520,6 +544,13 @@
     background: var(--panel-bg);
     color: var(--text-primary);
     box-shadow: 0 28px 60px rgba(0, 0, 0, 0.35);
+  }
+
+  .vendor-import-dialog.embedded {
+    width: 100%;
+    max-height: none;
+    border-radius: 10px;
+    box-shadow: none;
   }
 
   .vendor-import-header {

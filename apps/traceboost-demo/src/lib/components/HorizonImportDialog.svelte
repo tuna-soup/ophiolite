@@ -30,6 +30,7 @@
   interface Props {
     inputPaths: string[];
     close: () => void;
+    embedded?: boolean;
   }
 
   interface ReviewFileSummary {
@@ -46,7 +47,7 @@
     issues: string[];
   }
 
-  let { inputPaths, close }: Props = $props();
+  let { inputPaths, close, embedded = false }: Props = $props();
 
   const viewerModel = getViewerModelContext();
   let sourceMode = $state<"survey" | "custom" | "unresolved">("unresolved");
@@ -637,14 +638,22 @@
 
 <svelte:window
   onkeydown={(event) => {
-    if (event.key === "Escape" && !viewerModel.horizonImporting) {
+    if (!embedded && event.key === "Escape" && !viewerModel.horizonImporting) {
       close();
     }
   }}
 />
 
-<div class="dialog-backdrop" role="presentation" onclick={handleBackdropClick}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-label="Import horizons">
+<div
+  class={["dialog-backdrop", embedded && "embedded"]}
+  role="presentation"
+  onclick={(event) => {
+    if (!embedded) {
+      handleBackdropClick(event);
+    }
+  }}
+>
+  <div class={["dialog", embedded && "embedded"]} role="dialog" aria-modal={!embedded} aria-label="Import horizons">
     <header>
       <h3>Import Horizons</h3>
       <p>Parse the selected horizon XYZ files, confirm the CRS path, then import.</p>
@@ -1196,6 +1205,13 @@
     backdrop-filter: blur(4px);
   }
 
+  .dialog-backdrop.embedded {
+    position: static;
+    padding: 0;
+    background: transparent;
+    backdrop-filter: none;
+  }
+
   .dialog {
     width: min(880px, calc(100vw - 32px));
     max-height: min(90vh, 980px);
@@ -1208,6 +1224,13 @@
     background: var(--panel-bg);
     color: var(--text-primary);
     box-shadow: 0 20px 60px rgba(42, 64, 84, 0.18);
+  }
+
+  .dialog.embedded {
+    width: 100%;
+    max-height: none;
+    border-radius: 10px;
+    box-shadow: none;
   }
 
   header h3,

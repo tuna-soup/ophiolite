@@ -120,6 +120,54 @@ export interface FrontendDiagnosticsEventRequest {
   fields?: Record<string, unknown> | null;
 }
 
+export type ImportProviderId =
+  | "seismic_volume"
+  | "horizons"
+  | "well_sources"
+  | "velocity_functions"
+  | "checkshot_vsp"
+  | "manual_picks"
+  | "authored_model"
+  | "compiled_model"
+  | "vendor_project";
+
+export interface ImportProviderDescriptor {
+  providerId: ImportProviderId;
+  label: string;
+  description: string;
+  destinationKind: "runtime_store" | "project_asset" | string;
+  selectionMode: "single_file" | "multi_file" | string;
+  supportedExtensions: string[];
+  implemented: boolean;
+}
+
+export interface ImportSessionDiagnostic {
+  level: string;
+  message: string;
+}
+
+export interface ImportSessionEnvelope {
+  sessionId: string;
+  providerId: ImportProviderId;
+  sourceRefs: string[];
+  destinationKind: string;
+  destinationRef?: string | null;
+  activationIntent: string;
+  status: string;
+  diagnostics: ImportSessionDiagnostic[];
+}
+
+export interface BeginImportSessionRequest {
+  providerId: ImportProviderId;
+  sourceRefs?: string[] | null;
+  destinationRef?: string | null;
+  activationIntent?: string | null;
+}
+
+export interface ListImportProvidersResponse {
+  providers: ImportProviderDescriptor[];
+}
+
 export interface RunSectionBrowsingBenchmarkRequest {
   storePath: string;
   axis: SectionAxis;
@@ -1664,6 +1712,25 @@ function resolveEntryStatus(entry: DatasetRegistryEntry): DatasetRegistryStatus 
     return entry.imported_store_path ? "imported" : "linked";
   }
   return entry.imported_store_path ? "imported" : "linked";
+}
+
+export async function listImportProviders(): Promise<ImportProviderDescriptor[]> {
+  if (isTauriEnvironment()) {
+    const response = await invokeTauri<ListImportProvidersResponse>("list_import_providers_command", {});
+    return response.providers;
+  }
+
+  throw new Error("Import provider discovery is only available in the desktop runtime right now.");
+}
+
+export async function beginImportSession(
+  request: BeginImportSessionRequest
+): Promise<ImportSessionEnvelope> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<ImportSessionEnvelope>("begin_import_session_command", { request });
+  }
+
+  throw new Error("Import session orchestration is only available in the desktop runtime right now.");
 }
 
 export async function preflightImport(

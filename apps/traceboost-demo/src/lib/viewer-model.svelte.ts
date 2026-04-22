@@ -4414,7 +4414,7 @@ export class ViewerModel {
     this.note(`Selected ${sourceVolumeType} path.`, "ui", "info", normalizedPath);
   };
 
-  openVolumePath = async (volumePath: string): Promise<void> => {
+  openManagedVolumePath = async (volumePath: string): Promise<void> => {
     const normalizedPath = trimPath(volumePath);
     if (!normalizedPath) {
       this.error = "Volume path is required.";
@@ -4442,116 +4442,22 @@ export class ViewerModel {
       return;
     }
 
-    if (!isSupportedImportVolumeExtension(extension)) {
-      this.error = "TraceBoost currently supports opening .tbvol, .mdio, .zarr, .sgy, and .segy volumes.";
-      this.note("Open-volume blocked because the selected file type is unsupported.", "ui", "error", normalizedPath);
-      return;
-    }
+    const supportedImportSource = isSupportedImportVolumeExtension(extension);
+    this.error = supportedImportSource
+      ? "External seismic sources now open through Import Data instead of Open Volume."
+      : "TraceBoost currently supports opening managed .tbvol stores through Open Volume.";
+    this.note(
+      supportedImportSource
+        ? "Open-volume blocked because external seismic sources now route through Import Data."
+        : "Open-volume blocked because the selected file type is unsupported.",
+      "ui",
+      "warn",
+      normalizedPath
+    );
+  };
 
-    const matchingEntry =
-      this.workspaceEntries.find((entry) => trimPath(entry.source_path ?? "") === normalizedPath) ?? null;
-    const existingImportedStore = trimPath(matchingEntry?.imported_store_path ?? "");
-    if (existingImportedStore) {
-      this.note("Reusing existing imported runtime store for the selected source volume.", "ui", "info", existingImportedStore);
-      await this.openDatasetAt(existingImportedStore, "inline", 0, {
-        entryId: matchingEntry?.entry_id ?? null,
-        sourcePath: normalizedPath,
-        sessionPipelines: cloneSessionPipelines(matchingEntry?.session_pipelines),
-        activeSessionPipelineId: matchingEntry?.active_session_pipeline_id ?? null,
-        makeActive: shouldActivateOpenedVolume,
-        loadSection: shouldActivateOpenedVolume
-      });
-      return;
-    }
-
-    if (isDirectImportVolumeExtension(extension)) {
-      const outputStorePath =
-        trimPath(matchingEntry?.imported_store_path ?? matchingEntry?.preferred_store_path ?? "") ||
-        (await defaultImportStorePath(normalizedPath));
-      this.note(
-        `Started one-shot import from ${describeImportVolumeType(extension).toLowerCase()}.`,
-        "ui",
-        "info",
-        normalizedPath
-      );
-      await this.importDataset({
-        inputPath: normalizedPath,
-        outputStorePath,
-        entryId: matchingEntry?.entry_id ?? null,
-        sourcePath: normalizedPath,
-        sessionPipelines: cloneSessionPipelines(matchingEntry?.session_pipelines),
-        activeSessionPipelineId: matchingEntry?.active_session_pipeline_id ?? null,
-        makeActive: shouldActivateOpenedVolume,
-        loadSection: shouldActivateOpenedVolume,
-        reuseExistingStore: true
-      });
-      return;
-    }
-
-    this.loading = true;
-    this.busyLabel = "Inspecting volume";
-    this.error = null;
-    this.preflight = null;
-    this.importGeometryRecovery = null;
-    this.note("Started one-shot SEG-Y import.", "ui", "info", normalizedPath);
-
-    try {
-      const preflight = await preflightImport(normalizedPath);
-      this.preflight = preflight;
-
-      const outputStorePath =
-        trimPath(matchingEntry?.imported_store_path ?? matchingEntry?.preferred_store_path ?? "") ||
-        (await defaultImportStorePath(normalizedPath));
-
-      if (!canAutoImportPreflight(preflight)) {
-        this.loading = false;
-        this.busyLabel = null;
-
-        if (canRecoverPreflight(preflight)) {
-          this.error = null;
-          this.openImportGeometryRecovery(preflight, {
-            inputPath: normalizedPath,
-            outputStorePath,
-            entryId: matchingEntry?.entry_id ?? null,
-            sourcePath: normalizedPath,
-            sessionPipelines: cloneSessionPipelines(matchingEntry?.session_pipelines),
-            activeSessionPipelineId: matchingEntry?.active_session_pipeline_id ?? null,
-            makeActive: shouldActivateOpenedVolume,
-            loadSection: shouldActivateOpenedVolume,
-            reuseExistingStore: true
-          });
-          this.note(
-            "SEG-Y import requires geometry review; opened the mapping recovery dialog.",
-            "ui",
-            "warn",
-            describePreflight(preflight)
-          );
-          return;
-        }
-
-        throw new Error(
-          `This SEG-Y survey cannot be opened automatically yet. Resolved layout: ${describePreflight(preflight)}. Suggested action: ${preflight.suggested_action}.`
-        );
-      }
-      this.loading = false;
-      this.busyLabel = null;
-      await this.importDataset({
-        inputPath: normalizedPath,
-        outputStorePath,
-        entryId: matchingEntry?.entry_id ?? null,
-        sourcePath: normalizedPath,
-        sessionPipelines: cloneSessionPipelines(matchingEntry?.session_pipelines),
-        activeSessionPipelineId: matchingEntry?.active_session_pipeline_id ?? null,
-        makeActive: shouldActivateOpenedVolume,
-        loadSection: shouldActivateOpenedVolume,
-        reuseExistingStore: true
-      });
-    } catch (error) {
-      this.loading = false;
-      this.busyLabel = null;
-      this.error = errorMessage(error, "Failed to open the selected volume.");
-      this.note("One-shot volume open failed.", "backend", "error", this.error);
-    }
+  openVolumePath = async (volumePath: string): Promise<void> => {
+    await this.openManagedVolumePath(volumePath);
   };
 
   openImportGeometryRecovery = (

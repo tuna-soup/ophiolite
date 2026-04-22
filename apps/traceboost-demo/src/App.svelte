@@ -2,56 +2,31 @@
 
 <script lang="ts">
   import { onMount } from "svelte";
-  import HorizonImportDialog from "./lib/components/HorizonImportDialog.svelte";
+  import ImportManagerDialog from "./lib/components/ImportManagerDialog.svelte";
   import MissingNativeCoordinateReferencePrompt from "./lib/components/MissingNativeCoordinateReferencePrompt.svelte";
   import ProjectSettingsDialog from "./lib/components/ProjectSettingsDialog.svelte";
-  import SegyImportDialog from "./lib/components/SegyImportDialog.svelte";
-  import VendorProjectImportDialog from "./lib/components/VendorProjectImportDialog.svelte";
-  import type { ProjectAssetBindingInput } from "./lib/bridge";
-  import WellSourceImportDialog from "./lib/components/WellFolderImportDialog.svelte";
-  import WellTimeDepthImportDialog from "./lib/components/WellTimeDepthImportDialog.svelte";
+  import type { ImportProviderId } from "./lib/bridge";
   import WorkflowSidebar from "./lib/components/WorkflowSidebar.svelte";
   import ViewerMain from "./lib/components/ViewerMain.svelte";
   import { emitFrontendDiagnosticsEvent, isTauriEnvironment } from "./lib/bridge";
   import {
     pickHorizonFiles,
     pickImportSeismicFile,
-    pickProjectFolder,
     pickRuntimeStoreFile,
-    pickVelocityFunctionsFile,
-    pickWellImportFiles,
-    pickWellTimeDepthJsonFile
+    pickWellImportFiles
   } from "./lib/file-dialog";
+  import { ImportManagerModel, setImportManagerContext } from "./lib/import-manager-model.svelte";
   import { ProcessingModel, setProcessingModelContext } from "./lib/processing-model.svelte";
   import { buildStartupSetupBlockers } from "./lib/startup-setup";
   import { setViewerModelContext, ViewerModel } from "./lib/viewer-model.svelte";
 
   let showSidebar = $state(true);
-  let horizonImportDialogOpen = $state(false);
-  let pendingHorizonImportPaths = $state<string[]>([]);
-  let wellSourceImportDialogOpen = $state(false);
-  let pendingWellImportSourceRoot = $state<string | null>(null);
-  let pendingWellImportSourcePaths = $state<string[]>([]);
-  let segyImportDialogOpen = $state(false);
-  let pendingSegyImportPath = $state<string | null>(null);
-  let wellTimeDepthImportDialogOpen = $state(false);
-  let vendorProjectImportDialogOpen = $state(false);
-  let pendingWellTimeDepthImport = $state.raw<{
-    projectRoot: string;
-    jsonPath: string;
-    binding: ProjectAssetBindingInput;
-    assetKind:
-      | "checkshot_vsp_observation_set"
-      | "manual_time_depth_pick_set"
-      | "well_time_depth_authored_model"
-      | "well_time_depth_model";
-    dialogTitle: string;
-  } | null>(null);
   let viewerChart = $state.raw<{ fitToData?: () => void } | null>(null);
   let lastStartupSetupDiagnosticsSignature = "";
 
   const viewerModel = setViewerModelContext(new ViewerModel({ tauriRuntime: isTauriEnvironment() }));
   const processingModel = setProcessingModelContext(new ProcessingModel({ viewerModel }));
+  const importManager = setImportManagerContext(new ImportManagerModel());
   let startupSetupBlockers = $derived.by(() =>
     buildStartupSetupBlockers({
       workspaceReady: viewerModel.workspaceReady,
@@ -133,68 +108,6 @@
     });
   }
 
-  function closeHorizonImportDialog(): void {
-    if (viewerModel.horizonImporting) {
-      return;
-    }
-    horizonImportDialogOpen = false;
-    pendingHorizonImportPaths = [];
-  }
-
-  function closeWellSourceImportDialog(): void {
-    wellSourceImportDialogOpen = false;
-    pendingWellImportSourceRoot = null;
-    pendingWellImportSourcePaths = [];
-  }
-
-  function closeSegyImportDialog(): void {
-    segyImportDialogOpen = false;
-    pendingSegyImportPath = null;
-  }
-
-  function closeWellTimeDepthImportDialog(): void {
-    wellTimeDepthImportDialogOpen = false;
-    pendingWellTimeDepthImport = null;
-  }
-
-  function closeVendorProjectImportDialog(): void {
-    vendorProjectImportDialogOpen = false;
-  }
-
-  function commonWellImportRoot(inputPaths: string[]): string | null {
-    const normalized = inputPaths
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0)
-      .map((value) => value.replace(/\\/g, "/"));
-    if (normalized.length === 0) {
-      return null;
-    }
-
-    const splitParent = (value: string): string[] => {
-      const parts = value.split("/");
-      parts.pop();
-      return parts.filter((part, index) => part.length > 0 || index === 0);
-    };
-
-    let shared = splitParent(normalized[0]);
-    for (const path of normalized.slice(1)) {
-      const next = splitParent(path);
-      const sharedLength = Math.min(shared.length, next.length);
-      let index = 0;
-      while (index < sharedLength && shared[index] === next[index]) {
-        index += 1;
-      }
-      shared = shared.slice(0, index);
-    }
-
-    if (shared.length === 0) {
-      const fallbackPath = normalized[0];
-      const separatorIndex = fallbackPath.lastIndexOf("/");
-      return separatorIndex > 0 ? fallbackPath.slice(0, separatorIndex) : null;
-    }
-    return shared.join("/") || null;
-  }
-
   function openDepthConversionWorkbench(): void {
     showSidebarPanel();
     logSettingsDialogEvent("Depth conversion dialog open requested.", {
@@ -212,19 +125,6 @@
     viewerModel.openResidualWorkbench();
   }
 
-  function selectedProjectWellBinding() {
-    const selectedWellbore = viewerModel.selectedProjectWellboreInventoryItem;
-    if (!selectedWellbore) {
-      return null;
-    }
-
-    return {
-      well_name: selectedWellbore.wellName,
-      wellbore_name: selectedWellbore.wellboreName,
-      operator_aliases: []
-    };
-  }
-
   async function handleOpenVolumeMenu(): Promise<void> {
     showSidebarPanel();
     const path = await pickRuntimeStoreFile();
@@ -237,19 +137,30 @@
     viewerModel.note("Volume selection did not produce a usable path.", "ui", "warn");
   }
 
-  async function handleImportSeismicMenu(): Promise<void> {
+  async function openImportManager(
+    providerId: ImportProviderId | null = null,
+    sourceRefs: string[] = [],
+    pendingAction: "open" | "import" | "deep_link" = "import"
+  ): Promise<void> {
     showSidebarPanel();
+    await importManager.openManager({
+      providerId,
+      sourceRefs,
+      pendingAction
+    });
+  }
+
+  async function handleImportDataMenu(): Promise<void> {
+    await openImportManager(null, [], "import");
+  }
+
+  async function handleImportSeismicMenu(): Promise<void> {
     const path = await pickImportSeismicFile();
     if (!path) {
       viewerModel.note("Import selection did not produce a usable seismic path.", "ui", "warn");
       return;
     }
-    if (/\.(sgy|segy)$/i.test(path.trim())) {
-      pendingSegyImportPath = path;
-      segyImportDialogOpen = true;
-      return;
-    }
-    await viewerModel.openVolumePath(path);
+    await openImportManager("seismic_volume", [path], "import");
   }
 
   async function handleRequestHorizonImport(): Promise<void> {
@@ -268,34 +179,22 @@
     if (viewerModel.horizonImportProjectAdvisory) {
       viewerModel.note(viewerModel.horizonImportProjectAdvisory, "ui", "warn");
     }
-    pendingHorizonImportPaths = inputPaths;
-    horizonImportDialogOpen = true;
+    await openImportManager("horizons", inputPaths, "import");
   }
 
   async function handleRequestPetrelImport(): Promise<void> {
-    showSidebarPanel();
     if (!viewerModel.tauriRuntime) {
       viewerModel.note("Petrel import is only available in the desktop runtime.", "ui", "warn");
       return;
     }
-    vendorProjectImportDialogOpen = true;
+    await openImportManager("vendor_project", [], "import");
   }
 
   async function handleImportVelocityFunctionsMenu(): Promise<void> {
-    showSidebarPanel();
-    if (!viewerModel.activeStorePath) {
-      viewerModel.note("Open a seismic volume before importing velocity functions.", "ui", "warn");
-      return;
-    }
-    const inputPath = await pickVelocityFunctionsFile();
-    if (!inputPath) {
-      return;
-    }
-    await viewerModel.importVelocityFunctionsFile(inputPath, "interval");
+    await openImportManager("velocity_functions", [], "import");
   }
 
   async function handleRequestWellSourceImport(): Promise<void> {
-    showSidebarPanel();
     if (!viewerModel.tauriRuntime) {
       viewerModel.note("Well import is only available in the desktop runtime.", "ui", "warn");
       return;
@@ -312,47 +211,26 @@
         "warn"
       );
     }
-
-    pendingWellImportSourceRoot = commonWellImportRoot(sourcePaths);
-    pendingWellImportSourcePaths = sourcePaths;
-    wellSourceImportDialogOpen = true;
+    await openImportManager("well_sources", sourcePaths, "import");
   }
 
-  async function ensureProjectSettingsReady(): Promise<boolean> {
-    if (viewerModel.canImportProjectWellAssets && selectedProjectWellBinding()) {
-      return true;
+  function providerIdForTimeDepthAsset(
+    assetKind:
+      | "checkshot_vsp_observation_set"
+      | "manual_time_depth_pick_set"
+      | "well_time_depth_authored_model"
+      | "well_time_depth_model"
+  ): ImportProviderId {
+    switch (assetKind) {
+      case "checkshot_vsp_observation_set":
+        return "checkshot_vsp";
+      case "manual_time_depth_pick_set":
+        return "manual_picks";
+      case "well_time_depth_authored_model":
+        return "authored_model";
+      case "well_time_depth_model":
+        return "compiled_model";
     }
-
-    openSettings();
-
-    if (!viewerModel.projectRoot.trim()) {
-      const pickedProjectRoot = await pickProjectFolder();
-      if (pickedProjectRoot) {
-        await viewerModel.setProjectRoot(pickedProjectRoot);
-      }
-    }
-
-    const importBlocker = viewerModel.projectWellAssetImportBlocker;
-    if (importBlocker || !selectedProjectWellBinding()) {
-      viewerModel.note(
-        importBlocker ??
-          "Set the project root and select a project wellbore in Settings before importing well objects.",
-        "ui",
-        "warn"
-      );
-      return false;
-    }
-
-    const importAdvisory = viewerModel.projectWellAssetImportAdvisory;
-    if (importAdvisory) {
-      viewerModel.note(
-        importAdvisory,
-        "ui",
-        "warn"
-      );
-    }
-
-    return true;
   }
 
   async function handleImportProjectWellTimeDepthAsset(
@@ -360,30 +238,9 @@
       | "checkshot_vsp_observation_set"
       | "manual_time_depth_pick_set"
       | "well_time_depth_authored_model"
-      | "well_time_depth_model",
-    dialogTitle: string
+      | "well_time_depth_model"
   ): Promise<void> {
-    showSidebarPanel();
-    const settingsReady = await ensureProjectSettingsReady();
-    const projectRoot = viewerModel.projectRoot.trim();
-    const binding = selectedProjectWellBinding();
-    if (!settingsReady || !projectRoot || !binding) {
-      return;
-    }
-
-    const jsonPath = await pickWellTimeDepthJsonFile(dialogTitle);
-    if (!jsonPath) {
-      return;
-    }
-
-    pendingWellTimeDepthImport = {
-      projectRoot,
-      jsonPath,
-      binding,
-      assetKind,
-      dialogTitle
-    };
-    wellTimeDepthImportDialogOpen = true;
+    await openImportManager(providerIdForTimeDepthAsset(assetKind), [], "import");
   }
 
   onMount(() => {
@@ -419,6 +276,9 @@
         const unlistenOpenVolume = await listen("menu:file-open-volume", () => {
           void handleOpenVolumeMenu();
         });
+        const unlistenImportData = await listen("menu:file-import-data", () => {
+          void handleImportDataMenu();
+        });
         const unlistenImportSeismic = await listen("menu:file-import-seismic", () => {
           void handleImportSeismicMenu();
         });
@@ -432,28 +292,16 @@
           void handleImportVelocityFunctionsMenu();
         });
         const unlistenImportCheckshot = await listen("menu:file-import-checkshot", () => {
-          void handleImportProjectWellTimeDepthAsset(
-            "checkshot_vsp_observation_set",
-            "Import Checkshot/VSP Observation Set"
-          );
+          void handleImportProjectWellTimeDepthAsset("checkshot_vsp_observation_set");
         });
         const unlistenImportManualPicks = await listen("menu:file-import-manual-picks", () => {
-          void handleImportProjectWellTimeDepthAsset(
-            "manual_time_depth_pick_set",
-            "Import Manual Time-Depth Picks"
-          );
+          void handleImportProjectWellTimeDepthAsset("manual_time_depth_pick_set");
         });
         const unlistenImportAuthoredModel = await listen("menu:file-import-authored-well-model", () => {
-          void handleImportProjectWellTimeDepthAsset(
-            "well_time_depth_authored_model",
-            "Import Well Time-Depth Authored Model"
-          );
+          void handleImportProjectWellTimeDepthAsset("well_time_depth_authored_model");
         });
         const unlistenImportCompiledModel = await listen("menu:file-import-compiled-well-model", () => {
-          void handleImportProjectWellTimeDepthAsset(
-            "well_time_depth_model",
-            "Import Compiled Well Time-Depth Model"
-          );
+          void handleImportProjectWellTimeDepthAsset("well_time_depth_model");
         });
 
         if (disposed) {
@@ -463,6 +311,7 @@
           unlistenDepthConversion();
           unlistenWellTie();
           unlistenOpenVolume();
+          unlistenImportData();
           unlistenImportSeismic();
           unlistenImportHorizons();
           unlistenImportWellSources();
@@ -481,6 +330,7 @@
           unlistenDepthConversion();
           unlistenWellTie();
           unlistenOpenVolume();
+          unlistenImportData();
           unlistenImportSeismic();
           unlistenImportHorizons();
           unlistenImportWellSources();
@@ -551,38 +401,7 @@
   <MissingNativeCoordinateReferencePrompt {openSettings} />
 {/if}
 
-{#if segyImportDialogOpen && pendingSegyImportPath}
-  <SegyImportDialog
-    open={segyImportDialogOpen}
-    inputPath={pendingSegyImportPath}
-    {viewerModel}
-    onClose={closeSegyImportDialog}
-  />
-{/if}
-{#if horizonImportDialogOpen}
-  <HorizonImportDialog inputPaths={pendingHorizonImportPaths} close={closeHorizonImportDialog} />
-{/if}
-{#if wellSourceImportDialogOpen && pendingWellImportSourceRoot}
-  <WellSourceImportDialog
-    sourceRootPath={pendingWellImportSourceRoot}
-    sourcePaths={pendingWellImportSourcePaths}
-    close={closeWellSourceImportDialog}
-  />
-{/if}
-{#if wellTimeDepthImportDialogOpen && pendingWellTimeDepthImport}
-  <WellTimeDepthImportDialog
-    projectRoot={pendingWellTimeDepthImport.projectRoot}
-    jsonPath={pendingWellTimeDepthImport.jsonPath}
-    binding={pendingWellTimeDepthImport.binding}
-    assetKind={pendingWellTimeDepthImport.assetKind}
-    dialogTitle={pendingWellTimeDepthImport.dialogTitle}
-    openSettings={openSettings}
-    close={closeWellTimeDepthImportDialog}
-  />
-{/if}
-{#if vendorProjectImportDialogOpen}
-  <VendorProjectImportDialog openSettings={openSettings} close={closeVendorProjectImportDialog} />
-{/if}
+<ImportManagerDialog {openSettings} />
 
 <style>
   .shell {

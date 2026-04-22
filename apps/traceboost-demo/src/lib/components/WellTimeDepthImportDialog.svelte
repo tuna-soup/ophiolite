@@ -32,10 +32,19 @@
     dialogTitle: string;
     openSettings: () => void;
     close: () => void;
+    embedded?: boolean;
   }
 
-  let { projectRoot, jsonPath, binding, assetKind, dialogTitle, openSettings, close }: Props =
-    $props();
+  let {
+    projectRoot,
+    jsonPath,
+    binding,
+    assetKind,
+    dialogTitle,
+    openSettings,
+    close,
+    embedded = false
+  }: Props = $props();
 
   const viewerModel = getViewerModelContext();
 
@@ -501,16 +510,16 @@
   }
 </script>
 
-<div class="well-time-depth-import-backdrop" role="presentation">
+<div class={["well-time-depth-import-backdrop", embedded && "embedded"]} role="presentation">
   <div
-    class="well-time-depth-import-dialog"
+    class={["well-time-depth-import-dialog", embedded && "embedded"]}
     role="dialog"
-    aria-modal="true"
+    aria-modal={!embedded}
     aria-labelledby="well-time-depth-import-title"
     tabindex="-1"
     onclick={(event) => event.stopPropagation()}
     onkeydown={(event) => {
-      if (event.key === "Escape" && !committing) {
+      if (!embedded && event.key === "Escape" && !committing) {
         close();
       }
     }}
@@ -1012,6 +1021,12 @@
     background: rgb(0 0 0 / 0.45);
   }
 
+  .well-time-depth-import-backdrop.embedded {
+    position: static;
+    padding: 0;
+    background: transparent;
+  }
+
   .well-time-depth-import-dialog {
     width: min(920px, 100%);
     max-height: min(90vh, 960px);
@@ -1022,6 +1037,13 @@
     border-radius: 8px;
     background: rgba(14, 20, 29, 0.98);
     box-shadow: 0 28px 72px rgb(0 0 0 / 0.38);
+  }
+
+  .well-time-depth-import-dialog.embedded {
+    width: 100%;
+    max-height: none;
+    border-radius: 10px;
+    box-shadow: none;
   }
 
   .dialog-header,

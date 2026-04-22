@@ -1,6 +1,7 @@
 mod app_paths;
 mod crs_registry;
 mod diagnostics;
+mod import_manager;
 mod preview_session;
 mod processing;
 mod processing_cache;
@@ -30,11 +31,11 @@ use seis_contracts_operations::import_ops::{
     DeleteSegyImportRecipeRequest, DeleteSegyImportRecipeResponse, ExportSegyRequest,
     ExportSegyResponse, ImportDatasetRequest, ImportDatasetResponse, ImportHorizonXyzRequest,
     ImportHorizonXyzResponse, ImportPrestackOffsetDatasetRequest,
-    ImportPrestackOffsetDatasetResponse, ImportSegyWithPlanRequest,
-    ImportSegyWithPlanResponse, ListSegyImportRecipesRequest, ListSegyImportRecipesResponse,
-    LoadSectionHorizonsResponse, SaveSegyImportRecipeRequest, SaveSegyImportRecipeResponse,
-    ScanSegyImportRequest, SegyImportScanResponse, SegyImportValidationResponse,
-    SurveyPreflightRequest, SurveyPreflightResponse, ValidateSegyImportPlanRequest,
+    ImportPrestackOffsetDatasetResponse, ImportSegyWithPlanRequest, ImportSegyWithPlanResponse,
+    ListSegyImportRecipesRequest, ListSegyImportRecipesResponse, LoadSectionHorizonsResponse,
+    SaveSegyImportRecipeRequest, SaveSegyImportRecipeResponse, ScanSegyImportRequest,
+    SegyImportScanResponse, SegyImportValidationResponse, SurveyPreflightRequest,
+    SurveyPreflightResponse, ValidateSegyImportPlanRequest,
 };
 use seis_contracts_operations::processing_ops::{
     AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, CancelProcessingJobRequest,
@@ -95,6 +96,10 @@ use crate::crs_registry::{
     resolve_coordinate_reference, search_coordinate_references,
 };
 use crate::diagnostics::{DiagnosticsState, ExportBundleResponse, build_fields, json_value};
+use crate::import_manager::{
+    BeginImportSessionRequest, ImportManagerState, ImportSessionEnvelope,
+    ListImportProvidersResponse,
+};
 use crate::preview_session::PreviewSessionState;
 use crate::processing::{JobRecord, ProcessingState};
 use crate::processing_cache::ProcessingCacheState;
@@ -107,6 +112,8 @@ use crate::workspace::WorkspaceState;
 
 const FILE_OPEN_VOLUME_MENU_ID: &str = "file.open_volume";
 const FILE_OPEN_VOLUME_MENU_EVENT: &str = "menu:file-open-volume";
+const FILE_IMPORT_DATA_MENU_ID: &str = "file.import_data";
+const FILE_IMPORT_DATA_MENU_EVENT: &str = "menu:file-import-data";
 const APP_SETTINGS_MENU_ID: &str = "app.settings";
 const APP_SETTINGS_MENU_EVENT: &str = "menu:app-settings";
 const APP_VELOCITY_MODEL_MENU_ID: &str = "app.velocity_model";
@@ -140,6 +147,22 @@ const PROCESSING_CACHE_RUNTIME_VERSION: &str = env!("CARGO_PKG_VERSION");
 fn workflow_service() -> TraceBoostWorkflowService {
     TraceBoostWorkflowService
 }
+
+#[tauri::command]
+fn list_import_providers_command(
+    import_manager: State<'_, ImportManagerState>,
+) -> Result<ListImportProvidersResponse, String> {
+    Ok(import_manager.list_providers())
+}
+
+#[tauri::command]
+fn begin_import_session_command(
+    import_manager: State<'_, ImportManagerState>,
+    request: BeginImportSessionRequest,
+) -> Result<ImportSessionEnvelope, String> {
+    import_manager.begin_session(request)
+}
+
 const PACKED_PREVIEW_MAGIC: &[u8; 8] = b"TBPRV001";
 const PACKED_SECTION_MAGIC: &[u8; 8] = b"TBSEC001";
 const PACKED_SECTION_TILE_MAGIC: &[u8; 8] = b"TBTIL001";
@@ -3687,6 +3710,13 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R
         true,
         None::<&str>,
     )?;
+    let import_data = MenuItem::with_id(
+        app,
+        FILE_IMPORT_DATA_MENU_ID,
+        "Import &Data...",
+        true,
+        None::<&str>,
+    )?;
     let import_seismic = MenuItem::with_id(
         app,
         FILE_IMPORT_SEISMIC_MENU_ID,
@@ -3782,7 +3812,13 @@ fn build_app_menu<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R
                 app,
                 "&File",
                 true,
-                &[&open_volume, &import_submenu, &separator, &close_window],
+                &[
+                    &open_volume,
+                    &import_data,
+                    &import_submenu,
+                    &separator,
+                    &close_window,
+                ],
             )?,
         ],
     )
@@ -9588,6 +9624,11 @@ pub fn run() {
                     log::warn!("failed to emit native open-volume menu event: {error}");
                 }
             }
+            FILE_IMPORT_DATA_MENU_ID => {
+                if let Err(error) = app.emit(FILE_IMPORT_DATA_MENU_EVENT, ()) {
+                    log::warn!("failed to emit native import-data menu event: {error}");
+                }
+            }
             FILE_IMPORT_SEISMIC_MENU_ID => {
                 if let Err(error) = app.emit(FILE_IMPORT_SEISMIC_MENU_EVENT, ()) {
                     log::warn!("failed to emit native import-seismic menu event: {error}");
@@ -9657,6 +9698,7 @@ pub fn run() {
                 app_paths.dataset_registry_path(),
                 app_paths.workspace_session_path(),
             )?;
+            let import_manager = ImportManagerState::initialize();
             diagnostics.emit_session_event(
                 &app.handle().clone(),
                 "started",
@@ -9676,9 +9718,12 @@ pub fn run() {
             app.manage(processing_cache);
             app.manage(preview_sessions);
             app.manage(workspace);
+            app.manage(import_manager);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            list_import_providers_command,
+            begin_import_session_command,
             preflight_import_command,
             scan_segy_import_command,
             validate_segy_import_plan_command,

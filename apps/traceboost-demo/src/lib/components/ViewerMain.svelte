@@ -896,8 +896,9 @@
           </svg>
           <h2>Open a Volume</h2>
           <p>
-            Use <strong>File &gt; Open Volume…</strong> for runtime stores or <strong>File &gt; Import</strong>
-            for seismic volumes, then start viewing and processing.
+            Use <strong>File &gt; Open Volume…</strong> for managed runtime stores or
+            <strong>File &gt; Import Data…</strong> for external sources, then start viewing and
+            processing.
           </p>
           <span class="welcome-version">TraceBoost v0.1.0</span>
         </div>

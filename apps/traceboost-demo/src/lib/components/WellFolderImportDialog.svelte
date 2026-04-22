@@ -50,6 +50,7 @@
     sourceRootPath: string;
     sourcePaths?: string[];
     close: () => void;
+    embedded?: boolean;
   }
 
   interface ReviewAsciiLogMappingRow {
@@ -61,7 +62,7 @@
     unit: string;
   }
 
-  let { sourceRootPath, sourcePaths = [], close }: Props = $props();
+  let { sourceRootPath, sourcePaths = [], close, embedded = false }: Props = $props();
   const REVIEW_ROW_LIMIT = 12;
   const REVIEW_MAPPING_LIMIT = 24;
 
@@ -1255,16 +1256,16 @@
   }
 </script>
 
-<div class="well-folder-import-backdrop" role="presentation">
+<div class={["well-folder-import-backdrop", embedded && "embedded"]} role="presentation">
   <div
-    class="well-folder-import-dialog"
+    class={["well-folder-import-dialog", embedded && "embedded"]}
     role="dialog"
-    aria-modal="true"
+    aria-modal={!embedded}
     aria-labelledby="well-folder-import-title"
     tabindex="-1"
     onclick={(event) => event.stopPropagation()}
     onkeydown={(event) => {
-      if (event.key === "Escape" && !committing) {
+      if (!embedded && event.key === "Escape" && !committing) {
         close();
       }
     }}
@@ -2262,6 +2263,12 @@
     background: rgb(0 0 0 / 0.45);
   }
 
+  .well-folder-import-backdrop.embedded {
+    position: static;
+    padding: 0;
+    background: transparent;
+  }
+
   .well-folder-import-dialog {
     width: min(960px, 100%);
     max-height: calc(100vh - 40px);
@@ -2271,6 +2278,12 @@
     border: 1px solid rgb(255 255 255 / 0.12);
     border-radius: 8px;
     overflow: hidden;
+  }
+
+  .well-folder-import-dialog.embedded {
+    width: 100%;
+    max-height: none;
+    border-radius: 10px;
   }
 
   .dialog-header,

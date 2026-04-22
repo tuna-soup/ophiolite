@@ -46,6 +46,7 @@ Current properties:
 - canonical wellbore geometry, resolved trajectory, well time/depth authored models, and section well overlays are defined in `ADR-0016-canonical-wellbore-geometry-and-resolved-trajectory-boundary.md`, `ADR-0017-well-time-depth-source-assets-authored-models-and-compiled-runtime-output.md`, and `ADR-0018-project-aware-well-on-section-overlay-dtos-and-backend-projection-rules.md`
 - chart-kernel direction, rock-physics crossplot DTO guidance, the first point-cloud spike, and the AVO chart-family analysis boundary are defined in `ADR-0019-chart-kernels-rock-physics-crossplot-and-point-cloud-spike.md` and `ADR-0020-avo-chart-family-analysis-contracts-and-initial-rendering-plan.md`
 - the domain-first Python SDK surface and advanced namespace rule are defined in `ADR-0028-domain-first-python-sdk-surface-and-advanced-namespaces.md`
+- the unified TraceBoost import manager, app-local backend provider registry, and normalized import lifecycle are defined in `ADR-0029-unified-import-manager-and-provider-registry.md`
 
 ## Layered Architecture
 
@@ -318,6 +319,17 @@ Only after those are stable should the project tighten runtime/package behavior 
 - `ADR-0016-canonical-wellbore-geometry-and-resolved-trajectory-boundary.md`
 - `ADR-0017-well-time-depth-source-assets-authored-models-and-compiled-runtime-output.md`
 - `ADR-0018-project-aware-well-on-section-overlay-dtos-and-backend-projection-rules.md`
+- `ADR-0019-chart-kernels-rock-physics-crossplot-and-point-cloud-spike.md`
+- `ADR-0020-avo-chart-family-analysis-contracts-and-initial-rendering-plan.md`
+- `ADR-0021-volume-interpretation-chart-family-and-resolved-scene-boundary.md`
+- `ADR-0022-canonical-well-and-wellbore-metadata-phase-one.md`
+- `ADR-0023-canonical-well-markers-phase-one.md`
+- `ADR-0024-authored-marker-set-assets-and-canonical-marker-precedence.md`
+- `ADR-0025-well-marker-depth-horizon-residuals.md`
+- `ADR-0026-vendor-project-import-adapters.md`
+- `ADR-0027-asset-owner-scopes-for-vendor-and-survey-assets.md`
+- `ADR-0028-domain-first-python-sdk-surface-and-advanced-namespaces.md`
+- `ADR-0029-unified-import-manager-and-provider-registry.md`
 
 ## Related Docs
 

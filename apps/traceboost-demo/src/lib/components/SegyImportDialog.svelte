@@ -29,6 +29,7 @@
     inputPath: string | null;
     viewerModel: ViewerModel;
     onClose: () => void;
+    embedded?: boolean;
   }
 
   type WizardStage = "scan" | "structure" | "spatial" | "review" | "import" | "raw_inspect";
@@ -40,7 +41,7 @@
     | "y_field"
     | "coordinate_scalar_field";
 
-  let { open, inputPath, viewerModel, onClose }: Props = $props();
+  let { open, inputPath, viewerModel, onClose, embedded = false }: Props = $props();
 
   const baseSteps: ImportFlowStep[] = [
     { key: "scan", label: "1. Scan", description: "Read the SEG-Y structure and suggested mappings." },
@@ -927,11 +928,19 @@
 </script>
 
 {#if open}
-  <div class="segy-import-backdrop" role="presentation" onclick={handleClose}>
+  <div
+    class={["segy-import-backdrop", embedded && "embedded"]}
+    role="presentation"
+    onclick={() => {
+      if (!embedded) {
+        handleClose();
+      }
+    }}
+  >
     <div
-      class="segy-import-dialog"
+      class={["segy-import-dialog", embedded && "embedded"]}
       role="dialog"
-      aria-modal="true"
+      aria-modal={!embedded}
       aria-label="Import SEG-Y survey"
       tabindex="0"
       onclick={(event) => event.stopPropagation()}
@@ -1409,6 +1418,13 @@
     backdrop-filter: blur(6px);
   }
 
+  .segy-import-backdrop.embedded {
+    position: static;
+    padding: 0;
+    background: transparent;
+    backdrop-filter: none;
+  }
+
   .segy-import-dialog {
     width: min(1080px, 100%);
     max-height: min(92vh, 980px);
@@ -1419,6 +1435,13 @@
     background: var(--panel-bg);
     display: grid;
     gap: 16px;
+  }
+
+  .segy-import-dialog.embedded {
+    width: 100%;
+    max-height: none;
+    border-radius: 10px;
+    box-shadow: none;
   }
 
   .segy-import-header,

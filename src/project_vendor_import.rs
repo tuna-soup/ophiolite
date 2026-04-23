@@ -949,8 +949,11 @@ fn run_opendtect_odbind_probe(
     script_source: &str,
 ) -> Result<OpendtectOdbindProbeResponse> {
     let python_executable = request.python_executable.as_deref().unwrap_or("python3");
-    let mut command = Command::new(python_executable);
-    command.arg("-c").arg(script_source);
+    let wrapper_mode = runtime_probe_uses_wrapper_mode(python_executable);
+    let mut command = runtime_probe_command(python_executable, wrapper_mode);
+    if !wrapper_mode {
+        command.arg("-c").arg(script_source);
+    }
     command.arg("--basedir").arg(basedir);
     command.arg("--survey").arg(survey_name);
     if let Some(odbind_root) = request.odbind_root.as_deref() {
@@ -990,6 +993,37 @@ fn run_opendtect_odbind_probe(
     })
 }
 
+fn runtime_probe_command(executable: &str, wrapper_mode: bool) -> Command {
+    #[cfg(windows)]
+    {
+        if wrapper_mode {
+            let mut command = Command::new("cmd");
+            command.arg("/C").arg(executable);
+            return command;
+        }
+    }
+
+    Command::new(executable)
+}
+
+fn runtime_probe_uses_wrapper_mode(executable: &str) -> bool {
+    #[cfg(windows)]
+    {
+        return Path::new(executable)
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| {
+                value.eq_ignore_ascii_case("cmd") || value.eq_ignore_ascii_case("bat")
+            });
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = executable;
+        false
+    }
+}
+
 fn prepare_opendtect_runtime_data_root(project_root: &Path, survey_name: &str) -> Result<PathBuf> {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1017,7 +1051,58 @@ fn symlink_directory(source: &Path, target: &Path) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        std::os::windows::fs::symlink_dir(source, target)?;
+        match std::os::windows::fs::symlink_dir(source, target) {
+            Ok(()) => {}
+            Err(error) if windows_link_requires_fallback(&error) => {
+                if !create_windows_directory_junction(source, target)? {
+                    copy_directory_recursive(source, target)?;
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_link_requires_fallback(error: &std::io::Error) -> bool {
+    matches!(error.raw_os_error(), Some(1314))
+        || matches!(error.kind(), std::io::ErrorKind::PermissionDenied)
+}
+
+#[cfg(windows)]
+fn create_windows_directory_junction(source: &Path, target: &Path) -> Result<bool> {
+    let output = Command::new("cmd")
+        .args([
+            "/C",
+            "mklink",
+            "/J",
+            &target.as_os_str().to_string_lossy(),
+            &source.as_os_str().to_string_lossy(),
+        ])
+        .output();
+    match output {
+        Ok(output) if output.status.success() => Ok(true),
+        Ok(_) => Ok(false),
+        Err(error) if windows_link_requires_fallback(&error) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_directory_recursive(&source_path, &destination_path)?;
+        } else {
+            if let Some(parent) = destination_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::copy(&source_path, &destination_path)?;
+        }
     }
     Ok(())
 }
@@ -5415,25 +5500,13 @@ Coordinate System.Projection.Name: ED50 / UTM zone 31N
 ",
         );
         write_file(&vendor_root.join("Seismics/7a_AI_Cube_Std.cbvs"), "cbvs");
-        let fake_python = write_executable(
-            "fake_runtime_ok.sh",
-            r#"#!/bin/sh
-shift 2
-volume=""
-while [ $# -gt 0 ]; do
-  if [ "$1" = "--volume" ]; then
-    volume="$2"
-    shift 2
-  else
-    shift
-  fi
-done
-if [ -n "$volume" ]; then
-  printf '%s\n' '{"status":"ok","surveyNames":["F3_Demo_2023"],"objectNames":{"Seismic Data":["7a AI Cube Std"]},"volumeProbe":{"hasObject":true,"objectInfoError":{"message":"translator group not found"},"openStatus":"error","openError":{"message":"IO object read error - "}}}'
-else
-  printf '%s\n' '{"status":"ok","surveyNames":["F3_Demo_2023"],"surveyInfo":{"name":"F3 Demo 2023","type":"2D3D"},"objectNames":{"Seismic Data":["7a AI Cube Std"],"Well":["F03-2"]}}'
-fi
-"#,
+        let fake_python = write_fake_runtime_probe(
+            "fake_runtime_ok",
+            r#"{"status":"ok","surveyNames":["F3_Demo_2023"],"surveyInfo":{"name":"F3 Demo 2023","type":"2D3D"},"objectNames":{"Seismic Data":["7a AI Cube Std"],"Well":["F03-2"]}}"#,
+            Some(
+                r#"{"status":"ok","surveyNames":["F3_Demo_2023"],"objectNames":{"Seismic Data":["7a AI Cube Std"]},"volumeProbe":{"hasObject":true,"objectInfoError":{"message":"translator group not found"},"openStatus":"error","openError":{"message":"IO object read error - "}}}"#,
+            ),
+            0,
         );
 
         let response = probe_vendor_project_runtime(&VendorProjectRuntimeProbeRequest {
@@ -5485,12 +5558,11 @@ Coordinate System.Projection.ID: EPSG`23031
 Coordinate System.Projection.Name: ED50 / UTM zone 31N
 ",
         );
-        let fake_python = write_executable(
-            "fake_runtime_import_error.sh",
-            r#"#!/bin/sh
-printf '%s\n' '{"status":"import_error","error":{"message":"No module named odbind"}}'
-exit 1
-"#,
+        let fake_python = write_fake_runtime_probe(
+            "fake_runtime_import_error",
+            r#"{"status":"import_error","error":{"message":"No module named odbind"}}"#,
+            None,
+            1,
         );
 
         let response = probe_vendor_project_runtime(&VendorProjectRuntimeProbeRequest {
@@ -5538,25 +5610,13 @@ Coordinate System.Projection.Name: ED50 / UTM zone 31N
 Input.ID: 100010.7
 ",
         );
-        let fake_python = write_executable(
-            "fake_runtime_plan_ok.sh",
-            r#"#!/bin/sh
-shift 2
-volume=""
-while [ $# -gt 0 ]; do
-  if [ "$1" = "--volume" ]; then
-    volume="$2"
-    shift 2
-  else
-    shift
-  fi
-done
-if [ -n "$volume" ]; then
-  printf '%s\n' '{"status":"ok","surveyNames":["F3_Demo_2023"],"objectNames":{"Seismic Data":["7a AI Cube Std"]},"volumeProbe":{"hasObject":false,"objectInfoError":{"message":"translator group not found"},"openStatus":"error","openError":{"message":"IO object read error - "}}}'
-else
-  printf '%s\n' '{"status":"ok","surveyNames":["F3_Demo_2023"],"surveyInfo":{"name":"F3 Demo 2023","type":"2D3D"},"objectNames":{"Seismic Data":["7a AI Cube Std"]}}'
-fi
-"#,
+        let fake_python = write_fake_runtime_probe(
+            "fake_runtime_plan_ok",
+            r#"{"status":"ok","surveyNames":["F3_Demo_2023"],"surveyInfo":{"name":"F3 Demo 2023","type":"2D3D"},"objectNames":{"Seismic Data":["7a AI Cube Std"]}}"#,
+            Some(
+                r#"{"status":"ok","surveyNames":["F3_Demo_2023"],"objectNames":{"Seismic Data":["7a AI Cube Std"]},"volumeProbe":{"hasObject":false,"objectInfoError":{"message":"translator group not found"},"openStatus":"error","openError":{"message":"IO object read error - "}}}"#,
+            ),
+            0,
         );
 
         let response = plan_vendor_project_import(&VendorProjectPlanRequest {
@@ -5711,10 +5771,8 @@ Input.ID: 100010.7
         .expect("bridge preparation should succeed");
 
         assert_eq!(
-            response.command[0],
-            install_root
-                .join("Contents/MacOS/od_process_segyio")
-                .to_string_lossy()
+            PathBuf::from(&response.command[0]),
+            install_root.join("Contents/MacOS/od_process_segyio")
         );
         assert_eq!(response.artifacts.len(), 3);
         assert!(response.notes.iter().any(|note| {
@@ -6487,15 +6545,56 @@ Binary Data
         root
     }
 
+    #[cfg(unix)]
     fn write_executable(name: &str, contents: &str) -> std::path::PathBuf {
         let path = write_temp_dir().join(name);
         write_file(&path, contents);
+        let mut permissions = fs::metadata(&path).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&path, permissions).expect("chmod");
+        path
+    }
+
+    fn write_fake_runtime_probe(
+        name: &str,
+        survey_response: &str,
+        volume_response: Option<&str>,
+        exit_code: i32,
+    ) -> std::path::PathBuf {
         #[cfg(unix)]
         {
-            let mut permissions = fs::metadata(&path).expect("metadata").permissions();
-            permissions.set_mode(0o755);
-            fs::set_permissions(&path, permissions).expect("chmod");
+            let volume_branch = volume_response.map_or_else(
+                String::new,
+                |response| {
+                    format!(
+                        "if [ -n \"$volume\" ]; then\n  printf '%s\\n' '{response}'\nelse\n  printf '%s\\n' '{survey_response}'\nfi\n"
+                    )
+                },
+            );
+            let body = if volume_branch.is_empty() {
+                format!(
+                    "#!/bin/sh\nshift 2\nprintf '%s\\n' '{survey_response}'\nexit {exit_code}\n"
+                )
+            } else {
+                format!(
+                    "#!/bin/sh\nshift 2\nvolume=\"\"\nwhile [ $# -gt 0 ]; do\n  if [ \"$1\" = \"--volume\" ]; then\n    volume=\"$2\"\n    shift 2\n  else\n    shift\n  fi\ndone\n{volume_branch}exit {exit_code}\n"
+                )
+            };
+            return write_executable(&format!("{name}.sh"), &body);
         }
-        path
+
+        #[cfg(windows)]
+        {
+            let path = write_temp_dir().join(format!("{name}.cmd"));
+            let body = if let Some(volume_response) = volume_response {
+                format!(
+                    "@echo off\r\necho %* | findstr /C:\"--volume\" >nul\r\nif not errorlevel 1 (\r\n  echo {volume_response}\r\n) else (\r\n  echo {survey_response}\r\n)\r\nexit /b {exit_code}\r\n"
+                )
+            } else {
+                format!("@echo off\r\necho {survey_response}\r\nexit /b {exit_code}\r\n")
+            };
+            write_file(&path, &body);
+            return path;
+        }
     }
 }

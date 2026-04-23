@@ -3658,20 +3658,13 @@ Depth(m)	Inclination(deg)	Azimuth(deg)	TVD(m)	X-offset(m)	Y-offset(m)
         assert_eq!(asset.manifest.provenance.source_path, ascii.source_path);
         assert_eq!(asset.manifest.source_artifacts.len(), 3);
         assert!(
-            asset.manifest.source_artifacts[0]
-                .source_path
-                .ends_with("/basisgegevens.txt")
+            Path::new(&asset.manifest.source_artifacts[0].source_path)
+                .ends_with("basisgegevens.txt")
         );
         assert!(
-            asset.manifest.source_artifacts[1]
-                .source_path
-                .ends_with("/f02a02_lwd.asc")
+            Path::new(&asset.manifest.source_artifacts[1].source_path).ends_with("f02a02_lwd.asc")
         );
-        assert!(
-            asset.manifest.source_artifacts[2]
-                .source_path
-                .ends_with("/trace.dlis")
-        );
+        assert!(Path::new(&asset.manifest.source_artifacts[2].source_path).ends_with("trace.dlis"));
         assert!(
             asset
                 .manifest

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Benchmark"
+  short_description: "Run trustworthy local and remote benchmark flows"
+  default_prompt: "Use $benchmark to classify benchmark intent, enforce the repo benchmark launch policy, prefer the gated Windows benchmark launcher locally, and prefer the dedicated GitHub Actions benchmark workflow on the self-hosted Windows benchmark runner for cleaner evidence."

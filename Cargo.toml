@@ -9,6 +9,7 @@ members = [
     "crates/ophiolite-ingest",
     "crates/ophiolite-compute",
     "crates/ophiolite-operators",
+    "crates/ophiolite-sdk",
     "crates/ophiolite-seismic",
     "crates/ophiolite-seismic-io",
     "crates/ophiolite-seismic-runtime",
@@ -53,6 +54,7 @@ tracing = "0.1.44"
 name = "ophiolite"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [features]
 default = []

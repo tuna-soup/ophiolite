@@ -30,6 +30,15 @@ pub use ophiolite_operators::{
 };
 pub use ophiolite_package::write_package_overwrite;
 pub use ophiolite_parser::read_path;
+pub use ophiolite_seismic::{
+    CoordinateReferenceBindingDto, CoordinateReferenceDto, CoordinateReferenceSourceDto,
+    ProjectedPoint2Dto, ProjectedPolygon2Dto, ProjectedVector2Dto, ResolvedSurveyMapHorizonDto,
+    ResolvedSurveyMapSourceDto, ResolvedSurveyMapSurveyDto, ResolvedSurveyMapWellDto,
+    SurveyIndexAxisDto, SurveyIndexGridDto, SurveyMapGridTransformDto, SurveyMapScalarFieldDto,
+    SurveyMapSpatialAvailabilityDto, SurveyMapSpatialDescriptorDto, SurveyMapTrajectoryDto,
+    SurveyMapTrajectoryStationDto, SurveyMapTransformDiagnosticsDto, SurveyMapTransformPolicyDto,
+    SurveyMapTransformStatusDto,
+};
 
 #[path = "../../../src/project.rs"]
 mod project;
@@ -82,36 +91,29 @@ pub use project_assets::{
 pub use project_contracts::{
     AVO_ANALYSIS_CONTRACT_VERSION, AvoAnisotropyModeDto, AvoAxisDto, AvoBackgroundRegionDto,
     AvoChiProjectionSeriesDto, AvoCrossplotPointDto, AvoCurveStyleDto, AvoInterfaceDto,
-    AvoReferenceLineDto, AvoReflectivityModelDto, AvoResponseSeriesDto,
-    CoordinateReferenceBindingDto, CoordinateReferenceDto, CoordinateReferenceSourceDto,
-    ProjectSurveyMapRequestDto, ProjectedPoint2Dto, ProjectedPolygon2Dto, ProjectedVector2Dto,
+    AvoReferenceLineDto, AvoReflectivityModelDto, AvoResponseSeriesDto, ProjectSurveyMapRequestDto,
     ROCK_PHYSICS_CROSSPLOT_CONTRACT_VERSION, ResolveSectionWellOverlaysResponse,
     ResolvedAvoChiProjectionSourceDto, ResolvedAvoCrossplotSourceDto, ResolvedAvoResponseSourceDto,
     ResolvedRockPhysicsCrossplotSourceDto, ResolvedSectionWellOverlayDto,
-    ResolvedSurveyMapHorizonDto, ResolvedSurveyMapSourceDto, ResolvedSurveyMapSurveyDto,
-    ResolvedSurveyMapWellDto, ResolvedWellMarkerHorizonResidualSourceDto,
-    ResolvedWellPanelSourceDto, ResolvedWellPanelWellDto, RockPhysicsAxisDto,
-    RockPhysicsCategoricalColorBindingDto, RockPhysicsCategoricalColorRequestDto,
-    RockPhysicsCategoricalSemanticDto, RockPhysicsCategoryDto, RockPhysicsColorBindingDto,
-    RockPhysicsColorRequestDto, RockPhysicsContinuousColorBindingDto,
-    RockPhysicsContinuousColorRequestDto, RockPhysicsCrossplotRequestDto,
-    RockPhysicsCurveSemanticDto, RockPhysicsInteractionThresholdsDto, RockPhysicsPointSymbolDto,
-    RockPhysicsSampleDto, RockPhysicsSourceBindingDto, RockPhysicsTemplateIdDto,
-    RockPhysicsTemplateLineDto, RockPhysicsTemplateOverlayDto, RockPhysicsTemplatePointDto,
+    ResolvedWellMarkerHorizonResidualSourceDto, ResolvedWellPanelSourceDto,
+    ResolvedWellPanelWellDto, RockPhysicsAxisDto, RockPhysicsCategoricalColorBindingDto,
+    RockPhysicsCategoricalColorRequestDto, RockPhysicsCategoricalSemanticDto,
+    RockPhysicsCategoryDto, RockPhysicsColorBindingDto, RockPhysicsColorRequestDto,
+    RockPhysicsContinuousColorBindingDto, RockPhysicsContinuousColorRequestDto,
+    RockPhysicsCrossplotRequestDto, RockPhysicsCurveSemanticDto,
+    RockPhysicsInteractionThresholdsDto, RockPhysicsPointSymbolDto, RockPhysicsSampleDto,
+    RockPhysicsSourceBindingDto, RockPhysicsTemplateIdDto, RockPhysicsTemplateLineDto,
+    RockPhysicsTemplateOverlayDto, RockPhysicsTemplatePointDto,
     RockPhysicsTemplatePolygonOverlayDto, RockPhysicsTemplatePolylineOverlayDto,
     RockPhysicsTemplateTextOverlayDto, RockPhysicsTextAlignDto, RockPhysicsTextBaselineDto,
     RockPhysicsWellDto, SECTION_WELL_OVERLAY_CONTRACT_VERSION, SURVEY_MAP_CONTRACT_VERSION,
     SectionWellOverlayDomainDto, SectionWellOverlayRequestDto, SectionWellOverlaySampleDto,
-    SectionWellOverlaySegmentDto, SurveyIndexAxisDto, SurveyIndexGridDto,
-    SurveyMapGridTransformDto, SurveyMapRequestDto, SurveyMapScalarFieldDto,
-    SurveyMapSpatialAvailabilityDto, SurveyMapSpatialDescriptorDto, SurveyMapTrajectoryDto,
-    SurveyMapTrajectoryStationDto, SurveyMapTransformDiagnosticsDto, SurveyMapTransformPolicyDto,
-    SurveyMapTransformStatusDto, WELL_MARKER_HORIZON_RESIDUAL_CONTRACT_VERSION,
-    WELL_PANEL_CONTRACT_VERSION, WellMarkerHorizonResidualRequestDto,
-    WellMarkerHorizonResidualRowDto, WellPanelDepthSampleDto, WellPanelDrillingObservationDto,
-    WellPanelDrillingSetDto, WellPanelLogCurveDto, WellPanelPressureObservationDto,
-    WellPanelPressureSetDto, WellPanelRequestDto, WellPanelTopRowDto, WellPanelTopSetDto,
-    WellPanelTrajectoryDto, WellPanelTrajectoryRowDto,
+    SectionWellOverlaySegmentDto, SurveyMapRequestDto,
+    WELL_MARKER_HORIZON_RESIDUAL_CONTRACT_VERSION, WELL_PANEL_CONTRACT_VERSION,
+    WellMarkerHorizonResidualRequestDto, WellMarkerHorizonResidualRowDto, WellPanelDepthSampleDto,
+    WellPanelDrillingObservationDto, WellPanelDrillingSetDto, WellPanelLogCurveDto,
+    WellPanelPressureObservationDto, WellPanelPressureSetDto, WellPanelRequestDto,
+    WellPanelTopRowDto, WellPanelTopSetDto, WellPanelTrajectoryDto, WellPanelTrajectoryRowDto,
 };
 pub use project_edit::{
     DrillingObservationEditRequest, DrillingObservationRowPatch,

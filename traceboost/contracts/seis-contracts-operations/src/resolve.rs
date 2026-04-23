@@ -2,20 +2,17 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-pub use ophiolite_project::{
-    CoordinateReferenceBindingDto, CoordinateReferenceDto, CoordinateReferenceSourceDto,
-    ProjectedPoint2Dto, ProjectedPolygon2Dto, ProjectedVector2Dto, ResolvedSurveyMapHorizonDto,
-    ResolvedSurveyMapSourceDto, ResolvedSurveyMapSurveyDto, ResolvedSurveyMapWellDto,
-    SurveyIndexAxisDto, SurveyIndexGridDto, SurveyMapGridTransformDto, SurveyMapScalarFieldDto,
-    SurveyMapSpatialAvailabilityDto, SurveyMapSpatialDescriptorDto, SurveyMapTrajectoryDto,
-    SurveyMapTrajectoryStationDto, SurveyMapTransformDiagnosticsDto, SurveyMapTransformPolicyDto,
-    SurveyMapTransformStatusDto,
-};
 pub use ophiolite_seismic::{
-    BuildSurveyTimeDepthTransformRequest, DatasetSummary, DepthReferenceKind, IPC_SCHEMA_VERSION,
-    LateralInterpolationMethod, LayeredVelocityInterval, LayeredVelocityModel,
-    StratigraphicBoundaryReference, SurveyTimeDepthTransform3D, TimeDepthDomain,
-    TravelTimeReference, VerticalInterpolationMethod,
+    BuildSurveyTimeDepthTransformRequest, CoordinateReferenceBindingDto, CoordinateReferenceDto,
+    CoordinateReferenceSourceDto, DatasetSummary, DepthReferenceKind, IPC_SCHEMA_VERSION,
+    LateralInterpolationMethod, LayeredVelocityInterval, LayeredVelocityModel, ProjectedPoint2Dto,
+    ProjectedPolygon2Dto, ProjectedVector2Dto, ResolvedSurveyMapHorizonDto,
+    ResolvedSurveyMapSourceDto, ResolvedSurveyMapSurveyDto, ResolvedSurveyMapWellDto,
+    StratigraphicBoundaryReference, SurveyIndexAxisDto, SurveyIndexGridDto,
+    SurveyMapGridTransformDto, SurveyMapScalarFieldDto, SurveyMapSpatialAvailabilityDto,
+    SurveyMapSpatialDescriptorDto, SurveyMapTrajectoryDto, SurveyMapTrajectoryStationDto,
+    SurveyMapTransformDiagnosticsDto, SurveyMapTransformPolicyDto, SurveyMapTransformStatusDto,
+    SurveyTimeDepthTransform3D, TimeDepthDomain, TravelTimeReference, VerticalInterpolationMethod,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS)]

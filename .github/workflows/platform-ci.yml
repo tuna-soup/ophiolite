@@ -18,6 +18,17 @@ jobs:
           cargo run -p traceboost-contracts-export
           git diff --exit-code -- contracts/ts/ophiolite-contracts traceboost/contracts/ts/seis-contracts
 
+  public-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify public SDK facade and shared public-core crates
+        run: |
+          cargo check -p ophiolite-sdk
+          cargo test -p ophiolite-sdk -p ophiolite-seismic -p seis-contracts-operations -p seis-contracts-interop
+
   security-audits:
     runs-on: ubuntu-latest
     steps:

@@ -1,3 +1,9 @@
+//! App-local processing authoring adapter for TraceBoost desktop.
+//!
+//! This module is intentionally not part of the public Ophiolite SDK surface.
+//! It owns desktop-facing authoring glue until a second real consumer justifies
+//! extraction into a shared crate.
+
 use ophiolite::IPC_SCHEMA_VERSION;
 use seis_contracts_operations::datasets::UpsertDatasetEntryResponse;
 use seis_contracts_operations::workspace::{

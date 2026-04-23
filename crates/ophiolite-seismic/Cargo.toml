@@ -2,6 +2,8 @@
 name = "ophiolite-seismic"
 version = "0.1.0"
 edition = "2024"
+license.workspace = true
+publish = true
 
 [dependencies]
 ophiolite-operators = { path = "../ophiolite-operators" }

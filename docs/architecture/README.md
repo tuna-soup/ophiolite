@@ -50,7 +50,11 @@ Current properties:
 - the unified operator catalog and seismic first-class operator discovery boundary are defined in `ADR-0030-unified-operator-catalog-and-seismic-first-class-registry.md`
 - the shared seismic execution planner and bounded local job-service direction are defined in `ADR-0031-shared-seismic-execution-planner-and-bounded-local-job-service.md`
 - the processing authority, thin-client migration, and contract-distribution consolidation direction are defined in `ADR-0032-processing-authority-and-thin-client-migration.md`
+- the public SDK core versus adapter/application boundary is defined in `ADR-0033-public-sdk-core-and-adapter-boundaries.md`
 - the current-to-target authority breakdown for processing concerns is tracked in `processing-authority-matrix.md`
+- the current public-core candidate, blocked, and internal package split is tracked in `public-sdk-package-matrix.md`
+- the current public-core versioning and support expectations are tracked in `public-sdk-support-policy.md`
+- the narrow public-core facade crate is `crates/ophiolite-sdk`, while the root `ophiolite` crate remains an internal compatibility facade
 
 ## Layered Architecture
 

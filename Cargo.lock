@@ -3659,6 +3659,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "ophiolite-sdk"
+version = "0.1.0"
+dependencies = [
+ "ophiolite-operators",
+ "ophiolite-seismic",
+ "ophiolite-seismic-execution",
+ "ophiolite-seismic-runtime",
+ "seis-contracts-core",
+ "seis-contracts-interop",
+ "seis-contracts-operations",
+ "seis-contracts-views",
+ "seis-runtime",
+]
+
+[[package]]
 name = "ophiolite-seismic"
 version = "0.1.0"
 dependencies = [
@@ -4893,7 +4908,6 @@ dependencies = [
 name = "seis-contracts-operations"
 version = "0.1.0"
 dependencies = [
- "ophiolite-project",
  "ophiolite-seismic",
  "schemars 0.8.22",
  "seis-contracts-core",

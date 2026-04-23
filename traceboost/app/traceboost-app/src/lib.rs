@@ -157,7 +157,7 @@ pub struct BenchmarkStageClassificationSummary {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct AdaptivePartitionBenchmarkRecommendation {
+pub struct TraceLocalChunkPlanBenchmarkRecommendation {
     pub target_bytes: u64,
     pub bytes_per_tile: u64,
     pub total_tiles: usize,
@@ -217,7 +217,7 @@ pub struct TraceLocalBenchmarkResponse {
     pub source_chunk_shape: [usize; 3],
     pub adaptive_partition_target: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub adaptive_recommendation: Option<AdaptivePartitionBenchmarkRecommendation>,
+    pub adaptive_recommendation: Option<TraceLocalChunkPlanBenchmarkRecommendation>,
     pub pipeline: TraceLocalProcessingPipeline,
     pub plan_summary: seis_runtime::ExecutionPlanSummary,
     pub stage_classifications: Vec<BenchmarkStageClassificationSummary>,
@@ -280,7 +280,7 @@ pub struct TraceLocalBatchBenchmarkVariantResult {
     pub max_expected_partition_count: Option<usize>,
     pub partition_target_bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub adaptive_recommendation: Option<AdaptivePartitionBenchmarkRecommendation>,
+    pub adaptive_recommendation: Option<TraceLocalChunkPlanBenchmarkRecommendation>,
     pub repeat_index: usize,
     pub batch_elapsed_ms: f64,
     pub completed_jobs: usize,
@@ -321,7 +321,7 @@ pub struct TraceLocalBatchBenchmarkResponse {
     pub partition_target_bytes: u64,
     pub adaptive_partition_target: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub adaptive_recommendation: Option<AdaptivePartitionBenchmarkRecommendation>,
+    pub adaptive_recommendation: Option<TraceLocalChunkPlanBenchmarkRecommendation>,
     pub pipeline: TraceLocalProcessingPipeline,
     pub plan_summary: seis_runtime::ExecutionPlanSummary,
     pub stage_classifications: Vec<BenchmarkStageClassificationSummary>,
@@ -895,9 +895,9 @@ pub fn benchmark_trace_local_processing(
         1,
     );
     let adaptive_recommendation = adaptive_options_resolution
-        .adaptive_recommendation
+        .chunk_plan_resolution
         .as_ref()
-        .map(|recommendation| adaptive_partition_recommendation(recommendation.clone()));
+        .map(|recommendation| chunk_plan_benchmark_recommendation(recommendation.clone()));
     let variants = benchmark_variant_targets(&request, adaptive_recommendation.as_ref());
     let repeat_count = request.repeat_count.max(1);
     let mut runs = Vec::new();
@@ -1064,9 +1064,9 @@ pub fn benchmark_trace_local_batch_processing(
                 batch_policy.effective_max_active_jobs,
             );
             let adaptive_recommendation = materialize_options_resolution
-                .adaptive_recommendation
+                .chunk_plan_resolution
                 .as_ref()
-                .map(|recommendation| adaptive_partition_recommendation(recommendation.clone()));
+                .map(|recommendation| chunk_plan_benchmark_recommendation(recommendation.clone()));
             let partition_target_bytes = materialize_options_resolution
                 .resolved_partition_target_bytes
                 .unwrap_or(request.partition_target_mib.max(1) * 1024 * 1024);
@@ -1583,10 +1583,10 @@ pub fn benchmark_post_stack_neighborhood_processing(
     })
 }
 
-fn adaptive_partition_recommendation(
-    recommendation: seis_runtime::AdaptivePartitionTargetRecommendation,
-) -> AdaptivePartitionBenchmarkRecommendation {
-    AdaptivePartitionBenchmarkRecommendation {
+fn chunk_plan_benchmark_recommendation(
+    recommendation: seis_runtime::TraceLocalChunkPlanResolution,
+) -> TraceLocalChunkPlanBenchmarkRecommendation {
+    TraceLocalChunkPlanBenchmarkRecommendation {
         target_bytes: recommendation.target_bytes(),
         bytes_per_tile: recommendation.bytes_per_tile,
         total_tiles: recommendation.total_tiles,
@@ -1668,7 +1668,7 @@ fn benchmark_stage_label(stage: &seis_runtime::ExecutionStage) -> String {
 
 fn benchmark_variant_targets(
     request: &TraceLocalBenchmarkRequest,
-    adaptive_recommendation: Option<&AdaptivePartitionBenchmarkRecommendation>,
+    adaptive_recommendation: Option<&TraceLocalChunkPlanBenchmarkRecommendation>,
 ) -> Vec<Option<u64>> {
     let mut variants = Vec::new();
     if request.include_serial {

@@ -67,14 +67,14 @@ pub use ophiolite_seismic::{
 };
 pub use ophiolite_seismic::{PreviewView, SectionView};
 pub use ophiolite_seismic_runtime::{
-    AdaptivePartitionTargetRecommendation, ArtifactDescriptor, CacheMode, ChunkShapePolicy,
-    CostEstimate, CpuCostClass, ExecutionArtifactRole, ExecutionOperatorScope,
-    ExecutionPipelineSegment, ExecutionPlan, ExecutionPlanSummary, ExecutionPriorityClass,
-    ExecutionSourceDescriptor, ExecutionSpatialDependency, ExecutionStage, ExecutionStageKind,
-    HaloSpec, IoCostClass, MemoryCostClass, OperatorExecutionTraits, ParallelEfficiencyClass,
-    PartitionFamily, PartitionOrdering, PartitionSpec, PipelineDescriptor, PlanProcessingRequest,
-    PlanningMode, PreferredPartitioning, ProgressUnits, RetryPolicy, SampleHaloRequirement,
-    SchedulerHints, StageExecutionClassification, TraceLocalChunkPlanRecommendation,
+    ArtifactDescriptor, CacheMode, ChunkShapePolicy, CostEstimate, CpuCostClass,
+    ExecutionArtifactRole, ExecutionOperatorScope, ExecutionPipelineSegment, ExecutionPlan,
+    ExecutionPlanSummary, ExecutionPriorityClass, ExecutionSourceDescriptor,
+    ExecutionSpatialDependency, ExecutionStage, ExecutionStageKind, HaloSpec, IoCostClass,
+    MemoryCostClass, OperatorExecutionTraits, ParallelEfficiencyClass, PartitionFamily,
+    PartitionOrdering, PartitionSpec, PipelineDescriptor, PlanProcessingRequest, PlanningMode,
+    PreferredPartitioning, ProgressUnits, RetryPolicy, SampleHaloRequirement, SchedulerHints,
+    StageExecutionClassification, TraceLocalChunkPlanRecommendation, TraceLocalChunkPlanResolution,
     TraceLocalMaterializeOptionsResolution, ValidationReport,
     operator_execution_traits_for_pipeline_spec, recommend_adaptive_partition_target,
     recommend_adaptive_partition_target_for_job_concurrency,

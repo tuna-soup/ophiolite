@@ -126,7 +126,7 @@ pub use ophiolite_seismic::{
     VelocityScanResponse, VolumeDescriptor,
 };
 pub use planner::{
-    AdaptivePartitionTargetRecommendation, PlanProcessingRequest, build_execution_plan,
+    PlanProcessingRequest, TraceLocalChunkPlanResolution, build_execution_plan,
     recommend_adaptive_partition_target, recommend_adaptive_partition_target_for_job_concurrency,
     recommend_trace_local_chunk_plan_for_execution,
 };

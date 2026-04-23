@@ -8,7 +8,7 @@ use crate::error::SeismicStoreError;
 use crate::execution::{ExecutionPlan, TraceLocalChunkPlanRecommendation};
 use crate::metadata::{DatasetKind, ProcessingLineage, VolumeMetadata, generate_store_id};
 use crate::planner::{
-    AdaptivePartitionTargetRecommendation, recommend_trace_local_chunk_plan_for_execution,
+    TraceLocalChunkPlanResolution, recommend_trace_local_chunk_plan_for_execution,
 };
 use crate::segy_export::{copy_store_segy_export, crop_store_segy_export};
 use crate::storage::section_assembler;
@@ -67,7 +67,7 @@ impl Default for MaterializeOptions {
 #[derive(Debug, Clone)]
 pub struct TraceLocalMaterializeOptionsResolution {
     pub options: MaterializeOptions,
-    pub adaptive_recommendation: Option<AdaptivePartitionTargetRecommendation>,
+    pub chunk_plan_resolution: Option<TraceLocalChunkPlanResolution>,
     pub resolved_chunk_plan: Option<ProcessingJobChunkPlanSummary>,
     pub resolved_partition_target_bytes: Option<u64>,
 }
@@ -81,7 +81,7 @@ pub fn resolve_trace_local_materialize_options(
     available_memory_bytes: Option<u64>,
     concurrent_job_count: usize,
 ) -> TraceLocalMaterializeOptionsResolution {
-    let adaptive_recommendation = if adaptive_partition_target {
+    let chunk_plan_resolution = if adaptive_partition_target {
         plan.and_then(|plan| {
             recommend_trace_local_chunk_plan_for_execution(
                 plan,
@@ -93,7 +93,7 @@ pub fn resolve_trace_local_materialize_options(
     } else {
         None
     };
-    let chunk_plan = adaptive_recommendation
+    let chunk_plan = chunk_plan_resolution
         .as_ref()
         .map(|recommendation| recommendation.trace_local_chunk_plan());
     let resolved_chunk_plan = chunk_plan
@@ -104,7 +104,7 @@ pub fn resolve_trace_local_materialize_options(
                 fixed_partition_target_summary(plan, target_bytes, worker_count)
             })
         });
-    let resolved_partition_target_bytes = adaptive_recommendation
+    let resolved_partition_target_bytes = chunk_plan_resolution
         .as_ref()
         .map(|recommendation| recommendation.target_bytes())
         .or(fallback_partition_target_bytes);
@@ -122,7 +122,7 @@ pub fn resolve_trace_local_materialize_options(
 
     TraceLocalMaterializeOptionsResolution {
         options,
-        adaptive_recommendation,
+        chunk_plan_resolution,
         resolved_chunk_plan,
         resolved_partition_target_bytes,
     }
@@ -4442,7 +4442,7 @@ mod tests {
         );
 
         let recommendation = resolution
-            .adaptive_recommendation
+            .chunk_plan_resolution
             .as_ref()
             .expect("adaptive recommendation should exist");
         let chunk_plan = resolution
@@ -4490,7 +4490,7 @@ mod tests {
             1,
         );
 
-        assert!(resolution.adaptive_recommendation.is_none());
+        assert!(resolution.chunk_plan_resolution.is_none());
         assert_eq!(
             resolution.options.partition_target_bytes,
             Some(target_bytes)
@@ -4523,7 +4523,7 @@ mod tests {
             1,
         );
 
-        assert!(resolution.adaptive_recommendation.is_none());
+        assert!(resolution.chunk_plan_resolution.is_none());
         assert_eq!(
             resolution.options.partition_target_bytes,
             Some(target_bytes)
@@ -4564,10 +4564,10 @@ mod tests {
         );
 
         let single = single_job
-            .adaptive_recommendation
+            .chunk_plan_resolution
             .expect("single-job adaptive recommendation should exist");
         let batch = four_jobs
-            .adaptive_recommendation
+            .chunk_plan_resolution
             .expect("batch adaptive recommendation should exist");
 
         assert!(batch.target_bytes() <= single.target_bytes());

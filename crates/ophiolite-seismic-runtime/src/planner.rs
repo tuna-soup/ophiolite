@@ -132,7 +132,7 @@ pub fn build_execution_plan(request: &PlanProcessingRequest) -> Result<Execution
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdaptivePartitionTargetRecommendation {
+pub struct TraceLocalChunkPlanResolution {
     pub chunk_plan: TraceLocalChunkPlanRecommendation,
     pub bytes_per_tile: u64,
     pub total_tiles: usize,
@@ -142,7 +142,7 @@ pub struct AdaptivePartitionTargetRecommendation {
     pub usable_memory_bytes: Option<u64>,
 }
 
-impl AdaptivePartitionTargetRecommendation {
+impl TraceLocalChunkPlanResolution {
     pub fn trace_local_chunk_plan(&self) -> TraceLocalChunkPlanRecommendation {
         self.chunk_plan.clone()
     }
@@ -182,7 +182,7 @@ pub fn recommend_adaptive_partition_target(
     source_chunk_shape: [usize; 3],
     worker_count: usize,
     available_memory_bytes: Option<u64>,
-) -> AdaptivePartitionTargetRecommendation {
+) -> TraceLocalChunkPlanResolution {
     recommend_adaptive_partition_target_for_job_concurrency(
         plan,
         source_shape,
@@ -200,7 +200,7 @@ pub fn recommend_adaptive_partition_target_for_job_concurrency(
     worker_count: usize,
     available_memory_bytes: Option<u64>,
     concurrent_job_count: usize,
-) -> AdaptivePartitionTargetRecommendation {
+) -> TraceLocalChunkPlanResolution {
     trace_local_chunk_plan_recommendation(
         plan,
         source_shape,
@@ -226,7 +226,7 @@ pub fn recommend_trace_local_chunk_plan_for_execution(
     worker_count: usize,
     available_memory_bytes: Option<u64>,
     concurrent_job_count: usize,
-) -> Option<AdaptivePartitionTargetRecommendation> {
+) -> Option<TraceLocalChunkPlanResolution> {
     trace_local_chunk_plan_recommendation(
         plan,
         plan.source.shape?,
@@ -244,7 +244,7 @@ fn trace_local_chunk_plan_recommendation(
     worker_count: usize,
     available_memory_bytes: Option<u64>,
     concurrent_job_count: usize,
-) -> Option<AdaptivePartitionTargetRecommendation> {
+) -> Option<TraceLocalChunkPlanResolution> {
     let chunk_inline = source_chunk_shape[0].max(1).min(source_shape[0].max(1));
     let chunk_xline = source_chunk_shape[1].max(1).min(source_shape[1].max(1));
     let chunk_samples = source_chunk_shape[2].max(1).min(source_shape[2].max(1));
@@ -315,7 +315,7 @@ fn trace_local_chunk_plan_recommendation(
     )?;
     let recommendation = recommendation_from_chunk_plan(&compiled);
 
-    Some(AdaptivePartitionTargetRecommendation {
+    Some(TraceLocalChunkPlanResolution {
         chunk_plan: recommendation,
         bytes_per_tile,
         total_tiles,
@@ -333,7 +333,7 @@ fn legacy_adaptive_partition_target_recommendation(
     worker_count: usize,
     available_memory_bytes: Option<u64>,
     concurrent_job_count: usize,
-) -> AdaptivePartitionTargetRecommendation {
+) -> TraceLocalChunkPlanResolution {
     let chunk_inline = source_chunk_shape[0].max(1).min(source_shape[0].max(1));
     let chunk_xline = source_chunk_shape[1].max(1).min(source_shape[1].max(1));
     let chunk_samples = source_chunk_shape[2].max(1).min(source_shape[2].max(1));
@@ -388,7 +388,7 @@ fn legacy_adaptive_partition_target_recommendation(
     let tiles_per_partition = (target_bytes / bytes_per_tile).max(1) as usize;
     let recommended_partition_count = total_tiles.div_ceil(tiles_per_partition.max(1)).max(1);
 
-    AdaptivePartitionTargetRecommendation {
+    TraceLocalChunkPlanResolution {
         chunk_plan: TraceLocalChunkPlanRecommendation {
             max_active_partitions: desired_active_partitions.max(1),
             tiles_per_partition,

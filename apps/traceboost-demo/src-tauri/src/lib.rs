@@ -4,6 +4,7 @@ mod diagnostics;
 mod import_manager;
 mod preview_session;
 mod processing;
+mod processing_authoring;
 mod processing_cache;
 mod project_settings;
 mod security;
@@ -114,6 +115,11 @@ use crate::import_manager::{
 };
 use crate::preview_session::PreviewSessionState;
 use crate::processing::{JobRecord, ProcessingState};
+use crate::processing_authoring::{
+    PersistProcessingSessionPipelinesRequest, ResolveProcessingRunOutputRequest,
+    ResolveProcessingRunOutputResponse, persist_processing_session_pipelines,
+    resolve_processing_run_output,
+};
 use crate::processing_cache::ProcessingCacheState;
 use crate::project_settings::{
     ProjectDisplayCoordinateReference, ProjectGeospatialSettings, load_project_geospatial_settings,
@@ -4169,6 +4175,31 @@ fn default_post_stack_neighborhood_processing_store_path_command(
     let app_paths = AppPaths::resolve(&app)?;
     let store_path = resolve_store_path_argument(&security, &store_path)?;
     default_post_stack_neighborhood_processing_store_path(&app_paths, &store_path, &pipeline)
+}
+
+#[tauri::command]
+fn persist_processing_session_pipelines_command(
+    workspace: State<WorkspaceState>,
+    request: PersistProcessingSessionPipelinesRequest,
+) -> Result<UpsertDatasetEntryResponse, String> {
+    persist_processing_session_pipelines(&workspace, request)
+}
+
+#[tauri::command]
+fn resolve_processing_run_output_command(
+    app: AppHandle,
+    security: State<SecurityState>,
+    request: ResolveProcessingRunOutputRequest,
+) -> Result<ResolveProcessingRunOutputResponse, String> {
+    let app_paths = AppPaths::resolve(&app)?;
+    let store_path = resolve_store_path_argument(&security, &request.store_path)?;
+    resolve_processing_run_output(
+        &app_paths,
+        ResolveProcessingRunOutputRequest {
+            store_path,
+            ..request
+        },
+    )
 }
 
 #[tauri::command]
@@ -11570,6 +11601,7 @@ pub fn run() {
             delete_segy_import_recipe_command,
             load_workspace_state_command,
             upsert_dataset_entry_command,
+            persist_processing_session_pipelines_command,
             remove_dataset_entry_command,
             set_active_dataset_entry_command,
             save_workspace_session_command,
@@ -11609,6 +11641,7 @@ pub fn run() {
             default_processing_store_path_command,
             default_post_stack_neighborhood_processing_store_path_command,
             default_subvolume_processing_store_path_command,
+            resolve_processing_run_output_command,
             default_gather_processing_store_path_command,
             get_diagnostics_status_command,
             set_diagnostics_verbosity_command,

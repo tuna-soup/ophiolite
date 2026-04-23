@@ -3605,7 +3605,9 @@ dependencies = [
 name = "ophiolite-operators"
 version = "0.1.0"
 dependencies = [
+ "schemars 0.8.22",
  "serde",
+ "ts-rs",
 ]
 
 [[package]]

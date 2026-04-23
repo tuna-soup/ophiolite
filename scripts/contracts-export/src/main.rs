@@ -1,4 +1,4 @@
-#![recursion_limit = "512"]
+#![recursion_limit = "1024"]
 
 use std::error::Error;
 use std::fs;
@@ -14,8 +14,11 @@ use ophiolite::{
     GatherInteractionChanged, GatherPreviewView, GatherProbe, GatherProbeChanged,
     GatherSampleDomain, GatherView, GatherViewport, GatherViewportChanged,
     ImportedHorizonDescriptor, LateralInterpolationMethod, LayeredVelocityInterval,
-    LayeredVelocityModel, ManualTimeDepthPickSet1D, PreviewView, ProjectSurveyMapRequestDto,
-    ProjectedPoint2Dto, ProjectedPolygon2Dto, ProjectedVector2Dto,
+    LayeredVelocityModel, ManualTimeDepthPickSet1D, OperatorAvailability, OperatorCatalog,
+    OperatorCatalogEntry, OperatorCatalogOutputLifecycle, OperatorCatalogStability,
+    OperatorContractRef, OperatorDetail, OperatorDocumentation, OperatorExecutionKind,
+    OperatorFamily, OperatorParameterDoc, OperatorSubjectKind, PreviewView,
+    ProjectSurveyMapRequestDto, ProjectedPoint2Dto, ProjectedPolygon2Dto, ProjectedVector2Dto,
     ROCK_PHYSICS_CROSSPLOT_CONTRACT_VERSION, ResolveSectionWellOverlaysResponse,
     ResolvedAvoChiProjectionSourceDto, ResolvedAvoCrossplotSourceDto, ResolvedAvoResponseSourceDto,
     ResolvedRockPhysicsCrossplotSourceDto, ResolvedSectionDisplayView,
@@ -255,6 +258,18 @@ fn export_ts_types(output_dir: &Path) -> Result<(), Box<dyn Error>> {
         "RockPhysicsTextAlignDto.ts",
         "RockPhysicsTextBaselineDto.ts",
         "RockPhysicsWellDto.ts",
+        "OperatorAvailability.ts",
+        "OperatorCatalog.ts",
+        "OperatorCatalogEntry.ts",
+        "OperatorOutputLifecycle.ts",
+        "OperatorStability.ts",
+        "OperatorContractRef.ts",
+        "OperatorDetail.ts",
+        "OperatorDocumentation.ts",
+        "OperatorExecutionKind.ts",
+        "OperatorFamily.ts",
+        "OperatorParameterDoc.ts",
+        "OperatorSubjectKind.ts",
         "rock-physics-crossplot-contract-version.ts",
         "avo-analysis-contract-version.ts",
         "WellTimeDepthModel1D.ts",
@@ -343,6 +358,18 @@ fn export_ts_types(output_dir: &Path) -> Result<(), Box<dyn Error>> {
     WellTimeDepthModel1D::export_all_to(output_dir)?;
     SurveyPropertyField3D::export_all_to(output_dir)?;
     SurveyTimeDepthTransform3D::export_all_to(output_dir)?;
+    OperatorCatalog::export_all_to(output_dir)?;
+    OperatorCatalogEntry::export_all_to(output_dir)?;
+    OperatorSubjectKind::export_all_to(output_dir)?;
+    OperatorFamily::export_all_to(output_dir)?;
+    OperatorExecutionKind::export_all_to(output_dir)?;
+    OperatorCatalogOutputLifecycle::export_all_to(output_dir)?;
+    OperatorCatalogStability::export_all_to(output_dir)?;
+    OperatorContractRef::export_all_to(output_dir)?;
+    OperatorDocumentation::export_all_to(output_dir)?;
+    OperatorParameterDoc::export_all_to(output_dir)?;
+    OperatorAvailability::export_all_to(output_dir)?;
+    OperatorDetail::export_all_to(output_dir)?;
 
     fs::write(
         output_dir.join("rock-physics-crossplot-contract-version.ts"),
@@ -547,6 +574,18 @@ export type { WellPanelTopSetDto } from "./WellPanelTopSetDto";
 export type { WellPanelTrajectoryDto } from "./WellPanelTrajectoryDto";
 export type { WellPanelTrajectoryRowDto } from "./WellPanelTrajectoryRowDto";
 export type { WellTimeDepthModel1D } from "./WellTimeDepthModel1D";
+export type { OperatorCatalog } from "./OperatorCatalog";
+export type { OperatorCatalogEntry } from "./OperatorCatalogEntry";
+export type { OperatorSubjectKind } from "./OperatorSubjectKind";
+export type { OperatorFamily } from "./OperatorFamily";
+export type { OperatorExecutionKind } from "./OperatorExecutionKind";
+export type { OperatorOutputLifecycle as OperatorCatalogOutputLifecycle } from "./OperatorOutputLifecycle";
+export type { OperatorStability as OperatorCatalogStability } from "./OperatorStability";
+export type { OperatorContractRef } from "./OperatorContractRef";
+export type { OperatorDocumentation } from "./OperatorDocumentation";
+export type { OperatorParameterDoc } from "./OperatorParameterDoc";
+export type { OperatorAvailability } from "./OperatorAvailability";
+export type { OperatorDetail } from "./OperatorDetail";
 export { AVO_ANALYSIS_CONTRACT_VERSION } from "./avo-analysis-contract-version";
 export { ROCK_PHYSICS_CROSSPLOT_CONTRACT_VERSION } from "./rock-physics-crossplot-contract-version";
 export { SECTION_WELL_OVERLAY_CONTRACT_VERSION } from "./section-well-overlay-contract-version";
@@ -726,6 +765,18 @@ fn write_schema_bundle(output_dir: &Path) -> Result<(), Box<dyn Error>> {
             "WellTimeDepthModel1D": schema_for!(WellTimeDepthModel1D),
             "SurveyPropertyField3D": schema_for!(SurveyPropertyField3D),
             "SurveyTimeDepthTransform3D": schema_for!(SurveyTimeDepthTransform3D),
+            "OperatorCatalog": schema_for!(OperatorCatalog),
+            "OperatorCatalogEntry": schema_for!(OperatorCatalogEntry),
+            "OperatorSubjectKind": schema_for!(OperatorSubjectKind),
+            "OperatorFamily": schema_for!(OperatorFamily),
+            "OperatorExecutionKind": schema_for!(OperatorExecutionKind),
+            "OperatorCatalogOutputLifecycle": schema_for!(OperatorCatalogOutputLifecycle),
+            "OperatorCatalogStability": schema_for!(OperatorCatalogStability),
+            "OperatorContractRef": schema_for!(OperatorContractRef),
+            "OperatorDocumentation": schema_for!(OperatorDocumentation),
+            "OperatorParameterDoc": schema_for!(OperatorParameterDoc),
+            "OperatorAvailability": schema_for!(OperatorAvailability),
+            "OperatorDetail": schema_for!(OperatorDetail),
         }
     });
 

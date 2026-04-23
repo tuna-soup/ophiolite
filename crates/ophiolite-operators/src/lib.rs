@@ -1,9 +1,12 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 pub const OPERATOR_CATALOG_SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum OperatorSubjectKind {
     Log,
     Trajectory,
@@ -14,8 +17,9 @@ pub enum OperatorSubjectKind {
     SeismicTraceData,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum OperatorFamily {
     LogCompute,
     TrajectoryCompute,
@@ -30,43 +34,46 @@ pub enum OperatorFamily {
     SeismicAnalysis,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum OperatorExecutionKind {
     Immediate,
     Job,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum OperatorOutputLifecycle {
     DerivedAsset,
     AnalysisOnly,
     ViewOnly,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum OperatorStability {
     Internal,
     Preview,
     Stable,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 pub struct OperatorContractRef {
     pub schema_id: String,
     pub contract_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 pub struct OperatorDocumentation {
     pub short_help: String,
     pub help_markdown: Option<String>,
     pub help_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 pub struct OperatorParameterDoc {
     pub name: String,
     pub label: String,
@@ -80,21 +87,22 @@ pub struct OperatorParameterDoc {
     pub maximum: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum OperatorAvailability {
     Available,
     Unavailable { reasons: Vec<String> },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct OperatorCatalog {
     pub schema_version: u32,
     pub subject_kind: OperatorSubjectKind,
     pub operators: Vec<OperatorCatalogEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct OperatorCatalogEntry {
     pub id: String,
     pub provider: String,
@@ -115,7 +123,7 @@ pub struct OperatorCatalogEntry {
     pub detail: OperatorDetail,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct LogComputeDetail {
     pub default_output_mnemonic: String,
     pub output_kind: String,
@@ -124,37 +132,37 @@ pub struct LogComputeDetail {
     pub binding_parameter_names: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct TrajectoryComputeDetail {
     pub input_kinds: Vec<String>,
     pub parameter_names: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct TopSetComputeDetail {
     pub input_kinds: Vec<String>,
     pub parameter_names: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct WellMarkerComputeDetail {
     pub input_kinds: Vec<String>,
     pub parameter_names: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct PressureComputeDetail {
     pub input_kinds: Vec<String>,
     pub parameter_names: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct DrillingComputeDetail {
     pub input_kinds: Vec<String>,
     pub parameter_names: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct TraceLocalProcessingDetail {
     pub operation_id: String,
     pub scope: String,
@@ -163,7 +171,7 @@ pub struct TraceLocalProcessingDetail {
     pub checkpoint_supported: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct SubvolumeProcessingDetail {
     pub terminal_operation_id: String,
     pub layout_compatibility: String,
@@ -171,7 +179,7 @@ pub struct SubvolumeProcessingDetail {
     pub trace_local_prefix_supported: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct PostStackNeighborhoodProcessingDetail {
     pub operation_id: String,
     pub scope: String,
@@ -180,7 +188,7 @@ pub struct PostStackNeighborhoodProcessingDetail {
     pub trace_local_prefix_supported: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct GatherProcessingDetail {
     pub operation_id: String,
     pub scope: String,
@@ -189,15 +197,16 @@ pub struct GatherProcessingDetail {
     pub trace_local_prefix_supported: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 pub struct SeismicAnalysisDetail {
     pub analysis_kind: String,
     pub layout_compatibility: String,
     pub output_kind: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum OperatorDetail {
     LogCompute(LogComputeDetail),
     TrajectoryCompute(TrajectoryComputeDetail),

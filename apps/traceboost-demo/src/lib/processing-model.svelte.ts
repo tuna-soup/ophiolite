@@ -1,6 +1,10 @@
 import { createContext, tick } from "svelte";
 import type { SeismicSectionAnalysisSelectionMode } from "@ophiolite/charts";
 import type {
+  OperatorCatalog,
+  OperatorCatalogEntry,
+  OperatorFamily,
+  OperatorParameterDoc,
   AmplitudeSpectrumRequest,
   AmplitudeSpectrumResponse,
   LocalVolumeStatistic,
@@ -30,12 +34,6 @@ import type {
 import {
   cancelProcessingJob,
   cancelProcessingBatch,
-  type DatasetOperatorCatalog,
-  type DatasetOperatorCatalogEntry,
-  type DatasetOperatorParameterDoc,
-  defaultProcessingStorePath,
-  defaultPostStackNeighborhoodProcessingStorePath,
-  defaultSubvolumeProcessingStorePath,
   deletePipelinePreset,
   emitFrontendDiagnosticsEvent,
   fetchAmplitudeSpectrum,
@@ -45,6 +43,7 @@ import {
   loadDatasetOperatorCatalog,
   previewPostStackNeighborhoodProcessing,
   previewProcessing,
+  resolveProcessingRunOutput,
   runPostStackNeighborhoodProcessing,
   runProcessing,
   runSubvolumeProcessing,
@@ -155,7 +154,7 @@ export type OperatorCatalogId =
 interface OperatorCatalogDefinition {
   id: OperatorCatalogId;
   canonicalId: string;
-  canonicalFamily: "trace_local" | "subvolume";
+  canonicalFamily: Extract<OperatorFamily, "trace_local_processing" | "subvolume_processing">;
   fallbackLabel: string;
   fallbackDescription: string;
   searchTerms: string[];
@@ -175,7 +174,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "amplitude_scalar",
     canonicalId: "amplitude_scalar",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Amplitude Scalar",
     fallbackDescription: "Scale trace amplitudes by a constant factor.",
     searchTerms: ["scalar", "scale", "gain", "amplitude"],
@@ -185,7 +184,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "trace_rms_normalize",
     canonicalId: "trace_rms_normalize",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Trace RMS Normalize",
     fallbackDescription: "Normalize each trace to unit RMS amplitude.",
     searchTerms: ["normalize", "rms", "trace", "balance"],
@@ -195,7 +194,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "agc_rms",
     canonicalId: "agc_rms",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "RMS AGC",
     fallbackDescription: "Centered moving-window RMS automatic gain control.",
     searchTerms: ["agc", "gain", "window", "rms", "balance", "automatic gain control"],
@@ -205,7 +204,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "phase_rotation",
     canonicalId: "phase_rotation",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Phase Rotation",
     fallbackDescription: "Constant trace phase rotation in degrees.",
     searchTerms: ["phase", "rotation", "rotate", "constant phase", "quadrature", "hilbert"],
@@ -215,7 +214,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "envelope",
     canonicalId: "envelope",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Envelope",
     fallbackDescription: "Analytic-trace magnitude using the trace and its Hilbert transform.",
     searchTerms: ["envelope", "reflection strength", "analytic", "hilbert", "magnitude"],
@@ -225,7 +224,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "instantaneous_phase",
     canonicalId: "instantaneous_phase",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Instantaneous Phase",
     fallbackDescription: "Wrapped analytic-trace phase in degrees over [-180, 180].",
     searchTerms: ["instantaneous phase", "phase", "analytic", "hilbert", "degrees"],
@@ -235,7 +234,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "instantaneous_frequency",
     canonicalId: "instantaneous_frequency",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Instantaneous Frequency",
     fallbackDescription: "Classic analytic-signal instantaneous frequency in Hz. Can be noisy or negative.",
     searchTerms: ["instantaneous frequency", "frequency", "analytic", "hilbert", "barnes", "fomel"],
@@ -245,7 +244,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "sweetness",
     canonicalId: "sweetness",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Sweetness",
     fallbackDescription: "Envelope divided by the square root of stabilized instantaneous frequency.",
     searchTerms: ["sweetness", "envelope", "instantaneous frequency", "analytic", "attribute"],
@@ -255,7 +254,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "volume_subtract",
     canonicalId: "volume_arithmetic",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Subtract Volume",
     fallbackDescription: "Subtract a compatible workspace volume from the active volume.",
     searchTerms: ["volume", "arithmetic", "subtract", "difference", "minus", "cube"],
@@ -266,7 +265,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "volume_add",
     canonicalId: "volume_arithmetic",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Add Volume",
     fallbackDescription: "Add a compatible workspace volume to the active volume sample-by-sample.",
     searchTerms: ["volume", "arithmetic", "add", "sum", "plus", "cube"],
@@ -277,7 +276,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "volume_multiply",
     canonicalId: "volume_arithmetic",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Multiply Volumes",
     fallbackDescription: "Multiply the active volume by another compatible workspace volume.",
     searchTerms: ["volume", "arithmetic", "multiply", "product", "times", "cube"],
@@ -288,7 +287,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "volume_divide",
     canonicalId: "volume_arithmetic",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Divide Volumes",
     fallbackDescription: "Divide the active volume by another compatible workspace volume.",
     searchTerms: ["volume", "arithmetic", "divide", "ratio", "quotient", "cube"],
@@ -299,7 +298,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "crop_subvolume",
     canonicalId: "crop",
-    canonicalFamily: "subvolume",
+    canonicalFamily: "subvolume_processing",
     fallbackLabel: "Crop Subvolume",
     fallbackDescription: "Write a strict subvolume bounded by inline, xline, and time windows.",
     searchTerms: ["crop", "subvolume", "subset", "window", "inline", "xline", "time", "cube"],
@@ -310,7 +309,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "lowpass_filter",
     canonicalId: "lowpass_filter",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Lowpass Filter",
     fallbackDescription: "Zero-phase FFT lowpass with a cosine high-cut taper.",
     searchTerms: ["lowpass", "filter", "frequency", "spectral", "highcut", "noise"],
@@ -320,7 +319,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "highpass_filter",
     canonicalId: "highpass_filter",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Highpass Filter",
     fallbackDescription: "Zero-phase FFT highpass with a cosine low-cut taper.",
     searchTerms: ["highpass", "filter", "frequency", "spectral", "lowcut", "drift"],
@@ -330,7 +329,7 @@ const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "bandpass_filter",
     canonicalId: "bandpass_filter",
-    canonicalFamily: "trace_local",
+    canonicalFamily: "trace_local_processing",
     fallbackLabel: "Bandpass Filter",
     fallbackDescription: "Zero-phase FFT bandpass with cosine tapers.",
     searchTerms: ["bandpass", "filter", "frequency", "spectral", "highcut", "lowcut"],
@@ -354,7 +353,7 @@ export interface OperatorCatalogItem {
   groupId: string;
   provider: string;
   tags: string[];
-  parameterDocs: readonly DatasetOperatorParameterDoc[];
+  parameterDocs: readonly OperatorParameterDoc[];
   aliasLabel: string | null;
   source: "canonical" | "fallback";
 }
@@ -364,14 +363,14 @@ function isDemoAliasDefinition(definition: OperatorCatalogDefinition): boolean {
 }
 
 function fallbackGroupForDefinition(definition: OperatorCatalogDefinition): string {
-  return definition.canonicalFamily === "subvolume" ? "Subvolume" : "Trace Local";
+  return definition.canonicalFamily === "subvolume_processing" ? "Subvolume" : "Trace Local";
 }
 
 function fallbackGroupIdForDefinition(definition: OperatorCatalogDefinition): string {
-  return definition.canonicalFamily === "subvolume" ? "subvolume" : "trace_local";
+  return definition.canonicalFamily === "subvolume_processing" ? "subvolume" : "trace_local";
 }
 
-function catalogEntryIsAvailable(entry: DatasetOperatorCatalogEntry | null): boolean {
+function catalogEntryIsAvailable(entry: OperatorCatalogEntry | null): boolean {
   if (!entry) {
     return false;
   }
@@ -379,9 +378,9 @@ function catalogEntryIsAvailable(entry: DatasetOperatorCatalogEntry | null): boo
 }
 
 function findCatalogOperatorEntry(
-  catalog: DatasetOperatorCatalog | null,
+  catalog: OperatorCatalog | null,
   definition: OperatorCatalogDefinition
-): DatasetOperatorCatalogEntry | null {
+): OperatorCatalogEntry | null {
   if (!catalog) {
     return null;
   }
@@ -395,7 +394,7 @@ function findCatalogOperatorEntry(
 }
 
 function isCatalogOperatorAvailable(
-  catalog: DatasetOperatorCatalog | null,
+  catalog: OperatorCatalog | null,
   definition: OperatorCatalogDefinition
 ): boolean {
   if (!catalog) {
@@ -407,7 +406,7 @@ function isCatalogOperatorAvailable(
 
 function toOperatorCatalogItem(
   definition: OperatorCatalogDefinition,
-  catalog: DatasetOperatorCatalog | null
+  catalog: OperatorCatalog | null
 ): OperatorCatalogItem {
   const catalogEntry = findCatalogOperatorEntry(catalog, definition);
   const alias = isDemoAliasDefinition(definition);
@@ -1276,7 +1275,7 @@ export class ProcessingModel {
   runBusy = $state(false);
   batchSubmitting = $state(false);
   error = $state<string | null>(null);
-  datasetOperatorCatalog = $state.raw<DatasetOperatorCatalog | null>(null);
+  datasetOperatorCatalog = $state.raw<OperatorCatalog | null>(null);
   datasetOperatorCatalogLoading = $state(false);
   datasetOperatorCatalogError = $state<string | null>(null);
   presets = $state.raw<ProcessingPreset[]>([]);
@@ -1578,7 +1577,7 @@ export class ProcessingModel {
     return OPERATOR_CATALOG
       .filter((definition) =>
         this.pipelineFamily === "post_stack_neighborhood"
-          ? definition.canonicalFamily === "trace_local"
+          ? definition.canonicalFamily === "trace_local_processing"
           : true
       )
       .filter((definition) => isCatalogOperatorAvailable(this.datasetOperatorCatalog, definition))
@@ -3218,17 +3217,12 @@ export class ProcessingModel {
       const outputStorePath =
         this.runOutputPathMode === "custom"
           ? this.customRunOutputPath.trim()
-          : this.pipelineFamily === "post_stack_neighborhood"
-            ? await defaultPostStackNeighborhoodProcessingStorePath(
-                this.viewerModel.activeStorePath,
-                this.postStackNeighborhoodPipeline
-              )
-          : this.subvolumeCrop
-            ? await defaultSubvolumeProcessingStorePath(
-                this.viewerModel.activeStorePath,
-                buildSubvolumeProcessingPipeline(this.pipeline, this.subvolumeCrop)
-              )
-            : await defaultProcessingStorePath(this.viewerModel.activeStorePath, this.pipeline);
+          : await this.resolveDefaultRunOutputPathForState(
+              this.viewerModel.activeStorePath,
+              clonePipeline(this.pipeline),
+              clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline),
+              cloneSubvolumeCrop(this.subvolumeCrop)
+            );
       if (!outputStorePath) {
         this.error = "Select an output runtime store path before running the full volume.";
         this.runBusy = false;
@@ -3246,17 +3240,12 @@ export class ProcessingModel {
           const outputStorePath =
             this.resolvedRunOutputPath ??
             (this.viewerModel.activeStorePath
-              ? this.pipelineFamily === "post_stack_neighborhood"
-                ? await defaultPostStackNeighborhoodProcessingStorePath(
-                    this.viewerModel.activeStorePath,
-                    this.postStackNeighborhoodPipeline
-                  )
-                : this.subvolumeCrop
-                  ? await defaultSubvolumeProcessingStorePath(
-                      this.viewerModel.activeStorePath,
-                      buildSubvolumeProcessingPipeline(this.pipeline, this.subvolumeCrop)
-                    )
-                  : await defaultProcessingStorePath(this.viewerModel.activeStorePath, this.pipeline)
+              ? await this.resolveDefaultRunOutputPathForState(
+                  this.viewerModel.activeStorePath,
+                  clonePipeline(this.pipeline),
+                  clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline),
+                  cloneSubvolumeCrop(this.subvolumeCrop)
+                )
               : null);
           if (outputStorePath) {
             try {
@@ -3693,18 +3682,12 @@ export class ProcessingModel {
     const requestId = ++this.#runOutputPathRequestId;
     this.resolvingRunOutputPath = true;
     try {
-      const nextPath =
-        this.pipelineFamily === "post_stack_neighborhood"
-          ? await defaultPostStackNeighborhoodProcessingStorePath(
-              activeStorePath,
-              postStackNeighborhoodPipeline
-            )
-          : subvolumeCrop
-            ? await defaultSubvolumeProcessingStorePath(
-                activeStorePath,
-                buildSubvolumeProcessingPipeline(pipeline, subvolumeCrop)
-              )
-            : await defaultProcessingStorePath(activeStorePath, pipeline);
+      const nextPath = await this.resolveDefaultRunOutputPathForState(
+        activeStorePath,
+        pipeline,
+        postStackNeighborhoodPipeline,
+        subvolumeCrop
+      );
       if (
         requestId !== this.#runOutputPathRequestId ||
         activeStorePath !== this.viewerModel.activeStorePath ||
@@ -3760,6 +3743,29 @@ export class ProcessingModel {
         signature
       );
     }, RUN_OUTPUT_PATH_REFRESH_DEBOUNCE_MS);
+  }
+
+  private async resolveDefaultRunOutputPathForState(
+    activeStorePath: string,
+    pipeline: ProcessingPipeline,
+    postStackNeighborhoodPipeline: PostStackNeighborhoodProcessingPipeline,
+    subvolumeCrop: SubvolumeCropOperation | null
+  ): Promise<string> {
+    const response = await resolveProcessingRunOutput({
+      schema_version: 1,
+      store_path: activeStorePath,
+      family:
+        this.pipelineFamily === "post_stack_neighborhood"
+          ? "post_stack_neighborhood"
+          : subvolumeCrop
+            ? "subvolume"
+            : "trace_local",
+      pipeline,
+      subvolume_crop: subvolumeCrop,
+      post_stack_neighborhood_pipeline:
+        this.pipelineFamily === "post_stack_neighborhood" ? postStackNeighborhoodPipeline : null
+    });
+    return response.output_store_path;
   }
 
   private async startRunOnVolume(outputStorePath: string, overwriteExisting: boolean): Promise<void> {

@@ -24,6 +24,7 @@ import type {
   OpenDatasetResponse,
   PostStackNeighborhoodProcessingPipeline,
   ProcessingPipelineSpec,
+  ProcessingPipelineFamily,
   PreviewSubvolumeProcessingRequest,
   PreviewSubvolumeProcessingResponse,
   PreviewPostStackNeighborhoodProcessingRequest,
@@ -65,15 +66,18 @@ import type {
   ResolveSurveyMapRequest,
   ResolveSurveyMapResponse,
   RunTraceLocalProcessingRequest as RunProcessingRequest,
+  SubvolumeCropOperation,
   SubvolumeProcessingPipeline,
   UpsertDatasetEntryRequest,
   UpsertDatasetEntryResponse,
+  WorkspacePipelineEntry,
   WorkspaceSession
 } from "@traceboost/seis-contracts";
 import { IPC_SCHEMA_VERSION as SCHEMA_VERSION } from "@traceboost/seis-contracts";
 import type {
   CheckshotVspObservationSet1D,
   CoordinateReferenceDescriptor,
+  OperatorCatalog,
   ResolvedSurveyMapSourceDto,
   ManualTimeDepthPickSet1D,
   ResolveSectionWellOverlaysResponse,
@@ -150,57 +154,27 @@ export interface FrontendDiagnosticsEventRequest {
   fields?: Record<string, unknown> | null;
 }
 
-export interface DatasetOperatorContractRef {
-  schema_id: string;
-  contract_id: string;
-}
-
-export type DatasetOperatorAvailability =
-  | "available"
-  | {
-      unavailable: {
-        reasons: string[];
-      };
-    };
-
-export interface DatasetOperatorDocumentation {
-  short_help: string;
-  help_markdown: string | null;
-  help_url: string | null;
-}
-
-export interface DatasetOperatorParameterDoc {
-  name: string;
-  label: string;
-  description: string;
-  value_kind: string;
-  required: boolean;
-  default_value: string | null;
-  units: string | null;
-  options: string[];
-  minimum: string | null;
-  maximum: string | null;
-}
-
-export interface DatasetOperatorCatalogEntry {
-  id: string;
-  family: string;
-  provider: string;
-  name: string;
-  group: string;
-  group_id: string;
-  description: string;
-  tags: string[];
-  documentation: DatasetOperatorDocumentation;
-  parameter_docs: DatasetOperatorParameterDoc[];
-  request_contract: DatasetOperatorContractRef;
-  response_contract: DatasetOperatorContractRef;
-  availability: DatasetOperatorAvailability;
-}
-
-export interface DatasetOperatorCatalog {
+export interface PersistProcessingSessionPipelinesRequest {
   schema_version: number;
-  operators: DatasetOperatorCatalogEntry[];
+  entry_id: string;
+  session_pipelines: WorkspacePipelineEntry[];
+  active_session_pipeline_id?: string | null;
+}
+
+export type PersistProcessingSessionPipelinesResponse = UpsertDatasetEntryResponse;
+
+export interface ResolveProcessingRunOutputRequest {
+  schema_version: number;
+  store_path: string;
+  family: ProcessingPipelineFamily;
+  pipeline?: TraceLocalProcessingPipeline | null;
+  subvolume_crop?: SubvolumeCropOperation | null;
+  post_stack_neighborhood_pipeline?: PostStackNeighborhoodProcessingPipeline | null;
+}
+
+export interface ResolveProcessingRunOutputResponse {
+  schema_version: number;
+  output_store_path: string;
 }
 
 export type ImportProviderId =
@@ -2558,14 +2532,39 @@ export async function openDataset(storePath: string): Promise<OpenDatasetRespons
 
 export async function loadDatasetOperatorCatalog(
   storePath: string
-): Promise<DatasetOperatorCatalog> {
+): Promise<OperatorCatalog> {
   if (isTauriEnvironment()) {
-    return invokeTauri<DatasetOperatorCatalog>("dataset_operator_catalog_command", {
+    return invokeTauri<OperatorCatalog>("dataset_operator_catalog_command", {
       storePath
     });
   }
 
   throw new Error("Dataset operator catalog is only available in the desktop runtime right now.");
+}
+
+export async function persistProcessingSessionPipelines(
+  request: PersistProcessingSessionPipelinesRequest
+): Promise<PersistProcessingSessionPipelinesResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<PersistProcessingSessionPipelinesResponse>(
+      "persist_processing_session_pipelines_command",
+      { request }
+    );
+  }
+
+  throw new Error("Processing authoring persistence is only available in the desktop runtime right now.");
+}
+
+export async function resolveProcessingRunOutput(
+  request: ResolveProcessingRunOutputRequest
+): Promise<ResolveProcessingRunOutputResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<ResolveProcessingRunOutputResponse>("resolve_processing_run_output_command", {
+      request
+    });
+  }
+
+  throw new Error("Processing run output resolution is only available in the desktop runtime right now.");
 }
 
 export async function exportDatasetSegy(

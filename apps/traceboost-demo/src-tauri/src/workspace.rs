@@ -9,8 +9,11 @@ use seis_contracts_operations::datasets::{
 };
 use seis_contracts_operations::resolve::IPC_SCHEMA_VERSION;
 use seis_contracts_operations::workspace::{
-    SaveWorkspaceSessionRequest, SaveWorkspaceSessionResponse, SectionAxis, WorkspaceSession,
+    PostStackNeighborhoodProcessingPipeline, ProcessingPipelineFamily, SaveWorkspaceSessionRequest,
+    SaveWorkspaceSessionResponse, SectionAxis, SubvolumeCropOperation, WorkspacePipelineEntry,
+    WorkspaceSession,
 };
+use seis_runtime::TraceLocalProcessingPipeline;
 use serde::{Deserialize, Serialize};
 
 use crate::processing::unix_timestamp_s;
@@ -358,6 +361,44 @@ impl WorkspaceState {
         })
     }
 
+    pub fn save_processing_session_pipelines(
+        &self,
+        entry_id: &str,
+        session_pipelines: Vec<WorkspacePipelineEntry>,
+        active_session_pipeline_id: Option<String>,
+    ) -> Result<UpsertDatasetEntryResponse, String> {
+        let now = unix_timestamp_s();
+        let mut entries = self
+            .entries
+            .lock()
+            .expect("workspace entries mutex poisoned");
+        let session = self
+            .session
+            .lock()
+            .expect("workspace session mutex poisoned");
+
+        let index = entries
+            .iter()
+            .position(|entry| entry.entry_id == entry_id)
+            .ok_or_else(|| format!("Unknown dataset entry: {entry_id}"))?;
+        let entry = &mut entries[index];
+        entry.session_pipelines = normalize_workspace_pipeline_entries(session_pipelines);
+        entry.active_session_pipeline_id =
+            normalize_active_pipeline_id(&entry.session_pipelines, active_session_pipeline_id);
+        entry.updated_at_unix_s = now;
+        apply_status(entry);
+        let snapshot = entry.clone();
+
+        sort_entries(&mut entries);
+        persist_registry(&self.registry_path, &entries)?;
+
+        Ok(UpsertDatasetEntryResponse {
+            schema_version: IPC_SCHEMA_VERSION,
+            entry: snapshot,
+            session: session.clone(),
+        })
+    }
+
     fn snapshot_entries(&self) -> Result<Vec<DatasetRegistryEntry>, String> {
         let mut entries = self
             .entries
@@ -456,6 +497,122 @@ fn ensure_unique_store_identity(
     }
 
     Ok(())
+}
+
+fn normalize_workspace_pipeline_entries(
+    session_pipelines: Vec<WorkspacePipelineEntry>,
+) -> Vec<WorkspacePipelineEntry> {
+    session_pipelines
+        .into_iter()
+        .filter_map(normalize_workspace_pipeline_entry)
+        .collect()
+}
+
+fn normalize_workspace_pipeline_entry(
+    entry: WorkspacePipelineEntry,
+) -> Option<WorkspacePipelineEntry> {
+    let pipeline_id = entry.pipeline_id.trim().to_string();
+    if pipeline_id.is_empty() {
+        return None;
+    }
+
+    match entry.family {
+        ProcessingPipelineFamily::PostStackNeighborhood => Some(WorkspacePipelineEntry {
+            pipeline_id,
+            family: ProcessingPipelineFamily::PostStackNeighborhood,
+            pipeline: None,
+            subvolume_crop: None,
+            post_stack_neighborhood_pipeline: Some(normalize_post_stack_neighborhood_pipeline(
+                entry.post_stack_neighborhood_pipeline,
+            )),
+            updated_at_unix_s: entry.updated_at_unix_s,
+        }),
+        _ => Some(WorkspacePipelineEntry {
+            pipeline_id,
+            family: ProcessingPipelineFamily::TraceLocal,
+            pipeline: Some(normalize_trace_local_pipeline(entry.pipeline)),
+            subvolume_crop: normalize_subvolume_crop(entry.subvolume_crop),
+            post_stack_neighborhood_pipeline: None,
+            updated_at_unix_s: entry.updated_at_unix_s,
+        }),
+    }
+}
+
+fn normalize_active_pipeline_id(
+    session_pipelines: &[WorkspacePipelineEntry],
+    active_session_pipeline_id: Option<String>,
+) -> Option<String> {
+    let requested = normalize_optional_string(active_session_pipeline_id.as_deref());
+    if let Some(requested) = requested {
+        if session_pipelines
+            .iter()
+            .any(|entry| entry.pipeline_id == requested)
+        {
+            return Some(requested);
+        }
+    }
+
+    session_pipelines
+        .first()
+        .map(|entry| entry.pipeline_id.clone())
+}
+
+fn normalize_trace_local_pipeline(
+    pipeline: Option<TraceLocalProcessingPipeline>,
+) -> TraceLocalProcessingPipeline {
+    let mut pipeline = pipeline.unwrap_or_else(empty_trace_local_pipeline);
+    pipeline.name = normalize_optional_string(pipeline.name.as_deref());
+    pipeline.description = normalize_optional_string(pipeline.description.as_deref());
+    pipeline
+}
+
+fn normalize_post_stack_neighborhood_pipeline(
+    pipeline: Option<PostStackNeighborhoodProcessingPipeline>,
+) -> PostStackNeighborhoodProcessingPipeline {
+    let mut pipeline = pipeline.unwrap_or_else(empty_post_stack_neighborhood_pipeline);
+    pipeline.name = normalize_optional_string(pipeline.name.as_deref());
+    pipeline.description = normalize_optional_string(pipeline.description.as_deref());
+    pipeline
+}
+
+fn normalize_subvolume_crop(
+    crop: Option<SubvolumeCropOperation>,
+) -> Option<SubvolumeCropOperation> {
+    crop.map(|mut crop| {
+        if crop.inline_min > crop.inline_max {
+            std::mem::swap(&mut crop.inline_min, &mut crop.inline_max);
+        }
+        if crop.xline_min > crop.xline_max {
+            std::mem::swap(&mut crop.xline_min, &mut crop.xline_max);
+        }
+        if crop.z_min_ms > crop.z_max_ms {
+            std::mem::swap(&mut crop.z_min_ms, &mut crop.z_max_ms);
+        }
+        crop
+    })
+}
+
+fn empty_trace_local_pipeline() -> TraceLocalProcessingPipeline {
+    TraceLocalProcessingPipeline {
+        schema_version: 2,
+        revision: 1,
+        preset_id: None,
+        name: None,
+        description: None,
+        steps: Vec::new(),
+    }
+}
+
+fn empty_post_stack_neighborhood_pipeline() -> PostStackNeighborhoodProcessingPipeline {
+    PostStackNeighborhoodProcessingPipeline {
+        schema_version: 2,
+        revision: 1,
+        preset_id: None,
+        name: None,
+        description: None,
+        trace_local_pipeline: None,
+        operations: Vec::new(),
+    }
 }
 
 fn ensure_registry_has_unique_store_ids(entries: &[DatasetRegistryEntry]) -> Result<(), String> {
@@ -1074,5 +1231,134 @@ mod tests {
             .err()
             .expect("tampered registry should be rejected");
         assert!(error.contains("failed integrity verification"));
+    }
+
+    #[test]
+    fn save_processing_session_pipelines_normalizes_active_entry_payload() {
+        let registry = temp_file("registry.json");
+        let session = temp_file("session.json");
+        let state =
+            WorkspaceState::initialize(&registry, &session).expect("initialize workspace state");
+
+        let response = state
+            .upsert_entry(UpsertDatasetEntryRequest {
+                schema_version: IPC_SCHEMA_VERSION,
+                entry_id: Some("dataset-a".to_string()),
+                display_name: Some("Demo".to_string()),
+                source_path: Some("C:/data/demo.segy".to_string()),
+                preferred_store_path: Some("C:/data/demo.tbvol".to_string()),
+                imported_store_path: Some("C:/data/demo.tbvol".to_string()),
+                dataset: None,
+                session_pipelines: None,
+                active_session_pipeline_id: None,
+                make_active: true,
+            })
+            .expect("insert entry");
+
+        let saved = state
+            .save_processing_session_pipelines(
+                &response.entry.entry_id,
+                vec![
+                    WorkspacePipelineEntry {
+                        pipeline_id: "   ".to_string(),
+                        family: ProcessingPipelineFamily::TraceLocal,
+                        pipeline: Some(empty_trace_local_pipeline()),
+                        subvolume_crop: None,
+                        post_stack_neighborhood_pipeline: None,
+                        updated_at_unix_s: 10,
+                    },
+                    WorkspacePipelineEntry {
+                        pipeline_id: " pipeline-1 ".to_string(),
+                        family: ProcessingPipelineFamily::Subvolume,
+                        pipeline: None,
+                        subvolume_crop: Some(SubvolumeCropOperation {
+                            inline_min: 40,
+                            inline_max: 20,
+                            xline_min: 90,
+                            xline_max: 70,
+                            z_min_ms: 120.0,
+                            z_max_ms: 80.0,
+                        }),
+                        post_stack_neighborhood_pipeline: Some(
+                            empty_post_stack_neighborhood_pipeline(),
+                        ),
+                        updated_at_unix_s: 20,
+                    },
+                ],
+                Some("missing".to_string()),
+            )
+            .expect("save processing pipelines");
+
+        assert_eq!(saved.entry.session_pipelines.len(), 1);
+        let pipeline = &saved.entry.session_pipelines[0];
+        assert_eq!(pipeline.pipeline_id, "pipeline-1");
+        assert_eq!(pipeline.family, ProcessingPipelineFamily::TraceLocal);
+        assert!(pipeline.pipeline.is_some());
+        assert!(pipeline.post_stack_neighborhood_pipeline.is_none());
+        let crop = pipeline
+            .subvolume_crop
+            .as_ref()
+            .expect("subvolume crop preserved");
+        assert_eq!((crop.inline_min, crop.inline_max), (20, 40));
+        assert_eq!((crop.xline_min, crop.xline_max), (70, 90));
+        assert_eq!((crop.z_min_ms, crop.z_max_ms), (80.0, 120.0));
+        assert_eq!(
+            saved.entry.active_session_pipeline_id.as_deref(),
+            Some("pipeline-1")
+        );
+    }
+
+    #[test]
+    fn save_processing_session_pipelines_normalizes_neighborhood_entries() {
+        let registry = temp_file("registry.json");
+        let session = temp_file("session.json");
+        let state =
+            WorkspaceState::initialize(&registry, &session).expect("initialize workspace state");
+
+        let response = state
+            .upsert_entry(UpsertDatasetEntryRequest {
+                schema_version: IPC_SCHEMA_VERSION,
+                entry_id: Some("dataset-b".to_string()),
+                display_name: Some("Neighborhood".to_string()),
+                source_path: Some("C:/data/neighborhood.segy".to_string()),
+                preferred_store_path: Some("C:/data/neighborhood.tbvol".to_string()),
+                imported_store_path: Some("C:/data/neighborhood.tbvol".to_string()),
+                dataset: None,
+                session_pipelines: None,
+                active_session_pipeline_id: None,
+                make_active: true,
+            })
+            .expect("insert entry");
+
+        let saved = state
+            .save_processing_session_pipelines(
+                &response.entry.entry_id,
+                vec![WorkspacePipelineEntry {
+                    pipeline_id: "neighborhood-1".to_string(),
+                    family: ProcessingPipelineFamily::PostStackNeighborhood,
+                    pipeline: Some(empty_trace_local_pipeline()),
+                    subvolume_crop: Some(SubvolumeCropOperation {
+                        inline_min: 1,
+                        inline_max: 2,
+                        xline_min: 3,
+                        xline_max: 4,
+                        z_min_ms: 5.0,
+                        z_max_ms: 6.0,
+                    }),
+                    post_stack_neighborhood_pipeline: None,
+                    updated_at_unix_s: 30,
+                }],
+                Some("neighborhood-1".to_string()),
+            )
+            .expect("save neighborhood pipelines");
+
+        let pipeline = &saved.entry.session_pipelines[0];
+        assert_eq!(
+            pipeline.family,
+            ProcessingPipelineFamily::PostStackNeighborhood
+        );
+        assert!(pipeline.pipeline.is_none());
+        assert!(pipeline.subvolume_crop.is_none());
+        assert!(pipeline.post_stack_neighborhood_pipeline.is_some());
     }
 }

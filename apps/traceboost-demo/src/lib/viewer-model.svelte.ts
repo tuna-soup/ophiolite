@@ -113,6 +113,7 @@ import {
   loadWorkspaceState,
   listenToDiagnosticsEvents,
   openDataset,
+  persistProcessingSessionPipelines,
   preflightImport,
   readProjectWellTimeDepthModel,
   removeDatasetEntry,
@@ -4048,17 +4049,11 @@ export class ViewerModel {
     }
 
     try {
-      const response = await upsertDatasetEntry({
+      const response = await persistProcessingSessionPipelines({
         schema_version: 1,
         entry_id: activeEntry.entry_id,
-        display_name: activeEntry.display_name,
-        source_path: activeEntry.source_path,
-        preferred_store_path: activeEntry.preferred_store_path,
-        imported_store_path: activeEntry.imported_store_path,
-        dataset: activeEntry.last_dataset,
         session_pipelines: sessionPipelines,
-        active_session_pipeline_id: activeSessionPipelineId,
-        make_active: true
+        active_session_pipeline_id: activeSessionPipelineId
       });
       this.workspaceEntries = mergeWorkspaceEntry(this.workspaceEntries, response.entry);
       this.#applyWorkspaceSession(response.session);

@@ -15614,6 +15614,1965 @@
           }
         }
       }
+    },
+    "OperatorCatalog": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "OperatorCatalog",
+      "type": "object",
+      "required": [
+        "operators",
+        "schema_version",
+        "subject_kind"
+      ],
+      "properties": {
+        "operators": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OperatorCatalogEntry"
+          }
+        },
+        "schema_version": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "subject_kind": {
+          "$ref": "#/definitions/OperatorSubjectKind"
+        }
+      },
+      "definitions": {
+        "DrillingComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "GatherProcessingDetail": {
+          "type": "object",
+          "required": [
+            "layout_compatibility",
+            "operation_id",
+            "preview_contract",
+            "scope",
+            "trace_local_prefix_supported"
+          ],
+          "properties": {
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "preview_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "trace_local_prefix_supported": {
+              "type": "boolean"
+            }
+          }
+        },
+        "LogComputeDetail": {
+          "type": "object",
+          "required": [
+            "binding_parameter_names",
+            "default_output_mnemonic",
+            "input_kinds",
+            "output_kind",
+            "parameter_names"
+          ],
+          "properties": {
+            "binding_parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "default_output_mnemonic": {
+              "type": "string"
+            },
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "output_kind": {
+              "type": "string"
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "OperatorAvailability": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "available"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "unavailable"
+              ],
+              "properties": {
+                "unavailable": {
+                  "type": "object",
+                  "required": [
+                    "reasons"
+                  ],
+                  "properties": {
+                    "reasons": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "OperatorCatalogEntry": {
+          "type": "object",
+          "required": [
+            "availability",
+            "description",
+            "detail",
+            "documentation",
+            "execution_kind",
+            "family",
+            "group",
+            "group_id",
+            "id",
+            "name",
+            "output_lifecycle",
+            "parameter_docs",
+            "provider",
+            "request_contract",
+            "response_contract",
+            "stability",
+            "tags"
+          ],
+          "properties": {
+            "availability": {
+              "$ref": "#/definitions/OperatorAvailability"
+            },
+            "description": {
+              "type": "string"
+            },
+            "detail": {
+              "$ref": "#/definitions/OperatorDetail"
+            },
+            "documentation": {
+              "$ref": "#/definitions/OperatorDocumentation"
+            },
+            "execution_kind": {
+              "$ref": "#/definitions/OperatorExecutionKind"
+            },
+            "family": {
+              "$ref": "#/definitions/OperatorFamily"
+            },
+            "group": {
+              "type": "string"
+            },
+            "group_id": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "output_lifecycle": {
+              "$ref": "#/definitions/OperatorOutputLifecycle"
+            },
+            "parameter_docs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/OperatorParameterDoc"
+              }
+            },
+            "provider": {
+              "type": "string"
+            },
+            "request_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "response_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "stability": {
+              "$ref": "#/definitions/OperatorStability"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "OperatorContractRef": {
+          "type": "object",
+          "required": [
+            "contract_id",
+            "schema_id"
+          ],
+          "properties": {
+            "contract_id": {
+              "type": "string"
+            },
+            "schema_id": {
+              "type": "string"
+            }
+          }
+        },
+        "OperatorDetail": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "log_compute"
+              ],
+              "properties": {
+                "log_compute": {
+                  "$ref": "#/definitions/LogComputeDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "trajectory_compute"
+              ],
+              "properties": {
+                "trajectory_compute": {
+                  "$ref": "#/definitions/TrajectoryComputeDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "top_set_compute"
+              ],
+              "properties": {
+                "top_set_compute": {
+                  "$ref": "#/definitions/TopSetComputeDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "well_marker_compute"
+              ],
+              "properties": {
+                "well_marker_compute": {
+                  "$ref": "#/definitions/WellMarkerComputeDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "pressure_compute"
+              ],
+              "properties": {
+                "pressure_compute": {
+                  "$ref": "#/definitions/PressureComputeDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "drilling_compute"
+              ],
+              "properties": {
+                "drilling_compute": {
+                  "$ref": "#/definitions/DrillingComputeDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "trace_local_processing"
+              ],
+              "properties": {
+                "trace_local_processing": {
+                  "$ref": "#/definitions/TraceLocalProcessingDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "post_stack_neighborhood_processing"
+              ],
+              "properties": {
+                "post_stack_neighborhood_processing": {
+                  "$ref": "#/definitions/PostStackNeighborhoodProcessingDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "subvolume_processing"
+              ],
+              "properties": {
+                "subvolume_processing": {
+                  "$ref": "#/definitions/SubvolumeProcessingDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "gather_processing"
+              ],
+              "properties": {
+                "gather_processing": {
+                  "$ref": "#/definitions/GatherProcessingDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "seismic_analysis"
+              ],
+              "properties": {
+                "seismic_analysis": {
+                  "$ref": "#/definitions/SeismicAnalysisDetail"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "OperatorDocumentation": {
+          "type": "object",
+          "required": [
+            "short_help"
+          ],
+          "properties": {
+            "help_markdown": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "help_url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "short_help": {
+              "type": "string"
+            }
+          }
+        },
+        "OperatorExecutionKind": {
+          "type": "string",
+          "enum": [
+            "immediate",
+            "job"
+          ]
+        },
+        "OperatorFamily": {
+          "type": "string",
+          "enum": [
+            "log_compute",
+            "trajectory_compute",
+            "top_set_compute",
+            "well_marker_compute",
+            "pressure_compute",
+            "drilling_compute",
+            "trace_local_processing",
+            "post_stack_neighborhood_processing",
+            "subvolume_processing",
+            "gather_processing",
+            "seismic_analysis"
+          ]
+        },
+        "OperatorOutputLifecycle": {
+          "type": "string",
+          "enum": [
+            "derived_asset",
+            "analysis_only",
+            "view_only"
+          ]
+        },
+        "OperatorParameterDoc": {
+          "type": "object",
+          "required": [
+            "description",
+            "label",
+            "name",
+            "options",
+            "required",
+            "value_kind"
+          ],
+          "properties": {
+            "default_value": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "maximum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "minimum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "units": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "value_kind": {
+              "type": "string"
+            }
+          }
+        },
+        "OperatorStability": {
+          "type": "string",
+          "enum": [
+            "internal",
+            "preview",
+            "stable"
+          ]
+        },
+        "OperatorSubjectKind": {
+          "type": "string",
+          "enum": [
+            "log",
+            "trajectory",
+            "top_set",
+            "well_marker_set",
+            "pressure_observation",
+            "drilling_observation",
+            "seismic_trace_data"
+          ]
+        },
+        "PostStackNeighborhoodProcessingDetail": {
+          "type": "object",
+          "required": [
+            "layout_compatibility",
+            "operation_id",
+            "preview_contract",
+            "scope",
+            "trace_local_prefix_supported"
+          ],
+          "properties": {
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "preview_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "trace_local_prefix_supported": {
+              "type": "boolean"
+            }
+          }
+        },
+        "PressureComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "SeismicAnalysisDetail": {
+          "type": "object",
+          "required": [
+            "analysis_kind",
+            "layout_compatibility",
+            "output_kind"
+          ],
+          "properties": {
+            "analysis_kind": {
+              "type": "string"
+            },
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "output_kind": {
+              "type": "string"
+            }
+          }
+        },
+        "SubvolumeProcessingDetail": {
+          "type": "object",
+          "required": [
+            "layout_compatibility",
+            "preview_contract",
+            "terminal_operation_id",
+            "trace_local_prefix_supported"
+          ],
+          "properties": {
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "preview_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "terminal_operation_id": {
+              "type": "string"
+            },
+            "trace_local_prefix_supported": {
+              "type": "boolean"
+            }
+          }
+        },
+        "TopSetComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "TraceLocalProcessingDetail": {
+          "type": "object",
+          "required": [
+            "checkpoint_supported",
+            "layout_compatibility",
+            "operation_id",
+            "preview_contract",
+            "scope"
+          ],
+          "properties": {
+            "checkpoint_supported": {
+              "type": "boolean"
+            },
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "preview_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "scope": {
+              "type": "string"
+            }
+          }
+        },
+        "TrajectoryComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "WellMarkerComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "OperatorCatalogEntry": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "OperatorCatalogEntry",
+      "type": "object",
+      "required": [
+        "availability",
+        "description",
+        "detail",
+        "documentation",
+        "execution_kind",
+        "family",
+        "group",
+        "group_id",
+        "id",
+        "name",
+        "output_lifecycle",
+        "parameter_docs",
+        "provider",
+        "request_contract",
+        "response_contract",
+        "stability",
+        "tags"
+      ],
+      "properties": {
+        "availability": {
+          "$ref": "#/definitions/OperatorAvailability"
+        },
+        "description": {
+          "type": "string"
+        },
+        "detail": {
+          "$ref": "#/definitions/OperatorDetail"
+        },
+        "documentation": {
+          "$ref": "#/definitions/OperatorDocumentation"
+        },
+        "execution_kind": {
+          "$ref": "#/definitions/OperatorExecutionKind"
+        },
+        "family": {
+          "$ref": "#/definitions/OperatorFamily"
+        },
+        "group": {
+          "type": "string"
+        },
+        "group_id": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "output_lifecycle": {
+          "$ref": "#/definitions/OperatorOutputLifecycle"
+        },
+        "parameter_docs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OperatorParameterDoc"
+          }
+        },
+        "provider": {
+          "type": "string"
+        },
+        "request_contract": {
+          "$ref": "#/definitions/OperatorContractRef"
+        },
+        "response_contract": {
+          "$ref": "#/definitions/OperatorContractRef"
+        },
+        "stability": {
+          "$ref": "#/definitions/OperatorStability"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "definitions": {
+        "DrillingComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "GatherProcessingDetail": {
+          "type": "object",
+          "required": [
+            "layout_compatibility",
+            "operation_id",
+            "preview_contract",
+            "scope",
+            "trace_local_prefix_supported"
+          ],
+          "properties": {
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "preview_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "trace_local_prefix_supported": {
+              "type": "boolean"
+            }
+          }
+        },
+        "LogComputeDetail": {
+          "type": "object",
+          "required": [
+            "binding_parameter_names",
+            "default_output_mnemonic",
+            "input_kinds",
+            "output_kind",
+            "parameter_names"
+          ],
+          "properties": {
+            "binding_parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "default_output_mnemonic": {
+              "type": "string"
+            },
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "output_kind": {
+              "type": "string"
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "OperatorAvailability": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "available"
+              ]
+            },
+            {
+              "type": "object",
+              "required": [
+                "unavailable"
+              ],
+              "properties": {
+                "unavailable": {
+                  "type": "object",
+                  "required": [
+                    "reasons"
+                  ],
+                  "properties": {
+                    "reasons": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "OperatorContractRef": {
+          "type": "object",
+          "required": [
+            "contract_id",
+            "schema_id"
+          ],
+          "properties": {
+            "contract_id": {
+              "type": "string"
+            },
+            "schema_id": {
+              "type": "string"
+            }
+          }
+        },
+        "OperatorDetail": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "log_compute"
+              ],
+              "properties": {
+                "log_compute": {
+                  "$ref": "#/definitions/LogComputeDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "trajectory_compute"
+              ],
+              "properties": {
+                "trajectory_compute": {
+                  "$ref": "#/definitions/TrajectoryComputeDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "top_set_compute"
+              ],
+              "properties": {
+                "top_set_compute": {
+                  "$ref": "#/definitions/TopSetComputeDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "well_marker_compute"
+              ],
+              "properties": {
+                "well_marker_compute": {
+                  "$ref": "#/definitions/WellMarkerComputeDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "pressure_compute"
+              ],
+              "properties": {
+                "pressure_compute": {
+                  "$ref": "#/definitions/PressureComputeDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "drilling_compute"
+              ],
+              "properties": {
+                "drilling_compute": {
+                  "$ref": "#/definitions/DrillingComputeDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "trace_local_processing"
+              ],
+              "properties": {
+                "trace_local_processing": {
+                  "$ref": "#/definitions/TraceLocalProcessingDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "post_stack_neighborhood_processing"
+              ],
+              "properties": {
+                "post_stack_neighborhood_processing": {
+                  "$ref": "#/definitions/PostStackNeighborhoodProcessingDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "subvolume_processing"
+              ],
+              "properties": {
+                "subvolume_processing": {
+                  "$ref": "#/definitions/SubvolumeProcessingDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "gather_processing"
+              ],
+              "properties": {
+                "gather_processing": {
+                  "$ref": "#/definitions/GatherProcessingDetail"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "seismic_analysis"
+              ],
+              "properties": {
+                "seismic_analysis": {
+                  "$ref": "#/definitions/SeismicAnalysisDetail"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "OperatorDocumentation": {
+          "type": "object",
+          "required": [
+            "short_help"
+          ],
+          "properties": {
+            "help_markdown": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "help_url": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "short_help": {
+              "type": "string"
+            }
+          }
+        },
+        "OperatorExecutionKind": {
+          "type": "string",
+          "enum": [
+            "immediate",
+            "job"
+          ]
+        },
+        "OperatorFamily": {
+          "type": "string",
+          "enum": [
+            "log_compute",
+            "trajectory_compute",
+            "top_set_compute",
+            "well_marker_compute",
+            "pressure_compute",
+            "drilling_compute",
+            "trace_local_processing",
+            "post_stack_neighborhood_processing",
+            "subvolume_processing",
+            "gather_processing",
+            "seismic_analysis"
+          ]
+        },
+        "OperatorOutputLifecycle": {
+          "type": "string",
+          "enum": [
+            "derived_asset",
+            "analysis_only",
+            "view_only"
+          ]
+        },
+        "OperatorParameterDoc": {
+          "type": "object",
+          "required": [
+            "description",
+            "label",
+            "name",
+            "options",
+            "required",
+            "value_kind"
+          ],
+          "properties": {
+            "default_value": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "maximum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "minimum": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "required": {
+              "type": "boolean"
+            },
+            "units": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "value_kind": {
+              "type": "string"
+            }
+          }
+        },
+        "OperatorStability": {
+          "type": "string",
+          "enum": [
+            "internal",
+            "preview",
+            "stable"
+          ]
+        },
+        "PostStackNeighborhoodProcessingDetail": {
+          "type": "object",
+          "required": [
+            "layout_compatibility",
+            "operation_id",
+            "preview_contract",
+            "scope",
+            "trace_local_prefix_supported"
+          ],
+          "properties": {
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "preview_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "trace_local_prefix_supported": {
+              "type": "boolean"
+            }
+          }
+        },
+        "PressureComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "SeismicAnalysisDetail": {
+          "type": "object",
+          "required": [
+            "analysis_kind",
+            "layout_compatibility",
+            "output_kind"
+          ],
+          "properties": {
+            "analysis_kind": {
+              "type": "string"
+            },
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "output_kind": {
+              "type": "string"
+            }
+          }
+        },
+        "SubvolumeProcessingDetail": {
+          "type": "object",
+          "required": [
+            "layout_compatibility",
+            "preview_contract",
+            "terminal_operation_id",
+            "trace_local_prefix_supported"
+          ],
+          "properties": {
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "preview_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "terminal_operation_id": {
+              "type": "string"
+            },
+            "trace_local_prefix_supported": {
+              "type": "boolean"
+            }
+          }
+        },
+        "TopSetComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "TraceLocalProcessingDetail": {
+          "type": "object",
+          "required": [
+            "checkpoint_supported",
+            "layout_compatibility",
+            "operation_id",
+            "preview_contract",
+            "scope"
+          ],
+          "properties": {
+            "checkpoint_supported": {
+              "type": "boolean"
+            },
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "preview_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "scope": {
+              "type": "string"
+            }
+          }
+        },
+        "TrajectoryComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "WellMarkerComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "OperatorSubjectKind": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "OperatorSubjectKind",
+      "type": "string",
+      "enum": [
+        "log",
+        "trajectory",
+        "top_set",
+        "well_marker_set",
+        "pressure_observation",
+        "drilling_observation",
+        "seismic_trace_data"
+      ]
+    },
+    "OperatorFamily": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "OperatorFamily",
+      "type": "string",
+      "enum": [
+        "log_compute",
+        "trajectory_compute",
+        "top_set_compute",
+        "well_marker_compute",
+        "pressure_compute",
+        "drilling_compute",
+        "trace_local_processing",
+        "post_stack_neighborhood_processing",
+        "subvolume_processing",
+        "gather_processing",
+        "seismic_analysis"
+      ]
+    },
+    "OperatorExecutionKind": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "OperatorExecutionKind",
+      "type": "string",
+      "enum": [
+        "immediate",
+        "job"
+      ]
+    },
+    "OperatorCatalogOutputLifecycle": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "OperatorOutputLifecycle",
+      "type": "string",
+      "enum": [
+        "derived_asset",
+        "analysis_only",
+        "view_only"
+      ]
+    },
+    "OperatorCatalogStability": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "OperatorStability",
+      "type": "string",
+      "enum": [
+        "internal",
+        "preview",
+        "stable"
+      ]
+    },
+    "OperatorContractRef": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "OperatorContractRef",
+      "type": "object",
+      "required": [
+        "contract_id",
+        "schema_id"
+      ],
+      "properties": {
+        "contract_id": {
+          "type": "string"
+        },
+        "schema_id": {
+          "type": "string"
+        }
+      }
+    },
+    "OperatorDocumentation": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "OperatorDocumentation",
+      "type": "object",
+      "required": [
+        "short_help"
+      ],
+      "properties": {
+        "help_markdown": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "help_url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "short_help": {
+          "type": "string"
+        }
+      }
+    },
+    "OperatorParameterDoc": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "OperatorParameterDoc",
+      "type": "object",
+      "required": [
+        "description",
+        "label",
+        "name",
+        "options",
+        "required",
+        "value_kind"
+      ],
+      "properties": {
+        "default_value": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "maximum": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "minimum": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "units": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value_kind": {
+          "type": "string"
+        }
+      }
+    },
+    "OperatorAvailability": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "OperatorAvailability",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "available"
+          ]
+        },
+        {
+          "type": "object",
+          "required": [
+            "unavailable"
+          ],
+          "properties": {
+            "unavailable": {
+              "type": "object",
+              "required": [
+                "reasons"
+              ],
+              "properties": {
+                "reasons": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "OperatorDetail": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "OperatorDetail",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "log_compute"
+          ],
+          "properties": {
+            "log_compute": {
+              "$ref": "#/definitions/LogComputeDetail"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "trajectory_compute"
+          ],
+          "properties": {
+            "trajectory_compute": {
+              "$ref": "#/definitions/TrajectoryComputeDetail"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "top_set_compute"
+          ],
+          "properties": {
+            "top_set_compute": {
+              "$ref": "#/definitions/TopSetComputeDetail"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "well_marker_compute"
+          ],
+          "properties": {
+            "well_marker_compute": {
+              "$ref": "#/definitions/WellMarkerComputeDetail"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "pressure_compute"
+          ],
+          "properties": {
+            "pressure_compute": {
+              "$ref": "#/definitions/PressureComputeDetail"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "drilling_compute"
+          ],
+          "properties": {
+            "drilling_compute": {
+              "$ref": "#/definitions/DrillingComputeDetail"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "trace_local_processing"
+          ],
+          "properties": {
+            "trace_local_processing": {
+              "$ref": "#/definitions/TraceLocalProcessingDetail"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "post_stack_neighborhood_processing"
+          ],
+          "properties": {
+            "post_stack_neighborhood_processing": {
+              "$ref": "#/definitions/PostStackNeighborhoodProcessingDetail"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "subvolume_processing"
+          ],
+          "properties": {
+            "subvolume_processing": {
+              "$ref": "#/definitions/SubvolumeProcessingDetail"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "gather_processing"
+          ],
+          "properties": {
+            "gather_processing": {
+              "$ref": "#/definitions/GatherProcessingDetail"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "seismic_analysis"
+          ],
+          "properties": {
+            "seismic_analysis": {
+              "$ref": "#/definitions/SeismicAnalysisDetail"
+            }
+          },
+          "additionalProperties": false
+        }
+      ],
+      "definitions": {
+        "DrillingComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "GatherProcessingDetail": {
+          "type": "object",
+          "required": [
+            "layout_compatibility",
+            "operation_id",
+            "preview_contract",
+            "scope",
+            "trace_local_prefix_supported"
+          ],
+          "properties": {
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "preview_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "trace_local_prefix_supported": {
+              "type": "boolean"
+            }
+          }
+        },
+        "LogComputeDetail": {
+          "type": "object",
+          "required": [
+            "binding_parameter_names",
+            "default_output_mnemonic",
+            "input_kinds",
+            "output_kind",
+            "parameter_names"
+          ],
+          "properties": {
+            "binding_parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "default_output_mnemonic": {
+              "type": "string"
+            },
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "output_kind": {
+              "type": "string"
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "OperatorContractRef": {
+          "type": "object",
+          "required": [
+            "contract_id",
+            "schema_id"
+          ],
+          "properties": {
+            "contract_id": {
+              "type": "string"
+            },
+            "schema_id": {
+              "type": "string"
+            }
+          }
+        },
+        "PostStackNeighborhoodProcessingDetail": {
+          "type": "object",
+          "required": [
+            "layout_compatibility",
+            "operation_id",
+            "preview_contract",
+            "scope",
+            "trace_local_prefix_supported"
+          ],
+          "properties": {
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "preview_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "trace_local_prefix_supported": {
+              "type": "boolean"
+            }
+          }
+        },
+        "PressureComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "SeismicAnalysisDetail": {
+          "type": "object",
+          "required": [
+            "analysis_kind",
+            "layout_compatibility",
+            "output_kind"
+          ],
+          "properties": {
+            "analysis_kind": {
+              "type": "string"
+            },
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "output_kind": {
+              "type": "string"
+            }
+          }
+        },
+        "SubvolumeProcessingDetail": {
+          "type": "object",
+          "required": [
+            "layout_compatibility",
+            "preview_contract",
+            "terminal_operation_id",
+            "trace_local_prefix_supported"
+          ],
+          "properties": {
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "preview_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "terminal_operation_id": {
+              "type": "string"
+            },
+            "trace_local_prefix_supported": {
+              "type": "boolean"
+            }
+          }
+        },
+        "TopSetComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "TraceLocalProcessingDetail": {
+          "type": "object",
+          "required": [
+            "checkpoint_supported",
+            "layout_compatibility",
+            "operation_id",
+            "preview_contract",
+            "scope"
+          ],
+          "properties": {
+            "checkpoint_supported": {
+              "type": "boolean"
+            },
+            "layout_compatibility": {
+              "type": "string"
+            },
+            "operation_id": {
+              "type": "string"
+            },
+            "preview_contract": {
+              "$ref": "#/definitions/OperatorContractRef"
+            },
+            "scope": {
+              "type": "string"
+            }
+          }
+        },
+        "TrajectoryComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "WellMarkerComputeDetail": {
+          "type": "object",
+          "required": [
+            "input_kinds",
+            "parameter_names"
+          ],
+          "properties": {
+            "input_kinds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "parameter_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

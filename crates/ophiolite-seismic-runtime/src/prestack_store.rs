@@ -353,6 +353,9 @@ fn processing_lineage_summary(
         ProcessingPipelineSpec::TraceLocal { pipeline } => {
             (pipeline.name.clone(), pipeline.revision)
         }
+        ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
+            (pipeline.name.clone(), pipeline.revision)
+        }
         ProcessingPipelineSpec::Subvolume { pipeline } => {
             (pipeline.name.clone(), pipeline.revision)
         }

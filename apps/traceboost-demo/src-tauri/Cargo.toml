@@ -16,6 +16,7 @@ blake3 = "1.5"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 log = "0.4"
 ophiolite = { path = "../../../" }
+ophiolite-seismic-execution = { path = "../../../crates/ophiolite-seismic-execution" }
 proj = { workspace = true }
 proj-sys = "0.27"
 rusqlite = { version = "0.32", features = ["bundled"] }

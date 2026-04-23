@@ -3,19 +3,28 @@ mod operation_catalog;
 use std::{fs, path::PathBuf};
 
 use traceboost_app::{
-    PrepareSurveyDemoRequest, TraceBoostWorkflowService, apply_processing, import_horizon_xyz,
-    preview_processing,
+    PostStackNeighborhoodBenchmarkOperator, PostStackNeighborhoodPreviewBenchmarkRequest,
+    PostStackNeighborhoodProcessingBenchmarkRequest, PrepareSurveyDemoRequest,
+    TraceBoostWorkflowService, TraceLocalBatchBenchmarkRequest, TraceLocalBenchmarkRequest,
+    TraceLocalBenchmarkScenario, apply_gather_processing, apply_processing,
+    apply_subvolume_processing, benchmark_post_stack_neighborhood_preview,
+    benchmark_post_stack_neighborhood_processing, benchmark_trace_local_batch_processing,
+    benchmark_trace_local_processing, dataset_operator_catalog, import_horizon_xyz,
+    preview_gather_processing, preview_processing, preview_subvolume_processing, run_velocity_scan,
 };
 
 use clap::{Parser, Subcommand, ValueEnum};
 use operation_catalog::operation_catalog;
 use seis_contracts_operations::datasets::OpenDatasetRequest;
 use seis_contracts_operations::import_ops::{
-    ExportSegyRequest, ImportDatasetRequest, ImportHorizonXyzRequest, LoadSectionHorizonsRequest,
+    ExportSegyRequest, ImportDatasetRequest, ImportHorizonXyzRequest,
+    ImportPrestackOffsetDatasetRequest, LoadSectionHorizonsRequest, PrestackThirdAxisField,
     SegyGeometryOverride, SegyHeaderField, SegyHeaderValueType, SurveyPreflightRequest,
 };
 use seis_contracts_operations::processing_ops::{
-    PreviewTraceLocalProcessingRequest, RunTraceLocalProcessingRequest,
+    PreviewGatherProcessingRequest, PreviewSubvolumeProcessingRequest,
+    PreviewTraceLocalProcessingRequest, RunGatherProcessingRequest, RunSubvolumeProcessingRequest,
+    RunTraceLocalProcessingRequest, VelocityScanRequest,
 };
 use seis_contracts_operations::resolve::{
     IPC_SCHEMA_VERSION, ResolveSurveyMapRequest, SetDatasetNativeCoordinateReferenceRequest,
@@ -24,8 +33,9 @@ use seis_contracts_operations::workspace::{
     DescribeVelocityVolumeRequest, IngestVelocityVolumeRequest,
 };
 use seis_runtime::{
-    IngestOptions, SeisGeometryOptions, SparseSurveyPolicy, TimeDepthDomain, ValidationOptions,
-    VelocityQuantityKind, ingest_segy, inspect_segy, open_store, preflight_segy, run_validation,
+    IngestOptions, ProcessingExecutionMode, SeisGeometryOptions, SparseSurveyPolicy,
+    TimeDepthDomain, ValidationOptions, VelocityQuantityKind, ingest_segy, inspect_segy,
+    open_store, preflight_segy, run_validation,
 };
 #[derive(Debug, Parser)]
 #[command(name = "traceboost-app")]
@@ -39,6 +49,9 @@ struct Cli {
 enum Command {
     BackendInfo,
     OperationCatalog,
+    DatasetOperatorCatalog {
+        store: PathBuf,
+    },
     Inspect {
         input: PathBuf,
     },
@@ -117,6 +130,12 @@ enum Command {
         #[arg(long, default_value_t = false)]
         overwrite_existing: bool,
     },
+    ImportPrestackOffsetDataset {
+        input: PathBuf,
+        output: PathBuf,
+        #[arg(long, default_value_t = false)]
+        overwrite_existing: bool,
+    },
     OpenDataset {
         store: PathBuf,
     },
@@ -168,6 +187,97 @@ enum Command {
         request_json: String,
     },
     RunProcessing {
+        request_json: String,
+    },
+    BenchmarkTraceLocalProcessing {
+        store: PathBuf,
+        #[arg(long)]
+        output_root: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = TraceLocalBenchmarkScenarioArg::Agc)]
+        scenario: TraceLocalBenchmarkScenarioArg,
+        #[arg(long = "partition-target-mib", value_delimiter = ',')]
+        partition_target_mib: Vec<u64>,
+        #[arg(long, default_value_t = false)]
+        adaptive_partition_target: bool,
+        #[arg(long, default_value_t = true)]
+        include_serial: bool,
+        #[arg(long, default_value_t = 1)]
+        repeat_count: usize,
+        #[arg(long, default_value_t = false)]
+        keep_outputs: bool,
+    },
+    BenchmarkTraceLocalBatchProcessing {
+        store: PathBuf,
+        #[arg(long)]
+        output_root: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = TraceLocalBenchmarkScenarioArg::Agc)]
+        scenario: TraceLocalBenchmarkScenarioArg,
+        #[arg(long, default_value_t = 4)]
+        job_count: usize,
+        #[arg(long = "max-active-jobs", value_delimiter = ',')]
+        max_active_jobs: Vec<usize>,
+        #[arg(long, value_enum)]
+        execution_mode: Option<BatchExecutionModeArg>,
+        #[arg(long, default_value_t = 64)]
+        partition_target_mib: u64,
+        #[arg(long, default_value_t = false)]
+        adaptive_partition_target: bool,
+        #[arg(long, default_value_t = 1)]
+        repeat_count: usize,
+        #[arg(long, default_value_t = false)]
+        keep_outputs: bool,
+    },
+    BenchmarkPostStackNeighborhoodPreview {
+        store: PathBuf,
+        #[arg(long, value_enum, default_value_t = NeighborhoodBenchmarkOperatorArg::Similarity)]
+        operator: NeighborhoodBenchmarkOperatorArg,
+        #[arg(long, default_value_t = 24.0)]
+        gate_ms: f32,
+        #[arg(long, default_value_t = 1)]
+        inline_stepout: usize,
+        #[arg(long, default_value_t = 1)]
+        xline_stepout: usize,
+        #[arg(long, value_enum, default_value_t = SectionAxisArg::Inline)]
+        axis: SectionAxisArg,
+        #[arg(long, default_value_t = 0)]
+        section_index: usize,
+        #[arg(long, default_value_t = false)]
+        include_trace_local_prefix: bool,
+        #[arg(long, default_value_t = 1)]
+        repeat_count: usize,
+    },
+    BenchmarkPostStackNeighborhoodProcessing {
+        store: PathBuf,
+        #[arg(long)]
+        output_root: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = NeighborhoodBenchmarkOperatorArg::Similarity)]
+        operator: NeighborhoodBenchmarkOperatorArg,
+        #[arg(long, default_value_t = 24.0)]
+        gate_ms: f32,
+        #[arg(long, default_value_t = 1)]
+        inline_stepout: usize,
+        #[arg(long, default_value_t = 1)]
+        xline_stepout: usize,
+        #[arg(long, default_value_t = false)]
+        include_trace_local_prefix: bool,
+        #[arg(long, default_value_t = 1)]
+        repeat_count: usize,
+        #[arg(long, default_value_t = false)]
+        keep_outputs: bool,
+    },
+    PreviewSubvolumeProcessing {
+        request_json: String,
+    },
+    RunSubvolumeProcessing {
+        request_json: String,
+    },
+    PreviewGatherProcessing {
+        request_json: String,
+    },
+    RunGatherProcessing {
+        request_json: String,
+    },
+    RunVelocityScan {
         request_json: String,
     },
     ViewSectionHorizons {
@@ -287,6 +397,27 @@ enum VerticalDomainArg {
     Depth,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum BatchExecutionModeArg {
+    Auto,
+    Conservative,
+    Throughput,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum TraceLocalBenchmarkScenarioArg {
+    Scalar,
+    Agc,
+    Analytic,
+    Bandpass,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum NeighborhoodBenchmarkOperatorArg {
+    Similarity,
+    LocalVolumeStatsMean,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let workflows = TraceBoostWorkflowService;
@@ -299,6 +430,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::OperationCatalog => {
             println!("{}", serde_json::to_string_pretty(operation_catalog())?);
+        }
+        Command::DatasetOperatorCatalog { store } => {
+            let response = dataset_operator_catalog(&store)?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
         }
         Command::Inspect { input } => {
             println!("{}", serde_json::to_string_pretty(&inspect_segy(input)?)?);
@@ -422,6 +557,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })?;
             println!("{}", serde_json::to_string_pretty(&response)?);
         }
+        Command::ImportPrestackOffsetDataset {
+            input,
+            output,
+            overwrite_existing,
+        } => {
+            let response =
+                workflows.import_prestack_offset_dataset(ImportPrestackOffsetDatasetRequest {
+                    schema_version: IPC_SCHEMA_VERSION,
+                    input_path: input.to_string_lossy().into_owned(),
+                    output_store_path: output.to_string_lossy().into_owned(),
+                    third_axis_field: PrestackThirdAxisField::Offset,
+                    overwrite_existing,
+                })?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
         Command::OpenDataset { store } => {
             let response = workflows.open_dataset_summary(OpenDatasetRequest {
                 schema_version: IPC_SCHEMA_VERSION,
@@ -516,6 +666,132 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Command::RunProcessing { request_json } => {
             let request: RunTraceLocalProcessingRequest = read_json_arg(&request_json)?;
             let response = apply_processing(request)?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        Command::BenchmarkTraceLocalProcessing {
+            store,
+            output_root,
+            scenario,
+            partition_target_mib,
+            adaptive_partition_target,
+            include_serial,
+            repeat_count,
+            keep_outputs,
+        } => {
+            let response = benchmark_trace_local_processing(TraceLocalBenchmarkRequest {
+                store_path: store.to_string_lossy().into_owned(),
+                output_root: output_root.map(|path| path.to_string_lossy().into_owned()),
+                scenario: scenario.into(),
+                partition_target_mib,
+                adaptive_partition_target,
+                include_serial,
+                repeat_count,
+                keep_outputs,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        Command::BenchmarkTraceLocalBatchProcessing {
+            store,
+            output_root,
+            scenario,
+            job_count,
+            max_active_jobs,
+            execution_mode,
+            partition_target_mib,
+            adaptive_partition_target,
+            repeat_count,
+            keep_outputs,
+        } => {
+            let response =
+                benchmark_trace_local_batch_processing(TraceLocalBatchBenchmarkRequest {
+                    store_path: store.to_string_lossy().into_owned(),
+                    output_root: output_root.map(|path| path.to_string_lossy().into_owned()),
+                    scenario: scenario.into(),
+                    job_count,
+                    max_active_jobs,
+                    execution_mode: execution_mode.map(Into::into),
+                    partition_target_mib,
+                    adaptive_partition_target,
+                    repeat_count,
+                    keep_outputs,
+                })?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        Command::BenchmarkPostStackNeighborhoodPreview {
+            store,
+            operator,
+            gate_ms,
+            inline_stepout,
+            xline_stepout,
+            axis,
+            section_index,
+            include_trace_local_prefix,
+            repeat_count,
+        } => {
+            let response = benchmark_post_stack_neighborhood_preview(
+                PostStackNeighborhoodPreviewBenchmarkRequest {
+                    store_path: store.to_string_lossy().into_owned(),
+                    operator: operator.into(),
+                    gate_ms,
+                    inline_stepout,
+                    xline_stepout,
+                    section_axis: axis.into(),
+                    section_index,
+                    include_trace_local_prefix,
+                    repeat_count,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        Command::BenchmarkPostStackNeighborhoodProcessing {
+            store,
+            output_root,
+            operator,
+            gate_ms,
+            inline_stepout,
+            xline_stepout,
+            include_trace_local_prefix,
+            repeat_count,
+            keep_outputs,
+        } => {
+            let response = benchmark_post_stack_neighborhood_processing(
+                PostStackNeighborhoodProcessingBenchmarkRequest {
+                    store_path: store.to_string_lossy().into_owned(),
+                    output_root: output_root.map(|path| path.to_string_lossy().into_owned()),
+                    operator: operator.into(),
+                    gate_ms,
+                    inline_stepout,
+                    xline_stepout,
+                    include_trace_local_prefix,
+                    repeat_count,
+                    keep_outputs,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        Command::PreviewSubvolumeProcessing { request_json } => {
+            let request: PreviewSubvolumeProcessingRequest = read_json_arg(&request_json)?;
+            let response = preview_subvolume_processing(request)?;
+            println!("{}", serde_json::to_string(&response)?);
+        }
+        Command::RunSubvolumeProcessing { request_json } => {
+            let request: RunSubvolumeProcessingRequest = read_json_arg(&request_json)?;
+            let response = apply_subvolume_processing(request)?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        Command::PreviewGatherProcessing { request_json } => {
+            let request: PreviewGatherProcessingRequest = read_json_arg(&request_json)?;
+            let response = preview_gather_processing(request)?;
+            println!("{}", serde_json::to_string(&response)?);
+        }
+        Command::RunGatherProcessing { request_json } => {
+            let request: RunGatherProcessingRequest = read_json_arg(&request_json)?;
+            let response = apply_gather_processing(request)?;
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        }
+        Command::RunVelocityScan { request_json } => {
+            let request: VelocityScanRequest = read_json_arg(&request_json)?;
+            let response = run_velocity_scan(request)?;
             println!("{}", serde_json::to_string_pretty(&response)?);
         }
         Command::ViewSectionHorizons { store, axis, index } => {
@@ -680,6 +956,36 @@ impl From<VerticalDomainArg> for TimeDepthDomain {
         match value {
             VerticalDomainArg::Time => Self::Time,
             VerticalDomainArg::Depth => Self::Depth,
+        }
+    }
+}
+
+impl From<TraceLocalBenchmarkScenarioArg> for TraceLocalBenchmarkScenario {
+    fn from(value: TraceLocalBenchmarkScenarioArg) -> Self {
+        match value {
+            TraceLocalBenchmarkScenarioArg::Scalar => Self::Scalar,
+            TraceLocalBenchmarkScenarioArg::Agc => Self::Agc,
+            TraceLocalBenchmarkScenarioArg::Analytic => Self::Analytic,
+            TraceLocalBenchmarkScenarioArg::Bandpass => Self::Bandpass,
+        }
+    }
+}
+
+impl From<NeighborhoodBenchmarkOperatorArg> for PostStackNeighborhoodBenchmarkOperator {
+    fn from(value: NeighborhoodBenchmarkOperatorArg) -> Self {
+        match value {
+            NeighborhoodBenchmarkOperatorArg::Similarity => Self::Similarity,
+            NeighborhoodBenchmarkOperatorArg::LocalVolumeStatsMean => Self::LocalVolumeStatsMean,
+        }
+    }
+}
+
+impl From<BatchExecutionModeArg> for ProcessingExecutionMode {
+    fn from(value: BatchExecutionModeArg) -> Self {
+        match value {
+            BatchExecutionModeArg::Auto => ProcessingExecutionMode::Auto,
+            BatchExecutionModeArg::Conservative => ProcessingExecutionMode::Conservative,
+            BatchExecutionModeArg::Throughput => ProcessingExecutionMode::Throughput,
         }
     }
 }

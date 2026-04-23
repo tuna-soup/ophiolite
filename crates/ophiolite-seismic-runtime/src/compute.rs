@@ -5,7 +5,11 @@ use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::SeismicStoreError;
+use crate::execution::{ExecutionPlan, TraceLocalChunkPlanRecommendation};
 use crate::metadata::{DatasetKind, ProcessingLineage, VolumeMetadata, generate_store_id};
+use crate::planner::{
+    AdaptivePartitionTargetRecommendation, recommend_trace_local_chunk_plan_for_execution,
+};
 use crate::segy_export::{copy_store_segy_export, crop_store_segy_export};
 use crate::storage::section_assembler;
 use crate::storage::tbvol::{
@@ -21,7 +25,7 @@ use crate::{
     SeismicLayout, SubvolumeCropOperation, SubvolumeProcessingPipeline,
     TraceLocalVolumeArithmeticOperator,
 };
-use ophiolite_seismic::ProcessingArtifactRole;
+use ophiolite_seismic::{ProcessingArtifactRole, ProcessingJobChunkPlanSummary};
 use rayon::ThreadPool;
 use rayon::ThreadPoolBuilder;
 use rayon::prelude::*;
@@ -34,12 +38,17 @@ const RMS_EPSILON: f32 = 1.0e-8;
 const MAX_RMS_GAIN: f32 = 1.0e6;
 const SPECTRUM_EPSILON: f32 = 1.0e-12;
 const DIVISION_EPSILON: f32 = 1.0e-8;
+const INSTANTANEOUS_FREQUENCY_EPSILON: f32 = 1.0e-8;
+const SWEETNESS_FREQUENCY_FLOOR_HZ: f32 = 1.0;
 const RUNTIME_VERSION: &str = "ophiolite-seismic-runtime-0.1.0";
 const DEFAULT_PREVIEW_SECTION_PREFIX_CACHE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct MaterializeOptions {
     pub chunk_shape: [usize; 3],
+    pub partition_target_bytes: Option<u64>,
+    pub max_active_partitions: Option<usize>,
+    pub trace_local_chunk_plan: Option<TraceLocalChunkPlanRecommendation>,
     pub created_by: String,
 }
 
@@ -47,9 +56,131 @@ impl Default for MaterializeOptions {
     fn default() -> Self {
         Self {
             chunk_shape: [0, 0, 0],
+            partition_target_bytes: None,
+            max_active_partitions: None,
+            trace_local_chunk_plan: None,
             created_by: RUNTIME_VERSION.to_string(),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct TraceLocalMaterializeOptionsResolution {
+    pub options: MaterializeOptions,
+    pub adaptive_recommendation: Option<AdaptivePartitionTargetRecommendation>,
+    pub resolved_chunk_plan: Option<ProcessingJobChunkPlanSummary>,
+    pub resolved_partition_target_bytes: Option<u64>,
+}
+
+pub fn resolve_trace_local_materialize_options(
+    plan: Option<&ExecutionPlan>,
+    chunk_shape: [usize; 3],
+    adaptive_partition_target: bool,
+    fallback_partition_target_bytes: Option<u64>,
+    worker_count: usize,
+    available_memory_bytes: Option<u64>,
+    concurrent_job_count: usize,
+) -> TraceLocalMaterializeOptionsResolution {
+    let adaptive_recommendation = if adaptive_partition_target {
+        plan.and_then(|plan| {
+            recommend_trace_local_chunk_plan_for_execution(
+                plan,
+                worker_count,
+                available_memory_bytes,
+                concurrent_job_count,
+            )
+        })
+    } else {
+        None
+    };
+    let chunk_plan = adaptive_recommendation
+        .as_ref()
+        .map(|recommendation| recommendation.trace_local_chunk_plan());
+    let resolved_chunk_plan = chunk_plan
+        .as_ref()
+        .map(processing_job_chunk_plan_summary)
+        .or_else(|| {
+            fallback_partition_target_bytes.and_then(|target_bytes| {
+                fixed_partition_target_summary(plan, target_bytes, worker_count)
+            })
+        });
+    let resolved_partition_target_bytes = adaptive_recommendation
+        .as_ref()
+        .map(|recommendation| recommendation.target_bytes())
+        .or(fallback_partition_target_bytes);
+    let options = MaterializeOptions {
+        chunk_shape,
+        partition_target_bytes: if chunk_plan.is_some() {
+            None
+        } else {
+            fallback_partition_target_bytes
+        },
+        max_active_partitions: None,
+        trace_local_chunk_plan: chunk_plan,
+        ..MaterializeOptions::default()
+    };
+
+    TraceLocalMaterializeOptionsResolution {
+        options,
+        adaptive_recommendation,
+        resolved_chunk_plan,
+        resolved_partition_target_bytes,
+    }
+}
+
+fn processing_job_chunk_plan_summary(
+    plan: &TraceLocalChunkPlanRecommendation,
+) -> ProcessingJobChunkPlanSummary {
+    ProcessingJobChunkPlanSummary {
+        partition_count: plan.partition_count,
+        max_active_partitions: plan.max_active_partitions,
+        tiles_per_partition: plan.tiles_per_partition,
+        compatibility_target_bytes: plan.compatibility_target_bytes,
+        estimated_peak_bytes: plan.estimated_peak_bytes,
+    }
+}
+
+fn fixed_partition_target_summary(
+    plan: Option<&ExecutionPlan>,
+    partition_target_bytes: u64,
+    worker_count: usize,
+) -> Option<ProcessingJobChunkPlanSummary> {
+    let plan = plan?;
+    let source_shape = plan.source.shape?;
+    let source_chunk_shape = plan.source.chunk_shape?;
+    let chunk_inline = source_chunk_shape[0].max(1).min(source_shape[0].max(1));
+    let chunk_xline = source_chunk_shape[1].max(1).min(source_shape[1].max(1));
+    let chunk_samples = source_chunk_shape[2].max(1).min(source_shape[2].max(1));
+    let total_tiles =
+        source_shape[0].div_ceil(chunk_inline) * source_shape[1].div_ceil(chunk_xline);
+    let bytes_per_tile = (chunk_inline as u64 * chunk_xline as u64 * chunk_samples as u64 * 4)
+        .saturating_add(chunk_inline as u64 * chunk_xline as u64)
+        .max(1);
+    let tiles_per_partition = target_tile_group_size(
+        chunk_inline as u64 * chunk_xline as u64 * chunk_samples as u64 * 4,
+        chunk_inline as u64 * chunk_xline as u64,
+        partition_target_bytes,
+    )
+    .max(1);
+    let partition_count = total_tiles.div_ceil(tiles_per_partition).max(1);
+    let max_active_partitions = worker_count.max(1).min(partition_count);
+    let resident_partition_bytes = bytes_per_tile.saturating_mul(tiles_per_partition as u64);
+    Some(ProcessingJobChunkPlanSummary {
+        partition_count,
+        max_active_partitions,
+        tiles_per_partition,
+        compatibility_target_bytes: partition_target_bytes,
+        estimated_peak_bytes: resident_partition_bytes.saturating_mul(max_active_partitions as u64),
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PartitionExecutionProgress {
+    pub completed_partitions: usize,
+    pub total_partitions: usize,
+    pub active_partitions: usize,
+    pub peak_active_partitions: usize,
+    pub retry_count: usize,
 }
 
 #[derive(Debug)]
@@ -280,6 +411,45 @@ impl PreviewSectionSession {
             &mut self.prefix_cache,
         )?;
         Ok((self.handle.section_view_from_plane(&plane), reuse))
+    }
+
+    pub fn read_section_plane(
+        &self,
+        axis: SectionAxis,
+        index: usize,
+    ) -> Result<SectionPlane, SeismicStoreError> {
+        section_assembler::read_section_plane(&self.reader, axis, index)
+    }
+
+    pub fn preview_processing_section_plane_with_prefix_cache(
+        &mut self,
+        axis: SectionAxis,
+        index: usize,
+        pipeline: &ProcessingPipeline,
+    ) -> Result<(SectionPlane, PreviewSectionPrefixReuse), SeismicStoreError> {
+        validate_processing_pipeline(pipeline)?;
+        let operations = trace_local_operations(pipeline);
+        let secondary_readers = open_secondary_store_readers(&self.handle, None, &operations)?;
+        preview_section_from_tbvol_reader_with_prefix_cache(
+            &self.reader,
+            self.store_root_hash,
+            axis,
+            index,
+            &operations,
+            &secondary_readers,
+            &mut self.prefix_cache,
+        )
+    }
+
+    pub fn section_view_from_plane(&self, plane: &SectionPlane) -> SectionView {
+        self.handle.section_view_from_plane(plane)
+    }
+
+    pub fn section_count(&self, axis: SectionAxis) -> usize {
+        match axis {
+            SectionAxis::Inline => self.reader.volume().shape[0],
+            SectionAxis::Xline => self.reader.volume().shape[1],
+        }
     }
 
     pub fn cache_entry_count(&self) -> usize {
@@ -606,6 +776,8 @@ fn pipeline_requires_sample_interval(pipeline: &[ProcessingOperation]) -> bool {
         matches!(
             operation,
             ProcessingOperation::AgcRms { .. }
+                | ProcessingOperation::InstantaneousFrequency
+                | ProcessingOperation::Sweetness
                 | ProcessingOperation::LowpassFilter { .. }
                 | ProcessingOperation::HighpassFilter { .. }
                 | ProcessingOperation::BandpassFilter { .. }
@@ -618,6 +790,10 @@ fn pipeline_requires_spectral_workspace(pipeline: &[ProcessingOperation]) -> boo
         matches!(
             operation,
             ProcessingOperation::PhaseRotation { .. }
+                | ProcessingOperation::Envelope
+                | ProcessingOperation::InstantaneousPhase
+                | ProcessingOperation::InstantaneousFrequency
+                | ProcessingOperation::Sweetness
                 | ProcessingOperation::LowpassFilter { .. }
                 | ProcessingOperation::HighpassFilter { .. }
                 | ProcessingOperation::BandpassFilter { .. }
@@ -881,7 +1057,11 @@ pub fn materialize_volume(
         writer,
         pipeline,
         &secondary_readers,
+        options.partition_target_bytes,
+        options.max_active_partitions,
+        options.trace_local_chunk_plan.as_ref(),
         |_, _| Ok(()),
+        |_| Ok(()),
     )?;
     copy_store_segy_export(input_store_root.as_ref(), &output_root)?;
     open_store(output_root)
@@ -909,7 +1089,28 @@ pub fn materialize_processing_volume_with_progress<
     output_store_root: impl AsRef<Path>,
     pipeline: &ProcessingPipeline,
     options: MaterializeOptions,
+    on_progress: F,
+) -> Result<StoreHandle, SeismicStoreError> {
+    materialize_processing_volume_with_partition_progress(
+        input_store_root,
+        output_store_root,
+        pipeline,
+        options,
+        on_progress,
+        |_| Ok(()),
+    )
+}
+
+pub fn materialize_processing_volume_with_partition_progress<
+    F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+    P: FnMut(PartitionExecutionProgress) -> Result<(), SeismicStoreError>,
+>(
+    input_store_root: impl AsRef<Path>,
+    output_store_root: impl AsRef<Path>,
+    pipeline: &ProcessingPipeline,
+    options: MaterializeOptions,
     mut on_progress: F,
+    mut on_partition_progress: P,
 ) -> Result<StoreHandle, SeismicStoreError> {
     validate_processing_pipeline(pipeline)?;
     let handle = open_store(&input_store_root)?;
@@ -935,7 +1136,11 @@ pub fn materialize_processing_volume_with_progress<
         writer,
         &operations,
         &secondary_readers,
+        options.partition_target_bytes,
+        options.max_active_partitions,
+        options.trace_local_chunk_plan.as_ref(),
         |completed, total| on_progress(completed, total),
+        |progress| on_partition_progress(progress),
     )?;
     copy_store_segy_export(input_store_root.as_ref(), &output_root)?;
     open_store(output_root)
@@ -1492,7 +1697,59 @@ pub fn materialize_from_reader_writer_with_progress<
                 .to_string(),
         ));
     }
-    materialize_from_reader_writer_internal(reader, writer, pipeline, None, &mut on_progress)
+    materialize_from_reader_writer_internal(reader, writer, pipeline, &mut on_progress)
+}
+
+fn materialize_from_reader_writer_internal<
+    R: VolumeStoreReader,
+    W: VolumeStoreWriter,
+    F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+>(
+    reader: &R,
+    writer: W,
+    pipeline: &[ProcessingOperation],
+    on_progress: &mut F,
+) -> Result<(), SeismicStoreError> {
+    validate_pipeline(pipeline)?;
+    if reader.tile_geometry().tile_shape() != writer.tile_geometry().tile_shape()
+        || reader.volume().shape != writer.volume().shape
+    {
+        return Err(SeismicStoreError::Message(
+            "reader and writer geometry mismatch".to_string(),
+        ));
+    }
+
+    let tile_shape = reader.tile_geometry().tile_shape();
+    let traces = tile_shape[0] * tile_shape[1];
+    let samples = tile_shape[2];
+    let sample_interval_ms = reader.volume().source.sample_interval_us as f32 / 1000.0;
+    validate_pipeline_for_sample_interval(pipeline, sample_interval_ms)?;
+
+    let total_tiles = reader.tile_geometry().tile_count();
+    let mut completed_tiles = 0;
+    for tile in reader.tile_geometry().iter_tiles() {
+        let mut amplitudes = reader.read_tile(tile)?.into_owned();
+        let occupancy = reader
+            .read_tile_occupancy(tile)?
+            .map(|value| value.into_owned());
+        apply_pipeline_to_traces_internal(
+            &mut amplitudes,
+            traces,
+            samples,
+            sample_interval_ms,
+            occupancy.as_deref(),
+            pipeline,
+            None,
+        )?;
+        writer.write_tile(tile, &amplitudes)?;
+        if let Some(mask) = occupancy.as_deref() {
+            writer.write_tile_occupancy(tile, mask)?;
+        }
+        completed_tiles += 1;
+        on_progress(completed_tiles, total_tiles)?;
+    }
+
+    writer.finalize()
 }
 
 pub fn apply_pipeline_to_plane(
@@ -1646,32 +1903,45 @@ fn preview_section_from_tbvol_reader_with_prefix_cache(
 fn materialize_from_tbvol_reader_writer_with_progress<
     W: VolumeStoreWriter,
     F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+    P: FnMut(PartitionExecutionProgress) -> Result<(), SeismicStoreError>,
 >(
     reader: &TbvolReader,
     writer: W,
     pipeline: &[ProcessingOperation],
     secondary_readers: &HashMap<String, TbvolReader>,
+    partition_target_bytes: Option<u64>,
+    max_active_partitions: Option<usize>,
+    trace_local_chunk_plan: Option<&TraceLocalChunkPlanRecommendation>,
     mut on_progress: F,
+    mut on_partition_progress: P,
 ) -> Result<(), SeismicStoreError> {
-    materialize_from_reader_writer_internal(
+    materialize_from_tbvol_reader_writer_internal(
         reader,
         writer,
         pipeline,
-        Some(secondary_readers),
+        secondary_readers,
+        partition_target_bytes,
+        max_active_partitions,
+        trace_local_chunk_plan,
         &mut on_progress,
+        &mut on_partition_progress,
     )
 }
 
-fn materialize_from_reader_writer_internal<
-    R: VolumeStoreReader,
+fn materialize_from_tbvol_reader_writer_internal<
     W: VolumeStoreWriter,
     F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+    P: FnMut(PartitionExecutionProgress) -> Result<(), SeismicStoreError>,
 >(
-    reader: &R,
+    reader: &TbvolReader,
     writer: W,
     pipeline: &[ProcessingOperation],
-    secondary_readers: Option<&HashMap<String, TbvolReader>>,
+    secondary_readers: &HashMap<String, TbvolReader>,
+    partition_target_bytes: Option<u64>,
+    max_active_partitions: Option<usize>,
+    trace_local_chunk_plan: Option<&TraceLocalChunkPlanRecommendation>,
     on_progress: &mut F,
+    on_partition_progress: &mut P,
 ) -> Result<(), SeismicStoreError> {
     validate_pipeline(pipeline)?;
     if reader.tile_geometry().tile_shape() != writer.tile_geometry().tile_shape()
@@ -1689,34 +1959,250 @@ fn materialize_from_reader_writer_internal<
     validate_pipeline_for_sample_interval(pipeline, sample_interval_ms)?;
     let total_tiles = reader.tile_geometry().tile_count();
     let mut completed_tiles = 0;
-    for tile in reader.tile_geometry().iter_tiles() {
-        let mut amplitudes = reader.read_tile(tile)?.into_owned();
-        let occupancy = reader
-            .read_tile_occupancy(tile)?
-            .map(|value| value.into_owned());
-        let secondary_inputs = match secondary_readers {
-            Some(readers) if pipeline_requires_external_volume_inputs(pipeline) => {
-                Some(load_secondary_tile_inputs(tile, readers)?)
+
+    let chunk_execution = resolve_trace_local_chunk_execution(
+        reader.tile_geometry(),
+        partition_target_bytes,
+        max_active_partitions,
+        trace_local_chunk_plan,
+    );
+
+    if let Some(tiles_per_partition) = chunk_execution.tiles_per_partition {
+        let tile_groups =
+            partition_tile_groups_for_tile_count(reader.tile_geometry(), tiles_per_partition);
+        if tile_groups.len() > 1 {
+            let max_groups_per_batch = chunk_execution
+                .max_active_partitions
+                .unwrap_or_else(|| compute_pool().current_num_threads())
+                .max(1)
+                .min(compute_pool().current_num_threads().max(1));
+            let total_partitions = tile_groups.len();
+            let mut completed_partitions = 0usize;
+            let mut peak_active_partitions = 0usize;
+            for group_batch in tile_groups.chunks(max_groups_per_batch) {
+                let active_partitions = group_batch.len();
+                peak_active_partitions = peak_active_partitions.max(active_partitions);
+                on_partition_progress(PartitionExecutionProgress {
+                    completed_partitions,
+                    total_partitions,
+                    active_partitions,
+                    peak_active_partitions,
+                    retry_count: 0,
+                })?;
+                let processed_batches = compute_pool().install(|| {
+                    group_batch
+                        .par_iter()
+                        .map(|group| {
+                            process_tile_group(
+                                reader,
+                                pipeline,
+                                secondary_readers,
+                                traces,
+                                samples,
+                                sample_interval_ms,
+                                group,
+                            )
+                        })
+                        .collect::<Result<Vec<_>, SeismicStoreError>>()
+                })?;
+                for outputs in processed_batches {
+                    for output in outputs {
+                        writer.write_tile(output.tile, &output.amplitudes)?;
+                        if let Some(mask) = output.occupancy.as_deref() {
+                            writer.write_tile_occupancy(output.tile, mask)?;
+                        }
+                        completed_tiles += 1;
+                        on_progress(completed_tiles, total_tiles)?;
+                    }
+                    completed_partitions += 1;
+                    on_partition_progress(PartitionExecutionProgress {
+                        completed_partitions,
+                        total_partitions,
+                        active_partitions: 0,
+                        peak_active_partitions,
+                        retry_count: 0,
+                    })?;
+                }
             }
-            _ => None,
-        };
-        apply_pipeline_to_traces_internal(
-            &mut amplitudes,
+            return writer.finalize();
+        }
+    }
+
+    on_partition_progress(PartitionExecutionProgress {
+        completed_partitions: 0,
+        total_partitions: 1,
+        active_partitions: 1,
+        peak_active_partitions: 1,
+        retry_count: 0,
+    })?;
+    for tile in reader.tile_geometry().iter_tiles() {
+        let output = process_tile(
+            reader,
+            pipeline,
+            secondary_readers,
             traces,
             samples,
             sample_interval_ms,
-            occupancy.as_deref(),
-            pipeline,
-            secondary_inputs.as_ref(),
+            tile,
         )?;
-        writer.write_tile(tile, &amplitudes)?;
-        if let Some(mask) = occupancy.as_deref() {
-            writer.write_tile_occupancy(tile, mask)?;
+        writer.write_tile(output.tile, &output.amplitudes)?;
+        if let Some(mask) = output.occupancy.as_deref() {
+            writer.write_tile_occupancy(output.tile, mask)?;
         }
         completed_tiles += 1;
         on_progress(completed_tiles, total_tiles)?;
     }
-    writer.finalize()
+    writer.finalize()?;
+    on_partition_progress(PartitionExecutionProgress {
+        completed_partitions: 1,
+        total_partitions: 1,
+        active_partitions: 0,
+        peak_active_partitions: 1,
+        retry_count: 0,
+    })?;
+    Ok(())
+}
+
+#[derive(Debug)]
+struct ProcessedTileOutput {
+    tile: TileCoord,
+    amplitudes: Vec<f32>,
+    occupancy: Option<Vec<u8>>,
+}
+
+fn process_tile_group(
+    reader: &TbvolReader,
+    pipeline: &[ProcessingOperation],
+    secondary_readers: &HashMap<String, TbvolReader>,
+    traces: usize,
+    samples: usize,
+    sample_interval_ms: f32,
+    tiles: &[TileCoord],
+) -> Result<Vec<ProcessedTileOutput>, SeismicStoreError> {
+    tiles
+        .iter()
+        .copied()
+        .map(|tile| {
+            process_tile(
+                reader,
+                pipeline,
+                secondary_readers,
+                traces,
+                samples,
+                sample_interval_ms,
+                tile,
+            )
+        })
+        .collect()
+}
+
+fn process_tile(
+    reader: &TbvolReader,
+    pipeline: &[ProcessingOperation],
+    secondary_readers: &HashMap<String, TbvolReader>,
+    traces: usize,
+    samples: usize,
+    sample_interval_ms: f32,
+    tile: TileCoord,
+) -> Result<ProcessedTileOutput, SeismicStoreError> {
+    let mut amplitudes = reader.read_tile(tile)?.into_owned();
+    let occupancy = reader
+        .read_tile_occupancy(tile)?
+        .map(|value| value.into_owned());
+    let secondary_inputs = if pipeline_requires_external_volume_inputs(pipeline) {
+        Some(load_secondary_tile_inputs(tile, secondary_readers)?)
+    } else {
+        None
+    };
+    apply_pipeline_to_traces_internal(
+        &mut amplitudes,
+        traces,
+        samples,
+        sample_interval_ms,
+        occupancy.as_deref(),
+        pipeline,
+        secondary_inputs.as_ref(),
+    )?;
+    Ok(ProcessedTileOutput {
+        tile,
+        amplitudes,
+        occupancy,
+    })
+}
+
+#[cfg(test)]
+fn partition_tile_groups_for_target_bytes(
+    geometry: &crate::storage::tile_geometry::TileGeometry,
+    target_bytes: u64,
+) -> Vec<Vec<TileCoord>> {
+    let target_tiles = target_tile_group_size(
+        geometry.amplitude_tile_bytes(),
+        geometry.occupancy_tile_bytes(),
+        target_bytes,
+    );
+    let tiles = geometry.iter_tiles().collect::<Vec<_>>();
+    tiles
+        .chunks(target_tiles.max(1))
+        .map(|chunk| chunk.to_vec())
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TraceLocalChunkExecution {
+    tiles_per_partition: Option<usize>,
+    max_active_partitions: Option<usize>,
+}
+
+fn resolve_trace_local_chunk_execution(
+    geometry: &crate::storage::tile_geometry::TileGeometry,
+    partition_target_bytes: Option<u64>,
+    max_active_partitions: Option<usize>,
+    trace_local_chunk_plan: Option<&TraceLocalChunkPlanRecommendation>,
+) -> TraceLocalChunkExecution {
+    if let Some(plan) = trace_local_chunk_plan {
+        return TraceLocalChunkExecution {
+            tiles_per_partition: Some(plan.tiles_per_partition.max(1)),
+            max_active_partitions: Some(
+                max_active_partitions
+                    .unwrap_or(plan.max_active_partitions)
+                    .max(1)
+                    .min(plan.max_active_partitions.max(1)),
+            ),
+        };
+    }
+
+    TraceLocalChunkExecution {
+        tiles_per_partition: partition_target_bytes.map(|target_bytes| {
+            target_tile_group_size(
+                geometry.amplitude_tile_bytes(),
+                geometry.occupancy_tile_bytes(),
+                target_bytes,
+            )
+        }),
+        max_active_partitions,
+    }
+}
+
+fn partition_tile_groups_for_tile_count(
+    geometry: &crate::storage::tile_geometry::TileGeometry,
+    tiles_per_partition: usize,
+) -> Vec<Vec<TileCoord>> {
+    let tiles = geometry.iter_tiles().collect::<Vec<_>>();
+    tiles
+        .chunks(tiles_per_partition.max(1))
+        .map(|chunk| chunk.to_vec())
+        .collect()
+}
+
+fn target_tile_group_size(
+    amplitude_tile_bytes: u64,
+    occupancy_tile_bytes: u64,
+    target_bytes: u64,
+) -> usize {
+    let bytes_per_tile = amplitude_tile_bytes
+        .saturating_add(occupancy_tile_bytes)
+        .max(1);
+    (target_bytes / bytes_per_tile).max(1) as usize
 }
 
 fn apply_pipeline_to_traces_internal(
@@ -1804,6 +2290,34 @@ fn apply_operation_to_trace(
                 .as_mut()
                 .expect("spectral workspace should exist when spectral operators are present")
                 .apply_phase_rotation(trace, *angle_degrees)?;
+        }
+        ProcessingOperation::Envelope => {
+            state
+                .spectral
+                .as_mut()
+                .expect("spectral workspace should exist when spectral operators are present")
+                .apply_envelope(trace)?;
+        }
+        ProcessingOperation::InstantaneousPhase => {
+            state
+                .spectral
+                .as_mut()
+                .expect("spectral workspace should exist when spectral operators are present")
+                .apply_instantaneous_phase(trace)?;
+        }
+        ProcessingOperation::InstantaneousFrequency => {
+            state
+                .spectral
+                .as_mut()
+                .expect("spectral workspace should exist when spectral operators are present")
+                .apply_instantaneous_frequency(trace, sample_interval_ms)?;
+        }
+        ProcessingOperation::Sweetness => {
+            state
+                .spectral
+                .as_mut()
+                .expect("spectral workspace should exist when spectral operators are present")
+                .apply_sweetness(trace, sample_interval_ms)?;
         }
         ProcessingOperation::LowpassFilter {
             f3_hz,
@@ -1995,13 +2509,25 @@ fn hash_processing_operation(hasher: &mut DefaultHasher, operation: &ProcessingO
             hasher.write_u8(3);
             hasher.write_u32(angle_degrees.to_bits());
         }
+        ProcessingOperation::Envelope => {
+            hasher.write_u8(4);
+        }
+        ProcessingOperation::InstantaneousPhase => {
+            hasher.write_u8(5);
+        }
+        ProcessingOperation::InstantaneousFrequency => {
+            hasher.write_u8(6);
+        }
+        ProcessingOperation::Sweetness => {
+            hasher.write_u8(7);
+        }
         ProcessingOperation::LowpassFilter {
             f3_hz,
             f4_hz,
             phase,
             window,
         } => {
-            hasher.write_u8(4);
+            hasher.write_u8(8);
             hasher.write_u32(f3_hz.to_bits());
             hasher.write_u32(f4_hz.to_bits());
             hasher.write_u8(match phase {
@@ -2017,7 +2543,7 @@ fn hash_processing_operation(hasher: &mut DefaultHasher, operation: &ProcessingO
             phase,
             window,
         } => {
-            hasher.write_u8(5);
+            hasher.write_u8(9);
             hasher.write_u32(f1_hz.to_bits());
             hasher.write_u32(f2_hz.to_bits());
             hasher.write_u8(match phase {
@@ -2035,7 +2561,7 @@ fn hash_processing_operation(hasher: &mut DefaultHasher, operation: &ProcessingO
             phase,
             window,
         } => {
-            hasher.write_u8(6);
+            hasher.write_u8(10);
             hasher.write_u32(f1_hz.to_bits());
             hasher.write_u32(f2_hz.to_bits());
             hasher.write_u32(f3_hz.to_bits());
@@ -2051,7 +2577,7 @@ fn hash_processing_operation(hasher: &mut DefaultHasher, operation: &ProcessingO
             operator,
             secondary_store_path,
         } => {
-            hasher.write_u8(7);
+            hasher.write_u8(11);
             hasher.write_u8(match operator {
                 TraceLocalVolumeArithmeticOperator::Add => 0,
                 TraceLocalVolumeArithmeticOperator::Subtract => 1,
@@ -2220,6 +2746,9 @@ struct SpectralWorkspace {
     input: Vec<f32>,
     output: Vec<f32>,
     spectrum: Vec<Complex32>,
+    analytic_hilbert: Vec<f32>,
+    derivative_real: Vec<f32>,
+    derivative_hilbert: Vec<f32>,
 }
 
 impl SpectralWorkspace {
@@ -2236,6 +2765,9 @@ impl SpectralWorkspace {
             input,
             output,
             spectrum,
+            analytic_hilbert: vec![0.0; samples],
+            derivative_real: vec![0.0; samples],
+            derivative_hilbert: vec![0.0; samples],
         }
     }
 
@@ -2420,6 +2952,105 @@ impl SpectralWorkspace {
 
         Ok(())
     }
+
+    fn apply_envelope(&mut self, trace: &mut [f32]) -> Result<(), SeismicStoreError> {
+        self.compute_hilbert_transform(trace, "envelope")?;
+        for (sample, hilbert) in trace.iter_mut().zip(self.output.iter()) {
+            *sample = sample.hypot(*hilbert);
+        }
+        Ok(())
+    }
+
+    fn apply_instantaneous_phase(&mut self, trace: &mut [f32]) -> Result<(), SeismicStoreError> {
+        self.compute_hilbert_transform(trace, "instantaneous phase")?;
+        for (sample, hilbert) in trace.iter_mut().zip(self.output.iter()) {
+            *sample = wrap_phase_degrees(hilbert.atan2(*sample).to_degrees());
+        }
+        Ok(())
+    }
+
+    fn apply_instantaneous_frequency(
+        &mut self,
+        trace: &mut [f32],
+        sample_interval_ms: f32,
+    ) -> Result<(), SeismicStoreError> {
+        let dt_s = trace_sample_interval_seconds(sample_interval_ms)?;
+        self.compute_hilbert_transform(trace, "instantaneous frequency")?;
+        self.analytic_hilbert.copy_from_slice(&self.output);
+        differentiate_trace(trace, dt_s, &mut self.derivative_real)?;
+        differentiate_trace(&self.analytic_hilbert, dt_s, &mut self.derivative_hilbert)?;
+
+        for index in 0..trace.len() {
+            let real = trace[index];
+            let hilbert = self.analytic_hilbert[index];
+            let denominator = real * real + hilbert * hilbert + INSTANTANEOUS_FREQUENCY_EPSILON;
+            let angular_frequency = (real * self.derivative_hilbert[index]
+                - self.derivative_real[index] * hilbert)
+                / denominator;
+            self.output[index] = angular_frequency / (2.0 * std::f32::consts::PI);
+        }
+        trace.copy_from_slice(&self.output[..trace.len()]);
+        Ok(())
+    }
+
+    fn apply_sweetness(
+        &mut self,
+        trace: &mut [f32],
+        sample_interval_ms: f32,
+    ) -> Result<(), SeismicStoreError> {
+        let dt_s = trace_sample_interval_seconds(sample_interval_ms)?;
+        self.compute_hilbert_transform(trace, "sweetness")?;
+        self.analytic_hilbert.copy_from_slice(&self.output);
+        differentiate_trace(trace, dt_s, &mut self.derivative_real)?;
+        differentiate_trace(&self.analytic_hilbert, dt_s, &mut self.derivative_hilbert)?;
+
+        for index in 0..trace.len() {
+            let real = trace[index];
+            let hilbert = self.analytic_hilbert[index];
+            let envelope = real.hypot(hilbert);
+            let denominator = real * real + hilbert * hilbert + INSTANTANEOUS_FREQUENCY_EPSILON;
+            let angular_frequency = (real * self.derivative_hilbert[index]
+                - self.derivative_real[index] * hilbert)
+                / denominator;
+            let frequency_hz = angular_frequency / (2.0 * std::f32::consts::PI);
+            self.output[index] = envelope / frequency_hz.max(SWEETNESS_FREQUENCY_FLOOR_HZ).sqrt();
+        }
+        trace.copy_from_slice(&self.output[..trace.len()]);
+        Ok(())
+    }
+
+    fn compute_hilbert_transform(
+        &mut self,
+        trace: &[f32],
+        label: &str,
+    ) -> Result<(), SeismicStoreError> {
+        if trace.len() != self.input.len() {
+            return Err(SeismicStoreError::Message(format!(
+                "{label} workspace length mismatch: expected {}, found {}",
+                self.input.len(),
+                trace.len()
+            )));
+        }
+
+        self.input.copy_from_slice(trace);
+        self.forward
+            .process(&mut self.input, &mut self.spectrum)
+            .map_err(|error| {
+                SeismicStoreError::Message(format!("{label} forward FFT failed: {error}"))
+            })?;
+        apply_hilbert_response(&mut self.spectrum, trace.len());
+        self.inverse
+            .process(&mut self.spectrum, &mut self.output)
+            .map_err(|error| {
+                SeismicStoreError::Message(format!("{label} inverse FFT failed: {error}"))
+            })?;
+
+        let inverse_scale = 1.0 / trace.len().max(1) as f32;
+        for value in &mut self.output[..trace.len()] {
+            *value *= inverse_scale;
+        }
+        Ok(())
+    }
 }
 
 struct SpectrumWorkspace {
@@ -2595,6 +3226,61 @@ fn apply_phase_rotation_response(
     }
 
     Ok(())
+}
+
+fn apply_hilbert_response(spectrum: &mut [Complex32], samples: usize) {
+    let multiplier = Complex32::new(0.0, -1.0);
+    for (index, value) in spectrum.iter_mut().enumerate() {
+        let is_dc = index == 0;
+        let is_nyquist = samples % 2 == 0 && index == samples / 2;
+        if is_dc || is_nyquist {
+            *value = Complex32::default();
+            continue;
+        }
+        *value *= multiplier;
+    }
+}
+
+fn trace_sample_interval_seconds(sample_interval_ms: f32) -> Result<f32, SeismicStoreError> {
+    if !sample_interval_ms.is_finite() || sample_interval_ms <= 0.0 {
+        return Err(SeismicStoreError::Message(format!(
+            "sample interval must be finite and > 0 ms, found {sample_interval_ms}"
+        )));
+    }
+    Ok(sample_interval_ms / 1000.0)
+}
+
+fn differentiate_trace(
+    samples: &[f32],
+    delta_seconds: f32,
+    destination: &mut [f32],
+) -> Result<(), SeismicStoreError> {
+    if samples.len() != destination.len() {
+        return Err(SeismicStoreError::Message(format!(
+            "derivative workspace length mismatch: expected {}, found {}",
+            samples.len(),
+            destination.len()
+        )));
+    }
+    if samples.is_empty() {
+        return Ok(());
+    }
+    if samples.len() == 1 {
+        destination[0] = 0.0;
+        return Ok(());
+    }
+
+    destination[0] = (samples[1] - samples[0]) / delta_seconds;
+    for index in 1..samples.len() - 1 {
+        destination[index] = (samples[index + 1] - samples[index - 1]) / (2.0 * delta_seconds);
+    }
+    destination[samples.len() - 1] =
+        (samples[samples.len() - 1] - samples[samples.len() - 2]) / delta_seconds;
+    Ok(())
+}
+
+fn wrap_phase_degrees(angle_degrees: f32) -> f32 {
+    (angle_degrees + 180.0).rem_euclid(360.0) - 180.0
 }
 
 fn cosine_taper_bandpass_gain(
@@ -2776,15 +3462,25 @@ fn accumulate_single_sided_amplitudes(
 fn compute_pool() -> &'static ThreadPool {
     static POOL: OnceLock<ThreadPool> = OnceLock::new();
     POOL.get_or_init(|| {
-        let threads = std::thread::available_parallelism()
-            .map(|value| value.get())
-            .unwrap_or(1);
+        let threads = configured_compute_threads();
         ThreadPoolBuilder::new()
             .thread_name(|index| format!("ophiolite-seismic-compute-{index}"))
             .num_threads(threads)
             .build()
             .expect("compute pool should build")
     })
+}
+
+fn configured_compute_threads() -> usize {
+    std::env::var("OPHIOLITE_BENCHMARK_WORKERS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|value| value.get())
+                .unwrap_or(1)
+        })
 }
 
 fn resolve_chunk_shape(chunk_shape: [usize; 3], shape: [usize; 3]) -> [usize; 3] {
@@ -2869,8 +3565,46 @@ fn reader_has_occupancy<R: VolumeStoreReader>(reader: &R) -> Result<bool, Seismi
 mod tests {
     use super::*;
     use crate::SectionAxis;
+    use crate::metadata::{
+        DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, VolumeAxes,
+    };
+    use crate::{
+        PlanProcessingRequest, PlanningMode, ProcessingPipelineSpec, build_execution_plan,
+    };
     use crate::{ProcessingOperatorScope, ProcessingSampleDependency, ProcessingSpatialDependency};
     use std::collections::HashMap;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn sinusoid_trace(
+        samples: usize,
+        sample_interval_ms: f32,
+        cycles_per_trace: usize,
+        amplitude: f32,
+        phase_radians: f32,
+    ) -> (Vec<f32>, f32) {
+        let dt_s = sample_interval_ms / 1000.0;
+        let frequency_hz = cycles_per_trace as f32 / (samples as f32 * dt_s);
+        let trace = (0..samples)
+            .map(|index| {
+                let t = index as f32 * dt_s;
+                amplitude * (2.0 * std::f32::consts::PI * frequency_hz * t + phase_radians).sin()
+            })
+            .collect::<Vec<_>>();
+        (trace, frequency_hz)
+    }
+
+    fn mean_absolute_error(values: &[f32], expected: &[f32], trim: usize) -> f32 {
+        let start = trim.min(values.len());
+        let end = values.len().saturating_sub(trim).max(start);
+        values[start..end]
+            .iter()
+            .zip(expected[start..end].iter())
+            .map(|(actual, target)| (actual - target).abs())
+            .sum::<f32>()
+            / (end - start).max(1) as f32
+    }
 
     #[test]
     fn pipeline_validation_rejects_invalid_scalar() {
@@ -3236,6 +3970,703 @@ mod tests {
             max_error_negative = max_error_negative.max((actual + expected).abs());
         }
         assert!(max_error_positive.min(max_error_negative) < 3.0e-3);
+    }
+
+    #[test]
+    fn envelope_matches_analytic_magnitude_definition() {
+        let samples = 256usize;
+        let sample_interval_ms = 2.0_f32;
+        let amplitude = 3.5_f32;
+        let (mut trace, _) = sinusoid_trace(
+            samples,
+            sample_interval_ms,
+            16,
+            amplitude,
+            0.35 * std::f32::consts::PI,
+        );
+
+        apply_pipeline_to_traces(
+            &mut trace,
+            1,
+            samples,
+            sample_interval_ms,
+            None,
+            &[ProcessingOperation::Envelope],
+        )
+        .unwrap();
+
+        let expected = vec![amplitude; samples];
+        assert!(mean_absolute_error(&trace, &expected, 4) < 2.0e-3);
+    }
+
+    #[test]
+    fn instantaneous_phase_reconstructs_original_trace() {
+        let samples = 256usize;
+        let sample_interval_ms = 2.0_f32;
+        let phase_offset = 0.2 * std::f32::consts::PI;
+        let (original, _) = sinusoid_trace(samples, sample_interval_ms, 18, 2.0, phase_offset);
+        let mut envelope = original.clone();
+        let mut phase = original.clone();
+
+        apply_pipeline_to_traces(
+            &mut envelope,
+            1,
+            samples,
+            sample_interval_ms,
+            None,
+            &[ProcessingOperation::Envelope],
+        )
+        .unwrap();
+        apply_pipeline_to_traces(
+            &mut phase,
+            1,
+            samples,
+            sample_interval_ms,
+            None,
+            &[ProcessingOperation::InstantaneousPhase],
+        )
+        .unwrap();
+
+        let reconstructed = envelope
+            .iter()
+            .zip(phase.iter())
+            .map(|(magnitude, phase_degrees)| magnitude * phase_degrees.to_radians().cos())
+            .collect::<Vec<_>>();
+        assert!(mean_absolute_error(&reconstructed, &original, 4) < 2.5e-3);
+    }
+
+    #[test]
+    fn instantaneous_frequency_tracks_periodic_sine_frequency() {
+        let samples = 256usize;
+        let sample_interval_ms = 2.0_f32;
+        let (mut trace, frequency_hz) = sinusoid_trace(samples, sample_interval_ms, 20, 1.5, 0.0);
+
+        apply_pipeline_to_traces(
+            &mut trace,
+            1,
+            samples,
+            sample_interval_ms,
+            None,
+            &[ProcessingOperation::InstantaneousFrequency],
+        )
+        .unwrap();
+
+        let expected = vec![frequency_hz; samples];
+        assert!(mean_absolute_error(&trace, &expected, 4) < 0.2);
+    }
+
+    #[test]
+    fn sweetness_uses_envelope_and_stabilized_frequency() {
+        let samples = 256usize;
+        let sample_interval_ms = 2.0_f32;
+        let amplitude = 4.0_f32;
+        let (mut trace, frequency_hz) =
+            sinusoid_trace(samples, sample_interval_ms, 12, amplitude, 0.1);
+
+        apply_pipeline_to_traces(
+            &mut trace,
+            1,
+            samples,
+            sample_interval_ms,
+            None,
+            &[ProcessingOperation::Sweetness],
+        )
+        .unwrap();
+
+        let expected = vec![amplitude / frequency_hz.sqrt(); samples];
+        assert!(mean_absolute_error(&trace, &expected, 4) < 2.5e-3);
+    }
+
+    #[test]
+    fn target_tile_group_size_respects_target_bytes() {
+        let tiles = target_tile_group_size(4096, 128, 16_000);
+        assert_eq!(tiles, 3);
+        assert_eq!(target_tile_group_size(4096, 128, 1), 1);
+    }
+
+    #[test]
+    fn partition_tile_groups_follow_storage_order() {
+        let geometry = crate::storage::tile_geometry::TileGeometry::new([8, 6, 4], [2, 3, 4]);
+        let groups = partition_tile_groups_for_target_bytes(&geometry, 220);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].len(), 2);
+        assert_eq!(groups[1].len(), 2);
+        assert_eq!(
+            groups[0],
+            vec![
+                TileCoord {
+                    tile_i: 0,
+                    tile_x: 0,
+                },
+                TileCoord {
+                    tile_i: 0,
+                    tile_x: 1,
+                },
+            ]
+        );
+        assert_eq!(
+            groups[1],
+            vec![
+                TileCoord {
+                    tile_i: 1,
+                    tile_x: 0,
+                },
+                TileCoord {
+                    tile_i: 1,
+                    tile_x: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn partitioned_tbvol_materialization_matches_serial_output_with_secondary_inputs() {
+        let source_root = unique_test_root("partitioned-trace-local-source");
+        let secondary_root = unique_test_root("partitioned-trace-local-secondary");
+        let serial_root = unique_test_root("partitioned-trace-local-serial");
+        let partitioned_root = unique_test_root("partitioned-trace-local-parallel");
+        let tile_shape = [2, 2, 8];
+        let shape = [4, 4, 8];
+
+        write_test_store(
+            &source_root,
+            shape,
+            tile_shape,
+            |iline, xline, sample| (iline as f32 * 100.0) + (xline as f32 * 10.0) + sample as f32,
+            |iline, xline| !(iline == 1 && xline == 2),
+        );
+        write_test_store(
+            &secondary_root,
+            shape,
+            tile_shape,
+            |iline, xline, sample| {
+                ((iline as f32 * 100.0) + (xline as f32 * 10.0) + sample as f32) * 0.25
+            },
+            |_, _| true,
+        );
+
+        let pipeline = ProcessingPipeline {
+            schema_version: 1,
+            revision: 1,
+            preset_id: None,
+            name: Some("volume arithmetic add".to_string()),
+            description: None,
+            steps: vec![ophiolite_seismic::TraceLocalProcessingStep {
+                operation: ProcessingOperation::VolumeArithmetic {
+                    operator: TraceLocalVolumeArithmeticOperator::Add,
+                    secondary_store_path: secondary_root.display().to_string(),
+                },
+                checkpoint: false,
+            }],
+        };
+
+        let mut serial_progress = Vec::new();
+        materialize_processing_volume_with_progress(
+            &source_root,
+            &serial_root,
+            &pipeline,
+            MaterializeOptions {
+                chunk_shape: tile_shape,
+                partition_target_bytes: None,
+                ..MaterializeOptions::default()
+            },
+            |completed, total| {
+                serial_progress.push((completed, total));
+                Ok(())
+            },
+        )
+        .expect("serial materialization should succeed");
+
+        let mut partitioned_progress = Vec::new();
+        let mut partition_execution_progress = Vec::new();
+        materialize_processing_volume_with_partition_progress(
+            &source_root,
+            &partitioned_root,
+            &pipeline,
+            MaterializeOptions {
+                chunk_shape: tile_shape,
+                partition_target_bytes: Some(264),
+                ..MaterializeOptions::default()
+            },
+            |completed, total| {
+                partitioned_progress.push((completed, total));
+                Ok(())
+            },
+            |progress| {
+                partition_execution_progress.push(progress);
+                Ok(())
+            },
+        )
+        .expect("partitioned materialization should succeed");
+
+        assert_eq!(serial_progress.last().copied(), Some((4, 4)));
+        assert_eq!(partitioned_progress.last().copied(), Some((4, 4)));
+        assert_eq!(
+            partition_execution_progress.last().copied(),
+            Some(PartitionExecutionProgress {
+                completed_partitions: 2,
+                total_partitions: 2,
+                active_partitions: 0,
+                peak_active_partitions: 2,
+                retry_count: 0,
+            })
+        );
+
+        let serial = TbvolReader::open(&serial_root).expect("open serial output");
+        let partitioned = TbvolReader::open(&partitioned_root).expect("open partitioned output");
+
+        for tile in serial.tile_geometry().iter_tiles() {
+            assert_eq!(
+                serial.read_tile(tile).expect("read serial tile").as_slice(),
+                partitioned
+                    .read_tile(tile)
+                    .expect("read partitioned tile")
+                    .as_slice()
+            );
+            assert_eq!(
+                serial
+                    .read_tile_occupancy(tile)
+                    .expect("read serial occupancy")
+                    .map(|mask| mask.into_owned()),
+                partitioned
+                    .read_tile_occupancy(tile)
+                    .expect("read partitioned occupancy")
+                    .map(|mask| mask.into_owned())
+            );
+        }
+
+        let tile = partitioned
+            .read_tile(TileCoord {
+                tile_i: 0,
+                tile_x: 0,
+            })
+            .expect("read partitioned verification tile");
+        let tile = tile.as_slice();
+        assert!((tile[0] - 0.0).abs() < 1.0e-6);
+        assert!((tile[1] - 1.25).abs() < 1.0e-6);
+
+        for root in [
+            &source_root,
+            &secondary_root,
+            &serial_root,
+            &partitioned_root,
+        ] {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn partitioned_tbvol_materialization_respects_max_active_partition_cap() {
+        let source_root = unique_test_root("partition-cap-source");
+        let output_root = unique_test_root("partition-cap-output");
+        let tile_shape = [2, 2, 8];
+        let shape = [4, 4, 8];
+
+        write_test_store(
+            &source_root,
+            shape,
+            tile_shape,
+            |iline, xline, sample| (iline as f32 * 100.0) + (xline as f32 * 10.0) + sample as f32,
+            |_, _| true,
+        );
+
+        let pipeline = ProcessingPipeline {
+            schema_version: 1,
+            revision: 1,
+            preset_id: None,
+            name: Some("scalar".to_string()),
+            description: None,
+            steps: vec![ophiolite_seismic::TraceLocalProcessingStep {
+                operation: ProcessingOperation::AmplitudeScalar { factor: 2.0 },
+                checkpoint: false,
+            }],
+        };
+
+        let mut partition_execution_progress = Vec::new();
+        materialize_processing_volume_with_partition_progress(
+            &source_root,
+            &output_root,
+            &pipeline,
+            MaterializeOptions {
+                chunk_shape: tile_shape,
+                partition_target_bytes: Some(264),
+                max_active_partitions: Some(1),
+                ..MaterializeOptions::default()
+            },
+            |_, _| Ok(()),
+            |progress| {
+                partition_execution_progress.push(progress);
+                Ok(())
+            },
+        )
+        .expect("partition-capped materialization should succeed");
+
+        assert_eq!(
+            partition_execution_progress.last().copied(),
+            Some(PartitionExecutionProgress {
+                completed_partitions: 2,
+                total_partitions: 2,
+                active_partitions: 0,
+                peak_active_partitions: 1,
+                retry_count: 0,
+            })
+        );
+
+        for root in [&source_root, &output_root] {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn partitioned_tbvol_materialization_uses_explicit_chunk_plan() {
+        let source_root = unique_test_root("chunk-plan-source");
+        let output_root = unique_test_root("chunk-plan-output");
+        let tile_shape = [2, 2, 8];
+        let shape = [4, 4, 8];
+
+        write_test_store(
+            &source_root,
+            shape,
+            tile_shape,
+            |iline, xline, sample| (iline as f32 * 100.0) + (xline as f32 * 10.0) + sample as f32,
+            |_, _| true,
+        );
+
+        let pipeline = ProcessingPipeline {
+            schema_version: 1,
+            revision: 1,
+            preset_id: None,
+            name: Some("scalar".to_string()),
+            description: None,
+            steps: vec![ophiolite_seismic::TraceLocalProcessingStep {
+                operation: ProcessingOperation::AmplitudeScalar { factor: 2.0 },
+                checkpoint: false,
+            }],
+        };
+
+        let mut partition_execution_progress = Vec::new();
+        materialize_processing_volume_with_partition_progress(
+            &source_root,
+            &output_root,
+            &pipeline,
+            MaterializeOptions {
+                chunk_shape: tile_shape,
+                partition_target_bytes: None,
+                trace_local_chunk_plan: Some(TraceLocalChunkPlanRecommendation {
+                    max_active_partitions: 1,
+                    tiles_per_partition: 2,
+                    partition_count: 2,
+                    compatibility_target_bytes: 1,
+                    resident_partition_bytes: 1,
+                    global_worker_workspace_bytes: 0,
+                    estimated_peak_bytes: 1,
+                }),
+                ..MaterializeOptions::default()
+            },
+            |_, _| Ok(()),
+            |progress| {
+                partition_execution_progress.push(progress);
+                Ok(())
+            },
+        )
+        .expect("chunk-plan materialization should succeed");
+
+        assert_eq!(
+            partition_execution_progress.last().copied(),
+            Some(PartitionExecutionProgress {
+                completed_partitions: 2,
+                total_partitions: 2,
+                active_partitions: 0,
+                peak_active_partitions: 1,
+                retry_count: 0,
+            })
+        );
+
+        for root in [&source_root, &output_root] {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    fn test_trace_local_execution_plan(
+        shape: [usize; 3],
+        chunk_shape: [usize; 3],
+        planning_mode: PlanningMode,
+    ) -> crate::execution::ExecutionPlan {
+        build_execution_plan(&PlanProcessingRequest {
+            store_path: "input.tbvol".to_string(),
+            layout: SeismicLayout::PostStack3D,
+            source_shape: Some(shape),
+            source_chunk_shape: Some(chunk_shape),
+            pipeline: ProcessingPipelineSpec::TraceLocal {
+                pipeline: ProcessingPipeline {
+                    schema_version: 1,
+                    revision: 1,
+                    preset_id: None,
+                    name: Some("adaptive-test".to_string()),
+                    description: None,
+                    steps: vec![
+                        ophiolite_seismic::TraceLocalProcessingStep {
+                            operation: ProcessingOperation::TraceRmsNormalize,
+                            checkpoint: false,
+                        },
+                        ophiolite_seismic::TraceLocalProcessingStep {
+                            operation: ProcessingOperation::AgcRms { window_ms: 250.0 },
+                            checkpoint: false,
+                        },
+                    ],
+                },
+            },
+            output_store_path: Some("output.tbvol".to_string()),
+            planning_mode,
+            max_active_partitions: None,
+        })
+        .expect("trace-local execution plan should build")
+    }
+
+    #[test]
+    fn resolve_trace_local_materialize_options_uses_adaptive_chunk_plan() {
+        let plan = test_trace_local_execution_plan(
+            [64, 64, 256],
+            [8, 8, 256],
+            PlanningMode::ForegroundMaterialize,
+        );
+
+        let resolution = resolve_trace_local_materialize_options(
+            Some(&plan),
+            [8, 8, 256],
+            true,
+            Some(64 * 1024 * 1024),
+            8,
+            Some(8 * 1024 * 1024 * 1024),
+            1,
+        );
+
+        let recommendation = resolution
+            .adaptive_recommendation
+            .as_ref()
+            .expect("adaptive recommendation should exist");
+        let chunk_plan = resolution
+            .options
+            .trace_local_chunk_plan
+            .as_ref()
+            .expect("explicit chunk plan should be populated");
+        let summary = resolution
+            .resolved_chunk_plan
+            .as_ref()
+            .expect("resolved chunk-plan summary should be populated");
+
+        assert_eq!(resolution.options.partition_target_bytes, None);
+        assert_eq!(
+            resolution.resolved_partition_target_bytes,
+            Some(recommendation.target_bytes())
+        );
+        assert_eq!(
+            chunk_plan.partition_count,
+            recommendation.recommended_partition_count()
+        );
+        assert_eq!(
+            summary.compatibility_target_bytes,
+            recommendation.target_bytes()
+        );
+        assert_eq!(summary.partition_count, chunk_plan.partition_count);
+    }
+
+    #[test]
+    fn resolve_trace_local_materialize_options_falls_back_when_adaptive_disabled() {
+        let plan = test_trace_local_execution_plan(
+            [64, 64, 256],
+            [8, 8, 256],
+            PlanningMode::ForegroundMaterialize,
+        );
+        let target_bytes = 96 * 1024 * 1024;
+
+        let resolution = resolve_trace_local_materialize_options(
+            Some(&plan),
+            [8, 8, 256],
+            false,
+            Some(target_bytes),
+            8,
+            Some(8 * 1024 * 1024 * 1024),
+            1,
+        );
+
+        assert!(resolution.adaptive_recommendation.is_none());
+        assert_eq!(
+            resolution.options.partition_target_bytes,
+            Some(target_bytes)
+        );
+        assert!(resolution.options.trace_local_chunk_plan.is_none());
+        assert_eq!(
+            resolution.resolved_partition_target_bytes,
+            Some(target_bytes)
+        );
+        let summary = resolution
+            .resolved_chunk_plan
+            .as_ref()
+            .expect("fixed partition target should still resolve a chunk summary");
+        assert_eq!(summary.compatibility_target_bytes, target_bytes);
+        assert!(summary.partition_count >= 1);
+        assert!(summary.tiles_per_partition >= 1);
+    }
+
+    #[test]
+    fn resolve_trace_local_materialize_options_handles_missing_plan() {
+        let target_bytes = 32 * 1024 * 1024;
+
+        let resolution = resolve_trace_local_materialize_options(
+            None,
+            [8, 8, 256],
+            true,
+            Some(target_bytes),
+            8,
+            Some(8 * 1024 * 1024 * 1024),
+            1,
+        );
+
+        assert!(resolution.adaptive_recommendation.is_none());
+        assert_eq!(
+            resolution.options.partition_target_bytes,
+            Some(target_bytes)
+        );
+        assert!(resolution.options.trace_local_chunk_plan.is_none());
+        assert_eq!(
+            resolution.resolved_partition_target_bytes,
+            Some(target_bytes)
+        );
+        assert!(resolution.resolved_chunk_plan.is_none());
+    }
+
+    #[test]
+    fn resolve_trace_local_materialize_options_scales_for_batch_concurrency() {
+        let plan = test_trace_local_execution_plan(
+            [64, 64, 256],
+            [8, 8, 256],
+            PlanningMode::BackgroundBatch,
+        );
+
+        let single_job = resolve_trace_local_materialize_options(
+            Some(&plan),
+            [8, 8, 256],
+            true,
+            None,
+            8,
+            Some(8 * 1024 * 1024 * 1024),
+            1,
+        );
+        let four_jobs = resolve_trace_local_materialize_options(
+            Some(&plan),
+            [8, 8, 256],
+            true,
+            None,
+            8,
+            Some(8 * 1024 * 1024 * 1024),
+            4,
+        );
+
+        let single = single_job
+            .adaptive_recommendation
+            .expect("single-job adaptive recommendation should exist");
+        let batch = four_jobs
+            .adaptive_recommendation
+            .expect("batch adaptive recommendation should exist");
+
+        assert!(batch.target_bytes() <= single.target_bytes());
+        assert!(batch.recommended_partition_count() >= single.recommended_partition_count());
+    }
+
+    fn write_test_store<F, O>(
+        root: &Path,
+        shape: [usize; 3],
+        tile_shape: [usize; 3],
+        amplitude: F,
+        occupied: O,
+    ) where
+        F: Fn(usize, usize, usize) -> f32,
+        O: Fn(usize, usize) -> bool,
+    {
+        let volume = test_volume_metadata(shape);
+        let geometry = crate::storage::tile_geometry::TileGeometry::new(shape, tile_shape);
+        let writer =
+            TbvolWriter::create(root, volume, tile_shape, true).expect("create synthetic tbvol");
+
+        for tile in geometry.iter_tiles() {
+            let origin = geometry.tile_origin(tile);
+            let effective = geometry.effective_tile_shape(tile);
+            let mut amplitudes = vec![0.0_f32; geometry.amplitude_tile_len()];
+            let mut occupancy = vec![0_u8; geometry.occupancy_tile_len()];
+            for local_i in 0..effective[0] {
+                for local_x in 0..effective[1] {
+                    let global_i = origin[0] + local_i;
+                    let global_x = origin[1] + local_x;
+                    let trace_index = local_i * tile_shape[1] + local_x;
+                    occupancy[trace_index] = u8::from(occupied(global_i, global_x));
+                    let trace_start = trace_index * tile_shape[2];
+                    for sample in 0..effective[2] {
+                        amplitudes[trace_start + sample] = amplitude(global_i, global_x, sample);
+                    }
+                }
+            }
+            writer
+                .write_tile(tile, &amplitudes)
+                .expect("write amplitudes");
+            writer
+                .write_tile_occupancy(tile, &occupancy)
+                .expect("write occupancy");
+        }
+        writer.finalize().expect("finalize synthetic tbvol");
+    }
+
+    fn test_volume_metadata(shape: [usize; 3]) -> VolumeMetadata {
+        VolumeMetadata {
+            kind: DatasetKind::Source,
+            store_id: generate_store_id(),
+            source: SourceIdentity {
+                source_path: PathBuf::from("synthetic://compute-partition-test"),
+                file_size: 0,
+                trace_count: (shape[0] * shape[1]) as u64,
+                samples_per_trace: shape[2],
+                sample_interval_us: 2000,
+                sample_format_code: 5,
+                sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(5),
+                endianness: "little".to_string(),
+                revision_raw: 0,
+                fixed_length_trace_flag_raw: 1,
+                extended_textual_headers: 0,
+                geometry: GeometryProvenance {
+                    inline_field: HeaderFieldSpec {
+                        name: "INLINE".to_string(),
+                        start_byte: 189,
+                        value_type: "I32".to_string(),
+                    },
+                    crossline_field: HeaderFieldSpec {
+                        name: "XLINE".to_string(),
+                        start_byte: 193,
+                        value_type: "I32".to_string(),
+                    },
+                    third_axis_field: None,
+                },
+                regularization: None,
+            },
+            shape,
+            axes: VolumeAxes::from_time_axis(
+                (0..shape[0]).map(|value| value as f64).collect(),
+                (0..shape[1]).map(|value| value as f64).collect(),
+                (0..shape[2]).map(|value| value as f32 * 2.0).collect(),
+            ),
+            segy_export: None,
+            coordinate_reference_binding: None,
+            spatial: None,
+            created_by: "compute-partition-test".to_string(),
+            processing_lineage: None,
+        }
+    }
+
+    fn unique_test_root(label: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("traceboost-{label}-{suffix}.tbvol"))
     }
 
     #[test]

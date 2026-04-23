@@ -511,6 +511,7 @@
           "format": "double"
         },
         "sample_index": {
+          "default": null,
           "type": [
             "integer",
             "null"
@@ -519,6 +520,7 @@
           "minimum": 0.0
         },
         "sample_value": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -535,6 +537,7 @@
           "minimum": 0.0
         },
         "true_vertical_depth_m": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -542,6 +545,7 @@
           "format": "double"
         },
         "true_vertical_depth_subsea_m": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -549,6 +553,7 @@
           "format": "double"
         },
         "twt_ms": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -571,12 +576,14 @@
       "type": "object",
       "properties": {
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "samples": {
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/SectionWellOverlaySampleDto"
@@ -599,6 +606,7 @@
               "format": "double"
             },
             "sample_index": {
+              "default": null,
               "type": [
                 "integer",
                 "null"
@@ -607,6 +615,7 @@
               "minimum": 0.0
             },
             "sample_value": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -623,6 +632,7 @@
               "minimum": 0.0
             },
             "true_vertical_depth_m": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -630,6 +640,7 @@
               "format": "double"
             },
             "true_vertical_depth_subsea_m": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -637,6 +648,7 @@
               "format": "double"
             },
             "twt_ms": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -667,12 +679,14 @@
       ],
       "properties": {
         "active_model_id": {
+          "default": null,
           "type": [
             "string",
             "null"
           ]
         },
         "depth_reference": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/DepthReferenceKind"
@@ -683,6 +697,7 @@
           ]
         },
         "diagnostics": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
@@ -695,12 +710,14 @@
           "type": "string"
         },
         "segments": {
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/SectionWellOverlaySegmentDto"
           }
         },
         "travel_time_reference": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/TravelTimeReference"
@@ -748,6 +765,7 @@
               "format": "double"
             },
             "sample_index": {
+              "default": null,
               "type": [
                 "integer",
                 "null"
@@ -756,6 +774,7 @@
               "minimum": 0.0
             },
             "sample_value": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -772,6 +791,7 @@
               "minimum": 0.0
             },
             "true_vertical_depth_m": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -779,6 +799,7 @@
               "format": "double"
             },
             "true_vertical_depth_subsea_m": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -786,6 +807,7 @@
               "format": "double"
             },
             "twt_ms": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -806,12 +828,14 @@
           "type": "object",
           "properties": {
             "notes": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
             "samples": {
+              "default": [],
               "type": "array",
               "items": {
                 "$ref": "#/definitions/SectionWellOverlaySampleDto"
@@ -837,6 +861,7 @@
       ],
       "properties": {
         "overlays": {
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/ResolvedSectionWellOverlayDto"
@@ -867,12 +892,14 @@
           ],
           "properties": {
             "active_model_id": {
+              "default": null,
               "type": [
                 "string",
                 "null"
               ]
             },
             "depth_reference": {
+              "default": null,
               "anyOf": [
                 {
                   "$ref": "#/definitions/DepthReferenceKind"
@@ -883,6 +910,7 @@
               ]
             },
             "diagnostics": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string"
@@ -895,12 +923,14 @@
               "type": "string"
             },
             "segments": {
+              "default": [],
               "type": "array",
               "items": {
                 "$ref": "#/definitions/SectionWellOverlaySegmentDto"
               }
             },
             "travel_time_reference": {
+              "default": null,
               "anyOf": [
                 {
                   "$ref": "#/definitions/TravelTimeReference"
@@ -940,6 +970,7 @@
               "format": "double"
             },
             "sample_index": {
+              "default": null,
               "type": [
                 "integer",
                 "null"
@@ -948,6 +979,7 @@
               "minimum": 0.0
             },
             "sample_value": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -964,6 +996,7 @@
               "minimum": 0.0
             },
             "true_vertical_depth_m": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -971,6 +1004,7 @@
               "format": "double"
             },
             "true_vertical_depth_subsea_m": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -978,6 +1012,7 @@
               "format": "double"
             },
             "twt_ms": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -998,12 +1033,14 @@
           "type": "object",
           "properties": {
             "notes": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
             "samples": {
+              "default": [],
               "type": "array",
               "items": {
                 "$ref": "#/definitions/SectionWellOverlaySampleDto"
@@ -8059,6 +8096,7 @@
       ],
       "properties": {
         "aligned_coordinate_reference": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/CoordinateReferenceDescriptor"
@@ -8085,6 +8123,7 @@
           "type": "string"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
@@ -8096,6 +8135,7 @@
           "minimum": 0.0
         },
         "source_coordinate_reference": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/CoordinateReferenceDescriptor"
@@ -8174,6 +8214,7 @@
               "$ref": "#/definitions/SectionHorizonLineStyle"
             },
             "line_width": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -8181,6 +8222,7 @@
               "format": "float"
             },
             "opacity": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -8927,12 +8969,14 @@
           "$ref": "#/definitions/TimeDepthDomain"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "source_kind": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/TimeDepthTransformSourceKind"
@@ -8949,6 +8993,7 @@
           "$ref": "#/definitions/SectionTimeDepthTransformMode"
         },
         "velocity_kind": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/VelocityQuantityKind"
@@ -9053,6 +9098,7 @@
           "type": "string"
         },
         "name": {
+          "default": null,
           "type": [
             "string",
             "null"
@@ -9063,6 +9109,7 @@
           "format": "float"
         },
         "units": {
+          "default": null,
           "type": [
             "string",
             "null"
@@ -9139,6 +9186,7 @@
           "$ref": "#/definitions/SectionHorizonLineStyle"
         },
         "line_width": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -9146,6 +9194,7 @@
           "format": "float"
         },
         "opacity": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -9179,6 +9228,7 @@
           "minimum": 0.0
         },
         "sample_value": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -9205,12 +9255,14 @@
           "type": "string"
         },
         "name": {
+          "default": null,
           "type": [
             "string",
             "null"
           ]
         },
         "samples": {
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/SectionHorizonSample"
@@ -9242,6 +9294,7 @@
               "minimum": 0.0
             },
             "sample_value": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -9269,6 +9322,7 @@
               "$ref": "#/definitions/SectionHorizonLineStyle"
             },
             "line_width": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -9276,6 +9330,7 @@
               "format": "float"
             },
             "opacity": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -9295,12 +9350,14 @@
       ],
       "properties": {
         "horizon_overlays": {
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/SectionHorizonOverlayView"
           }
         },
         "scalar_overlays": {
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/SectionScalarOverlayView"
@@ -9310,6 +9367,7 @@
           "$ref": "#/definitions/SectionView"
         },
         "time_depth_diagnostics": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/SectionTimeDepthDiagnostics"
@@ -9413,12 +9471,14 @@
               "type": "string"
             },
             "name": {
+              "default": null,
               "type": [
                 "string",
                 "null"
               ]
             },
             "samples": {
+              "default": [],
               "type": "array",
               "items": {
                 "$ref": "#/definitions/SectionHorizonSample"
@@ -9442,6 +9502,7 @@
               "minimum": 0.0
             },
             "sample_value": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -9469,6 +9530,7 @@
               "$ref": "#/definitions/SectionHorizonLineStyle"
             },
             "line_width": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -9476,6 +9538,7 @@
               "format": "float"
             },
             "opacity": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -9573,6 +9636,7 @@
               "type": "string"
             },
             "name": {
+              "default": null,
               "type": [
                 "string",
                 "null"
@@ -9583,6 +9647,7 @@
               "format": "float"
             },
             "units": {
+              "default": null,
               "type": [
                 "string",
                 "null"
@@ -9622,12 +9687,14 @@
               "$ref": "#/definitions/TimeDepthDomain"
             },
             "notes": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
             "source_kind": {
+              "default": null,
               "anyOf": [
                 {
                   "$ref": "#/definitions/TimeDepthTransformSourceKind"
@@ -9644,6 +9711,7 @@
               "$ref": "#/definitions/SectionTimeDepthTransformMode"
             },
             "velocity_kind": {
+              "default": null,
               "anyOf": [
                 {
                   "$ref": "#/definitions/VelocityQuantityKind"
@@ -10255,6 +10323,7 @@
       ],
       "properties": {
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
@@ -10264,6 +10333,7 @@
           "$ref": "#/definitions/SpatialCoverageRelationship"
         },
         "source_coordinate_reference": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/CoordinateReferenceDescriptor"
@@ -10274,6 +10344,7 @@
           ]
         },
         "target_coordinate_reference": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/CoordinateReferenceDescriptor"
@@ -10748,6 +10819,7 @@
       ],
       "properties": {
         "coordinate_reference": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/CoordinateReferenceDescriptor"
@@ -10761,6 +10833,7 @@
           "$ref": "#/definitions/SpatialCoverageSummary"
         },
         "grid_transform": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/SurveyGridTransform"
@@ -10782,6 +10855,7 @@
           "type": "string"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
@@ -10889,6 +10963,7 @@
           ],
           "properties": {
             "notes": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string"
@@ -10898,6 +10973,7 @@
               "$ref": "#/definitions/SpatialCoverageRelationship"
             },
             "source_coordinate_reference": {
+              "default": null,
               "anyOf": [
                 {
                   "$ref": "#/definitions/CoordinateReferenceDescriptor"
@@ -10908,6 +10984,7 @@
               ]
             },
             "target_coordinate_reference": {
+              "default": null,
               "anyOf": [
                 {
                   "$ref": "#/definitions/CoordinateReferenceDescriptor"
@@ -13535,6 +13612,7 @@
           "minimum": 0.0
         },
         "unit": {
+          "default": null,
           "type": [
             "string",
             "null"
@@ -13591,6 +13669,7 @@
               "minimum": 0.0
             },
             "unit": {
+              "default": null,
               "type": [
                 "string",
                 "null"
@@ -13632,6 +13711,7 @@
           }
         },
         "unit": {
+          "default": null,
           "type": [
             "string",
             "null"
@@ -13800,6 +13880,7 @@
           "$ref": "#/definitions/WellTieLogSelection1D"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
@@ -13860,6 +13941,7 @@
               }
             },
             "unit": {
+              "default": null,
               "type": [
                 "string",
                 "null"
@@ -13902,6 +13984,7 @@
               "minimum": 0.0
             },
             "unit": {
+              "default": null,
               "type": [
                 "string",
                 "null"
@@ -13938,6 +14021,7 @@
           ],
           "properties": {
             "bulk_shift_ms": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -13945,6 +14029,7 @@
               "format": "float"
             },
             "correlation": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -13961,24 +14046,28 @@
               "type": "string"
             },
             "notes": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string"
               }
             },
             "samples": {
+              "default": [],
               "type": "array",
               "items": {
                 "$ref": "#/definitions/WellTimeDepthObservationSample"
               }
             },
             "source_well_time_depth_model_asset_id": {
+              "default": null,
               "type": [
                 "string",
                 "null"
               ]
             },
             "stretch_factor": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -13986,6 +14075,7 @@
               "format": "float"
             },
             "tie_window_end_ms": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -13993,6 +14083,7 @@
               "format": "double"
             },
             "tie_window_start_ms": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -14000,6 +14091,7 @@
               "format": "double"
             },
             "trace_search_offset_m": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -14007,6 +14099,7 @@
               "format": "float"
             },
             "trace_search_radius_m": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -14017,6 +14110,7 @@
               "$ref": "#/definitions/TravelTimeReference"
             },
             "wellbore_id": {
+              "default": null,
               "type": [
                 "string",
                 "null"
@@ -14209,12 +14303,14 @@
           "type": "string"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "samples": {
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/WellTimeDepthObservationSample"
@@ -14224,6 +14320,7 @@
           "$ref": "#/definitions/TravelTimeReference"
         },
         "wellbore_id": {
+          "default": null,
           "type": [
             "string",
             "null"
@@ -14305,12 +14402,14 @@
           "type": "string"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "samples": {
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/WellTimeDepthObservationSample"
@@ -14320,6 +14419,7 @@
           "$ref": "#/definitions/TravelTimeReference"
         },
         "wellbore_id": {
+          "default": null,
           "type": [
             "string",
             "null"
@@ -14392,6 +14492,7 @@
       ],
       "properties": {
         "bulk_shift_ms": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14399,6 +14500,7 @@
           "format": "float"
         },
         "correlation": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14415,24 +14517,28 @@
           "type": "string"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "samples": {
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/WellTimeDepthObservationSample"
           }
         },
         "source_well_time_depth_model_asset_id": {
+          "default": null,
           "type": [
             "string",
             "null"
           ]
         },
         "stretch_factor": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14440,6 +14546,7 @@
           "format": "float"
         },
         "tie_window_end_ms": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14447,6 +14554,7 @@
           "format": "double"
         },
         "tie_window_start_ms": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14454,6 +14562,7 @@
           "format": "double"
         },
         "trace_search_offset_m": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14461,6 +14570,7 @@
           "format": "float"
         },
         "trace_search_radius_m": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14471,6 +14581,7 @@
           "$ref": "#/definitions/TravelTimeReference"
         },
         "wellbore_id": {
+          "default": null,
           "type": [
             "string",
             "null"
@@ -14549,6 +14660,7 @@
           "type": "boolean"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
@@ -14563,6 +14675,7 @@
           "$ref": "#/definitions/TimeDepthTransformSourceKind"
         },
         "valid_from_depth_m": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14570,6 +14683,7 @@
           "format": "double"
         },
         "valid_to_depth_m": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14610,6 +14724,7 @@
       ],
       "properties": {
         "from_depth_m": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14620,6 +14735,7 @@
           "$ref": "#/definitions/WellTimeDepthAssumptionKind"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
@@ -14630,6 +14746,7 @@
           "type": "boolean"
         },
         "to_depth_m": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14637,6 +14754,7 @@
           "format": "double"
         },
         "velocity_m_per_s": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14667,6 +14785,7 @@
       ],
       "properties": {
         "assumption_intervals": {
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/WellTimeDepthAssumptionInterval"
@@ -14682,6 +14801,7 @@
           "type": "string"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
@@ -14691,6 +14811,7 @@
           "type": "string"
         },
         "sampling_step_m": {
+          "default": null,
           "type": [
             "number",
             "null"
@@ -14698,6 +14819,7 @@
           "format": "double"
         },
         "source_bindings": {
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/WellTimeDepthSourceBinding"
@@ -14746,6 +14868,7 @@
           ],
           "properties": {
             "from_depth_m": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -14756,6 +14879,7 @@
               "$ref": "#/definitions/WellTimeDepthAssumptionKind"
             },
             "notes": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string"
@@ -14766,6 +14890,7 @@
               "type": "boolean"
             },
             "to_depth_m": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -14773,6 +14898,7 @@
               "format": "double"
             },
             "velocity_m_per_s": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -14803,6 +14929,7 @@
               "type": "boolean"
             },
             "notes": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string"
@@ -14817,6 +14944,7 @@
               "$ref": "#/definitions/TimeDepthTransformSourceKind"
             },
             "valid_from_depth_m": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -14824,6 +14952,7 @@
               "format": "double"
             },
             "valid_to_depth_m": {
+              "default": null,
               "type": [
                 "number",
                 "null"
@@ -14850,6 +14979,7 @@
           "type": "string"
         },
         "source_asset_ids": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
@@ -14879,12 +15009,14 @@
           "type": "string"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "samples": {
+          "default": [],
           "type": "array",
           "items": {
             "$ref": "#/definitions/TimeDepthSample1D"
@@ -14897,6 +15029,7 @@
           "$ref": "#/definitions/TravelTimeReference"
         },
         "wellbore_id": {
+          "default": null,
           "type": [
             "string",
             "null"
@@ -14968,6 +15101,7 @@
       ],
       "properties": {
         "coordinate_reference": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/CoordinateReferenceDescriptor"
@@ -14981,12 +15115,14 @@
           "$ref": "#/definitions/SpatialCoverageSummary"
         },
         "derived_from": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "grid_transform": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/SurveyGridTransform"
@@ -15008,6 +15144,7 @@
           "type": "string"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
@@ -15114,6 +15251,7 @@
           ],
           "properties": {
             "notes": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string"
@@ -15123,6 +15261,7 @@
               "$ref": "#/definitions/SpatialCoverageRelationship"
             },
             "source_coordinate_reference": {
+              "default": null,
               "anyOf": [
                 {
                   "$ref": "#/definitions/CoordinateReferenceDescriptor"
@@ -15133,6 +15272,7 @@
               ]
             },
             "target_coordinate_reference": {
+              "default": null,
               "anyOf": [
                 {
                   "$ref": "#/definitions/CoordinateReferenceDescriptor"
@@ -15220,6 +15360,7 @@
       ],
       "properties": {
         "coordinate_reference": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/CoordinateReferenceDescriptor"
@@ -15236,12 +15377,14 @@
           "type": "string"
         },
         "derived_from": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
           }
         },
         "grid_transform": {
+          "default": null,
           "anyOf": [
             {
               "$ref": "#/definitions/SurveyGridTransform"
@@ -15263,6 +15406,7 @@
           "type": "string"
         },
         "notes": {
+          "default": [],
           "type": "array",
           "items": {
             "type": "string"
@@ -15366,6 +15510,7 @@
           ],
           "properties": {
             "notes": {
+              "default": [],
               "type": "array",
               "items": {
                 "type": "string"
@@ -15375,6 +15520,7 @@
               "$ref": "#/definitions/SpatialCoverageRelationship"
             },
             "source_coordinate_reference": {
+              "default": null,
               "anyOf": [
                 {
                   "$ref": "#/definitions/CoordinateReferenceDescriptor"
@@ -15385,6 +15531,7 @@
               ]
             },
             "target_coordinate_reference": {
+              "default": null,
               "anyOf": [
                 {
                   "$ref": "#/definitions/CoordinateReferenceDescriptor"

@@ -67,6 +67,16 @@ The generated output currently lives under:
 - `ts/seis-contracts/src/generated/`
 - `ts/seis-contracts/schemas/seis-contracts.schema.json`
 
+Contract wire-shape policy for the migrated TraceBoost families lives in:
+
+- `CONTRACT_STYLE.md`
+
+Run the scoped first-wave presence audit from the repo root with:
+
+```powershell
+python .\scripts\validation\audit_contract_presence_policy.py
+```
+
 ## Roadmap
 
 1. Keep this layer narrow and demo-specific.

@@ -3,15 +3,36 @@
 <script lang="ts">
   import type { ChartToolbarActionItem, ChartToolbarToolItem } from "@ophiolite/charts-toolbar";
   import { ChartInteractionToolbar } from "@ophiolite/charts-toolbar";
-  import { SeismicSectionChart } from "@ophiolite/charts";
+  import {
+    AmplitudeDistributionInspector,
+    SeismicSectionChart,
+    SpectrumInspector
+  } from "@ophiolite/charts";
+  import type {
+    SeismicSectionAnalysisConfig,
+    SeismicSectionAnalysisRequest,
+    SeismicSectionAnalysisSelectionMode,
+    SeismicSectionBrowseConfig,
+    SeismicSectionBrowseRequest,
+    SpectrumResponseLike
+  } from "@ophiolite/charts";
   import type { SegyGeometryCandidate, SegyHeaderField } from "@traceboost/seis-contracts";
+  import { buildAmplitudeDistribution, type AmplitudeDistributionResult } from "../amplitude-distribution";
+  import {
+    buildAnalysisSelectionKey,
+    buildAnalysisSelectionSummary,
+    selectionFromMode
+  } from "../seismic-analysis-selection";
+  import { adaptAmplitudeSpectrum } from "../spectrum-adapter";
+  import NeighborhoodOperatorEditor from "./NeighborhoodOperatorEditor.svelte";
+  import NeighborhoodSequenceList from "./NeighborhoodSequenceList.svelte";
+  import ProcessingActivityStrip from "./ProcessingActivityStrip.svelte";
   import PipelineControlBar from "./PipelineControlBar.svelte";
   import DepthConversionWorkbench from "./DepthConversionWorkbench.svelte";
   import PipelineOperatorEditor from "./PipelineOperatorEditor.svelte";
   import PipelineSequenceList from "./PipelineSequenceList.svelte";
   import PipelineSessionList from "./PipelineSessionList.svelte";
   import ResidualWorkbench from "./ResidualWorkbench.svelte";
-  import SpectrumInspector from "./SpectrumInspector.svelte";
   import VelocityModelWorkbench from "./VelocityModelWorkbench.svelte";
   import WellTieWorkbench from "./WellTieWorkbench.svelte";
   import { getProcessingModelContext } from "../processing-model.svelte";
@@ -42,11 +63,22 @@
   let draftClipMax = $state("");
   let draftColormap = $state<"grayscale" | "red-white-blue">("grayscale");
   let draftPolarity = $state<"normal" | "reversed">("normal");
-  let sectionIndexDraft = $state<number | undefined>(undefined);
   let depthVelocityDraft = $state(String(viewerModel.depthVelocityMPerS));
+  let analysisSelectionMode = $state<SeismicSectionAnalysisSelectionMode>("whole-section");
+  let distributionInspectorOpen = $state(false);
+  let distributionBusy = $state(false);
+  let distributionError = $state<string | null>(null);
+  let distributionResult = $state.raw<AmplitudeDistributionResult | null>(null);
+  let distributionResultKey = $state<string | null>(null);
 
   const compareViewport = $derived(viewerModel.displayedViewport);
   const chartSessionKey = $derived(`${viewerModel.displayedViewerSessionKey}:${processingModel.displaySectionMode}`);
+  const displayedSection = $derived(processingModel.displaySection);
+  const displayedSectionAnalysisKey = $derived(
+    displayedSection && viewerModel.activeStorePath
+      ? `${viewerModel.activeStorePath}:${displayedSection.axis}:${displayedSection.coordinate.index}:${processingModel.displaySectionMode}:${processingModel.displayResetToken}`
+      : null
+  );
   const displayedViewId = $derived(`${viewerModel.displayedViewId}:${processingModel.displaySectionMode}`);
   const geometryRecovery = $derived(viewerModel.importGeometryRecovery);
   const datasetExportDialog = $derived(viewerModel.datasetExportDialog);
@@ -69,6 +101,70 @@
         ? Math.max(0, viewerModel.dataset.descriptor.shape[0] - 1)
         : Math.max(0, viewerModel.dataset.descriptor.shape[1] - 1)
       : 0
+  );
+  const sectionBrowsePending = $derived(Boolean(displayedSection) && viewerModel.loading);
+  const chartLoading = $derived(
+    (!displayedSection && viewerModel.loading) ||
+      processingModel.previewBusy ||
+      (splitReady && viewerModel.backgroundLoading)
+  );
+  const sectionBrowse = $derived.by<SeismicSectionBrowseConfig | undefined>(() => {
+    if (!displayedSection || !viewerModel.activeStorePath || !viewerModel.dataset) {
+      return undefined;
+    }
+
+    return {
+      enabled: true,
+      current: {
+        axis: viewerModel.axis,
+        index: viewerModel.index,
+        value: displayedSection.coordinate.value
+      },
+      canStepBackward: viewerModel.index > 0,
+      canStepForward: viewerModel.index < sectionAxisLimit,
+      canSwitchAxis: !viewerModel.loading && !processingModel.previewBusy,
+      pending: sectionBrowsePending,
+      onRequest: handleSectionBrowseRequest
+    };
+  });
+  const currentAnalysisSelection = $derived(selectionFromMode(analysisSelectionMode, compareViewport));
+  const sectionAnalysis = $derived.by<SeismicSectionAnalysisConfig | undefined>(() => {
+    if (!displayedSection || !viewerModel.activeStorePath || !viewerModel.dataset) {
+      return undefined;
+    }
+
+    return {
+      enabled: true,
+      spectrumEnabled: processingModel.pipelineFamily === "trace_local",
+      distributionEnabled: true,
+      selectionMode: analysisSelectionMode,
+      selectionModes: ["whole-section", "viewport"],
+      openKinds: [
+        ...(processingModel.pipelineFamily === "trace_local" && processingModel.spectrumInspectorOpen
+          ? (["amplitude-spectrum"] as const)
+          : []),
+        ...(distributionInspectorOpen ? (["amplitude-distribution"] as const) : [])
+      ],
+      pendingKinds: [
+        ...(processingModel.spectrumBusy ? (["amplitude-spectrum"] as const) : []),
+        ...(distributionBusy ? (["amplitude-distribution"] as const) : [])
+      ],
+      onSelectionModeChange: handleAnalysisSelectionModeChange,
+      onRequest: handleSectionAnalysisRequest
+    };
+  });
+  const distributionSelectionSummary = $derived(
+    buildAnalysisSelectionSummary(displayedSection, currentAnalysisSelection)
+  );
+  const rawSpectrum = $derived.by<SpectrumResponseLike | null>(() => adaptAmplitudeSpectrum(processingModel.rawSpectrum));
+  const processedSpectrum = $derived.by<SpectrumResponseLike | null>(() =>
+    adaptAmplitudeSpectrum(processingModel.processedSpectrum)
+  );
+  const distributionCurrentKey = $derived(
+    buildAnalysisSelectionKey(displayedSectionAnalysisKey, currentAnalysisSelection)
+  );
+  const distributionStale = $derived(
+    Boolean(distributionResult && distributionResultKey && distributionCurrentKey && distributionResultKey !== distributionCurrentKey)
   );
   const tileWindow = $derived(resolveSectionTileWindow(viewerModel.section));
   const tileHitRate = $derived(
@@ -173,36 +269,86 @@
     }
   }
 
+  function axisLimitFor(axis: "inline" | "xline"): number {
+    return axis === "inline"
+      ? Math.max(0, (viewerModel.dataset?.descriptor.shape[0] ?? 1) - 1)
+      : Math.max(0, (viewerModel.dataset?.descriptor.shape[1] ?? 1) - 1);
+  }
+
   function handleAxisChange(nextAxis: "inline" | "xline"): void {
     if (!viewerModel.activeStorePath || viewerModel.loading) {
       return;
     }
 
-    const clampedIndex = Math.min(
-      viewerModel.index,
-      nextAxis === "inline"
-        ? Math.max(0, (viewerModel.dataset?.descriptor.shape[0] ?? 1) - 1)
-        : Math.max(0, (viewerModel.dataset?.descriptor.shape[1] ?? 1) - 1)
-    );
+    const clampedIndex = Math.min(viewerModel.index, axisLimitFor(nextAxis));
     void viewerModel.load(nextAxis, clampedIndex);
   }
 
-  function commitSectionIndex(): void {
-    const sectionIndexInput = sectionIndexDraft ?? viewerModel.index;
+  function handleSectionBrowseRequest(request: SeismicSectionBrowseRequest): void {
     if (!viewerModel.activeStorePath || viewerModel.loading) {
-      sectionIndexDraft = undefined;
       return;
     }
 
-    if (!Number.isFinite(sectionIndexInput)) {
-      sectionIndexDraft = undefined;
+    if (request.kind === "switch-axis") {
+      handleAxisChange(request.axis);
       return;
     }
 
-    const clamped = Math.min(Math.max(Math.round(sectionIndexInput), 0), sectionAxisLimit);
-    sectionIndexDraft = undefined;
-    if (clamped !== viewerModel.index) {
-      void viewerModel.load(viewerModel.axis, clamped);
+    const nextIndex = Math.min(
+      Math.max(request.current.index + request.direction, 0),
+      axisLimitFor(request.current.axis)
+    );
+    if (nextIndex !== viewerModel.index) {
+      void viewerModel.load(request.current.axis, nextIndex);
+    }
+  }
+
+  function handleAnalysisSelectionModeChange(mode: SeismicSectionAnalysisSelectionMode): void {
+    analysisSelectionMode = mode;
+    processingModel.setSpectrumSelectionMode(mode);
+  }
+
+  function handleSectionAnalysisRequest(request: SeismicSectionAnalysisRequest): void {
+    if (request.kind === "amplitude-spectrum") {
+      if (processingModel.pipelineFamily !== "trace_local") {
+        return;
+      }
+
+      handleAnalysisSelectionModeChange(request.selection.kind === "viewport" ? "viewport" : "whole-section");
+      processingModel.openSpectrumInspector();
+      if ((!processingModel.rawSpectrum || processingModel.spectrumStale) && !processingModel.spectrumBusy) {
+        void processingModel.refreshSpectrum();
+      }
+      return;
+    }
+
+    if (request.kind === "amplitude-distribution") {
+      handleAnalysisSelectionModeChange(request.selection.kind === "viewport" ? "viewport" : "whole-section");
+      distributionInspectorOpen = true;
+      if (!distributionResult || distributionResultKey !== buildAnalysisSelectionKey(displayedSectionAnalysisKey, request.selection)) {
+        void refreshAmplitudeDistribution(request.selection);
+      }
+    }
+  }
+
+  async function refreshAmplitudeDistribution(selection = currentAnalysisSelection): Promise<void> {
+    const currentSection = displayedSection;
+    const currentKey = buildAnalysisSelectionKey(displayedSectionAnalysisKey, selection);
+    if (!currentSection || !currentKey || !selection) {
+      distributionError = "Load a section before inspecting amplitude distribution.";
+      return;
+    }
+
+    distributionBusy = true;
+    distributionError = null;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      distributionResult = buildAmplitudeDistribution(currentSection, 48, selection);
+      distributionResultKey = currentKey;
+    } catch (error) {
+      distributionError = error instanceof Error ? error.message : "Failed to compute amplitude distribution.";
+    } finally {
+      distributionBusy = false;
     }
   }
 
@@ -307,6 +453,11 @@
       return;
     }
 
+    if (distributionInspectorOpen && event.key === "Escape") {
+      distributionInspectorOpen = false;
+      return;
+    }
+
     if (displaySettingsOpen) {
       return;
     }
@@ -359,42 +510,8 @@
 
 {#snippet chartDisplayOverlay()}
   <div class="chart-display-overlay">
-    <div class="display-chip-row">
-      <label class="display-chip field">
-        <span>{viewerModel.axis === "inline" ? "Inline" : "Xline"}</span>
-        <select
-          value={viewerModel.axis}
-          disabled={!viewerModel.activeStorePath || viewerModel.loading}
-          onchange={(event) => handleAxisChange((event.currentTarget as HTMLSelectElement).value as "inline" | "xline")}
-        >
-          <option value="inline">Inline</option>
-          <option value="xline">Xline</option>
-        </select>
-      </label>
-
-      <label class="display-chip field">
-        <span>Index</span>
-        <input
-          bind:value={
-            () => sectionIndexDraft ?? viewerModel.index,
-            (value) => {
-              sectionIndexDraft = value;
-            }
-          }
-          type="number"
-          min="0"
-          max={sectionAxisLimit}
-          disabled={!viewerModel.activeStorePath || viewerModel.loading}
-          onblur={commitSectionIndex}
-          onkeydown={(event) => {
-            if (event.key === "Enter") {
-              commitSectionIndex();
-            }
-          }}
-        />
-      </label>
-
-      {#if viewerModel.datasetSampleDataFidelityLabel}
+    {#if viewerModel.datasetSampleDataFidelityLabel}
+      <div class="display-chip-row">
         <div
           class={[
             "display-chip field sample-fidelity-chip",
@@ -405,8 +522,8 @@
           <span>Samples</span>
           <strong>{viewerModel.datasetSampleDataFidelityLabel}</strong>
         </div>
-      {/if}
-    </div>
+      </div>
+    {/if}
 
     <div class="display-chip-row">
       <button
@@ -530,21 +647,6 @@
         disabled={!processingModel.displaySection}
       >
         {viewerModel.displayTransform.colormap === "grayscale" ? "R/W/B" : "Gray"}
-      </button>
-      <button
-        class:active={processingModel.spectrumInspectorOpen}
-        class="display-chip icon"
-        onclick={processingModel.openSpectrumInspector}
-        aria-label="Open frequency spectrum inspector"
-        disabled={!processingModel.canInspectSpectrum}
-      >
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8">
-          <path d="M4 18.5V14" />
-          <path d="M9 18.5V8" />
-          <path d="M14 18.5V11" />
-          <path d="M19 18.5V5" />
-          <path d="M3 18.5h18" />
-        </svg>
       </button>
       <button
         class="display-chip icon"
@@ -712,6 +814,23 @@
             ? `Working on ${viewerModel.activeDatasetDisplayName} at ${viewerModel.axis}:${viewerModel.index}`
             : "Open a runtime store to preview processing on the current section."}
         </p>
+        <p class="workflow-origin">{processingModel.operatorCatalogSourceLabel}</p>
+        <div class="family-switch" role="tablist" aria-label="Processing family">
+          <button
+            class:active={processingModel.pipelineFamily === "trace_local"}
+            class="family-chip"
+            onclick={() => processingModel.setPipelineFamily("trace_local")}
+          >
+            Trace-Local
+          </button>
+          <button
+            class:active={processingModel.pipelineFamily === "post_stack_neighborhood"}
+            class="family-chip"
+            onclick={() => processingModel.setPipelineFamily("post_stack_neighborhood")}
+          >
+            Neighborhood
+          </button>
+        </div>
       </div>
 
         <PipelineSessionList
@@ -725,6 +844,7 @@
           onRemove={processingModel.removeActiveSessionPipeline}
           onRemoveItem={processingModel.removeSessionPipeline}
           getLabel={processingModel.sessionPipelineLabel}
+          getSummary={processingModel.sessionPipelineSummary}
           canRemove={processingModel.canRemoveSessionPipeline}
         />
     </aside>
@@ -732,15 +852,26 @@
     <div class="main-column">
       <div class="definition-pane">
         <PipelineControlBar
-          pipeline={processingModel.pipeline}
+          processingFamily={processingModel.pipelineFamily}
+          pipeline={
+            processingModel.pipelineFamily === "post_stack_neighborhood"
+              ? processingModel.postStackNeighborhoodPipeline
+              : processingModel.pipeline
+          }
           previewState={processingModel.previewState}
           previewLabel={processingModel.previewLabel}
-          presets={processingModel.presets}
+          presets={processingModel.visiblePresets}
           loadingPresets={processingModel.loadingPresets}
           canPreview={processingModel.canPreview}
           canRun={processingModel.canRun}
           previewBusy={processingModel.previewBusy}
           runBusy={processingModel.runBusy}
+          batchBusy={processingModel.batchBusy}
+          activeBatch={processingModel.activeBatch}
+          batchCandidates={processingModel.batchCandidates}
+          selectedBatchStorePaths={processingModel.selectedBatchStorePaths}
+          batchExecutionMode={processingModel.batchExecutionMode}
+          batchMaxActiveJobs={processingModel.batchMaxActiveJobs}
           runOutputSettingsOpen={processingModel.runOutputSettingsOpen}
           runOutputPathMode={processingModel.runOutputPathMode}
           runOutputPath={processingModel.resolvedRunOutputPath}
@@ -750,6 +881,8 @@
           onPreview={() => processingModel.previewCurrentSection()}
           onShowRaw={processingModel.showRawSection}
           onRun={() => processingModel.runOnVolume()}
+          onRunBatch={() => processingModel.runBatchOnVolumes()}
+          onCancelBatch={() => processingModel.cancelActiveBatch()}
           onToggleRunOutputSettings={() =>
             processingModel.setRunOutputSettingsOpen(!processingModel.runOutputSettingsOpen)}
           onSetRunOutputPathMode={processingModel.setRunOutputPathMode}
@@ -757,54 +890,95 @@
           onBrowseRunOutputPath={() => processingModel.browseRunOutputPath()}
           onResetRunOutputPath={processingModel.resetRunOutputPath}
           onSetOverwriteExistingRunOutput={processingModel.setOverwriteExistingRunOutput}
+          onToggleBatchStorePath={processingModel.toggleBatchStorePath}
+          onSelectAllBatchCandidates={processingModel.selectAllBatchCandidates}
+          onClearBatchSelection={processingModel.clearBatchSelection}
+          onSetBatchExecutionMode={processingModel.setBatchExecutionMode}
+          onSetBatchMaxActiveJobs={processingModel.setBatchMaxActiveJobs}
           onLoadPreset={processingModel.loadPreset}
           onSavePreset={() => processingModel.savePreset()}
           onDeletePreset={(presetId) => processingModel.deletePreset(presetId)}
         />
 
-        <div class="definition-grid">
-          <PipelineSequenceList
-            operations={processingModel.workspaceOperations}
-            traceLocalOperationCount={processingModel.pipeline.steps.length}
-            hasSubvolumeCrop={processingModel.hasSubvolumeCrop}
-            selectedIndex={processingModel.selectedStepIndex}
-            checkpointAfterOperationIndexes={processingModel.checkpointAfterOperationIndexes}
-            checkpointWarning={processingModel.checkpointWarning}
-            onSelect={processingModel.selectStep}
-            onInsertOperator={processingModel.insertOperatorById}
-            onCopy={processingModel.copySelectedOperation}
-            onPaste={processingModel.pasteCopiedOperation}
-            onRemove={processingModel.removeOperationAt}
-            onToggleCheckpoint={processingModel.toggleCheckpointAfterOperation}
-          />
+        <ProcessingActivityStrip
+          entries={processingModel.recentActivityEntries}
+          activeJobId={processingModel.activeJob?.job_id ?? null}
+          activeBatchId={processingModel.activeBatch?.batch_id ?? null}
+          onSelectJob={processingModel.focusRecentJob}
+          onSelectBatch={processingModel.focusRecentBatch}
+          onOpenArtifact={processingModel.openProcessingArtifact}
+          canClearFinished={processingModel.hasClearableRecentActivity}
+          onClearFinished={processingModel.clearFinishedRecentActivity}
+        />
 
-          <PipelineOperatorEditor
-            selectedOperation={processingModel.selectedOperation}
-            activeJob={processingModel.activeJob}
-            processingError={processingModel.error}
-            primaryVolumeLabel={processingModel.activePrimaryVolumeLabel}
-            sourceSubvolumeBounds={processingModel.sourceSubvolumeBounds}
-            secondaryVolumeOptions={processingModel.volumeArithmeticSecondaryOptions}
-            selectedStepCanCheckpoint={processingModel.canToggleSelectedCheckpoint}
-            selectedStepCheckpoint={processingModel.selectedStepCheckpoint}
-            onSetAmplitudeScalarFactor={processingModel.setSelectedAmplitudeScalarFactor}
-            onSetAgcWindow={processingModel.setSelectedAgcWindow}
-            onSetPhaseRotationAngle={processingModel.setSelectedPhaseRotationAngle}
-            onSetLowpassCorner={processingModel.setSelectedLowpassCorner}
-            onSetHighpassCorner={processingModel.setSelectedHighpassCorner}
-            onSetBandpassCorner={processingModel.setSelectedBandpassCorner}
-            onSetVolumeArithmeticOperator={processingModel.setSelectedVolumeArithmeticOperator}
-            onSetVolumeArithmeticSecondaryStorePath={processingModel.setSelectedVolumeArithmeticSecondaryStorePath}
-            onSetSubvolumeCropBound={processingModel.setSelectedSubvolumeCropBound}
-            onSetSelectedCheckpoint={processingModel.setSelectedCheckpoint}
-            canMoveUp={processingModel.canMoveSelectedUp}
-            canMoveDown={processingModel.canMoveSelectedDown}
-            onMoveUp={processingModel.moveSelectedUp}
-            onMoveDown={processingModel.moveSelectedDown}
-            onRemove={processingModel.removeSelected}
-            onCancelJob={() => processingModel.cancelActiveJob()}
-            onOpenArtifact={(storePath) => processingModel.openProcessingArtifact(storePath)}
-          />
+        <div class="definition-grid">
+          {#if processingModel.pipelineFamily === "post_stack_neighborhood"}
+            <NeighborhoodSequenceList
+              operations={processingModel.neighborhoodOperations}
+              selectedIndex={processingModel.selectedStepIndex}
+              onSelect={processingModel.selectStep}
+            />
+
+            <NeighborhoodOperatorEditor
+              selectedOperation={processingModel.selectedNeighborhoodOperation}
+              activeJob={processingModel.activeJob}
+              processingError={processingModel.error}
+              onSetWindow={processingModel.setSelectedNeighborhoodWindow}
+              onSetStatistic={processingModel.setSelectedNeighborhoodStatistic}
+              onSetDipOutput={processingModel.setSelectedNeighborhoodDipOutput}
+              onSetOperationKind={processingModel.setSelectedNeighborhoodOperatorKind}
+              onCancelJob={() => processingModel.cancelActiveJob()}
+              onOpenArtifact={(storePath) => processingModel.openProcessingArtifact(storePath)}
+            />
+          {:else}
+            <PipelineSequenceList
+              operations={processingModel.workspaceOperations}
+              operatorCatalogItems={processingModel.availableOperatorCatalogItems}
+              catalogSourceLabel={processingModel.operatorCatalogSourceLabel}
+              catalogSourceDetail={processingModel.operatorCatalogSourceDetail}
+              catalogEmptyMessage={processingModel.operatorCatalogEmptyMessage}
+              traceLocalOperationCount={processingModel.pipeline.steps.length}
+              hasSubvolumeCrop={processingModel.hasSubvolumeCrop}
+              selectedIndex={processingModel.selectedStepIndex}
+              checkpointAfterOperationIndexes={processingModel.checkpointAfterOperationIndexes}
+              checkpointWarning={processingModel.checkpointWarning}
+              onSelect={processingModel.selectStep}
+              onInsertOperator={processingModel.insertOperatorById}
+              onCopy={processingModel.copySelectedOperation}
+              onPaste={processingModel.pasteCopiedOperation}
+              onRemove={processingModel.removeOperationAt}
+              onToggleCheckpoint={processingModel.toggleCheckpointAfterOperation}
+            />
+
+            <PipelineOperatorEditor
+              selectedOperation={processingModel.selectedOperation}
+              selectedOperatorCatalogItem={processingModel.selectedOperatorCatalogItem}
+              activeJob={processingModel.activeJob}
+              processingError={processingModel.error}
+              primaryVolumeLabel={processingModel.activePrimaryVolumeLabel}
+              sourceSubvolumeBounds={processingModel.sourceSubvolumeBounds}
+              secondaryVolumeOptions={processingModel.volumeArithmeticSecondaryOptions}
+              selectedStepCanCheckpoint={processingModel.canToggleSelectedCheckpoint}
+              selectedStepCheckpoint={processingModel.selectedStepCheckpoint}
+              onSetAmplitudeScalarFactor={processingModel.setSelectedAmplitudeScalarFactor}
+              onSetAgcWindow={processingModel.setSelectedAgcWindow}
+              onSetPhaseRotationAngle={processingModel.setSelectedPhaseRotationAngle}
+              onSetLowpassCorner={processingModel.setSelectedLowpassCorner}
+              onSetHighpassCorner={processingModel.setSelectedHighpassCorner}
+              onSetBandpassCorner={processingModel.setSelectedBandpassCorner}
+              onSetVolumeArithmeticOperator={processingModel.setSelectedVolumeArithmeticOperator}
+              onSetVolumeArithmeticSecondaryStorePath={processingModel.setSelectedVolumeArithmeticSecondaryStorePath}
+              onSetSubvolumeCropBound={processingModel.setSelectedSubvolumeCropBound}
+              onSetSelectedCheckpoint={processingModel.setSelectedCheckpoint}
+              canMoveUp={processingModel.canMoveSelectedUp}
+              canMoveDown={processingModel.canMoveSelectedDown}
+              onMoveUp={processingModel.moveSelectedUp}
+              onMoveDown={processingModel.moveSelectedDown}
+              onRemove={processingModel.removeSelected}
+              onCancelJob={() => processingModel.cancelActiveJob()}
+              onOpenArtifact={(storePath) => processingModel.openProcessingArtifact(storePath)}
+            />
+          {/if}
         </div>
       </div>
 
@@ -838,8 +1012,10 @@
             splitPosition={viewerModel.compareSplitPosition}
             viewport={compareViewport}
             displayTransform={viewerModel.displayTransform}
+            browse={sectionBrowse}
+            analysis={sectionAnalysis}
             interactions={{ tool: viewerModel.chartTool }}
-            loading={viewerModel.loading || processingModel.previewBusy || (splitReady && viewerModel.backgroundLoading)}
+            loading={chartLoading}
             loadingMessage="Loading section..."
             errorMessage={viewerModel.error ?? (splitReady ? viewerModel.backgroundError : null)}
             resetToken={processingModel.displayResetToken}
@@ -857,7 +1033,7 @@
           />
           {/key}
 
-          {#if processingModel.spectrumInspectorOpen}
+          {#if processingModel.pipelineFamily === "trace_local" && processingModel.spectrumInspectorOpen}
             <div class="spectrum-inspector-layer">
               <SpectrumInspector
                 floating={true}
@@ -867,11 +1043,27 @@
                 spectrumError={processingModel.spectrumError}
                 spectrumSelectionSummary={processingModel.spectrumSelectionSummary}
                 spectrumAmplitudeScale={processingModel.spectrumAmplitudeScale}
-                rawSpectrum={processingModel.rawSpectrum}
-                processedSpectrum={processingModel.processedSpectrum}
+                rawSpectrum={rawSpectrum}
+                processedSpectrum={processedSpectrum}
                 onSetSpectrumAmplitudeScale={processingModel.setSpectrumAmplitudeScale}
                 onRefreshSpectrum={() => processingModel.refreshSpectrum()}
                 onClose={processingModel.closeSpectrumInspector}
+              />
+            </div>
+          {/if}
+          {#if distributionInspectorOpen}
+            <div class="distribution-inspector-layer">
+              <AmplitudeDistributionInspector
+                floating={true}
+                distributionBusy={distributionBusy}
+                distributionStale={distributionStale}
+                distributionError={distributionError}
+                distributionSelectionSummary={distributionSelectionSummary}
+                distributionResult={distributionResult}
+                onRefresh={refreshAmplitudeDistribution}
+                onClose={() => {
+                  distributionInspectorOpen = false;
+                }}
               />
             </div>
           {/if}
@@ -1453,6 +1645,35 @@
     line-height: 1.45;
   }
 
+  .workflow-origin {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
+  .family-switch {
+    display: flex;
+    gap: var(--ui-space-2);
+    flex-wrap: wrap;
+    margin-top: var(--ui-space-2);
+  }
+
+  .family-chip {
+    border: 1px solid var(--app-border-strong);
+    background: var(--surface-subtle);
+    color: var(--text-primary);
+    border-radius: var(--ui-radius-md);
+    min-height: var(--ui-button-height);
+    padding: 0 var(--ui-button-padding-x);
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .family-chip.active {
+    background: #e8f3fb;
+    border-color: #b0d4ee;
+    color: #1f5577;
+  }
+
   .main-column {
     min-height: 0;
     padding: var(--ui-panel-padding) var(--ui-space-6) var(--ui-space-6);
@@ -1533,7 +1754,6 @@
     color: var(--text-dim);
   }
 
-  .display-chip.field select,
   .display-chip.field input {
     min-width: 56px;
     border: none;
@@ -1597,12 +1817,6 @@
     color: #274b61;
   }
 
-  .display-chip.icon.active {
-    background: #e8f3fb;
-    border-color: #9bc7e3;
-    color: #274b61;
-  }
-
   .display-chip:disabled {
     opacity: 0.45;
     cursor: not-allowed;
@@ -1617,6 +1831,14 @@
     position: absolute;
     right: 14px;
     bottom: 16px;
+    z-index: 6;
+    pointer-events: none;
+  }
+
+  .distribution-inspector-layer {
+    position: absolute;
+    right: 14px;
+    top: 74px;
     z-index: 6;
     pointer-events: none;
   }

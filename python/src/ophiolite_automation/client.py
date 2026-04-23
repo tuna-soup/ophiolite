@@ -166,6 +166,9 @@ class OphioliteApp:
     def list_project_compute_catalog(self, project_root: str, asset_id: str) -> Any:
         return self.run_json("list-project-compute-catalog", project_root, asset_id)
 
+    def list_project_operator_catalog(self, project_root: str, asset_id: str) -> Any:
+        return self.run_json("list-project-operator-catalog", project_root, asset_id)
+
     def run_project_compute(self, project_root: str, request: Mapping[str, Any]) -> Any:
         normalized = dict(request)
         normalized["parameters"] = {
@@ -177,6 +180,88 @@ class OphioliteApp:
             project_root,
             "-",
             stdin_text=json.dumps(normalized),
+        )
+
+    def preview_project_trace_local_processing(
+        self, project_root: str, request: Mapping[str, Any]
+    ) -> Any:
+        return self.run_json(
+            "preview-project-trace-local-processing",
+            project_root,
+            "-",
+            stdin_text=json.dumps(dict(request)),
+        )
+
+    def run_project_trace_local_processing(self, project_root: str, request: Mapping[str, Any]) -> Any:
+        return self.run_json(
+            "run-project-trace-local-processing",
+            project_root,
+            "-",
+            stdin_text=json.dumps(dict(request)),
+        )
+
+    def preview_project_subvolume_processing(
+        self, project_root: str, request: Mapping[str, Any]
+    ) -> Any:
+        return self.run_json(
+            "preview-project-subvolume-processing",
+            project_root,
+            "-",
+            stdin_text=json.dumps(dict(request)),
+        )
+
+    def run_project_subvolume_processing(self, project_root: str, request: Mapping[str, Any]) -> Any:
+        return self.run_json(
+            "run-project-subvolume-processing",
+            project_root,
+            "-",
+            stdin_text=json.dumps(dict(request)),
+        )
+
+    def preview_project_post_stack_neighborhood_processing(
+        self, project_root: str, request: Mapping[str, Any]
+    ) -> Any:
+        return self.run_json(
+            "preview-project-post-stack-neighborhood-processing",
+            project_root,
+            "-",
+            stdin_text=json.dumps(dict(request)),
+        )
+
+    def run_project_post_stack_neighborhood_processing(
+        self, project_root: str, request: Mapping[str, Any]
+    ) -> Any:
+        return self.run_json(
+            "run-project-post-stack-neighborhood-processing",
+            project_root,
+            "-",
+            stdin_text=json.dumps(dict(request)),
+        )
+
+    def preview_project_gather_processing(
+        self, project_root: str, request: Mapping[str, Any]
+    ) -> Any:
+        return self.run_json(
+            "preview-project-gather-processing",
+            project_root,
+            "-",
+            stdin_text=json.dumps(dict(request)),
+        )
+
+    def run_project_gather_processing(self, project_root: str, request: Mapping[str, Any]) -> Any:
+        return self.run_json(
+            "run-project-gather-processing",
+            project_root,
+            "-",
+            stdin_text=json.dumps(dict(request)),
+        )
+
+    def run_project_velocity_scan(self, project_root: str, request: Mapping[str, Any]) -> Any:
+        return self.run_json(
+            "run-project-velocity-scan",
+            project_root,
+            "-",
+            stdin_text=json.dumps(dict(request)),
         )
 
     def run_avo_reflectivity(self, request: Mapping[str, Any]) -> Any:

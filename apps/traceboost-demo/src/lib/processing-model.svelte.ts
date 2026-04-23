@@ -1,15 +1,27 @@
 import { createContext, tick } from "svelte";
+import type { SeismicSectionAnalysisSelectionMode } from "@ophiolite/charts";
 import type {
   AmplitudeSpectrumRequest,
   AmplitudeSpectrumResponse,
+  LocalVolumeStatistic,
+  NeighborhoodDipOutput,
+  PostStackNeighborhoodProcessingOperation,
+  PostStackNeighborhoodProcessingPipeline,
+  PostStackNeighborhoodWindow,
+  PreviewPostStackNeighborhoodProcessingRequest,
   PreviewTraceLocalProcessingRequest as PreviewProcessingRequest,
+  ProcessingExecutionMode,
+  ProcessingBatchStatus,
+  ProcessingPreset,
+  ProcessingPipelineFamily,
+  ProcessingPipelineSpec,
   ProcessingJobStatus,
+  RunPostStackNeighborhoodProcessingRequest,
   SubvolumeCropOperation,
   SubvolumeProcessingPipeline,
   TraceLocalProcessingOperation as ProcessingOperation,
   TraceLocalProcessingPipeline as ProcessingPipeline,
   TraceLocalProcessingStep as ProcessingStep,
-  TraceLocalProcessingPreset as ProcessingPreset,
   RunTraceLocalProcessingRequest as RunProcessingRequest,
   RunSubvolumeProcessingRequest,
   SectionView,
@@ -17,26 +29,45 @@ import type {
 } from "@traceboost/seis-contracts";
 import {
   cancelProcessingJob,
+  cancelProcessingBatch,
+  type DatasetOperatorCatalog,
+  type DatasetOperatorCatalogEntry,
+  type DatasetOperatorParameterDoc,
   defaultProcessingStorePath,
+  defaultPostStackNeighborhoodProcessingStorePath,
   defaultSubvolumeProcessingStorePath,
   deletePipelinePreset,
   emitFrontendDiagnosticsEvent,
   fetchAmplitudeSpectrum,
+  getProcessingBatch,
   getProcessingJob,
   listPipelinePresets,
+  loadDatasetOperatorCatalog,
+  previewPostStackNeighborhoodProcessing,
   previewProcessing,
+  runPostStackNeighborhoodProcessing,
   runProcessing,
   runSubvolumeProcessing,
   savePipelinePreset,
+  submitProcessingBatch,
   type TransportSectionView
 } from "./bridge";
 import { confirmOverwriteStore, pickOutputStorePath } from "./file-dialog";
-import type { ViewerModel } from "./viewer-model.svelte";
+import {
+  buildAnalysisSelectionKey,
+  buildAnalysisSelectionSummary,
+  selectionFromMode,
+  toSpectrumSelection
+} from "./seismic-analysis-selection";
+import type { CompareCandidate, ViewerModel } from "./viewer-model.svelte";
 
 type PreviewState = "raw" | "preview" | "stale";
 type SpectrumAmplitudeScale = "db" | "linear";
 type VolumeArithmeticOperator = "add" | "subtract" | "multiply" | "divide";
+export type ProcessingWorkspaceFamily = "trace_local" | "post_stack_neighborhood";
+type BatchExecutionModeSelection = Exclude<ProcessingExecutionMode, "custom">;
 type DisplaySectionView = SectionView | TransportSectionView;
+export type NeighborhoodOperation = PostStackNeighborhoodProcessingOperation;
 export interface SourceSubvolumeBounds {
   inlineMin: number;
   inlineMax: number;
@@ -45,6 +76,56 @@ export interface SourceSubvolumeBounds {
   zMinMs: number;
   zMaxMs: number;
   zUnits: string | null;
+}
+export interface BatchProcessingCandidate {
+  storePath: string;
+  displayName: string;
+  isActive: boolean;
+}
+export interface ProcessingPlanSummaryView {
+  overview: string;
+  detail: string | null;
+  stages: string[];
+}
+export interface ProcessingExecutionSummaryView {
+  overview: string;
+  detail: string | null;
+  stages: string[];
+}
+export interface RecentProcessingJobEntry {
+  kind: "job";
+  job: ProcessingJobStatus;
+  familyLabel: string;
+  title: string;
+}
+export interface RecentProcessingBatchEntry {
+  kind: "batch";
+  batch: ProcessingBatchStatus;
+  familyLabel: string;
+  title: string;
+}
+export type RecentProcessingEntry = RecentProcessingJobEntry | RecentProcessingBatchEntry;
+interface ProcessingJobPlanSummaryViewModel {
+  planning_mode: string;
+  stage_count: number;
+  stage_labels: string[];
+  expected_partition_count: number | null;
+  max_active_partitions: number | null;
+  stage_partition_summaries: string[];
+}
+interface ProcessingJobStageExecutionSummaryViewModel {
+  stage_label: string;
+  completed_partitions: number;
+  total_partitions: number | null;
+  retry_count: number;
+}
+interface ProcessingJobExecutionSummaryViewModel {
+  completed_partitions: number;
+  total_partitions: number | null;
+  active_partitions: number;
+  peak_active_partitions: number;
+  retry_count: number;
+  stages: ProcessingJobStageExecutionSummaryViewModel[];
 }
 export type WorkspaceOperation =
   | ProcessingOperation
@@ -58,6 +139,10 @@ export type OperatorCatalogId =
   | "trace_rms_normalize"
   | "agc_rms"
   | "phase_rotation"
+  | "envelope"
+  | "instantaneous_phase"
+  | "instantaneous_frequency"
+  | "sweetness"
   | "volume_subtract"
   | "volume_add"
   | "volume_multiply"
@@ -69,112 +154,186 @@ export type OperatorCatalogId =
 
 interface OperatorCatalogDefinition {
   id: OperatorCatalogId;
-  label: string;
-  description: string;
-  keywords: string[];
-  shortcut: "a" | "n" | "g" | "h" | "l" | "i" | "b" | "v" | "c" | null;
+  canonicalId: string;
+  canonicalFamily: "trace_local" | "subvolume";
+  fallbackLabel: string;
+  fallbackDescription: string;
+  searchTerms: string[];
+  aliasLabel?: string | null;
+  shortcut: "a" | "n" | "g" | "h" | "e" | "p" | "f" | "s" | "l" | "i" | "b" | "v" | "c" | null;
   create: (viewerModel: ViewerModel) => WorkspaceOperation;
 }
 
 interface CopiedSessionPipeline {
+  family: ProcessingWorkspaceFamily;
   pipeline: ProcessingPipeline;
   subvolumeCrop: SubvolumeCropOperation | null;
+  postStackNeighborhoodPipeline: PostStackNeighborhoodProcessingPipeline | null;
 }
 
 const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
   {
     id: "amplitude_scalar",
-    label: "Amplitude Scalar",
-    description: "Scale trace amplitudes by a constant factor.",
-    keywords: ["scalar", "scale", "gain", "amplitude"],
+    canonicalId: "amplitude_scalar",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Amplitude Scalar",
+    fallbackDescription: "Scale trace amplitudes by a constant factor.",
+    searchTerms: ["scalar", "scale", "gain", "amplitude"],
     shortcut: "a",
     create: () => ({ amplitude_scalar: { factor: 1 } })
   },
   {
     id: "trace_rms_normalize",
-    label: "Trace RMS Normalize",
-    description: "Normalize each trace to unit RMS amplitude.",
-    keywords: ["normalize", "rms", "trace", "balance"],
+    canonicalId: "trace_rms_normalize",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Trace RMS Normalize",
+    fallbackDescription: "Normalize each trace to unit RMS amplitude.",
+    searchTerms: ["normalize", "rms", "trace", "balance"],
     shortcut: "n",
     create: () => "trace_rms_normalize"
   },
   {
     id: "agc_rms",
-    label: "RMS AGC",
-    description: "Centered moving-window RMS automatic gain control.",
-    keywords: ["agc", "gain", "window", "rms", "balance", "automatic gain control"],
+    canonicalId: "agc_rms",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "RMS AGC",
+    fallbackDescription: "Centered moving-window RMS automatic gain control.",
+    searchTerms: ["agc", "gain", "window", "rms", "balance", "automatic gain control"],
     shortcut: "g",
     create: () => defaultAgcRms()
   },
   {
     id: "phase_rotation",
-    label: "Phase Rotation",
-    description: "Constant trace phase rotation in degrees.",
-    keywords: ["phase", "rotation", "rotate", "constant phase", "quadrature", "hilbert"],
+    canonicalId: "phase_rotation",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Phase Rotation",
+    fallbackDescription: "Constant trace phase rotation in degrees.",
+    searchTerms: ["phase", "rotation", "rotate", "constant phase", "quadrature", "hilbert"],
     shortcut: "h",
     create: () => defaultPhaseRotation()
   },
   {
+    id: "envelope",
+    canonicalId: "envelope",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Envelope",
+    fallbackDescription: "Analytic-trace magnitude using the trace and its Hilbert transform.",
+    searchTerms: ["envelope", "reflection strength", "analytic", "hilbert", "magnitude"],
+    shortcut: "e",
+    create: () => "envelope"
+  },
+  {
+    id: "instantaneous_phase",
+    canonicalId: "instantaneous_phase",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Instantaneous Phase",
+    fallbackDescription: "Wrapped analytic-trace phase in degrees over [-180, 180].",
+    searchTerms: ["instantaneous phase", "phase", "analytic", "hilbert", "degrees"],
+    shortcut: "p",
+    create: () => "instantaneous_phase"
+  },
+  {
+    id: "instantaneous_frequency",
+    canonicalId: "instantaneous_frequency",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Instantaneous Frequency",
+    fallbackDescription: "Classic analytic-signal instantaneous frequency in Hz. Can be noisy or negative.",
+    searchTerms: ["instantaneous frequency", "frequency", "analytic", "hilbert", "barnes", "fomel"],
+    shortcut: "f",
+    create: () => "instantaneous_frequency"
+  },
+  {
+    id: "sweetness",
+    canonicalId: "sweetness",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Sweetness",
+    fallbackDescription: "Envelope divided by the square root of stabilized instantaneous frequency.",
+    searchTerms: ["sweetness", "envelope", "instantaneous frequency", "analytic", "attribute"],
+    shortcut: "s",
+    create: () => "sweetness"
+  },
+  {
     id: "volume_subtract",
-    label: "Subtract Volume",
-    description: "Subtract a compatible workspace volume from the active volume.",
-    keywords: ["volume", "arithmetic", "subtract", "difference", "minus", "cube"],
+    canonicalId: "volume_arithmetic",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Subtract Volume",
+    fallbackDescription: "Subtract a compatible workspace volume from the active volume.",
+    searchTerms: ["volume", "arithmetic", "subtract", "difference", "minus", "cube"],
+    aliasLabel: "Subtract Volume",
     shortcut: "v",
     create: (viewerModel) => defaultVolumeArithmetic(viewerModel, "subtract")
   },
   {
     id: "volume_add",
-    label: "Add Volume",
-    description: "Add a compatible workspace volume to the active volume sample-by-sample.",
-    keywords: ["volume", "arithmetic", "add", "sum", "plus", "cube"],
+    canonicalId: "volume_arithmetic",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Add Volume",
+    fallbackDescription: "Add a compatible workspace volume to the active volume sample-by-sample.",
+    searchTerms: ["volume", "arithmetic", "add", "sum", "plus", "cube"],
+    aliasLabel: "Add Volume",
     shortcut: null,
     create: (viewerModel) => defaultVolumeArithmetic(viewerModel, "add")
   },
   {
     id: "volume_multiply",
-    label: "Multiply Volumes",
-    description: "Multiply the active volume by another compatible workspace volume.",
-    keywords: ["volume", "arithmetic", "multiply", "product", "times", "cube"],
+    canonicalId: "volume_arithmetic",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Multiply Volumes",
+    fallbackDescription: "Multiply the active volume by another compatible workspace volume.",
+    searchTerms: ["volume", "arithmetic", "multiply", "product", "times", "cube"],
+    aliasLabel: "Multiply Volumes",
     shortcut: null,
     create: (viewerModel) => defaultVolumeArithmetic(viewerModel, "multiply")
   },
   {
     id: "volume_divide",
-    label: "Divide Volumes",
-    description: "Divide the active volume by another compatible workspace volume.",
-    keywords: ["volume", "arithmetic", "divide", "ratio", "quotient", "cube"],
+    canonicalId: "volume_arithmetic",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Divide Volumes",
+    fallbackDescription: "Divide the active volume by another compatible workspace volume.",
+    searchTerms: ["volume", "arithmetic", "divide", "ratio", "quotient", "cube"],
+    aliasLabel: "Divide Volumes",
     shortcut: null,
     create: (viewerModel) => defaultVolumeArithmetic(viewerModel, "divide")
   },
   {
     id: "crop_subvolume",
-    label: "Crop Subvolume",
-    description: "Write a strict subvolume bounded by inline, xline, and time windows.",
-    keywords: ["crop", "subvolume", "subset", "window", "inline", "xline", "time", "cube"],
+    canonicalId: "crop",
+    canonicalFamily: "subvolume",
+    fallbackLabel: "Crop Subvolume",
+    fallbackDescription: "Write a strict subvolume bounded by inline, xline, and time windows.",
+    searchTerms: ["crop", "subvolume", "subset", "window", "inline", "xline", "time", "cube"],
+    aliasLabel: "Crop Subvolume",
     shortcut: "c",
     create: (viewerModel) => ({ crop_subvolume: defaultSubvolumeCrop(viewerModel) })
   },
   {
     id: "lowpass_filter",
-    label: "Lowpass Filter",
-    description: "Zero-phase FFT lowpass with a cosine high-cut taper.",
-    keywords: ["lowpass", "filter", "frequency", "spectral", "highcut", "noise"],
+    canonicalId: "lowpass_filter",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Lowpass Filter",
+    fallbackDescription: "Zero-phase FFT lowpass with a cosine high-cut taper.",
+    searchTerms: ["lowpass", "filter", "frequency", "spectral", "highcut", "noise"],
     shortcut: "l",
     create: (viewerModel) => defaultLowpassFilter(viewerModel.section)
   },
   {
     id: "highpass_filter",
-    label: "Highpass Filter",
-    description: "Zero-phase FFT highpass with a cosine low-cut taper.",
-    keywords: ["highpass", "filter", "frequency", "spectral", "lowcut", "drift"],
+    canonicalId: "highpass_filter",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Highpass Filter",
+    fallbackDescription: "Zero-phase FFT highpass with a cosine low-cut taper.",
+    searchTerms: ["highpass", "filter", "frequency", "spectral", "lowcut", "drift"],
     shortcut: "i",
     create: (viewerModel) => defaultHighpassFilter(viewerModel.section)
   },
   {
     id: "bandpass_filter",
-    label: "Bandpass Filter",
-    description: "Zero-phase FFT bandpass with cosine tapers.",
-    keywords: ["bandpass", "filter", "frequency", "spectral", "highcut", "lowcut"],
+    canonicalId: "bandpass_filter",
+    canonicalFamily: "trace_local",
+    fallbackLabel: "Bandpass Filter",
+    fallbackDescription: "Zero-phase FFT bandpass with cosine tapers.",
+    searchTerms: ["bandpass", "filter", "frequency", "spectral", "highcut", "lowcut"],
     shortcut: "b",
     create: (viewerModel) => defaultBandpassFilter(viewerModel.section)
   }
@@ -184,19 +343,167 @@ export interface OperatorCatalogItem {
   id: OperatorCatalogId;
   label: string;
   description: string;
+  shortHelp: string;
+  helpMarkdown: string | null;
+  helpUrl: string | null;
   keywords: string[];
-  shortcut: "a" | "n" | "g" | "h" | "l" | "i" | "b" | "v" | "c" | null;
+  shortcut: "a" | "n" | "g" | "h" | "e" | "p" | "f" | "s" | "l" | "i" | "b" | "v" | "c" | null;
+  canonicalId: string;
+  canonicalName: string;
+  group: string;
+  groupId: string;
+  provider: string;
+  tags: string[];
+  parameterDocs: readonly DatasetOperatorParameterDoc[];
+  aliasLabel: string | null;
+  source: "canonical" | "fallback";
 }
 
-export const operatorCatalogItems: readonly OperatorCatalogItem[] = OPERATOR_CATALOG.map(
-  ({ id, label, description, keywords, shortcut }) => ({
-    id,
+function isDemoAliasDefinition(definition: OperatorCatalogDefinition): boolean {
+  return definition.id !== definition.canonicalId;
+}
+
+function fallbackGroupForDefinition(definition: OperatorCatalogDefinition): string {
+  return definition.canonicalFamily === "subvolume" ? "Subvolume" : "Trace Local";
+}
+
+function fallbackGroupIdForDefinition(definition: OperatorCatalogDefinition): string {
+  return definition.canonicalFamily === "subvolume" ? "subvolume" : "trace_local";
+}
+
+function catalogEntryIsAvailable(entry: DatasetOperatorCatalogEntry | null): boolean {
+  if (!entry) {
+    return false;
+  }
+  return entry.availability === "available";
+}
+
+function findCatalogOperatorEntry(
+  catalog: DatasetOperatorCatalog | null,
+  definition: OperatorCatalogDefinition
+): DatasetOperatorCatalogEntry | null {
+  if (!catalog) {
+    return null;
+  }
+
+  return (
+    catalog.operators.find(
+      (entry) =>
+        entry.id === definition.canonicalId && entry.family === definition.canonicalFamily
+    ) ?? null
+  );
+}
+
+function isCatalogOperatorAvailable(
+  catalog: DatasetOperatorCatalog | null,
+  definition: OperatorCatalogDefinition
+): boolean {
+  if (!catalog) {
+    return true;
+  }
+
+  return catalogEntryIsAvailable(findCatalogOperatorEntry(catalog, definition));
+}
+
+function toOperatorCatalogItem(
+  definition: OperatorCatalogDefinition,
+  catalog: DatasetOperatorCatalog | null
+): OperatorCatalogItem {
+  const catalogEntry = findCatalogOperatorEntry(catalog, definition);
+  const alias = isDemoAliasDefinition(definition);
+  const canonicalName = catalogEntry?.name || definition.fallbackLabel;
+  const label = definition.aliasLabel || canonicalName;
+  const parameterTerms =
+    catalogEntry?.parameter_docs.flatMap((parameter) => [
+      parameter.name,
+      parameter.label,
+      parameter.description,
+      ...parameter.options
+    ]) ?? [];
+  const keywords = Array.from(new Set([...(catalogEntry?.tags ?? []), ...definition.searchTerms, ...parameterTerms]));
+  const fallbackDescription = definition.fallbackDescription;
+  const shortHelp = catalogEntry?.documentation.short_help || catalogEntry?.description || fallbackDescription;
+  return {
+    id: definition.id,
     label,
-    description,
+    description: shortHelp,
+    shortHelp,
+    helpMarkdown: catalogEntry?.documentation.help_markdown ?? null,
+    helpUrl: catalogEntry?.documentation.help_url ?? null,
     keywords,
-    shortcut
-  })
-);
+    shortcut: definition.shortcut,
+    canonicalId: definition.canonicalId,
+    canonicalName,
+    group: catalogEntry?.group || fallbackGroupForDefinition(definition),
+    groupId: catalogEntry?.group_id || fallbackGroupIdForDefinition(definition),
+    provider: catalogEntry?.provider || "traceboost-demo",
+    tags: catalogEntry?.tags ?? [],
+    parameterDocs: catalogEntry?.parameter_docs ?? [],
+    aliasLabel: alias ? definition.aliasLabel || definition.fallbackLabel : null,
+    source: catalogEntry ? "canonical" : "fallback"
+  };
+}
+
+function operatorCatalogIdForOperation(operation: WorkspaceOperation): OperatorCatalogId {
+  if (isCropSubvolume(operation)) {
+    return "crop_subvolume";
+  }
+  if (typeof operation === "string") {
+    switch (operation) {
+      case "trace_rms_normalize":
+        return "trace_rms_normalize";
+      case "envelope":
+        return "envelope";
+      case "instantaneous_phase":
+        return "instantaneous_phase";
+      case "instantaneous_frequency":
+        return "instantaneous_frequency";
+      case "sweetness":
+        return "sweetness";
+      default:
+        return "trace_rms_normalize";
+    }
+  }
+  if ("amplitude_scalar" in operation) {
+    return "amplitude_scalar";
+  }
+  if ("agc_rms" in operation) {
+    return "agc_rms";
+  }
+  if ("phase_rotation" in operation) {
+    return "phase_rotation";
+  }
+  if ("lowpass_filter" in operation) {
+    return "lowpass_filter";
+  }
+  if ("highpass_filter" in operation) {
+    return "highpass_filter";
+  }
+  if ("bandpass_filter" in operation) {
+    return "bandpass_filter";
+  }
+  if ("volume_arithmetic" in operation) {
+    switch (operation.volume_arithmetic.operator) {
+      case "subtract":
+        return "volume_subtract";
+      case "add":
+        return "volume_add";
+      case "multiply":
+        return "volume_multiply";
+      case "divide":
+        return "volume_divide";
+    }
+  }
+  return "trace_rms_normalize";
+}
+
+export function findOperatorCatalogItemForOperation(
+  operation: WorkspaceOperation,
+  items: readonly OperatorCatalogItem[]
+): OperatorCatalogItem | null {
+  const operatorId = operatorCatalogIdForOperation(operation);
+  return items.find((item) => item.id === operatorId) ?? null;
+}
 
 function createEmptyPipeline(): ProcessingPipeline {
   return {
@@ -209,8 +516,24 @@ function createEmptyPipeline(): ProcessingPipeline {
   };
 }
 
+function createEmptyPostStackNeighborhoodPipeline(): PostStackNeighborhoodProcessingPipeline {
+  return {
+    schema_version: 1,
+    revision: 1,
+    preset_id: null,
+    name: null,
+    description: null,
+    trace_local_pipeline: null,
+    operations: [defaultNeighborhoodSimilarity()]
+  };
+}
+
 function pipelineName(pipeline: ProcessingPipeline): string {
   return pipeline.name?.trim() || "Untitled pipeline";
+}
+
+function postStackNeighborhoodPipelineName(pipeline: PostStackNeighborhoodProcessingPipeline): string {
+  return pipeline.name?.trim() || "Untitled neighborhood pipeline";
 }
 
 function nowMs(): number {
@@ -289,6 +612,54 @@ function clonePipeline(pipeline: ProcessingPipeline): ProcessingPipeline {
   };
 }
 
+function clonePostStackNeighborhoodWindow(window: PostStackNeighborhoodWindow): PostStackNeighborhoodWindow {
+  return {
+    gate_ms: window.gate_ms,
+    inline_stepout: window.inline_stepout,
+    xline_stepout: window.xline_stepout
+  };
+}
+
+function cloneNeighborhoodOperation(operation: NeighborhoodOperation): NeighborhoodOperation {
+  return "similarity" in operation
+    ? {
+        similarity: {
+          window: clonePostStackNeighborhoodWindow(operation.similarity.window)
+        }
+      }
+    : "local_volume_stats" in operation
+      ? {
+          local_volume_stats: {
+            window: clonePostStackNeighborhoodWindow(operation.local_volume_stats.window),
+            statistic: operation.local_volume_stats.statistic
+          }
+        }
+      : "dip" in operation
+        ? {
+            dip: {
+              window: clonePostStackNeighborhoodWindow(operation.dip.window),
+              output: operation.dip.output
+            }
+          }
+      : operation;
+}
+
+function clonePostStackNeighborhoodPipeline(
+  pipeline: PostStackNeighborhoodProcessingPipeline
+): PostStackNeighborhoodProcessingPipeline {
+  return {
+    schema_version: pipeline.schema_version,
+    revision: pipeline.revision,
+    preset_id: pipeline.preset_id,
+    name: pipeline.name,
+    description: pipeline.description,
+    trace_local_pipeline: pipeline.trace_local_pipeline
+      ? clonePipeline(pipeline.trace_local_pipeline)
+      : null,
+    operations: pipeline.operations.map((operation) => cloneNeighborhoodOperation(operation))
+  };
+}
+
 function cloneStep(step: ProcessingStep): ProcessingStep {
   return {
     operation: cloneOperation(step.operation),
@@ -336,6 +707,19 @@ function cloneSubvolumeCrop(crop: SubvolumeCropOperation | null | undefined): Su
   return crop ? { ...crop } : null;
 }
 
+function cloneWorkspacePipelineEntry(entry: WorkspacePipelineEntry): WorkspacePipelineEntry {
+  return {
+    pipeline_id: entry.pipeline_id,
+    family: entry.family,
+    pipeline: entry.pipeline ? clonePipeline(entry.pipeline) : null,
+    subvolume_crop: cloneSubvolumeCrop(entry.subvolume_crop),
+    post_stack_neighborhood_pipeline: entry.post_stack_neighborhood_pipeline
+      ? clonePostStackNeighborhoodPipeline(entry.post_stack_neighborhood_pipeline)
+      : null,
+    updated_at_unix_s: entry.updated_at_unix_s
+  };
+}
+
 function cloneWorkspaceOperation(operation: WorkspaceOperation): WorkspaceOperation {
   return isCropSubvolume(operation) ? { crop_subvolume: { ...operation.crop_subvolume } } : cloneOperation(operation);
 }
@@ -361,6 +745,15 @@ function normalizePresetId(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+function parsePositiveInteger(value: string): number | null {
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+  const parsed = Number.parseInt(normalized, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -440,11 +833,104 @@ function workspaceRunOutputSignature(
   });
 }
 
+function postStackNeighborhoodPipelineRunOutputSignature(
+  pipeline: PostStackNeighborhoodProcessingPipeline
+): string {
+  return JSON.stringify({
+    name: pipeline.name ?? null,
+    trace_local_pipeline: pipeline.trace_local_pipeline
+      ? JSON.parse(pipelineRunOutputSignature(pipeline.trace_local_pipeline))
+      : null,
+    operations: pipeline.operations.map((operation) =>
+      "similarity" in operation
+        ? {
+            similarity: {
+              window: clonePostStackNeighborhoodWindow(operation.similarity.window)
+            }
+          }
+        : "local_volume_stats" in operation
+          ? {
+              local_volume_stats: {
+                window: clonePostStackNeighborhoodWindow(operation.local_volume_stats.window),
+                statistic: operation.local_volume_stats.statistic
+              }
+            }
+          : "dip" in operation
+            ? {
+                dip: {
+                  window: clonePostStackNeighborhoodWindow(operation.dip.window),
+                  output: operation.dip.output
+                }
+              }
+          : operation
+    )
+  });
+}
+
 function defaultPhaseRotation(): ProcessingOperation {
   return {
     phase_rotation: {
       angle_degrees: 0
     }
+  };
+}
+
+function defaultNeighborhoodSimilarity(): NeighborhoodOperation {
+  return {
+    similarity: {
+      window: {
+        gate_ms: 24,
+        inline_stepout: 1,
+        xline_stepout: 1
+      }
+    }
+  };
+}
+
+function defaultNeighborhoodLocalVolumeStats(
+  window: PostStackNeighborhoodWindow = {
+    gate_ms: 24,
+    inline_stepout: 1,
+    xline_stepout: 1
+  }
+): NeighborhoodOperation {
+  return {
+    local_volume_stats: {
+      window: clonePostStackNeighborhoodWindow(window),
+      statistic: "mean"
+    }
+  };
+}
+
+function defaultNeighborhoodDip(
+  window: PostStackNeighborhoodWindow = {
+    gate_ms: 24,
+    inline_stepout: 1,
+    xline_stepout: 1
+  }
+): NeighborhoodOperation {
+  return {
+    dip: {
+      window: clonePostStackNeighborhoodWindow(window),
+      output: "inline"
+    }
+  };
+}
+
+function neighborhoodWindowForOperation(operation: NeighborhoodOperation): PostStackNeighborhoodWindow {
+  if ("similarity" in operation) {
+    return clonePostStackNeighborhoodWindow(operation.similarity.window);
+  }
+  if ("local_volume_stats" in operation) {
+    return clonePostStackNeighborhoodWindow(operation.local_volume_stats.window);
+  }
+  if ("dip" in operation) {
+    return clonePostStackNeighborhoodWindow(operation.dip.window);
+  }
+  return {
+    gate_ms: 24,
+    inline_stepout: 1,
+    xline_stepout: 1
   };
 }
 
@@ -592,6 +1078,155 @@ function workspaceOperations(
   return operations;
 }
 
+function batchPipelineSpecForWorkspace(
+  family: ProcessingWorkspaceFamily,
+  pipeline: ProcessingPipeline,
+  postStackNeighborhoodPipeline: PostStackNeighborhoodProcessingPipeline,
+  subvolumeCrop: SubvolumeCropOperation | null
+): ProcessingPipelineSpec {
+  if (family === "post_stack_neighborhood") {
+    return {
+      post_stack_neighborhood: {
+        pipeline: clonePostStackNeighborhoodPipeline(postStackNeighborhoodPipeline)
+      }
+    };
+  }
+  if (subvolumeCrop) {
+    return {
+      subvolume: {
+        pipeline: buildSubvolumeProcessingPipeline(pipeline, subvolumeCrop)
+      }
+    };
+  }
+  return {
+    trace_local: {
+      pipeline: clonePipeline(pipeline)
+    }
+  };
+}
+
+function processingPipelineSpecFamily(pipeline: ProcessingPipelineSpec): ProcessingPipelineFamily {
+  if ("trace_local" in pipeline) {
+    return "trace_local";
+  }
+  if ("post_stack_neighborhood" in pipeline) {
+    return "post_stack_neighborhood";
+  }
+  if ("subvolume" in pipeline) {
+    return "subvolume";
+  }
+  return "gather";
+}
+
+function workspaceEntryPresetId(entry: WorkspacePipelineEntry | null | undefined): string | null {
+  if (!entry) {
+    return null;
+  }
+  if (entry.family === "post_stack_neighborhood") {
+    return entry.post_stack_neighborhood_pipeline?.preset_id ?? null;
+  }
+  return entry.pipeline?.preset_id ?? null;
+}
+
+function traceLocalPipelineFromSubvolumePipeline(pipeline: SubvolumeProcessingPipeline): ProcessingPipeline {
+  if (pipeline.trace_local_pipeline) {
+    const traceLocal = clonePipeline(pipeline.trace_local_pipeline);
+    traceLocal.schema_version = pipeline.schema_version;
+    traceLocal.revision = pipeline.revision;
+    traceLocal.preset_id = pipeline.preset_id;
+    traceLocal.name = pipeline.name;
+    traceLocal.description = pipeline.description;
+    return traceLocal;
+  }
+
+  return {
+    schema_version: pipeline.schema_version,
+    revision: pipeline.revision,
+    preset_id: pipeline.preset_id,
+    name: pipeline.name,
+    description: pipeline.description,
+    steps: []
+  };
+}
+
+function withPresetIdOnPipelineSpec(pipeline: ProcessingPipelineSpec, presetId: string): ProcessingPipelineSpec {
+  const next = structuredClone(pipeline) as ProcessingPipelineSpec;
+  if ("trace_local" in next) {
+    next.trace_local.pipeline.preset_id = presetId;
+    return next;
+  }
+  if ("post_stack_neighborhood" in next) {
+    next.post_stack_neighborhood.pipeline.preset_id = presetId;
+    if (next.post_stack_neighborhood.pipeline.trace_local_pipeline) {
+      next.post_stack_neighborhood.pipeline.trace_local_pipeline.preset_id = presetId;
+    }
+    return next;
+  }
+  if ("subvolume" in next) {
+    next.subvolume.pipeline.preset_id = presetId;
+    if (next.subvolume.pipeline.trace_local_pipeline) {
+      next.subvolume.pipeline.trace_local_pipeline.preset_id = presetId;
+    }
+    return next;
+  }
+  next.gather.pipeline.preset_id = presetId;
+  if (next.gather.pipeline.trace_local_pipeline) {
+    next.gather.pipeline.trace_local_pipeline.preset_id = presetId;
+  }
+  return next;
+}
+
+function batchPipelineFamilyLabel(
+  family: ProcessingWorkspaceFamily,
+  subvolumeCrop: SubvolumeCropOperation | null
+): string {
+  if (family === "post_stack_neighborhood") {
+    return "post-stack neighborhood";
+  }
+  if (subvolumeCrop) {
+    return "subvolume";
+  }
+  return "trace-local";
+}
+
+function processingPipelineFamilyLabel(pipeline: ProcessingPipelineSpec): string {
+  if ("trace_local" in pipeline) {
+    return "trace-local";
+  }
+  if ("subvolume" in pipeline) {
+    return "subvolume";
+  }
+  if ("post_stack_neighborhood" in pipeline) {
+    return "post-stack neighborhood";
+  }
+  return "gather";
+}
+
+function summarizeStorePathLabel(path: string | null | undefined): string | null {
+  const normalized = path?.trim();
+  if (!normalized) {
+    return null;
+  }
+  const parts = normalized.replace(/\\/g, "/").split("/").filter((part) => part.length > 0);
+  return parts.at(-1) ?? normalized;
+}
+
+function recentJobTitle(job: ProcessingJobStatus): string {
+  return `${processingPipelineFamilyLabel(job.pipeline)} · ${summarizeStorePathLabel(job.input_store_path) ?? job.job_id}`;
+}
+
+function recentBatchTitle(batch: ProcessingBatchStatus): string {
+  return `${processingPipelineFamilyLabel(batch.pipeline)} batch · ${batch.progress.total_jobs} datasets`;
+}
+
+function isActiveJobState(state: ProcessingJobStatus["state"]): boolean {
+  return state === "queued" || state === "running";
+}
+
+function isActiveBatchState(state: ProcessingBatchStatus["state"]): boolean {
+  return state === "queued" || state === "running";
+}
+
 function workspaceOperationAt(
   pipeline: ProcessingPipeline,
   subvolumeCrop: SubvolumeCropOperation | null,
@@ -613,7 +1248,11 @@ export interface ProcessingModelOptions {
 export class ProcessingModel {
   readonly viewerModel: ViewerModel;
 
+  pipelineFamily = $state<ProcessingWorkspaceFamily>("trace_local");
   pipeline = $state<ProcessingPipeline>(createEmptyPipeline());
+  postStackNeighborhoodPipeline = $state<PostStackNeighborhoodProcessingPipeline>(
+    createEmptyPostStackNeighborhoodPipeline()
+  );
   subvolumeCrop = $state<SubvolumeCropOperation | null>(null);
   sessionPipelines = $state.raw<WorkspacePipelineEntry[]>([]);
   activeSessionPipelineId = $state<string | null>(null);
@@ -625,6 +1264,7 @@ export class ProcessingModel {
   previewedSectionKey = $state<string | null>(null);
   previewBusy = $state(false);
   spectrumInspectorOpen = $state(false);
+  spectrumSelectionMode = $state<SeismicSectionAnalysisSelectionMode>("whole-section");
   spectrumAmplitudeScale = $state<SpectrumAmplitudeScale>("db");
   spectrumBusy = $state(false);
   spectrumStale = $state(false);
@@ -632,10 +1272,21 @@ export class ProcessingModel {
   rawSpectrum = $state.raw<AmplitudeSpectrumResponse | null>(null);
   processedSpectrum = $state.raw<AmplitudeSpectrumResponse | null>(null);
   spectrumSectionKey = $state<string | null>(null);
+  spectrumSelectionKey = $state<string | null>(null);
   runBusy = $state(false);
+  batchSubmitting = $state(false);
   error = $state<string | null>(null);
+  datasetOperatorCatalog = $state.raw<DatasetOperatorCatalog | null>(null);
+  datasetOperatorCatalogLoading = $state(false);
+  datasetOperatorCatalogError = $state<string | null>(null);
   presets = $state.raw<ProcessingPreset[]>([]);
   activeJob = $state<ProcessingJobStatus | null>(null);
+  activeBatch = $state.raw<ProcessingBatchStatus | null>(null);
+  recentJobs = $state.raw<RecentProcessingJobEntry[]>([]);
+  recentBatches = $state.raw<RecentProcessingBatchEntry[]>([]);
+  selectedBatchStorePaths = $state.raw<string[]>([]);
+  batchExecutionMode = $state<BatchExecutionModeSelection>("auto");
+  batchMaxActiveJobs = $state("");
   loadingPresets = $state(false);
   runOutputSettingsOpen = $state(false);
   runOutputPathMode = $state<"default" | "custom">("default");
@@ -645,6 +1296,7 @@ export class ProcessingModel {
   resolvingRunOutputPath = $state(false);
 
   #jobPollTimer: number | null = null;
+  #batchPollTimer: number | null = null;
   #presetCounter = 0;
   #sessionPipelineCounter = 0;
   #hydratedDatasetEntryId: string | null = null;
@@ -653,6 +1305,7 @@ export class ProcessingModel {
   #copiedOperation: WorkspaceOperation | null = null;
   #persistSessionPipelinesTimer: number | null = null;
   #runOutputPathRefreshTimer: number | null = null;
+  #operatorCatalogRequestId = 0;
 
   constructor(options: ProcessingModelOptions) {
     this.viewerModel = options.viewerModel;
@@ -675,7 +1328,56 @@ export class ProcessingModel {
       }
       if (this.spectrumSectionKey && this.spectrumSectionKey !== key) {
         this.clearSpectrumState();
+        return;
       }
+
+      if (
+        this.spectrumSelectionKey &&
+        this.activeSpectrumSelection &&
+        this.spectrumSelectionKey !== buildAnalysisSelectionKey(key, this.activeSpectrumSelection)
+      ) {
+        this.spectrumStale = true;
+        this.spectrumError = null;
+      }
+    });
+
+    $effect(() => {
+      const activeStorePath = this.viewerModel.activeStorePath.trim();
+      if (!activeStorePath) {
+        this.datasetOperatorCatalog = null;
+        this.datasetOperatorCatalogError = null;
+        this.datasetOperatorCatalogLoading = false;
+        this.#operatorCatalogRequestId += 1;
+        return;
+      }
+
+      const requestId = ++this.#operatorCatalogRequestId;
+      this.datasetOperatorCatalogLoading = true;
+      this.datasetOperatorCatalogError = null;
+
+      void loadDatasetOperatorCatalog(activeStorePath)
+        .then((catalog) => {
+          if (this.#operatorCatalogRequestId !== requestId) {
+            return;
+          }
+          this.datasetOperatorCatalog = catalog;
+        })
+        .catch((error) => {
+          if (this.#operatorCatalogRequestId !== requestId) {
+            return;
+          }
+          this.datasetOperatorCatalog = null;
+          this.datasetOperatorCatalogError = errorMessage(
+            error,
+            "Failed to load the dataset operator catalog."
+          );
+        })
+        .finally(() => {
+          if (this.#operatorCatalogRequestId !== requestId) {
+            return;
+          }
+          this.datasetOperatorCatalogLoading = false;
+        });
     });
 
     $effect(() => {
@@ -688,7 +1390,10 @@ export class ProcessingModel {
           const fallback = this.createSessionPipelineEntry(this.nextEmptySessionPipelineName());
           this.sessionPipelines = [fallback];
           this.activeSessionPipelineId = fallback.pipeline_id;
-          this.pipeline = clonePipeline(fallback.pipeline);
+          this.pipeline = clonePipeline(fallback.pipeline ?? createEmptyPipeline());
+          this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
+            fallback.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+          );
           this.subvolumeCrop = cloneSubvolumeCrop(fallback.subvolume_crop);
         }
         return;
@@ -701,12 +1406,7 @@ export class ProcessingModel {
 
       const nextSessionPipelines =
         activeEntry.session_pipelines.length > 0
-          ? activeEntry.session_pipelines.map((entry) => ({
-              pipeline_id: entry.pipeline_id,
-              pipeline: clonePipeline(entry.pipeline),
-              subvolume_crop: cloneSubvolumeCrop(entry.subvolume_crop),
-              updated_at_unix_s: entry.updated_at_unix_s
-            }))
+          ? activeEntry.session_pipelines.map((entry) => cloneWorkspacePipelineEntry(entry))
           : [this.createSessionPipelineEntry("Pipeline 1")];
       const activePipelineId =
         activeEntry.active_session_pipeline_id &&
@@ -717,8 +1417,12 @@ export class ProcessingModel {
         nextSessionPipelines.find((entry) => entry.pipeline_id === activePipelineId) ?? nextSessionPipelines[0];
 
       this.sessionPipelines = nextSessionPipelines;
+      this.pipelineFamily = activePipeline?.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
       this.activeSessionPipelineId = activePipeline?.pipeline_id ?? null;
       this.pipeline = clonePipeline(activePipeline?.pipeline ?? createEmptyPipeline());
+      this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
+        activePipeline?.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+      );
       this.subvolumeCrop = cloneSubvolumeCrop(activePipeline?.subvolume_crop);
       this.selectedStepIndex = 0;
       this.editingParams = false;
@@ -729,7 +1433,10 @@ export class ProcessingModel {
       const runOutputSettingsOpen = this.runOutputSettingsOpen;
       const runOutputPathMode = this.runOutputPathMode;
       const activeStorePath = this.viewerModel.activeStorePath;
-      const signature = workspaceRunOutputSignature(this.pipeline, this.subvolumeCrop);
+      const signature =
+        this.pipelineFamily === "post_stack_neighborhood"
+          ? postStackNeighborhoodPipelineRunOutputSignature(this.postStackNeighborhoodPipeline)
+          : workspaceRunOutputSignature(this.pipeline, this.subvolumeCrop);
 
       if (!activeStorePath) {
         this.defaultRunOutputPath = null;
@@ -748,9 +1455,23 @@ export class ProcessingModel {
       this.scheduleDefaultRunOutputPathRefresh(
         activeStorePath,
         clonePipeline(this.pipeline),
+        clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline),
         cloneSubvolumeCrop(this.subvolumeCrop),
         signature
       );
+    });
+
+    $effect(() => {
+      const candidates = this.batchCandidates;
+      const nextSelection = this.selectedBatchStorePaths.filter((storePath) =>
+        candidates.some((candidate) => candidate.storePath === storePath)
+      );
+      if (
+        nextSelection.length !== this.selectedBatchStorePaths.length ||
+        nextSelection.some((storePath, index) => storePath !== this.selectedBatchStorePaths[index])
+      ) {
+        this.selectedBatchStorePaths = nextSelection;
+      }
     });
   }
 
@@ -770,19 +1491,155 @@ export class ProcessingModel {
         window.clearTimeout(this.#jobPollTimer);
       }
       this.#jobPollTimer = null;
+      if (this.#batchPollTimer !== null && typeof window !== "undefined") {
+        window.clearTimeout(this.#batchPollTimer);
+      }
+      this.#batchPollTimer = null;
     };
   };
 
   get selectedOperation(): WorkspaceOperation | null {
+    if (this.pipelineFamily === "post_stack_neighborhood") {
+      const prefix = this.postStackNeighborhoodPipeline.trace_local_pipeline;
+      if (!prefix || this.selectedStepIndex < 0 || this.selectedStepIndex >= prefix.steps.length) {
+        return null;
+      }
+      return prefix.steps[this.selectedStepIndex]?.operation ?? null;
+    }
     return workspaceOperationAt(this.pipeline, this.subvolumeCrop, this.selectedStepIndex);
   }
 
   get activeSessionPipeline(): WorkspacePipelineEntry | null {
-    return this.sessionPipelines.find((entry) => entry.pipeline_id === this.activeSessionPipelineId) ?? null;
+    const activeEntry =
+      this.sessionPipelines.find((entry) => entry.pipeline_id === this.activeSessionPipelineId) ?? null;
+    if (!activeEntry) {
+      return null;
+    }
+    return activeEntry.family === this.activeProcessingPipelineFamily ? activeEntry : null;
+  }
+
+  get activeProcessingPipelineFamily(): ProcessingPipelineFamily {
+    return this.pipelineFamily === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
+  }
+
+  get activeDatasetIsGatherNative(): boolean {
+    return Boolean(this.viewerModel.dataset?.descriptor.geometry.summary.gather_axis_kind);
+  }
+
+  get batchCandidates(): BatchProcessingCandidate[] {
+    if (this.activeDatasetIsGatherNative) {
+      return [];
+    }
+
+    return this.viewerModel.compatibleCompareCandidates.map((candidate: CompareCandidate) => ({
+      storePath: candidate.storePath,
+      displayName: candidate.displayName,
+      isActive: candidate.isPrimary
+    }));
+  }
+
+  get batchBusy(): boolean {
+    if (this.batchSubmitting) {
+      return true;
+    }
+    return this.activeBatch?.state === "queued" || this.activeBatch?.state === "running";
+  }
+
+  get canRunBatch(): boolean {
+    return (
+      this.canRun &&
+      this.batchCandidates.length > 0 &&
+      this.selectedBatchStorePaths.length > 0 &&
+      !this.runBusy &&
+      !this.batchBusy
+    );
+  }
+
+  get recentActivityEntries(): RecentProcessingEntry[] {
+    return [...this.recentJobs, ...this.recentBatches].sort((left, right) => {
+      const rightUpdatedAt = right.kind === "job" ? right.job.updated_at_unix_s : right.batch.updated_at_unix_s;
+      const leftUpdatedAt = left.kind === "job" ? left.job.updated_at_unix_s : left.batch.updated_at_unix_s;
+      return rightUpdatedAt - leftUpdatedAt;
+    });
+  }
+
+  get hasClearableRecentActivity(): boolean {
+    return (
+      this.recentJobs.some((entry) => !isActiveJobState(entry.job.state)) ||
+      this.recentBatches.some((entry) => !isActiveBatchState(entry.batch.state))
+    );
+  }
+
+  get availableOperatorCatalogItems(): readonly OperatorCatalogItem[] {
+    if (this.activeDatasetIsGatherNative) {
+      return [];
+    }
+
+    return OPERATOR_CATALOG
+      .filter((definition) =>
+        this.pipelineFamily === "post_stack_neighborhood"
+          ? definition.canonicalFamily === "trace_local"
+          : true
+      )
+      .filter((definition) => isCatalogOperatorAvailable(this.datasetOperatorCatalog, definition))
+      .map((definition) => toOperatorCatalogItem(definition, this.datasetOperatorCatalog));
+  }
+
+  get operatorCatalogSourceLabel(): string {
+    if (this.pipelineFamily === "post_stack_neighborhood") {
+      return "Trace-local neighborhood prefix";
+    }
+    if (this.activeDatasetIsGatherNative) {
+      return "Gather-native dataset";
+    }
+    if (this.datasetOperatorCatalog) {
+      return "Canonical registry-backed";
+    }
+    return "Demo fallback catalog";
+  }
+
+  get operatorCatalogSourceDetail(): string {
+    if (this.pipelineFamily === "post_stack_neighborhood") {
+      return "These trace-local steps run before the terminal neighborhood operator. Prefix checkpoints stay hidden in v1.";
+    }
+    if (this.activeDatasetIsGatherNative) {
+      return "This demo remains section-centric. Gather processing and velocity scans are backend-wired but not exposed here yet.";
+    }
+    if (this.datasetOperatorCatalog) {
+      return "Operators are filtered from the core-owned dataset catalog based on the active dataset layout.";
+    }
+    return this.datasetOperatorCatalogError
+      ? `${this.datasetOperatorCatalogError} Showing the demo fallback list instead.`
+      : "Using the demo fallback list until the canonical catalog is available.";
+  }
+
+  get operatorCatalogEmptyMessage(): string {
+    if (this.pipelineFamily === "post_stack_neighborhood") {
+      return "No trace-local prefix operators are available for this dataset.";
+    }
+    if (this.activeDatasetIsGatherNative) {
+      return "Gather-native authoring is not exposed in this section viewer yet.";
+    }
+    if (this.datasetOperatorCatalogLoading) {
+      return "Loading canonical operators for the active dataset...";
+    }
+    return "No catalog-backed operators are available for this dataset.";
+  }
+
+  get selectedNeighborhoodOperation(): NeighborhoodOperation | null {
+    if (this.pipelineFamily !== "post_stack_neighborhood") {
+      return null;
+    }
+    const prefixSteps = this.postStackNeighborhoodPipeline.trace_local_pipeline?.steps.length ?? 0;
+    return this.postStackNeighborhoodPipeline.operations[this.selectedStepIndex - prefixSteps] ?? null;
   }
 
   private traceOperationIndexForDisplayIndex(displayIndex: number): number | null {
-    if (displayIndex < 0 || displayIndex >= this.pipeline.steps.length) {
+    const traceStepCount =
+      this.pipelineFamily === "post_stack_neighborhood"
+        ? this.postStackNeighborhoodPipeline.trace_local_pipeline?.steps.length ?? 0
+        : this.pipeline.steps.length;
+    if (displayIndex < 0 || displayIndex >= traceStepCount) {
       return null;
     }
     return displayIndex;
@@ -791,7 +1648,9 @@ export class ProcessingModel {
   private nextTraceInsertIndexAfterSelection(): number {
     const selectedTraceOperationIndex = this.selectedTraceOperationIndex();
     if (selectedTraceOperationIndex === null) {
-      return this.pipeline.steps.length;
+      return this.pipelineFamily === "post_stack_neighborhood"
+        ? this.postStackNeighborhoodPipeline.trace_local_pipeline?.steps.length ?? 0
+        : this.pipeline.steps.length;
     }
     return selectedTraceOperationIndex + 1;
   }
@@ -812,15 +1671,33 @@ export class ProcessingModel {
   }
 
   get sessionPipelineItems(): WorkspacePipelineEntry[] {
-    return this.sessionPipelines;
+    return this.sessionPipelines.filter((entry) => entry.family === this.activeProcessingPipelineFamily);
   }
 
   get hasOperations(): boolean {
-    return this.pipeline.steps.length > 0 || this.subvolumeCrop !== null;
+    return this.pipelineFamily === "post_stack_neighborhood"
+      ? (this.postStackNeighborhoodPipeline.trace_local_pipeline?.steps.length ?? 0) +
+          this.postStackNeighborhoodPipeline.operations.length >
+          0
+      : this.pipeline.steps.length > 0 || this.subvolumeCrop !== null;
   }
 
   get selectedStepLabel(): string | null {
-    return this.selectedOperation ? describeOperation(this.selectedOperation) : null;
+    if (this.pipelineFamily === "post_stack_neighborhood") {
+      if (this.selectedOperation) {
+        return describeOperation(this.selectedOperation);
+      }
+      return this.selectedNeighborhoodOperation
+        ? describeNeighborhoodOperation(this.selectedNeighborhoodOperation)
+        : null;
+    }
+    return this.selectedOperatorCatalogItem?.label ?? (this.selectedOperation ? describeOperation(this.selectedOperation) : null);
+  }
+
+  get selectedOperatorCatalogItem(): OperatorCatalogItem | null {
+    return this.selectedOperation
+      ? findOperatorCatalogItemForOperation(this.selectedOperation, this.availableOperatorCatalogItems)
+      : null;
   }
 
   get displaySection(): DisplaySectionView | null {
@@ -839,7 +1716,10 @@ export class ProcessingModel {
   }
 
   get canPreview(): boolean {
-    return this.pipeline.steps.length > 0 && Boolean(this.viewerModel.section && this.viewerModel.activeStorePath);
+    return this.pipelineFamily === "post_stack_neighborhood"
+      ? this.postStackNeighborhoodPipeline.operations.length > 0 &&
+          Boolean(this.viewerModel.section && this.viewerModel.activeStorePath)
+      : this.pipeline.steps.length > 0 && Boolean(this.viewerModel.section && this.viewerModel.activeStorePath);
   }
 
   get canRun(): boolean {
@@ -847,16 +1727,24 @@ export class ProcessingModel {
   }
 
   get canInspectSpectrum(): boolean {
-    return Boolean(this.viewerModel.section && this.viewerModel.activeStorePath && this.viewerModel.dataset);
+    return Boolean(
+      this.viewerModel.section &&
+        this.viewerModel.activeStorePath &&
+        this.viewerModel.dataset &&
+        this.activeSpectrumSelection
+    );
   }
 
   get spectrumSelectionSummary(): string {
-    const section = this.viewerModel.section;
-    if (!section) {
+    if (!this.viewerModel.section || !this.activeSpectrumSelection) {
       return "Open a dataset and load a section to inspect spectra.";
     }
 
-    return `Whole ${this.viewerModel.axis} section ${this.viewerModel.index} · ${section.traces} traces × ${section.samples} samples`;
+    return buildAnalysisSelectionSummary(this.viewerModel.section, this.activeSpectrumSelection);
+  }
+
+  get activeSpectrumSelection() {
+    return selectionFromMode(this.spectrumSelectionMode, this.viewerModel.displayedViewport);
   }
 
   get pipelineDirty(): boolean {
@@ -864,7 +1752,24 @@ export class ProcessingModel {
   }
 
   get pipelineTitle(): string {
-    return pipelineName(this.pipeline);
+    return this.pipelineFamily === "post_stack_neighborhood"
+      ? postStackNeighborhoodPipelineName(this.postStackNeighborhoodPipeline)
+      : pipelineName(this.pipeline);
+  }
+
+  get activePresetFamily(): ProcessingPipelineFamily {
+    return processingPipelineSpecFamily(
+      batchPipelineSpecForWorkspace(
+        this.pipelineFamily,
+        this.pipeline,
+        this.postStackNeighborhoodPipeline,
+        this.subvolumeCrop
+      )
+    );
+  }
+
+  get visiblePresets(): ProcessingPreset[] {
+    return this.presets.filter((preset) => processingPipelineSpecFamily(preset.pipeline) === this.activePresetFamily);
   }
 
   get activePrimaryVolumeLabel(): string {
@@ -895,6 +1800,16 @@ export class ProcessingModel {
     return workspaceOperations(this.pipeline, this.subvolumeCrop);
   }
 
+  get neighborhoodOperations(): NeighborhoodOperation[] {
+    return this.postStackNeighborhoodPipeline.operations.map((operation) => cloneNeighborhoodOperation(operation));
+  }
+
+  get neighborhoodTraceLocalOperations(): WorkspaceOperation[] {
+    return this.postStackNeighborhoodPipeline.trace_local_pipeline
+      ? workspaceOperations(this.postStackNeighborhoodPipeline.trace_local_pipeline, null)
+      : [];
+  }
+
   get hasSubvolumeCrop(): boolean {
     return this.subvolumeCrop !== null;
   }
@@ -906,19 +1821,29 @@ export class ProcessingModel {
 
   get canMoveSelectedDown(): boolean {
     const selectedTraceOperationIndex = this.selectedTraceOperationIndex();
-    return selectedTraceOperationIndex !== null && selectedTraceOperationIndex < this.pipeline.steps.length - 1;
+    const traceStepCount =
+      this.pipelineFamily === "post_stack_neighborhood"
+        ? this.postStackNeighborhoodPipeline.trace_local_pipeline?.steps.length ?? 0
+        : this.pipeline.steps.length;
+    return selectedTraceOperationIndex !== null && selectedTraceOperationIndex < traceStepCount - 1;
   }
 
   get canRemoveSessionPipeline(): boolean {
-    return this.sessionPipelines.length > 1;
+    return this.sessionPipelineItems.length > 1;
   }
 
   get canToggleSelectedCheckpoint(): boolean {
+    if (this.pipelineFamily === "post_stack_neighborhood") {
+      return false;
+    }
     const selectedTraceOperationIndex = this.selectedTraceOperationIndex();
     return selectedTraceOperationIndex !== null && canCheckpointStepIndex(this.pipeline, selectedTraceOperationIndex, this.subvolumeCrop);
   }
 
   get selectedStepCheckpoint(): boolean {
+    if (this.pipelineFamily === "post_stack_neighborhood") {
+      return false;
+    }
     const selectedTraceOperationIndex = this.selectedTraceOperationIndex();
     return selectedTraceOperationIndex !== null
       ? this.pipeline.steps[selectedTraceOperationIndex]?.checkpoint ?? false
@@ -934,7 +1859,36 @@ export class ProcessingModel {
   }
 
   sessionPipelineLabel = (entry: WorkspacePipelineEntry, index: number): string => {
-    return pipelineName(entry.pipeline) || `Pipeline ${index + 1}`;
+    if (entry.family === "post_stack_neighborhood") {
+      return postStackNeighborhoodPipelineName(
+        entry.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+      ) || `Neighborhood ${index + 1}`;
+    }
+    return pipelineName(entry.pipeline ?? createEmptyPipeline()) || `Pipeline ${index + 1}`;
+  };
+
+  sessionPipelineSummary = (entry: WorkspacePipelineEntry): string => {
+    if (entry.family === "post_stack_neighborhood") {
+      const count = entry.post_stack_neighborhood_pipeline?.operations.length ?? 0;
+      return `${count} neighborhood step${count === 1 ? "" : "s"}`;
+    }
+    const stepCount = (entry.pipeline?.steps.length ?? 0) + (entry.subvolume_crop ? 1 : 0);
+    return `${stepCount} step${stepCount === 1 ? "" : "s"}`;
+  };
+
+  setPipelineFamily = (family: ProcessingWorkspaceFamily): void => {
+    if (this.pipelineFamily === family) {
+      return;
+    }
+
+    this.pipelineFamily = family;
+    const targetFamily = family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
+    let entry = this.sessionPipelines.find((candidate) => candidate.family === targetFamily) ?? null;
+    if (!entry) {
+      entry = this.createSessionPipelineEntry(this.nextEmptySessionPipelineName(), createEmptyPipeline(), null, null, family);
+      this.sessionPipelines = [...this.sessionPipelines, entry];
+    }
+    this.activateSessionPipeline(entry.pipeline_id);
   };
 
   setRunOutputSettingsOpen = (open: boolean): void => {
@@ -943,8 +1897,11 @@ export class ProcessingModel {
       this.scheduleDefaultRunOutputPathRefresh(
         this.viewerModel.activeStorePath,
         clonePipeline(this.pipeline),
+        clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline),
         cloneSubvolumeCrop(this.subvolumeCrop),
-        workspaceRunOutputSignature(this.pipeline, this.subvolumeCrop)
+        this.pipelineFamily === "post_stack_neighborhood"
+          ? postStackNeighborhoodPipelineRunOutputSignature(this.postStackNeighborhoodPipeline)
+          : workspaceRunOutputSignature(this.pipeline, this.subvolumeCrop)
       );
     }
   };
@@ -991,8 +1948,12 @@ export class ProcessingModel {
   createSessionPipeline = (): void => {
     const nextEntry = this.createSessionPipelineEntry(this.nextEmptySessionPipelineName());
     this.sessionPipelines = [...this.sessionPipelines, nextEntry];
+    this.pipelineFamily = nextEntry.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
     this.activeSessionPipelineId = nextEntry.pipeline_id;
-    this.pipeline = clonePipeline(nextEntry.pipeline);
+    this.pipeline = clonePipeline(nextEntry.pipeline ?? createEmptyPipeline());
+    this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
+      nextEntry.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+    );
     this.subvolumeCrop = cloneSubvolumeCrop(nextEntry.subvolume_crop);
     this.viewerModel.setSelectedPresetId(null);
     this.selectedStepIndex = 0;
@@ -1007,12 +1968,20 @@ export class ProcessingModel {
       return;
     }
     const duplicate = this.createCopiedSessionPipelineEntry(
-      source.pipeline,
-      source.subvolume_crop ?? null
+      source.family === "post_stack_neighborhood"
+        ? null
+        : (source.pipeline ?? createEmptyPipeline()),
+      source.subvolume_crop ?? null,
+      source.post_stack_neighborhood_pipeline ?? null,
+      source.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local"
     );
     this.sessionPipelines = [...this.sessionPipelines, duplicate];
+    this.pipelineFamily = duplicate.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
     this.activeSessionPipelineId = duplicate.pipeline_id;
-    this.pipeline = clonePipeline(duplicate.pipeline);
+    this.pipeline = clonePipeline(duplicate.pipeline ?? createEmptyPipeline());
+    this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
+      duplicate.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+    );
     this.subvolumeCrop = cloneSubvolumeCrop(duplicate.subvolume_crop);
     this.viewerModel.setSelectedPresetId(null);
     this.selectedStepIndex = 0;
@@ -1027,10 +1996,14 @@ export class ProcessingModel {
       return;
     }
 
+    this.pipelineFamily = entry.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
     this.activeSessionPipelineId = pipelineId;
-    this.pipeline = clonePipeline(entry.pipeline);
+    this.pipeline = clonePipeline(entry.pipeline ?? createEmptyPipeline());
+    this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
+      entry.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+    );
     this.subvolumeCrop = cloneSubvolumeCrop(entry.subvolume_crop);
-    this.viewerModel.setSelectedPresetId(entry.pipeline.preset_id ?? null);
+    this.viewerModel.setSelectedPresetId(workspaceEntryPresetId(entry));
     this.selectedStepIndex = 0;
     this.editingParams = false;
     this.clearPreviewState();
@@ -1063,9 +2036,13 @@ export class ProcessingModel {
     if (removingActivePipeline) {
       const fallbackEntry = nextSessionPipelines[Math.max(0, activeIndex - 1)] ?? nextSessionPipelines[0];
       this.activeSessionPipelineId = fallbackEntry?.pipeline_id ?? null;
+      this.pipelineFamily = fallbackEntry?.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
       this.pipeline = clonePipeline(fallbackEntry?.pipeline ?? createEmptyPipeline());
+      this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
+        fallbackEntry?.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+      );
       this.subvolumeCrop = cloneSubvolumeCrop(fallbackEntry?.subvolume_crop);
-      this.viewerModel.setSelectedPresetId(fallbackEntry?.pipeline.preset_id ?? null);
+      this.viewerModel.setSelectedPresetId(workspaceEntryPresetId(fallbackEntry));
       this.selectedStepIndex = 0;
       this.editingParams = false;
       this.clearPreviewState();
@@ -1077,47 +2054,92 @@ export class ProcessingModel {
   private createSessionPipelineEntry(
     suggestedName: string,
     template: ProcessingPipeline = createEmptyPipeline(),
-    subvolumeCrop: SubvolumeCropOperation | null = null
+    subvolumeCrop: SubvolumeCropOperation | null = null,
+    postStackNeighborhoodPipeline: PostStackNeighborhoodProcessingPipeline | null = null,
+    family: ProcessingWorkspaceFamily = this.pipelineFamily
   ): WorkspacePipelineEntry {
     this.#sessionPipelineCounter += 1;
-    const pipeline = clonePipeline(template);
-    pipeline.name = pipeline.name?.trim() || suggestedName;
+    const pipeline = family === "trace_local" ? clonePipeline(template) : null;
+    if (pipeline) {
+      pipeline.name = pipeline.name?.trim() || suggestedName;
+    }
+    const neighborhoodPipeline =
+      family === "post_stack_neighborhood"
+        ? clonePostStackNeighborhoodPipeline(
+            postStackNeighborhoodPipeline ?? createEmptyPostStackNeighborhoodPipeline()
+          )
+        : null;
+    if (neighborhoodPipeline) {
+      neighborhoodPipeline.name = neighborhoodPipeline.name?.trim() || suggestedName;
+    }
     return {
       pipeline_id: `session-pipeline-${Date.now()}-${this.#sessionPipelineCounter}`,
+      family: family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local",
       pipeline,
-      subvolume_crop: cloneSubvolumeCrop(subvolumeCrop),
+      subvolume_crop: family === "trace_local" ? cloneSubvolumeCrop(subvolumeCrop) : null,
+      post_stack_neighborhood_pipeline: neighborhoodPipeline,
       updated_at_unix_s: pipelineTimestamp()
     };
   }
 
   private nextEmptySessionPipelineName(): string {
-    const existingNames = this.sessionPipelines.map((entry) => pipelineName(entry.pipeline).trim().toLowerCase());
-    if (!existingNames.includes("pipeline")) {
-      return "Pipeline";
+    const baseLabel = this.pipelineFamily === "post_stack_neighborhood" ? "neighborhood" : "pipeline";
+    const existingNames = this.sessionPipelineItems.map((entry) =>
+      (entry.family === "post_stack_neighborhood"
+        ? postStackNeighborhoodPipelineName(
+            entry.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+          )
+        : pipelineName(entry.pipeline ?? createEmptyPipeline())
+      )
+        .trim()
+        .toLowerCase()
+    );
+    if (!existingNames.includes(baseLabel)) {
+      return this.pipelineFamily === "post_stack_neighborhood" ? "Neighborhood" : "Pipeline";
     }
 
     let index = 2;
-    while (existingNames.includes(`pipeline ${index}`)) {
+    while (existingNames.includes(`${baseLabel} ${index}`)) {
       index += 1;
     }
-    return `Pipeline ${index}`;
+    return this.pipelineFamily === "post_stack_neighborhood" ? `Neighborhood ${index}` : `Pipeline ${index}`;
   }
 
   private createCopiedSessionPipelineEntry(
-    source: ProcessingPipeline,
-    subvolumeCrop: SubvolumeCropOperation | null
+    source: ProcessingPipeline | null,
+    subvolumeCrop: SubvolumeCropOperation | null,
+    postStackNeighborhoodPipeline: PostStackNeighborhoodProcessingPipeline | null,
+    family: ProcessingWorkspaceFamily
   ): WorkspacePipelineEntry {
-    const pipeline = clonePipeline(source);
+    if (family === "post_stack_neighborhood") {
+      const pipeline = clonePostStackNeighborhoodPipeline(
+        postStackNeighborhoodPipeline ?? createEmptyPostStackNeighborhoodPipeline()
+      );
+      pipeline.preset_id = null;
+      pipeline.name = nextDuplicateName(
+        postStackNeighborhoodPipelineName(pipeline),
+        this.sessionPipelineItems.map((entry) =>
+          postStackNeighborhoodPipelineName(
+            entry.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+          )
+        )
+      );
+      return this.createSessionPipelineEntry(
+        pipeline.name,
+        createEmptyPipeline(),
+        null,
+        pipeline,
+        "post_stack_neighborhood"
+      );
+    }
+
+    const pipeline = clonePipeline(source ?? createEmptyPipeline());
     pipeline.preset_id = null;
     pipeline.name = nextDuplicateName(
-      pipelineName(source),
-      this.sessionPipelines.map((entry) => pipelineName(entry.pipeline))
+      pipelineName(pipeline),
+      this.sessionPipelineItems.map((entry) => pipelineName(entry.pipeline ?? createEmptyPipeline()))
     );
-    return this.createSessionPipelineEntry(
-      pipeline.name,
-      pipeline,
-      subvolumeCrop
-    );
+    return this.createSessionPipelineEntry(pipeline.name, pipeline, subvolumeCrop, null, "trace_local");
   }
 
   copyActiveSessionPipeline = (): void => {
@@ -1126,10 +2148,19 @@ export class ProcessingModel {
       return;
     }
     this.#copiedSessionPipeline = {
-      pipeline: clonePipeline(activePipeline.pipeline),
-      subvolumeCrop: cloneSubvolumeCrop(activePipeline.subvolume_crop)
+      family: activePipeline.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local",
+      pipeline: clonePipeline(activePipeline.pipeline ?? createEmptyPipeline()),
+      subvolumeCrop: cloneSubvolumeCrop(activePipeline.subvolume_crop),
+      postStackNeighborhoodPipeline: activePipeline.post_stack_neighborhood_pipeline
+        ? clonePostStackNeighborhoodPipeline(activePipeline.post_stack_neighborhood_pipeline)
+        : null
     };
-    this.viewerModel.note("Copied active session pipeline.", "ui", "info", pipelineName(activePipeline.pipeline));
+    this.viewerModel.note(
+      "Copied active session pipeline.",
+      "ui",
+      "info",
+      this.sessionPipelineLabel(activePipeline, 0)
+    );
   };
 
   pasteCopiedSessionPipeline = (): void => {
@@ -1139,11 +2170,17 @@ export class ProcessingModel {
 
     const duplicate = this.createCopiedSessionPipelineEntry(
       this.#copiedSessionPipeline.pipeline,
-      this.#copiedSessionPipeline.subvolumeCrop
+      this.#copiedSessionPipeline.subvolumeCrop,
+      this.#copiedSessionPipeline.postStackNeighborhoodPipeline,
+      this.#copiedSessionPipeline.family
     );
     this.sessionPipelines = [...this.sessionPipelines, duplicate];
+    this.pipelineFamily = duplicate.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
     this.activeSessionPipelineId = duplicate.pipeline_id;
-    this.pipeline = clonePipeline(duplicate.pipeline);
+    this.pipeline = clonePipeline(duplicate.pipeline ?? createEmptyPipeline());
+    this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
+      duplicate.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+    );
     this.subvolumeCrop = cloneSubvolumeCrop(duplicate.subvolume_crop);
     this.viewerModel.setSelectedPresetId(null);
     this.selectedStepIndex = 0;
@@ -1212,8 +2249,12 @@ export class ProcessingModel {
       this.sessionPipelines.map((entry) => ({
         pipeline_id: entry.pipeline_id,
         updated_at_unix_s: entry.updated_at_unix_s,
-        pipeline: clonePipeline(entry.pipeline),
-        subvolume_crop: cloneSubvolumeCrop(entry.subvolume_crop)
+        family: entry.family,
+        pipeline: entry.pipeline ? clonePipeline(entry.pipeline) : null,
+        subvolume_crop: cloneSubvolumeCrop(entry.subvolume_crop),
+        post_stack_neighborhood_pipeline: entry.post_stack_neighborhood_pipeline
+          ? clonePostStackNeighborhoodPipeline(entry.post_stack_neighborhood_pipeline)
+          : null
       })),
       this.activeSessionPipelineId
     );
@@ -1239,6 +2280,9 @@ export class ProcessingModel {
     nextPipeline: ProcessingPipeline,
     nextSubvolumeCrop: SubvolumeCropOperation | null = this.subvolumeCrop
   ): void {
+    if (this.pipelineFamily !== "trace_local") {
+      return;
+    }
     const activePipelineId = this.activeSessionPipelineId;
     const snapshot = clonePipeline(nextPipeline);
     this.pipeline = snapshot;
@@ -1252,13 +2296,65 @@ export class ProcessingModel {
       entry.pipeline_id === activePipelineId
         ? {
             pipeline_id: entry.pipeline_id,
+            family: entry.family,
             pipeline: clonePipeline(snapshot),
             subvolume_crop: cloneSubvolumeCrop(nextSubvolumeCrop),
+            post_stack_neighborhood_pipeline: null,
             updated_at_unix_s: pipelineTimestamp()
           }
         : entry
     );
     this.schedulePersistSessionPipelines();
+  }
+
+  private updateActivePostStackNeighborhoodPipeline(
+    nextPipeline: PostStackNeighborhoodProcessingPipeline
+  ): void {
+    if (this.pipelineFamily !== "post_stack_neighborhood") {
+      return;
+    }
+    const activePipelineId = this.activeSessionPipelineId;
+    const snapshot = clonePostStackNeighborhoodPipeline(nextPipeline);
+    this.postStackNeighborhoodPipeline = snapshot;
+
+    if (!activePipelineId) {
+      return;
+    }
+
+    this.sessionPipelines = this.sessionPipelines.map((entry) =>
+      entry.pipeline_id === activePipelineId
+        ? {
+            pipeline_id: entry.pipeline_id,
+            family: "post_stack_neighborhood",
+            pipeline: null,
+            subvolume_crop: null,
+            post_stack_neighborhood_pipeline: clonePostStackNeighborhoodPipeline(snapshot),
+            updated_at_unix_s: pipelineTimestamp()
+          }
+        : entry
+    );
+    this.schedulePersistSessionPipelines();
+  }
+
+  private cloneEditableTraceLocalPipeline(): ProcessingPipeline {
+    return this.pipelineFamily === "post_stack_neighborhood"
+      ? clonePipeline(this.postStackNeighborhoodPipeline.trace_local_pipeline ?? createEmptyPipeline())
+      : clonePipeline(this.pipeline);
+  }
+
+  private commitEditedTraceLocalPipeline(
+    nextPipeline: ProcessingPipeline,
+    nextSubvolumeCrop: SubvolumeCropOperation | null = this.subvolumeCrop
+  ): void {
+    nextPipeline.revision += 1;
+    if (this.pipelineFamily === "post_stack_neighborhood") {
+      const nextNeighborhood = clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline);
+      nextNeighborhood.trace_local_pipeline = nextPipeline.steps.length > 0 ? nextPipeline : null;
+      nextNeighborhood.revision += 1;
+      this.updateActivePostStackNeighborhoodPipeline(nextNeighborhood);
+      return;
+    }
+    this.updateActiveSessionPipeline(nextPipeline, nextSubvolumeCrop);
   }
 
   private clearPreviewState(): void {
@@ -1274,6 +2370,7 @@ export class ProcessingModel {
     this.spectrumStale = false;
     this.spectrumError = null;
     this.spectrumSectionKey = null;
+    this.spectrumSelectionKey = null;
   }
 
   openSpectrumInspector = (): void => {
@@ -1290,6 +2387,14 @@ export class ProcessingModel {
 
   setSpectrumAmplitudeScale = (scale: SpectrumAmplitudeScale): void => {
     this.spectrumAmplitudeScale = scale;
+  };
+
+  setSpectrumSelectionMode = (mode: SeismicSectionAnalysisSelectionMode): void => {
+    this.spectrumSelectionMode = mode;
+    if (this.rawSpectrum || this.processedSpectrum) {
+      this.spectrumStale = true;
+      this.spectrumError = null;
+    }
   };
 
   selectStep = (index: number): void => {
@@ -1346,6 +2451,11 @@ export class ProcessingModel {
   };
 
   insertOperatorById = (operatorId: OperatorCatalogId): void => {
+    const isAvailable = this.availableOperatorCatalogItems.some((item) => item.id === operatorId);
+    if (!isAvailable) {
+      this.error = `Operator '${operatorId}' is not available for the active dataset.`;
+      return;
+    }
     const operator = OPERATOR_CATALOG.find((candidate) => candidate.id === operatorId);
     if (!operator) {
       return;
@@ -1355,15 +2465,18 @@ export class ProcessingModel {
 
   insertOperation = (operation: WorkspaceOperation): void => {
     if (isCropSubvolume(operation)) {
+      if (this.pipelineFamily === "post_stack_neighborhood") {
+        this.error = "Neighborhood prefixes do not support crop subvolume steps.";
+        return;
+      }
       this.insertCropSubvolume(operation.crop_subvolume);
       return;
     }
-    const next = clonePipeline(this.pipeline);
+    const next = this.cloneEditableTraceLocalPipeline();
     const insertIndex = this.nextTraceInsertIndexAfterSelection();
     const insertDisplayIndex = insertIndex;
     next.steps.splice(insertIndex, 0, createStep(operation));
-    next.revision += 1;
-    this.updateActiveSessionPipeline(next, this.subvolumeCrop);
+    this.commitEditedTraceLocalPipeline(next);
     this.selectedStepIndex = insertDisplayIndex;
     this.editingParams = true;
     this.invalidatePreview();
@@ -1386,6 +2499,33 @@ export class ProcessingModel {
   };
 
   removeOperationAt = (index: number): void => {
+    if (this.pipelineFamily === "post_stack_neighborhood") {
+      const traceOperationIndex = this.traceOperationIndexForDisplayIndex(index);
+      const prefixPipeline = this.postStackNeighborhoodPipeline.trace_local_pipeline;
+      if (traceOperationIndex === null || !prefixPipeline?.steps[traceOperationIndex]) {
+        return;
+      }
+
+      const removedSelectedOperation = index === this.selectedStepIndex;
+      const next = clonePipeline(prefixPipeline);
+      next.steps.splice(traceOperationIndex, 1);
+      this.commitEditedTraceLocalPipeline(next);
+      const nextWorkspaceOperationCount =
+        next.steps.length + this.postStackNeighborhoodPipeline.operations.length;
+      if (next.steps.length === 0) {
+        this.selectedStepIndex = 0;
+      } else if (index < this.selectedStepIndex) {
+        this.selectedStepIndex -= 1;
+      } else if (index === this.selectedStepIndex) {
+        this.selectedStepIndex = Math.min(index, nextWorkspaceOperationCount - 1);
+      }
+      if (removedSelectedOperation || next.steps.length === 0) {
+        this.editingParams = false;
+      }
+      this.invalidatePreview();
+      return;
+    }
+
     if (this.subvolumeCrop && index === this.pipeline.steps.length) {
       this.updateActiveSessionPipeline(clonePipeline(this.pipeline), null);
       this.selectedStepIndex = Math.max(0, Math.min(index - 1, this.pipeline.steps.length - 1));
@@ -1400,10 +2540,9 @@ export class ProcessingModel {
     }
 
     const removedSelectedOperation = index === this.selectedStepIndex;
-    const next = clonePipeline(this.pipeline);
+    const next = this.cloneEditableTraceLocalPipeline();
     next.steps.splice(traceOperationIndex, 1);
-    next.revision += 1;
-    this.updateActiveSessionPipeline(next, this.subvolumeCrop);
+    this.commitEditedTraceLocalPipeline(next, this.subvolumeCrop);
     const nextWorkspaceOperationCount = next.steps.length + (this.subvolumeCrop ? 1 : 0);
     if (next.steps.length === 0) {
       this.selectedStepIndex = this.subvolumeCrop ? 0 : 0;
@@ -1427,11 +2566,10 @@ export class ProcessingModel {
       return;
     }
     const toIndex = fromIndex - 1;
-    const next = clonePipeline(this.pipeline);
+    const next = this.cloneEditableTraceLocalPipeline();
     const [step] = next.steps.splice(fromIndex, 1);
     next.steps.splice(toIndex, 0, step);
-    next.revision += 1;
-    this.updateActiveSessionPipeline(next, this.subvolumeCrop);
+    this.commitEditedTraceLocalPipeline(next, this.subvolumeCrop);
     this.selectedStepIndex -= 1;
     this.invalidatePreview();
   };
@@ -1445,11 +2583,10 @@ export class ProcessingModel {
       return;
     }
     const toIndex = fromIndex + 1;
-    const next = clonePipeline(this.pipeline);
+    const next = this.cloneEditableTraceLocalPipeline();
     const [step] = next.steps.splice(fromIndex, 1);
     next.steps.splice(toIndex, 0, step);
-    next.revision += 1;
-    this.updateActiveSessionPipeline(next, this.subvolumeCrop);
+    this.commitEditedTraceLocalPipeline(next, this.subvolumeCrop);
     this.selectedStepIndex += 1;
     this.invalidatePreview();
   };
@@ -1463,10 +2600,124 @@ export class ProcessingModel {
   };
 
   setPipelineName = (value: string): void => {
+    if (this.pipelineFamily === "post_stack_neighborhood") {
+      this.updateActivePostStackNeighborhoodPipeline({
+        ...clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline),
+        name: value.trim() || null
+      });
+      return;
+    }
+
     this.updateActiveSessionPipeline({
       ...clonePipeline(this.pipeline),
       name: value.trim() || null
     });
+  };
+
+  setSelectedNeighborhoodWindow = (field: keyof PostStackNeighborhoodWindow, value: number): void => {
+    const selected = this.selectedNeighborhoodOperation;
+    if (!selected || !Number.isFinite(value)) {
+      return;
+    }
+
+    const next = clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline);
+    const operation = next.operations[0];
+    if (!operation) {
+      return;
+    }
+
+    const window =
+      "similarity" in operation
+        ? operation.similarity.window
+        : "local_volume_stats" in operation
+          ? operation.local_volume_stats.window
+          : "dip" in operation
+            ? operation.dip.window
+          : null;
+    if (!window) {
+      return;
+    }
+
+    if (field === "inline_stepout" || field === "xline_stepout") {
+      window[field] = Math.max(0, Math.round(value));
+    } else {
+      window[field] = value;
+    }
+    next.revision += 1;
+    this.updateActivePostStackNeighborhoodPipeline(next);
+    this.invalidatePreview();
+  };
+
+  setSelectedNeighborhoodStatistic = (statistic: LocalVolumeStatistic): void => {
+    const selected = this.selectedNeighborhoodOperation;
+    if (!selected || !("local_volume_stats" in selected)) {
+      return;
+    }
+
+    const next = clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline);
+    const operation = next.operations[0];
+    if (!operation || !("local_volume_stats" in operation)) {
+      return;
+    }
+
+    operation.local_volume_stats.statistic = statistic;
+    next.revision += 1;
+    this.updateActivePostStackNeighborhoodPipeline(next);
+    this.invalidatePreview();
+  };
+
+  setSelectedNeighborhoodDipOutput = (output: NeighborhoodDipOutput): void => {
+    const selected = this.selectedNeighborhoodOperation;
+    if (!selected || !("dip" in selected)) {
+      return;
+    }
+
+    const next = clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline);
+    const operation = next.operations[0];
+    if (!operation || !("dip" in operation)) {
+      return;
+    }
+
+    operation.dip.output = output;
+    next.revision += 1;
+    this.updateActivePostStackNeighborhoodPipeline(next);
+    this.invalidatePreview();
+  };
+
+  setSelectedNeighborhoodOperatorKind = (
+    kind: "similarity" | "local_volume_stats" | "dip"
+  ): void => {
+    const selected = this.selectedNeighborhoodOperation;
+    if (!selected) {
+      return;
+    }
+    if (
+      (kind === "similarity" && "similarity" in selected) ||
+      (kind === "local_volume_stats" && "local_volume_stats" in selected) ||
+      (kind === "dip" && "dip" in selected)
+    ) {
+      return;
+    }
+
+    const next = clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline);
+    const current = next.operations[0];
+    if (!current) {
+      return;
+    }
+    const window = neighborhoodWindowForOperation(current);
+    next.operations[0] =
+      kind === "similarity"
+        ? {
+            similarity: {
+              window
+            }
+          }
+        : kind === "local_volume_stats"
+          ? defaultNeighborhoodLocalVolumeStats(window)
+          : defaultNeighborhoodDip(window);
+    next.revision += 1;
+    this.updateActivePostStackNeighborhoodPipeline(next);
+    this.invalidatePreview();
   };
 
   setSelectedAmplitudeScalarFactor = (value: number): void => {
@@ -1474,7 +2725,7 @@ export class ProcessingModel {
     if (!selected || !isAmplitudeScalar(selected)) {
       return;
     }
-    const next = clonePipeline(this.pipeline);
+    const next = this.cloneEditableTraceLocalPipeline();
     const selectedIndex = this.selectedTraceOperationIndex();
     if (selectedIndex === null) {
       return;
@@ -1484,8 +2735,7 @@ export class ProcessingModel {
       return;
     }
     operation.amplitude_scalar.factor = value;
-    next.revision += 1;
-    this.updateActiveSessionPipeline(next);
+    this.commitEditedTraceLocalPipeline(next);
     this.invalidatePreview();
   };
 
@@ -1495,7 +2745,7 @@ export class ProcessingModel {
       return;
     }
 
-    const next = clonePipeline(this.pipeline);
+    const next = this.cloneEditableTraceLocalPipeline();
     const selectedIndex = this.selectedTraceOperationIndex();
     if (selectedIndex === null) {
       return;
@@ -1506,8 +2756,7 @@ export class ProcessingModel {
     }
 
     operation.agc_rms.window_ms = value;
-    next.revision += 1;
-    this.updateActiveSessionPipeline(next);
+    this.commitEditedTraceLocalPipeline(next);
     this.invalidatePreview();
   };
 
@@ -1517,7 +2766,7 @@ export class ProcessingModel {
       return;
     }
 
-    const next = clonePipeline(this.pipeline);
+    const next = this.cloneEditableTraceLocalPipeline();
     const selectedIndex = this.selectedTraceOperationIndex();
     if (selectedIndex === null) {
       return;
@@ -1528,8 +2777,7 @@ export class ProcessingModel {
     }
 
     operation.lowpass_filter[corner] = value;
-    next.revision += 1;
-    this.updateActiveSessionPipeline(next);
+    this.commitEditedTraceLocalPipeline(next);
     this.invalidatePreview();
   };
 
@@ -1539,7 +2787,7 @@ export class ProcessingModel {
       return;
     }
 
-    const next = clonePipeline(this.pipeline);
+    const next = this.cloneEditableTraceLocalPipeline();
     const selectedIndex = this.selectedTraceOperationIndex();
     if (selectedIndex === null) {
       return;
@@ -1550,8 +2798,7 @@ export class ProcessingModel {
     }
 
     operation.highpass_filter[corner] = value;
-    next.revision += 1;
-    this.updateActiveSessionPipeline(next);
+    this.commitEditedTraceLocalPipeline(next);
     this.invalidatePreview();
   };
 
@@ -1564,7 +2811,7 @@ export class ProcessingModel {
       return;
     }
 
-    const next = clonePipeline(this.pipeline);
+    const next = this.cloneEditableTraceLocalPipeline();
     const selectedIndex = this.selectedTraceOperationIndex();
     if (selectedIndex === null) {
       return;
@@ -1575,8 +2822,7 @@ export class ProcessingModel {
     }
 
     operation.bandpass_filter[corner] = value;
-    next.revision += 1;
-    this.updateActiveSessionPipeline(next);
+    this.commitEditedTraceLocalPipeline(next);
     this.invalidatePreview();
   };
 
@@ -1586,7 +2832,7 @@ export class ProcessingModel {
       return;
     }
 
-    const next = clonePipeline(this.pipeline);
+    const next = this.cloneEditableTraceLocalPipeline();
     const selectedIndex = this.selectedTraceOperationIndex();
     if (selectedIndex === null) {
       return;
@@ -1597,8 +2843,7 @@ export class ProcessingModel {
     }
 
     operation.phase_rotation.angle_degrees = value;
-    next.revision += 1;
-    this.updateActiveSessionPipeline(next);
+    this.commitEditedTraceLocalPipeline(next);
     this.invalidatePreview();
   };
 
@@ -1608,7 +2853,7 @@ export class ProcessingModel {
       return;
     }
 
-    const next = clonePipeline(this.pipeline);
+    const next = this.cloneEditableTraceLocalPipeline();
     const selectedIndex = this.selectedTraceOperationIndex();
     if (selectedIndex === null) {
       return;
@@ -1619,8 +2864,7 @@ export class ProcessingModel {
     }
 
     operation.volume_arithmetic.operator = value;
-    next.revision += 1;
-    this.updateActiveSessionPipeline(next);
+    this.commitEditedTraceLocalPipeline(next);
     this.invalidatePreview();
   };
 
@@ -1630,7 +2874,7 @@ export class ProcessingModel {
       return;
     }
 
-    const next = clonePipeline(this.pipeline);
+    const next = this.cloneEditableTraceLocalPipeline();
     const selectedIndex = this.selectedTraceOperationIndex();
     if (selectedIndex === null) {
       return;
@@ -1641,8 +2885,7 @@ export class ProcessingModel {
     }
 
     operation.volume_arithmetic.secondary_store_path = value.trim();
-    next.revision += 1;
-    this.updateActiveSessionPipeline(next);
+    this.commitEditedTraceLocalPipeline(next);
     this.invalidatePreview();
   };
 
@@ -1676,33 +2919,68 @@ export class ProcessingModel {
     this.invalidatePreview();
   };
 
+  private applyPresetPipelineSpec(pipeline: ProcessingPipelineSpec): boolean {
+    if ("trace_local" in pipeline) {
+      this.replacePipeline(pipeline.trace_local.pipeline);
+      return true;
+    }
+    if ("subvolume" in pipeline) {
+      this.updateActiveSessionPipeline(traceLocalPipelineFromSubvolumePipeline(pipeline.subvolume.pipeline), {
+        ...pipeline.subvolume.pipeline.crop
+      });
+      this.selectedStepIndex = 0;
+      this.editingParams = false;
+      this.invalidatePreview();
+      return true;
+    }
+    if ("post_stack_neighborhood" in pipeline) {
+      this.updateActivePostStackNeighborhoodPipeline(
+        clonePostStackNeighborhoodPipeline(pipeline.post_stack_neighborhood.pipeline)
+      );
+      this.selectedStepIndex = 0;
+      this.editingParams = false;
+      this.invalidatePreview();
+      return true;
+    }
+    this.error = "Gather library templates cannot be applied in this workspace.";
+    this.viewerModel.note("Failed to apply library template.", "ui", "warn", this.error);
+    return false;
+  }
+
   loadPreset = (preset: ProcessingPreset): void => {
-    this.replacePipeline(preset.pipeline);
+    if (processingPipelineSpecFamily(preset.pipeline) !== this.activePresetFamily) {
+      this.error = "Library template family does not match the active processing workflow.";
+      this.viewerModel.note("Failed to apply library template.", "ui", "warn", this.error);
+      return;
+    }
+    if (!this.applyPresetPipelineSpec(preset.pipeline)) {
+      return;
+    }
     this.viewerModel.setSelectedPresetId(preset.preset_id);
     this.viewerModel.note("Applied library template to the active pipeline.", "ui", "info", preset.preset_id);
   };
 
   savePreset = async (): Promise<void> => {
-    if (this.subvolumeCrop) {
-      this.error = "Crop Subvolume pipelines cannot be saved as library templates.";
-      this.viewerModel.note("Failed to save library template.", "ui", "warn", this.error);
-      return;
-    }
     const presetId =
-      normalizePresetId(this.pipeline.preset_id ?? this.pipeline.name ?? `pipeline-${++this.#presetCounter}`) ||
+      normalizePresetId(this.pipelineTitle ?? this.pipeline.preset_id ?? `pipeline-${++this.#presetCounter}`) ||
       `pipeline-${++this.#presetCounter}`;
     const preset: ProcessingPreset = {
       preset_id: presetId,
-      pipeline: {
-        ...clonePipeline(this.pipeline),
-        preset_id: presetId
-      },
+      pipeline: withPresetIdOnPipelineSpec(
+        batchPipelineSpecForWorkspace(
+          this.pipelineFamily,
+          this.pipeline,
+          this.postStackNeighborhoodPipeline,
+          this.subvolumeCrop
+        ),
+        presetId
+      ),
       created_at_unix_s: 0,
       updated_at_unix_s: 0
     };
     try {
       const response = await savePipelinePreset(preset);
-      this.updateActiveSessionPipeline(clonePipeline(response.preset.pipeline));
+      this.applyPresetPipelineSpec(response.preset.pipeline);
       this.viewerModel.setSelectedPresetId(response.preset.preset_id);
       await this.refreshPresets();
       this.viewerModel.note("Saved pipeline as a library template.", "ui", "info", response.preset.preset_id);
@@ -1731,7 +3009,7 @@ export class ProcessingModel {
   previewCurrentSection = async (): Promise<void> => {
     if (!this.canPreview || !this.viewerModel.dataset || !this.viewerModel.activeStorePath) {
       this.error =
-        this.pipeline.steps.length === 0 && this.subvolumeCrop
+        this.pipelineFamily === "trace_local" && this.pipeline.steps.length === 0 && this.subvolumeCrop
           ? "Crop Subvolume runs only on full-volume execution. Add a processing step to preview."
           : "Open a dataset and load a section before previewing.";
       return;
@@ -1746,15 +3024,34 @@ export class ProcessingModel {
       index: this.viewerModel.index
     };
     const storePath = this.viewerModel.activeStorePath;
-    const operatorIds = previewOperationIds(this.pipeline);
-    const previewMode = "trace_local";
+    const operatorIds =
+      this.pipelineFamily === "post_stack_neighborhood"
+        ? this.postStackNeighborhoodPipeline.operations.map((operation) =>
+            "similarity" in operation
+              ? "similarity"
+              : "local_volume_stats" in operation
+                ? "local_volume_stats"
+                : "dip" in operation
+                  ? "dip"
+                  : "neighborhood"
+          )
+        : previewOperationIds(this.pipeline);
+    const previewMode = this.pipelineFamily;
     try {
-      const response = await previewProcessing({
-        schema_version: 1,
-        store_path: storePath,
-        section,
-        pipeline: clonePipeline(this.pipeline)
-      } satisfies PreviewProcessingRequest);
+      const response =
+        this.pipelineFamily === "post_stack_neighborhood"
+          ? await previewPostStackNeighborhoodProcessing({
+              schema_version: 1,
+              store_path: storePath,
+              section,
+              pipeline: clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline)
+            } satisfies PreviewPostStackNeighborhoodProcessingRequest)
+          : await previewProcessing({
+              schema_version: 1,
+              store_path: storePath,
+              section,
+              pipeline: clonePipeline(this.pipeline)
+            } satisfies PreviewProcessingRequest);
       const previewResolvedMs = nowMs();
       this.previewSection = response.preview.section;
       const stateAssignedMs = nowMs();
@@ -1778,11 +3075,17 @@ export class ProcessingModel {
           datasetId: section.dataset_id,
           axis: section.axis,
           index: section.index,
-          pipelineRevision: this.pipeline.revision,
-          pipelineName: pipelineName(this.pipeline),
+          pipelineRevision:
+            this.pipelineFamily === "post_stack_neighborhood"
+              ? this.postStackNeighborhoodPipeline.revision
+              : this.pipeline.revision,
+          pipelineName:
+            this.pipelineFamily === "post_stack_neighborhood"
+              ? postStackNeighborhoodPipelineName(this.postStackNeighborhoodPipeline)
+              : pipelineName(this.pipeline),
           operatorCount: operatorIds.length,
           operatorIds,
-          hasRunOnlySubvolumeCrop: this.subvolumeCrop !== null,
+          hasRunOnlySubvolumeCrop: this.pipelineFamily === "trace_local" && this.subvolumeCrop !== null,
           previewReady: response.preview.preview_ready,
           processingLabel: response.preview.processing_label,
           traces: previewSection.traces,
@@ -1806,7 +3109,12 @@ export class ProcessingModel {
       });
       this.viewerModel.note("Processing preview generated.", "backend", "info", this.previewLabel);
     } catch (error) {
-      this.error = errorMessage(error, "Failed to preview processing pipeline.");
+      this.error = errorMessage(
+        error,
+        this.pipelineFamily === "post_stack_neighborhood"
+          ? "Failed to preview neighborhood processing."
+          : "Failed to preview processing pipeline."
+      );
       this.viewerModel.note("Processing preview failed.", "backend", "error", this.error);
     } finally {
       this.previewBusy = false;
@@ -1815,7 +3123,14 @@ export class ProcessingModel {
 
   refreshSpectrum = async (): Promise<void> => {
     const currentSection = this.viewerModel.section;
-    if (!this.canInspectSpectrum || !this.viewerModel.dataset || !this.viewerModel.activeStorePath || !currentSection) {
+    const currentSelection = this.activeSpectrumSelection;
+    if (
+      !this.canInspectSpectrum ||
+      !this.viewerModel.dataset ||
+      !this.viewerModel.activeStorePath ||
+      !currentSection ||
+      !currentSelection
+    ) {
       this.spectrumError = "Open a dataset and load a section before inspecting the spectrum.";
       return;
     }
@@ -1831,7 +3146,7 @@ export class ProcessingModel {
           axis: this.viewerModel.axis,
           index: this.viewerModel.index
         },
-        selection: "whole_section",
+        selection: toSpectrumSelection(currentSelection),
         pipeline: null
       };
 
@@ -1849,6 +3164,7 @@ export class ProcessingModel {
 
       this.spectrumStale = false;
       this.spectrumSectionKey = sectionKey(this.viewerModel);
+      this.spectrumSelectionKey = buildAnalysisSelectionKey(this.spectrumSectionKey, currentSelection);
       this.viewerModel.note("Amplitude spectrum generated.", "backend", "info", this.spectrumSelectionSummary);
     } catch (error) {
       this.spectrumError = errorMessage(error, "Failed to inspect amplitude spectrum.");
@@ -1862,6 +3178,35 @@ export class ProcessingModel {
     this.previewState = this.previewedSectionKey === sectionKey(this.viewerModel) ? "stale" : "raw";
   };
 
+  setBatchMaxActiveJobs = (value: string): void => {
+    this.batchMaxActiveJobs = value.replace(/[^0-9]/g, "");
+  };
+
+  setBatchExecutionMode = (value: BatchExecutionModeSelection): void => {
+    this.batchExecutionMode = value;
+  };
+
+  toggleBatchStorePath = (storePath: string): void => {
+    const normalizedStorePath = storePath.trim();
+    if (!normalizedStorePath) {
+      return;
+    }
+    const selectedStorePaths = this.selectedBatchStorePaths.includes(normalizedStorePath)
+      ? this.selectedBatchStorePaths.filter((candidateStorePath) => candidateStorePath !== normalizedStorePath)
+      : [...this.selectedBatchStorePaths, normalizedStorePath];
+    this.selectedBatchStorePaths = this.batchCandidates
+      .map((candidate) => candidate.storePath)
+      .filter((candidateStorePath) => selectedStorePaths.includes(candidateStorePath));
+  };
+
+  selectAllBatchCandidates = (): void => {
+    this.selectedBatchStorePaths = this.batchCandidates.map((candidate) => candidate.storePath);
+  };
+
+  clearBatchSelection = (): void => {
+    this.selectedBatchStorePaths = [];
+  };
+
   runOnVolume = async (): Promise<void> => {
     if (!this.canRun || !this.viewerModel.activeStorePath) {
       this.error = "Open a dataset before running processing on the full volume.";
@@ -1873,6 +3218,11 @@ export class ProcessingModel {
       const outputStorePath =
         this.runOutputPathMode === "custom"
           ? this.customRunOutputPath.trim()
+          : this.pipelineFamily === "post_stack_neighborhood"
+            ? await defaultPostStackNeighborhoodProcessingStorePath(
+                this.viewerModel.activeStorePath,
+                this.postStackNeighborhoodPipeline
+              )
           : this.subvolumeCrop
             ? await defaultSubvolumeProcessingStorePath(
                 this.viewerModel.activeStorePath,
@@ -1896,12 +3246,17 @@ export class ProcessingModel {
           const outputStorePath =
             this.resolvedRunOutputPath ??
             (this.viewerModel.activeStorePath
-              ? this.subvolumeCrop
-                ? await defaultSubvolumeProcessingStorePath(
+              ? this.pipelineFamily === "post_stack_neighborhood"
+                ? await defaultPostStackNeighborhoodProcessingStorePath(
                     this.viewerModel.activeStorePath,
-                    buildSubvolumeProcessingPipeline(this.pipeline, this.subvolumeCrop)
+                    this.postStackNeighborhoodPipeline
                   )
-                : await defaultProcessingStorePath(this.viewerModel.activeStorePath, this.pipeline)
+                : this.subvolumeCrop
+                  ? await defaultSubvolumeProcessingStorePath(
+                      this.viewerModel.activeStorePath,
+                      buildSubvolumeProcessingPipeline(this.pipeline, this.subvolumeCrop)
+                    )
+                  : await defaultProcessingStorePath(this.viewerModel.activeStorePath, this.pipeline)
               : null);
           if (outputStorePath) {
             try {
@@ -1918,17 +3273,108 @@ export class ProcessingModel {
     }
   };
 
+  runBatchOnVolumes = async (): Promise<void> => {
+    const selectedStorePaths = this.batchCandidates
+      .map((candidate) => candidate.storePath)
+      .filter((storePath) => this.selectedBatchStorePaths.includes(storePath));
+    if (!selectedStorePaths.length) {
+      this.error = "Select at least one compatible dataset before starting a batch run.";
+      return;
+    }
+
+    this.batchSubmitting = true;
+    this.error = null;
+    try {
+      const familyLabel = batchPipelineFamilyLabel(this.pipelineFamily, this.subvolumeCrop);
+      const response = await submitProcessingBatch({
+        schema_version: 1,
+        items: selectedStorePaths.map((store_path) => ({
+          store_path,
+          output_store_path: null
+        })),
+        overwrite_existing: this.overwriteExistingRunOutput,
+        execution_mode: this.batchExecutionMode,
+        max_active_jobs: parsePositiveInteger(this.batchMaxActiveJobs),
+        pipeline: batchPipelineSpecForWorkspace(
+          this.pipelineFamily,
+          this.pipeline,
+          this.postStackNeighborhoodPipeline,
+          this.subvolumeCrop
+        )
+      });
+      this.setActiveBatchStatus(response.batch);
+      this.viewerModel.note(
+        "Started processing batch.",
+        "backend",
+        "info",
+        `${response.batch.progress.total_jobs} ${familyLabel} dataset runs`
+      );
+      this.scheduleBatchPoll();
+    } catch (error) {
+      this.error = errorMessage(error, "Failed to start processing batch.");
+      this.viewerModel.note("Failed to start processing batch.", "backend", "error", this.error);
+    } finally {
+      this.batchSubmitting = false;
+    }
+  };
+
   cancelActiveJob = async (): Promise<void> => {
     if (!this.activeJob) {
       return;
     }
     try {
       const response = await cancelProcessingJob(this.activeJob.job_id);
-      this.activeJob = response.job;
+      this.setActiveJobStatus(response.job);
       this.viewerModel.note("Requested processing job cancellation.", "ui", "warn", response.job.job_id);
     } catch (error) {
       this.error = errorMessage(error, "Failed to cancel processing job.");
     }
+  };
+
+  cancelActiveBatch = async (): Promise<void> => {
+    if (!this.activeBatch) {
+      return;
+    }
+    try {
+      const response = await cancelProcessingBatch(this.activeBatch.batch_id);
+      this.setActiveBatchStatus(response.batch);
+      this.viewerModel.note(
+        "Requested processing batch cancellation.",
+        "ui",
+        "warn",
+        response.batch.batch_id
+      );
+    } catch (error) {
+      this.error = errorMessage(error, "Failed to cancel processing batch.");
+    }
+  };
+
+  focusRecentJob = (jobId: string): void => {
+    const match = this.recentJobs.find((entry) => entry.job.job_id === jobId);
+    if (!match) {
+      return;
+    }
+    this.setActiveJobStatus(match.job);
+    if (match.job.state === "queued" || match.job.state === "running") {
+      this.runBusy = true;
+      this.scheduleJobPoll();
+    }
+  };
+
+  focusRecentBatch = (batchId: string): void => {
+    const match = this.recentBatches.find((entry) => entry.batch.batch_id === batchId);
+    if (!match) {
+      return;
+    }
+    this.setActiveBatchStatus(match.batch);
+    if (match.batch.state === "queued" || match.batch.state === "running") {
+      this.scheduleBatchPoll();
+    }
+  };
+
+  clearFinishedRecentActivity = (): void => {
+    this.recentJobs = this.recentJobs.filter((entry) => isActiveJobState(entry.job.state));
+    this.recentBatches = this.recentBatches.filter((entry) => isActiveBatchState(entry.batch.state));
   };
 
   handleKeydown = async (event: KeyboardEvent): Promise<void> => {
@@ -1947,7 +3393,31 @@ export class ProcessingModel {
     if (event.ctrlKey || event.metaKey) {
       if (event.key.toLowerCase() === "s") {
         event.preventDefault();
-        await this.savePreset();
+        if (this.pipelineFamily === "trace_local") {
+          await this.savePreset();
+        }
+      }
+      return;
+    }
+
+    if (this.pipelineFamily === "post_stack_neighborhood") {
+      switch (event.key) {
+        case "j":
+          event.preventDefault();
+          this.selectNextStep();
+          break;
+        case "k":
+          event.preventDefault();
+          this.selectPreviousStep();
+          break;
+        case "p":
+          event.preventDefault();
+          await this.previewCurrentSection();
+          break;
+        case "r":
+          event.preventDefault();
+          await this.runOnVolume();
+          break;
       }
       return;
     }
@@ -2052,6 +3522,18 @@ export class ProcessingModel {
     }, 500);
   }
 
+  private scheduleBatchPoll(): void {
+    if (!this.activeBatch || typeof window === "undefined") {
+      return;
+    }
+    if (this.#batchPollTimer !== null) {
+      window.clearTimeout(this.#batchPollTimer);
+    }
+    this.#batchPollTimer = window.setTimeout(() => {
+      void this.pollActiveBatch();
+    }, 750);
+  }
+
   private async pollActiveJob(): Promise<void> {
     if (!this.activeJob) {
       this.runBusy = false;
@@ -2059,7 +3541,7 @@ export class ProcessingModel {
     }
     try {
       const response = await getProcessingJob(this.activeJob.job_id);
-      this.activeJob = response.job;
+      this.setActiveJobStatus(response.job);
       switch (response.job.state) {
         case "queued":
         case "running":
@@ -2099,6 +3581,96 @@ export class ProcessingModel {
     }
   }
 
+  private async pollActiveBatch(): Promise<void> {
+    if (!this.activeBatch) {
+      return;
+    }
+    try {
+      const response = await getProcessingBatch(this.activeBatch.batch_id);
+      this.setActiveBatchStatus(response.batch);
+      switch (response.batch.state) {
+        case "queued":
+        case "running":
+          this.scheduleBatchPoll();
+          break;
+        case "completed":
+          await this.viewerModel.refreshWorkspaceState();
+          this.viewerModel.note(
+            "Processing batch completed.",
+            "backend",
+            "info",
+            `${response.batch.progress.total_jobs} datasets`
+          );
+          break;
+        case "completed_with_errors": {
+          await this.viewerModel.refreshWorkspaceState();
+          const failedCount = response.batch.items.filter((item) => item.state === "failed").length;
+          this.error =
+            failedCount > 0
+              ? `${failedCount} batch item${failedCount === 1 ? "" : "s"} failed.`
+              : "Processing batch completed with errors.";
+          this.viewerModel.note("Processing batch completed with errors.", "backend", "warn", this.error);
+          break;
+        }
+        case "cancelled":
+          this.viewerModel.note(
+            "Processing batch cancelled.",
+            "backend",
+            "warn",
+            response.batch.batch_id
+          );
+          break;
+      }
+    } catch (error) {
+      this.error = errorMessage(error, "Failed to poll processing batch.");
+      this.viewerModel.note("Processing batch polling failed.", "backend", "error", this.error);
+    }
+  }
+
+  private setActiveJobStatus(job: ProcessingJobStatus | null): void {
+    this.activeJob = job;
+    if (job) {
+      this.upsertRecentJob(job);
+    }
+  }
+
+  private setActiveBatchStatus(batch: ProcessingBatchStatus | null): void {
+    this.activeBatch = batch;
+    if (batch) {
+      this.upsertRecentBatch(batch);
+    }
+  }
+
+  private upsertRecentJob(job: ProcessingJobStatus): void {
+    const entry: RecentProcessingJobEntry = {
+      kind: "job",
+      job,
+      familyLabel: processingPipelineFamilyLabel(job.pipeline),
+      title: recentJobTitle(job)
+    };
+    this.recentJobs = [
+      entry,
+      ...this.recentJobs.filter((candidate) => candidate.job.job_id !== job.job_id)
+    ]
+      .sort((left, right) => right.job.updated_at_unix_s - left.job.updated_at_unix_s)
+      .slice(0, 8);
+  }
+
+  private upsertRecentBatch(batch: ProcessingBatchStatus): void {
+    const entry: RecentProcessingBatchEntry = {
+      kind: "batch",
+      batch,
+      familyLabel: processingPipelineFamilyLabel(batch.pipeline),
+      title: recentBatchTitle(batch)
+    };
+    this.recentBatches = [
+      entry,
+      ...this.recentBatches.filter((candidate) => candidate.batch.batch_id !== batch.batch_id)
+    ]
+      .sort((left, right) => right.batch.updated_at_unix_s - left.batch.updated_at_unix_s)
+      .slice(0, 8);
+  }
+
   private invalidatePreview(): void {
     if (this.previewSection) {
       this.previewState = "stale";
@@ -2114,19 +3686,32 @@ export class ProcessingModel {
   private async refreshDefaultRunOutputPath(
     activeStorePath: string,
     pipeline: ProcessingPipeline,
+    postStackNeighborhoodPipeline: PostStackNeighborhoodProcessingPipeline,
     subvolumeCrop: SubvolumeCropOperation | null,
     signature: string
   ): Promise<void> {
     const requestId = ++this.#runOutputPathRequestId;
     this.resolvingRunOutputPath = true;
     try {
-      const nextPath = subvolumeCrop
-        ? await defaultSubvolumeProcessingStorePath(activeStorePath, buildSubvolumeProcessingPipeline(pipeline, subvolumeCrop))
-        : await defaultProcessingStorePath(activeStorePath, pipeline);
+      const nextPath =
+        this.pipelineFamily === "post_stack_neighborhood"
+          ? await defaultPostStackNeighborhoodProcessingStorePath(
+              activeStorePath,
+              postStackNeighborhoodPipeline
+            )
+          : subvolumeCrop
+            ? await defaultSubvolumeProcessingStorePath(
+                activeStorePath,
+                buildSubvolumeProcessingPipeline(pipeline, subvolumeCrop)
+              )
+            : await defaultProcessingStorePath(activeStorePath, pipeline);
       if (
         requestId !== this.#runOutputPathRequestId ||
         activeStorePath !== this.viewerModel.activeStorePath ||
-        signature !== workspaceRunOutputSignature(this.pipeline, this.subvolumeCrop)
+        signature !==
+          (this.pipelineFamily === "post_stack_neighborhood"
+            ? postStackNeighborhoodPipelineRunOutputSignature(this.postStackNeighborhoodPipeline)
+            : workspaceRunOutputSignature(this.pipeline, this.subvolumeCrop))
       ) {
         return;
       }
@@ -2146,11 +3731,18 @@ export class ProcessingModel {
   private scheduleDefaultRunOutputPathRefresh(
     activeStorePath: string,
     pipeline: ProcessingPipeline,
+    postStackNeighborhoodPipeline: PostStackNeighborhoodProcessingPipeline,
     subvolumeCrop: SubvolumeCropOperation | null,
     signature: string
   ): void {
     if (typeof window === "undefined") {
-      void this.refreshDefaultRunOutputPath(activeStorePath, pipeline, subvolumeCrop, signature);
+      void this.refreshDefaultRunOutputPath(
+        activeStorePath,
+        pipeline,
+        postStackNeighborhoodPipeline,
+        subvolumeCrop,
+        signature
+      );
       return;
     }
 
@@ -2160,7 +3752,13 @@ export class ProcessingModel {
 
     this.#runOutputPathRefreshTimer = window.setTimeout(() => {
       this.#runOutputPathRefreshTimer = null;
-      void this.refreshDefaultRunOutputPath(activeStorePath, pipeline, subvolumeCrop, signature);
+      void this.refreshDefaultRunOutputPath(
+        activeStorePath,
+        pipeline,
+        postStackNeighborhoodPipeline,
+        subvolumeCrop,
+        signature
+      );
     }, RUN_OUTPUT_PATH_REFRESH_DEBOUNCE_MS);
   }
 
@@ -2169,22 +3767,31 @@ export class ProcessingModel {
       throw new Error("Open a dataset before running processing on the full volume.");
     }
 
-    const response = this.subvolumeCrop
-      ? await runSubvolumeProcessing({
-          schema_version: 1,
-          store_path: this.viewerModel.activeStorePath,
-          output_store_path: outputStorePath,
-          overwrite_existing: overwriteExisting,
-          pipeline: buildSubvolumeProcessingPipeline(this.pipeline, this.subvolumeCrop)
-        } satisfies RunSubvolumeProcessingRequest)
-      : await runProcessing({
-          schema_version: 1,
-          store_path: this.viewerModel.activeStorePath,
-          output_store_path: outputStorePath,
-          overwrite_existing: overwriteExisting,
-          pipeline: clonePipeline(this.pipeline)
-        } satisfies RunProcessingRequest);
-    this.activeJob = response.job;
+    const response =
+      this.pipelineFamily === "post_stack_neighborhood"
+        ? await runPostStackNeighborhoodProcessing({
+            schema_version: 1,
+            store_path: this.viewerModel.activeStorePath,
+            output_store_path: outputStorePath,
+            overwrite_existing: overwriteExisting,
+            pipeline: clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline)
+          } satisfies RunPostStackNeighborhoodProcessingRequest)
+        : this.subvolumeCrop
+          ? await runSubvolumeProcessing({
+              schema_version: 1,
+              store_path: this.viewerModel.activeStorePath,
+              output_store_path: outputStorePath,
+              overwrite_existing: overwriteExisting,
+              pipeline: buildSubvolumeProcessingPipeline(this.pipeline, this.subvolumeCrop)
+            } satisfies RunSubvolumeProcessingRequest)
+          : await runProcessing({
+              schema_version: 1,
+              store_path: this.viewerModel.activeStorePath,
+              output_store_path: outputStorePath,
+              overwrite_existing: overwriteExisting,
+              pipeline: clonePipeline(this.pipeline)
+            } satisfies RunProcessingRequest);
+    this.setActiveJobStatus(response.job);
     this.viewerModel.note(
       "Started full-volume processing job.",
       "backend",
@@ -2203,11 +3810,26 @@ export function describeOperation(operation: WorkspaceOperation): string {
   if (isAmplitudeScalar(operation)) {
     return `amplitude scalar (${operation.amplitude_scalar.factor})`;
   }
+  if (isTraceRmsNormalize(operation)) {
+    return "trace RMS normalize";
+  }
   if (isAgcRms(operation)) {
     return `RMS AGC (${operation.agc_rms.window_ms} ms)`;
   }
   if (isPhaseRotation(operation)) {
-    return `phase rotation (${operation.phase_rotation.angle_degrees}°)`;
+    return `phase rotation (${operation.phase_rotation.angle_degrees} deg)`;
+  }
+  if (isEnvelope(operation)) {
+    return "envelope";
+  }
+  if (isInstantaneousPhase(operation)) {
+    return "instantaneous phase";
+  }
+  if (isInstantaneousFrequency(operation)) {
+    return "instantaneous frequency";
+  }
+  if (isSweetness(operation)) {
+    return "sweetness";
   }
   if (isLowpassFilter(operation)) {
     const { f3_hz, f4_hz } = operation.lowpass_filter;
@@ -2224,7 +3846,131 @@ export function describeOperation(operation: WorkspaceOperation): string {
   if (isVolumeArithmetic(operation)) {
     return `${operation.volume_arithmetic.operator} volume (${volumeStoreLabel(operation.volume_arithmetic.secondary_store_path)})`;
   }
-  return "trace RMS normalize";
+  return "trace-local";
+}
+
+export function describeNeighborhoodOperation(operation: NeighborhoodOperation): string {
+  if ("similarity" in operation) {
+    const { gate_ms, inline_stepout, xline_stepout } = operation.similarity.window;
+    return `similarity (${gate_ms} ms, il ${inline_stepout}, xl ${xline_stepout})`;
+  }
+  if ("local_volume_stats" in operation) {
+    const { gate_ms, inline_stepout, xline_stepout } = operation.local_volume_stats.window;
+    return `${operation.local_volume_stats.statistic} stats (${gate_ms} ms, il ${inline_stepout}, xl ${xline_stepout})`;
+  }
+  if ("dip" in operation) {
+    const { gate_ms, inline_stepout, xline_stepout } = operation.dip.window;
+    return `dip ${operation.dip.output} (${gate_ms} ms, il ${inline_stepout}, xl ${xline_stepout})`;
+  }
+  return "neighborhood";
+}
+
+function pluralizeCount(value: number, noun: string): string {
+  return `${value} ${noun}${value === 1 ? "" : "s"}`;
+}
+
+function humanizePlanningMode(mode: string): string {
+  return mode
+    .split("_")
+    .filter((token) => token.length > 0)
+    .join(" ");
+}
+
+export function summarizeProcessingPlan(
+  summary: ProcessingJobPlanSummaryViewModel | null | undefined
+): ProcessingPlanSummaryView | null {
+  if (!summary) {
+    return null;
+  }
+
+  const overviewParts = [pluralizeCount(summary.stage_count, "stage")];
+  if (summary.expected_partition_count !== null) {
+    overviewParts.push(`~${pluralizeCount(summary.expected_partition_count, "partition")}`);
+  }
+
+  const detailParts = [`Mode: ${humanizePlanningMode(summary.planning_mode)}`];
+  if (summary.max_active_partitions !== null) {
+    detailParts.push(`max ${pluralizeCount(summary.max_active_partitions, "active partition")}`);
+  }
+
+  const stages = summary.stage_labels.map((label, index) => {
+    const partitionSummary = summary.stage_partition_summaries[index];
+    return partitionSummary ? `${label}: ${partitionSummary}` : label;
+  });
+
+  return {
+    overview: overviewParts.join(", "),
+    detail: detailParts.join(" · "),
+    stages
+  };
+}
+
+function formatPartitionProgress(
+  completed: number,
+  total: number | null | undefined
+): string {
+  return total === null || total === undefined
+    ? `${completed} partitions`
+    : `${completed}/${total} partitions`;
+}
+
+export function summarizeProcessingExecution(
+  summary: ProcessingJobExecutionSummaryViewModel | null | undefined
+): ProcessingExecutionSummaryView | null {
+  if (!summary) {
+    return null;
+  }
+
+  const overviewParts = [
+    formatPartitionProgress(summary.completed_partitions, summary.total_partitions)
+  ];
+  if (summary.active_partitions > 0) {
+    overviewParts.push(`${summary.active_partitions} active`);
+  }
+  if (summary.peak_active_partitions > 0) {
+    overviewParts.push(`peak ${summary.peak_active_partitions}`);
+  }
+
+  const detailParts: string[] = [];
+  if (summary.retry_count > 0) {
+    detailParts.push(`${pluralizeCount(summary.retry_count, "retry")}`);
+  }
+
+  const stages = summary.stages.map((stage) => {
+    const parts = [
+      `${stage.stage_label}: ${formatPartitionProgress(stage.completed_partitions, stage.total_partitions)}`
+    ];
+    if (stage.retry_count > 0) {
+      parts.push(`${pluralizeCount(stage.retry_count, "retry")}`);
+    }
+    return parts.join(", ");
+  });
+
+  return {
+    overview: overviewParts.join(", "),
+    detail: detailParts.length > 0 ? detailParts.join(" · ") : null,
+    stages
+  };
+}
+
+export function isNeighborhoodSimilarity(
+  operation: NeighborhoodOperation | null | undefined
+): operation is { similarity: { window: PostStackNeighborhoodWindow } } {
+  return Boolean(operation && typeof operation === "object" && "similarity" in operation);
+}
+
+export function isNeighborhoodLocalVolumeStats(
+  operation: NeighborhoodOperation | null | undefined
+): operation is {
+  local_volume_stats: { window: PostStackNeighborhoodWindow; statistic: LocalVolumeStatistic };
+} {
+  return Boolean(operation && typeof operation === "object" && "local_volume_stats" in operation);
+}
+
+export function isNeighborhoodDip(
+  operation: NeighborhoodOperation | null | undefined
+): operation is { dip: { window: PostStackNeighborhoodWindow; output: NeighborhoodDipOutput } } {
+  return Boolean(operation && typeof operation === "object" && "dip" in operation);
 }
 
 export function isCropSubvolume(
@@ -2237,6 +3983,12 @@ export function isAmplitudeScalar(
   operation: WorkspaceOperation
 ): operation is { amplitude_scalar: { factor: number } } {
   return !isCropSubvolume(operation) && typeof operation !== "string" && "amplitude_scalar" in operation;
+}
+
+export function isTraceRmsNormalize(
+  operation: WorkspaceOperation | null | undefined
+): operation is "trace_rms_normalize" {
+  return operation === "trace_rms_normalize";
 }
 
 export function isAgcRms(
@@ -2294,6 +4046,30 @@ export function isPhaseRotation(
   };
 } {
   return !isCropSubvolume(operation) && typeof operation !== "string" && "phase_rotation" in operation;
+}
+
+export function isEnvelope(
+  operation: WorkspaceOperation | null | undefined
+): operation is "envelope" {
+  return operation === "envelope";
+}
+
+export function isInstantaneousPhase(
+  operation: WorkspaceOperation | null | undefined
+): operation is "instantaneous_phase" {
+  return operation === "instantaneous_phase";
+}
+
+export function isInstantaneousFrequency(
+  operation: WorkspaceOperation | null | undefined
+): operation is "instantaneous_frequency" {
+  return operation === "instantaneous_frequency";
+}
+
+export function isSweetness(
+  operation: WorkspaceOperation | null | undefined
+): operation is "sweetness" {
+  return operation === "sweetness";
 }
 
 export function isVolumeArithmetic(

@@ -7,8 +7,9 @@ use super::default_pipeline_schema_version;
 use super::domain::{DatasetId, SampleDataFidelity, SectionAxis, VolumeDescriptor};
 use super::models::{TimeDepthDomain, WellTieObservationSet1D};
 use super::processing::{
-    GatherProcessingPipeline, ProcessingJobStatus, SubvolumeProcessingPipeline,
-    TraceLocalProcessingPipeline, TraceLocalProcessingPreset,
+    GatherProcessingPipeline, PostStackNeighborhoodProcessingPipeline, ProcessingBatchStatus,
+    ProcessingExecutionMode, ProcessingJobStatus, ProcessingPipelineSpec, ProcessingPreset,
+    SubvolumeProcessingPipeline, TraceLocalProcessingPipeline,
 };
 use super::views::{
     GatherPreviewView, ImportedHorizonDescriptor, PreviewView, SectionHorizonOverlayView,
@@ -69,7 +70,7 @@ pub struct AmplitudeSpectrumResponse {
     pub selection: SectionSpectrumSelection,
     pub sample_interval_ms: f32,
     pub curve: AmplitudeSpectrumCurve,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub processing_label: Option<String>,
 }
 
@@ -87,7 +88,7 @@ pub struct WellTieLogCurveSource {
     pub asset_name: String,
     pub curve_name: String,
     pub original_mnemonic: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub unit: Option<String>,
     pub sample_count: usize,
 }
@@ -103,7 +104,7 @@ pub struct WellTieLogSelection1D {
 pub struct WellTieCurve1D {
     pub id: String,
     pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub unit: Option<String>,
     pub times_ms: Vec<f32>,
     pub values: Vec<f32>,
@@ -148,7 +149,7 @@ pub struct WellTieAnalysis1D {
     pub well_trace: WellTieTrace1D,
     pub section_window: WellTieSectionWindow,
     pub wavelet: WellTieWavelet,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -189,11 +190,11 @@ pub struct AvoReflectivityResponse {
     pub sample_shape: Vec<usize>,
     pub angles_deg: Vec<f32>,
     pub pp_real_f32le: Vec<u8>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub pp_imag_f32le: Option<Vec<u8>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub intercept_f32le: Option<Vec<u8>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub gradient_f32le: Option<Vec<u8>>,
 }
 
@@ -234,10 +235,10 @@ pub struct RockPhysicsAttributeResponse {
     pub schema_version: u32,
     pub method: RockPhysicsAttributeMethod,
     pub sample_shape: Vec<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub unit: Option<String>,
     pub values_f32le: Vec<u8>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default)]
     pub semantic_parameters: BTreeMap<String, f64>,
 }
 
@@ -268,10 +269,10 @@ pub struct AvoInterceptGradientAttributeResponse {
     pub schema_version: u32,
     pub method: AvoInterceptGradientAttributeMethod,
     pub sample_shape: Vec<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub unit: Option<String>,
     pub values_f32le: Vec<u8>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default)]
     pub semantic_parameters: BTreeMap<String, f64>,
 }
 
@@ -322,11 +323,11 @@ pub struct SegyHeaderField {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SegyGeometryOverride {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub inline_3d: Option<SegyHeaderField>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub crossline_3d: Option<SegyHeaderField>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub third_axis: Option<SegyHeaderField>,
 }
 
@@ -338,7 +339,7 @@ pub struct SegyGeometryCandidate {
     pub stacking_state: String,
     pub organization: String,
     pub layout: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub gather_axis_kind: Option<String>,
     pub suggested_action: SuggestedImportAction,
     pub inline_count: usize,
@@ -348,7 +349,7 @@ pub struct SegyGeometryCandidate {
     pub expected_trace_count: usize,
     pub completeness_ratio: f64,
     pub auto_selectable: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -371,16 +372,16 @@ pub struct SurveyPreflightResponse {
     pub stacking_state: String,
     pub organization: String,
     pub layout: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub gather_axis_kind: Option<String>,
     pub suggested_action: SuggestedImportAction,
     pub observed_trace_count: usize,
     pub expected_trace_count: usize,
     pub completeness_ratio: f64,
     pub resolved_geometry: SegyGeometryOverride,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub suggested_geometry_override: Option<SegyGeometryOverride>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub geometry_candidates: Vec<SegyGeometryCandidate>,
     pub notes: Vec<String>,
 }
@@ -457,28 +458,28 @@ pub struct SegyImportPolicy {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SegyImportSpatialPlan {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub x_field: Option<SegyHeaderField>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub y_field: Option<SegyHeaderField>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub coordinate_scalar_field: Option<SegyHeaderField>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub coordinate_units: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub coordinate_reference_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub coordinate_reference_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SegyImportProvenance {
     pub plan_source: SegyImportPlanSource,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub selected_candidate_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub recipe_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub recipe_name: Option<String>,
 }
 
@@ -497,12 +498,12 @@ pub struct SegyImportIssue {
     pub severity: SegyImportIssueSeverity,
     pub code: String,
     pub message: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub field_path: Option<String>,
     pub section: SegyImportIssueSection,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub source_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub suggested_fix: Option<String>,
 }
 
@@ -525,7 +526,7 @@ pub struct SegyImportResolvedDataset {
     pub stacking_state: String,
     pub organization: String,
     pub layout: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub gather_axis_kind: Option<String>,
     pub inline_count: usize,
     pub crossline_count: usize,
@@ -537,19 +538,19 @@ pub struct SegyImportResolvedDataset {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SegyImportResolvedSpatial {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub x_field: Option<SegyHeaderField>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub y_field: Option<SegyHeaderField>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub coordinate_scalar_field: Option<SegyHeaderField>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub coordinate_units: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub coordinate_reference_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub coordinate_reference_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -558,9 +559,9 @@ pub struct SegyImportFieldObservation {
     pub field: SegyHeaderField,
     pub label: String,
     pub unique_count: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub min_value: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub max_value: Option<i64>,
     pub zero_count: usize,
     pub nonzero_count: usize,
@@ -573,7 +574,7 @@ pub struct SegyImportCandidatePlan {
     pub plan_patch: SegyImportPlan,
     pub resolved_dataset: SegyImportResolvedDataset,
     pub risk_summary: SegyImportRiskSummary,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub issues: Vec<SegyImportIssue>,
     pub auto_selectable: bool,
 }
@@ -596,12 +597,12 @@ pub struct SegyImportScanResponse {
     pub sample_format_code: u16,
     pub endianness: String,
     pub default_plan: SegyImportPlan,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub candidate_plans: Vec<SegyImportCandidatePlan>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub field_observations: Vec<SegyImportFieldObservation>,
     pub risk_summary: SegyImportRiskSummary,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub issues: Vec<SegyImportIssue>,
     pub recommended_next_stage: SegyImportWizardStage,
 }
@@ -620,7 +621,7 @@ pub struct SegyImportValidationResponse {
     pub resolved_dataset: SegyImportResolvedDataset,
     pub resolved_spatial: SegyImportResolvedSpatial,
     pub risk_summary: SegyImportRiskSummary,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub issues: Vec<SegyImportIssue>,
     pub can_import: bool,
     pub requires_acknowledgement: bool,
@@ -645,7 +646,7 @@ pub struct SegyImportRecipe {
     pub recipe_id: String,
     pub name: String,
     pub scope: SegyImportRecipeScope,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub source_fingerprint: Option<String>,
     pub plan: SegyImportPlan,
     pub created_at_unix_s: u64,
@@ -837,6 +838,21 @@ pub struct PreviewSubvolumeProcessingResponse {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PreviewPostStackNeighborhoodProcessingRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    pub section: SectionRequest,
+    pub pipeline: PostStackNeighborhoodProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PreviewPostStackNeighborhoodProcessingResponse {
+    pub schema_version: u32,
+    pub preview: PreviewView,
+    pub pipeline: PostStackNeighborhoodProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct RunTraceLocalProcessingRequest {
     pub schema_version: u32,
     pub store_path: String,
@@ -853,6 +869,51 @@ pub struct RunTraceLocalProcessingResponse {
     pub job: ProcessingJobStatus,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingBatchItemRequest {
+    pub store_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_store_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SubmitTraceLocalProcessingBatchRequest {
+    pub schema_version: u32,
+    pub items: Vec<ProcessingBatchItemRequest>,
+    #[serde(default)]
+    pub overwrite_existing: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_active_jobs: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_mode: Option<ProcessingExecutionMode>,
+    pub pipeline: TraceLocalProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SubmitTraceLocalProcessingBatchResponse {
+    pub schema_version: u32,
+    pub batch: ProcessingBatchStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SubmitProcessingBatchRequest {
+    pub schema_version: u32,
+    pub items: Vec<ProcessingBatchItemRequest>,
+    #[serde(default)]
+    pub overwrite_existing: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_active_jobs: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_mode: Option<ProcessingExecutionMode>,
+    pub pipeline: ProcessingPipelineSpec,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SubmitProcessingBatchResponse {
+    pub schema_version: u32,
+    pub batch: ProcessingBatchStatus,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct RunSubvolumeProcessingRequest {
     pub schema_version: u32,
@@ -866,6 +927,23 @@ pub struct RunSubvolumeProcessingRequest {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct RunSubvolumeProcessingResponse {
+    pub schema_version: u32,
+    pub job: ProcessingJobStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RunPostStackNeighborhoodProcessingRequest {
+    pub schema_version: u32,
+    pub store_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_store_path: Option<String>,
+    #[serde(default)]
+    pub overwrite_existing: bool,
+    pub pipeline: PostStackNeighborhoodProcessingPipeline,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct RunPostStackNeighborhoodProcessingResponse {
     pub schema_version: u32,
     pub job: ProcessingJobStatus,
 }
@@ -954,9 +1032,9 @@ pub struct VelocityScanResponse {
     pub schema_version: u32,
     pub gather: GatherRequest,
     pub panel: SemblancePanel,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub processing_label: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub autopicked_velocity_function: Option<VelocityFunctionEstimate>,
 }
 
@@ -989,22 +1067,46 @@ pub struct CancelProcessingJobResponse {
     pub job: ProcessingJobStatus,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GetProcessingBatchRequest {
+    pub schema_version: u32,
+    pub batch_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GetProcessingBatchResponse {
+    pub schema_version: u32,
+    pub batch: ProcessingBatchStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct CancelProcessingBatchRequest {
+    pub schema_version: u32,
+    pub batch_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct CancelProcessingBatchResponse {
+    pub schema_version: u32,
+    pub batch: ProcessingBatchStatus,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ListPipelinePresetsResponse {
     pub schema_version: u32,
-    pub presets: Vec<TraceLocalProcessingPreset>,
+    pub presets: Vec<ProcessingPreset>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SavePipelinePresetRequest {
     pub schema_version: u32,
-    pub preset: TraceLocalProcessingPreset,
+    pub preset: ProcessingPreset,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SavePipelinePresetResponse {
     pub schema_version: u32,
-    pub preset: TraceLocalProcessingPreset,
+    pub preset: ProcessingPreset,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -1020,3 +1122,56 @@ pub struct DeletePipelinePresetResponse {
 }
 
 pub const IPC_SCHEMA_VERSION: u32 = 1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contracts::{SampleDataConversionKind, SampleDataFidelity, SampleValuePreservation};
+    use serde_json::json;
+
+    #[test]
+    fn survey_preflight_response_serializes_presence_stable_fields() {
+        let response = SurveyPreflightResponse {
+            schema_version: 1,
+            input_path: "survey.segy".to_string(),
+            trace_count: 12,
+            samples_per_trace: 64,
+            sample_data_fidelity: SampleDataFidelity {
+                source_sample_type: "ibm32".to_string(),
+                working_sample_type: "f32".to_string(),
+                conversion: SampleDataConversionKind::FormatTranscode,
+                preservation: SampleValuePreservation::PotentiallyLossy,
+                notes: Vec::new(),
+            },
+            classification: "dense".to_string(),
+            stacking_state: "poststack".to_string(),
+            organization: "inline_xline".to_string(),
+            layout: "3d".to_string(),
+            gather_axis_kind: None,
+            suggested_action: SuggestedImportAction::DirectDenseIngest,
+            observed_trace_count: 12,
+            expected_trace_count: 12,
+            completeness_ratio: 1.0,
+            resolved_geometry: SegyGeometryOverride {
+                inline_3d: None,
+                crossline_3d: None,
+                third_axis: None,
+            },
+            suggested_geometry_override: None,
+            geometry_candidates: Vec::new(),
+            notes: Vec::new(),
+        };
+
+        let value = serde_json::to_value(response).expect("preflight should serialize");
+        assert_eq!(value["gather_axis_kind"], serde_json::Value::Null);
+        assert_eq!(
+            value["suggested_geometry_override"],
+            serde_json::Value::Null
+        );
+        assert_eq!(value["geometry_candidates"], json!([]));
+        assert_eq!(
+            value["resolved_geometry"]["inline_3d"],
+            serde_json::Value::Null
+        );
+    }
+}

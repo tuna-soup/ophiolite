@@ -5,4 +5,4 @@ import type { GatherAxisKind } from "./GatherAxisKind";
 import type { GeometryProvenanceSummary } from "./GeometryProvenanceSummary";
 import type { SeismicLayout } from "./SeismicLayout";
 
-export type GeometrySummary = { inline_axis: AxisSummaryI32, xline_axis: AxisSummaryI32, sample_axis: AxisSummaryF32, layout: SeismicLayout | null, gather_axis_kind: GatherAxisKind | null, gather_axis: AxisSummaryF32 | null, provenance: GeometryProvenanceSummary, };
+export type GeometrySummary = { inline_axis: AxisSummaryI32, xline_axis: AxisSummaryI32, sample_axis: AxisSummaryF32, layout?: SeismicLayout | null, gather_axis_kind?: GatherAxisKind | null, gather_axis?: AxisSummaryF32 | null, provenance: GeometryProvenanceSummary, };

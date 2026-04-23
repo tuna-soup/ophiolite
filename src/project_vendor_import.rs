@@ -1106,6 +1106,52 @@ fn validate_runtime_probe_request_matches_plan(request: &VendorProjectPlanReques
     Ok(())
 }
 
+fn validate_runtime_probe_request_lockdown(
+    request: Option<&VendorProjectRuntimeProbeRequest>,
+) -> Result<()> {
+    let Some(request) = request else {
+        return Ok(());
+    };
+    if request.python_executable.is_some() && !admin_bridge_mode_enabled() {
+        return Err(LasError::Validation(
+            "Caller-selected runtime probe executables are disabled outside developer mode."
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_bridge_run_request_lockdown(request: &VendorProjectBridgeRunRequest) -> Result<()> {
+    if request.executable_path.is_some() && !admin_bridge_mode_enabled() {
+        return Err(LasError::Validation(
+            "Caller-selected bridge executables are disabled outside developer mode.".to_string(),
+        ));
+    }
+    if request.execute && !admin_bridge_mode_enabled() {
+        return Err(LasError::Validation(
+            "In-product vendor bridge execution is disabled outside developer mode.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn admin_bridge_mode_enabled() -> bool {
+    if cfg!(test) {
+        return true;
+    }
+
+    if !cfg!(feature = "unsafe-developer-mode") {
+        return false;
+    }
+
+    matches!(
+        std::env::var("OPHIOLITE_ENABLE_DEVELOPER_MODE")
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("YES")
+    )
+}
+
 fn resolve_opendtect_runtime_name(
     display_name: &str,
     runtime_names: &BTreeSet<String>,
@@ -1137,6 +1183,7 @@ pub fn plan_vendor_project_import(
     request: &VendorProjectPlanRequest,
 ) -> Result<VendorProjectPlanResponse> {
     validate_runtime_probe_request_matches_plan(request)?;
+    validate_runtime_probe_request_lockdown(request.runtime_probe.as_ref())?;
     let scan = scan_vendor_project(&VendorProjectScanRequest {
         vendor: request.vendor,
         project_root: request.project_root.clone(),
@@ -1550,6 +1597,7 @@ pub fn commit_vendor_project_import(
 pub fn run_vendor_project_bridge(
     request: &VendorProjectBridgeRunRequest,
 ) -> Result<VendorProjectBridgeRunResponse> {
+    validate_bridge_run_request_lockdown(request)?;
     let scan = scan_vendor_project(&VendorProjectScanRequest {
         vendor: request.vendor,
         project_root: request.project_root.clone(),

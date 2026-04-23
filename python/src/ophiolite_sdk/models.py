@@ -501,6 +501,133 @@ class ComputeCatalog:
 
 
 @dataclass(frozen=True)
+class OperatorContractRef:
+    schema_id: str
+    contract_id: str
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> OperatorContractRef:
+        return cls(
+            schema_id=_string(data["schema_id"], "schema_id"),
+            contract_id=_string(data["contract_id"], "contract_id"),
+        )
+
+
+@dataclass(frozen=True)
+class OperatorDocumentation:
+    short_help: str
+    help_markdown: str | None
+    help_url: str | None
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> OperatorDocumentation:
+        return cls(
+            short_help=_string(data["short_help"], "short_help"),
+            help_markdown=_optional_string(data.get("help_markdown"), "help_markdown"),
+            help_url=_optional_string(data.get("help_url"), "help_url"),
+        )
+
+
+@dataclass(frozen=True)
+class OperatorParameterDoc:
+    name: str
+    label: str
+    description: str
+    value_kind: str
+    required: bool
+    default_value: str | None
+    units: str | None
+    options: tuple[str, ...]
+    minimum: str | None
+    maximum: str | None
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> OperatorParameterDoc:
+        return cls(
+            name=_string(data["name"], "name"),
+            label=_string(data["label"], "label"),
+            description=_string(data["description"], "description"),
+            value_kind=_string(data["value_kind"], "value_kind"),
+            required=bool(data["required"]),
+            default_value=_optional_string(data.get("default_value"), "default_value"),
+            units=_optional_string(data.get("units"), "units"),
+            options=_string_list(data.get("options", []), "options"),
+            minimum=_optional_string(data.get("minimum"), "minimum"),
+            maximum=_optional_string(data.get("maximum"), "maximum"),
+        )
+
+
+@dataclass(frozen=True)
+class OperatorCatalogEntry:
+    id: str
+    provider: str
+    name: str
+    group: str
+    group_id: str
+    description: str
+    family: str
+    execution_kind: str
+    output_lifecycle: str
+    stability: str
+    availability: Mapping[str, Any]
+    tags: tuple[str, ...]
+    documentation: OperatorDocumentation
+    parameter_docs: tuple[OperatorParameterDoc, ...]
+    request_contract: OperatorContractRef
+    response_contract: OperatorContractRef
+    detail: Mapping[str, Any]
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> OperatorCatalogEntry:
+        return cls(
+            id=_string(data["id"], "id"),
+            provider=_string(data["provider"], "provider"),
+            name=_string(data["name"], "name"),
+            group=_string(data["group"], "group"),
+            group_id=_string(data["group_id"], "group_id"),
+            description=_string(data["description"], "description"),
+            family=_string(data["family"], "family"),
+            execution_kind=_string(data["execution_kind"], "execution_kind"),
+            output_lifecycle=_string(data["output_lifecycle"], "output_lifecycle"),
+            stability=_string(data["stability"], "stability"),
+            availability=_mapping(data["availability"], "availability"),
+            tags=_string_list(data.get("tags", []), "tags"),
+            documentation=OperatorDocumentation.from_json(
+                _mapping(data["documentation"], "documentation")
+            ),
+            parameter_docs=tuple(
+                OperatorParameterDoc.from_json(item)
+                for item in _mapping_list(data.get("parameter_docs", []), "parameter_docs")
+            ),
+            request_contract=OperatorContractRef.from_json(
+                _mapping(data["request_contract"], "request_contract")
+            ),
+            response_contract=OperatorContractRef.from_json(
+                _mapping(data["response_contract"], "response_contract")
+            ),
+            detail=_mapping(data["detail"], "detail"),
+        )
+
+
+@dataclass(frozen=True)
+class OperatorCatalog:
+    schema_version: int
+    subject_kind: str
+    operators: tuple[OperatorCatalogEntry, ...]
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> OperatorCatalog:
+        return cls(
+            schema_version=int(data["schema_version"]),
+            subject_kind=_string(data["subject_kind"], "subject_kind"),
+            operators=tuple(
+                OperatorCatalogEntry.from_json(item)
+                for item in _mapping_list(data.get("operators", []), "operators")
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class ComputeRequest:
     source_asset_id: str
     function_id: str

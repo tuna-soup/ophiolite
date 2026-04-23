@@ -8,9 +8,11 @@ members = [
     "crates/ophiolite-project",
     "crates/ophiolite-ingest",
     "crates/ophiolite-compute",
+    "crates/ophiolite-operators",
     "crates/ophiolite-seismic",
     "crates/ophiolite-seismic-io",
     "crates/ophiolite-seismic-runtime",
+    "crates/ophiolite-seismic-execution",
     "crates/ophiolite-cli",
     "traceboost/contracts/seis-contracts-core",
     "traceboost/contracts/seis-contracts-views",
@@ -43,7 +45,7 @@ proj = { version = "0.31", features = ["bundled_proj"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 schemars = "0.8"
-ts-rs = "10.1"
+ts-rs = "12.0.1"
 thiserror = "2.0.18"
 tracing = "0.1.44"
 
@@ -51,6 +53,10 @@ tracing = "0.1.44"
 name = "ophiolite"
 version = "0.1.0"
 edition = "2024"
+
+[features]
+default = []
+unsafe-developer-mode = []
 
 [dependencies]
 arrow-array = { workspace = true }

@@ -203,11 +203,11 @@ pub struct VerticalAxisDescriptor {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SpatialCoverageSummary {
     pub relationship: SpatialCoverageRelationship,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub source_coordinate_reference: Option<CoordinateReferenceDescriptor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub target_coordinate_reference: Option<CoordinateReferenceDescriptor>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -219,15 +219,15 @@ pub struct VelocitySource3D {
     pub velocity_kind: VelocityQuantityKind,
     pub vertical_domain: TimeDepthDomain,
     pub velocity_unit: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub coordinate_reference: Option<CoordinateReferenceDescriptor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub grid_transform: Option<SurveyGridTransform>,
     pub vertical_axis: VerticalAxisDescriptor,
     pub inline_count: usize,
     pub xline_count: usize,
     pub coverage: SpatialCoverageSummary,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -235,20 +235,20 @@ pub struct VelocitySource3D {
 pub struct SurveyPropertyField3D {
     pub id: String,
     pub name: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub derived_from: Vec<String>,
     pub property_name: String,
     pub property_unit: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub coordinate_reference: Option<CoordinateReferenceDescriptor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub grid_transform: Option<SurveyGridTransform>,
     pub vertical_axis: VerticalAxisDescriptor,
     pub inline_count: usize,
     pub xline_count: usize,
     pub sample_count: usize,
     pub coverage: SpatialCoverageSummary,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -274,13 +274,13 @@ pub struct WellTimeDepthObservationSample {
 pub struct CheckshotVspObservationSet1D {
     pub id: String,
     pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub wellbore_id: Option<String>,
     pub depth_reference: DepthReferenceKind,
     pub travel_time_reference: TravelTimeReference,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub samples: Vec<WellTimeDepthObservationSample>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -288,13 +288,13 @@ pub struct CheckshotVspObservationSet1D {
 pub struct ManualTimeDepthPickSet1D {
     pub id: String,
     pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub wellbore_id: Option<String>,
     pub depth_reference: DepthReferenceKind,
     pub travel_time_reference: TravelTimeReference,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub samples: Vec<WellTimeDepthObservationSample>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -302,29 +302,29 @@ pub struct ManualTimeDepthPickSet1D {
 pub struct WellTieObservationSet1D {
     pub id: String,
     pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub wellbore_id: Option<String>,
     pub depth_reference: DepthReferenceKind,
     pub travel_time_reference: TravelTimeReference,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub samples: Vec<WellTimeDepthObservationSample>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub source_well_time_depth_model_asset_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub tie_window_start_ms: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub tie_window_end_ms: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub trace_search_radius_m: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub bulk_shift_ms: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub stretch_factor: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub trace_search_offset_m: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub correlation: Option<f32>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -334,11 +334,11 @@ pub struct WellTimeDepthSourceBinding {
     pub asset_id: String,
     pub enabled: bool,
     pub priority: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub valid_from_depth_m: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub valid_to_depth_m: Option<f64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -351,16 +351,16 @@ pub enum WellTimeDepthAssumptionKind {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct WellTimeDepthAssumptionInterval {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub from_depth_m: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub to_depth_m: Option<f64>,
     pub kind: WellTimeDepthAssumptionKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub velocity_m_per_s: Option<f64>,
     #[serde(default)]
     pub overwrite_existing_source_coverage: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -372,13 +372,13 @@ pub struct WellTimeDepthAuthoredModel1D {
     pub resolved_trajectory_fingerprint: String,
     pub depth_reference: DepthReferenceKind,
     pub travel_time_reference: TravelTimeReference,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub source_bindings: Vec<WellTimeDepthSourceBinding>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub assumption_intervals: Vec<WellTimeDepthAssumptionInterval>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub sampling_step_m: Option<f64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -386,7 +386,7 @@ pub struct WellTimeDepthAuthoredModel1D {
 pub struct CompiledWellTimeDepthLineage {
     pub authored_model_id: String,
     pub resolved_trajectory_fingerprint: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub source_asset_ids: Vec<String>,
 }
 
@@ -394,14 +394,14 @@ pub struct CompiledWellTimeDepthLineage {
 pub struct WellTimeDepthModel1D {
     pub id: String,
     pub name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub wellbore_id: Option<String>,
     pub source_kind: TimeDepthTransformSourceKind,
     pub depth_reference: DepthReferenceKind,
     pub travel_time_reference: TravelTimeReference,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub samples: Vec<TimeDepthSample1D>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -409,12 +409,12 @@ pub struct WellTimeDepthModel1D {
 pub struct SurveyTimeDepthTransform3D {
     pub id: String,
     pub name: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub derived_from: Vec<String>,
     pub source_kind: TimeDepthTransformSourceKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub coordinate_reference: Option<CoordinateReferenceDescriptor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub grid_transform: Option<SurveyGridTransform>,
     pub time_axis: VerticalAxisDescriptor,
     pub depth_unit: String,
@@ -422,7 +422,7 @@ pub struct SurveyTimeDepthTransform3D {
     pub xline_count: usize,
     pub sample_count: usize,
     pub coverage: SpatialCoverageSummary,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -592,4 +592,85 @@ pub struct BuildSurveyPropertyFieldRequest {
     pub output_vertical_domain: TimeDepthDomain,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn vertical_axis() -> VerticalAxisDescriptor {
+        VerticalAxisDescriptor {
+            domain: TimeDepthDomain::Time,
+            unit: "ms".to_string(),
+            start: 0.0,
+            step: 4.0,
+            count: 10,
+        }
+    }
+
+    fn coverage() -> SpatialCoverageSummary {
+        SpatialCoverageSummary {
+            relationship: SpatialCoverageRelationship::Unknown,
+            source_coordinate_reference: None,
+            target_coordinate_reference: None,
+            notes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn survey_time_depth_transform_serializes_presence_stable_fields() {
+        let model = SurveyTimeDepthTransform3D {
+            id: "vel-1".to_string(),
+            name: "Velocity".to_string(),
+            derived_from: Vec::new(),
+            source_kind: TimeDepthTransformSourceKind::VelocityGrid3D,
+            coordinate_reference: None,
+            grid_transform: None,
+            time_axis: vertical_axis(),
+            depth_unit: "m".to_string(),
+            inline_count: 8,
+            xline_count: 9,
+            sample_count: 10,
+            coverage: coverage(),
+            notes: Vec::new(),
+        };
+
+        let value = serde_json::to_value(model).expect("transform should serialize");
+        assert_eq!(value["derived_from"], json!([]));
+        assert_eq!(value["coordinate_reference"], serde_json::Value::Null);
+        assert_eq!(value["grid_transform"], serde_json::Value::Null);
+        assert_eq!(value["notes"], json!([]));
+        assert_eq!(value["coverage"]["notes"], json!([]));
+    }
+
+    #[test]
+    fn well_tie_observation_set_serializes_samples_and_nulls() {
+        let observation_set = WellTieObservationSet1D {
+            id: "tie-1".to_string(),
+            name: "Tie".to_string(),
+            wellbore_id: None,
+            depth_reference: DepthReferenceKind::MeasuredDepth,
+            travel_time_reference: TravelTimeReference::TwoWay,
+            samples: Vec::new(),
+            source_well_time_depth_model_asset_id: None,
+            tie_window_start_ms: None,
+            tie_window_end_ms: None,
+            trace_search_radius_m: None,
+            bulk_shift_ms: None,
+            stretch_factor: None,
+            trace_search_offset_m: None,
+            correlation: None,
+            notes: Vec::new(),
+        };
+
+        let value =
+            serde_json::to_value(observation_set).expect("observation set should serialize");
+        assert_eq!(value["samples"], json!([]));
+        assert_eq!(
+            value["source_well_time_depth_model_asset_id"],
+            serde_json::Value::Null
+        );
+        assert_eq!(value["notes"], json!([]));
+    }
 }

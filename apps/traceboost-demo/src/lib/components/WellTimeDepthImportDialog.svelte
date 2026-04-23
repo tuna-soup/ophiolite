@@ -13,6 +13,7 @@
     previewProjectWellTimeDepthImport
   } from "../bridge";
   import { getViewerModelContext } from "../viewer-model.svelte";
+  import type { ImportManagerNormalizedResult } from "../import-manager-types";
   import ImportFlowStepper from "./ImportFlowStepper.svelte";
   import ImportReviewChecklist from "./ImportReviewChecklist.svelte";
   import ImportReviewFieldSection from "./ImportReviewFieldSection.svelte";
@@ -33,6 +34,7 @@
     openSettings: () => void;
     close: () => void;
     embedded?: boolean;
+    onCommitResult?: ((result: ImportManagerNormalizedResult) => void) | undefined;
   }
 
   let {
@@ -43,7 +45,8 @@
     dialogTitle,
     openSettings,
     close,
-    embedded = false
+    embedded = false,
+    onCommitResult
   }: Props = $props();
 
   const viewerModel = getViewerModelContext();
@@ -352,16 +355,51 @@
         binding,
         draft: canonicalDraft
       });
-      await viewerModel.refreshProjectWellOverlayInventory(
-        projectRoot,
-        viewerModel.displayCoordinateReferenceId
-      );
-      await viewerModel.refreshProjectWellTimeDepthModels(projectRoot, response.wellboreId);
-      openSettings();
       importResult = response;
+      onCommitResult?.({
+        providerId: providerIdForAssetKind(assetKind),
+        status: "commit_succeeded",
+        outcome: "canonical_commit",
+        canonicalAssets: [
+          {
+            kind: assetKind,
+            id: response.assetId,
+            label: collectionNameDraft.trim() || preview?.name || dialogTitle,
+            detail: jsonPath
+          }
+        ],
+        preservedSources: [],
+        droppedItems: [],
+        warnings: preview?.issues
+          .filter((issue) => issue.severity === "warning")
+          .map((issue) => issue.message) ?? [],
+        blockers: [],
+        diagnostics: preview?.issues.map((issue) => issue.message) ?? [],
+        refreshScopes: ["project_well_inventory", "project_well_time_depth_models"],
+        activationEffects: [{ kind: "open_project_settings" }],
+        providerDetail: {
+          assetId: response.assetId,
+          wellId: response.wellId,
+          wellboreId: response.wellboreId
+        }
+      });
       stage = "result";
     } catch (error) {
       commitErrorMessage = error instanceof Error ? error.message : String(error);
+      onCommitResult?.({
+        providerId: providerIdForAssetKind(assetKind),
+        status: "commit_failed",
+        outcome: "commit_failed",
+        canonicalAssets: [],
+        preservedSources: [],
+        droppedItems: [],
+        warnings: [],
+        blockers: [commitErrorMessage],
+        diagnostics: [commitErrorMessage],
+        refreshScopes: [],
+        activationEffects: [],
+        providerDetail: null
+      });
       viewerModel.note(
         "Failed to import project well time-depth asset.",
         "backend",
@@ -395,6 +433,22 @@
 
   function countLabel(value: number | null | undefined): string | null {
     return typeof value === "number" ? String(value) : null;
+  }
+
+  function providerIdForAssetKind(
+    value: PreviewProjectWellTimeDepthAssetRequest["assetKind"]
+  ): ImportManagerNormalizedResult["providerId"] {
+    switch (value) {
+      case "checkshot_vsp_observation_set":
+        return "checkshot_vsp";
+      case "manual_time_depth_pick_set":
+        return "manual_picks";
+      case "well_time_depth_authored_model":
+        return "authored_model";
+      case "well_time_depth_model":
+      case "well_tie_observation_set":
+        return "compiled_model";
+    }
   }
 
   function numberLabel(value: number | null | undefined): string | null {
@@ -1018,13 +1072,15 @@
     align-items: center;
     justify-content: center;
     padding: 20px;
-    background: rgb(0 0 0 / 0.45);
+    background: rgba(38, 55, 71, 0.2);
+    backdrop-filter: blur(4px);
   }
 
   .well-time-depth-import-backdrop.embedded {
     position: static;
     padding: 0;
     background: transparent;
+    backdrop-filter: none;
   }
 
   .well-time-depth-import-dialog {
@@ -1033,10 +1089,11 @@
     display: grid;
     grid-template-rows: auto 1fr auto auto;
     overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
-    background: rgba(14, 20, 29, 0.98);
-    box-shadow: 0 28px 72px rgb(0 0 0 / 0.38);
+    border: 1px solid var(--app-border);
+    border-radius: var(--ui-radius-lg);
+    background: var(--panel-bg);
+    color: var(--text-primary);
+    box-shadow: var(--ui-shadow-dialog);
   }
 
   .well-time-depth-import-dialog.embedded {
@@ -1053,11 +1110,11 @@
     justify-content: space-between;
     gap: 12px;
     padding: 16px 18px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid var(--app-border);
   }
 
   .dialog-footer {
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid var(--app-border);
     border-bottom: none;
   }
 
@@ -1074,7 +1131,7 @@
   .summary-label,
   label span,
   .footer-note {
-    color: rgba(255, 255, 255, 0.7);
+    color: var(--text-muted);
   }
 
   .dialog-body {
@@ -1093,9 +1150,9 @@
 
   .summary-grid > div,
   .section-block {
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 8px;
-    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--app-border);
+    border-radius: var(--ui-radius-lg);
+    background: var(--surface-bg);
   }
 
   .summary-grid > div {
@@ -1147,10 +1204,10 @@
   .field-textarea {
     min-height: 40px;
     padding: 0 12px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--app-border-strong);
     border-radius: 6px;
-    background: rgba(11, 16, 24, 0.92);
-    color: inherit;
+    background: #fff;
+    color: var(--text-primary);
     font: inherit;
   }
 
@@ -1163,10 +1220,10 @@
   .payload-editor {
     min-height: 280px;
     padding: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--app-border);
     border-radius: 6px;
-    background: rgb(8 12 18);
-    color: inherit;
+    background: var(--surface-subtle);
+    color: var(--text-primary);
     font: inherit;
     resize: vertical;
     white-space: pre;
@@ -1176,27 +1233,27 @@
     display: grid;
     gap: 6px;
     padding: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--app-border);
     border-radius: 6px;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-bg);
   }
 
   .status-block p,
   .issue-item span {
     margin: 0;
-    color: rgba(255, 255, 255, 0.72);
+    color: var(--text-muted);
   }
 
   .status-ready {
-    border-color: rgba(66, 140, 84, 0.24);
+    border-color: rgba(46, 174, 107, 0.35);
   }
 
   .status-warning {
-    border-color: rgba(201, 145, 62, 0.3);
+    border-color: var(--warn-border);
   }
 
   .status-error {
-    border-color: rgba(177, 71, 61, 0.28);
+    border-color: var(--danger-border);
   }
 
   .issue-list {
@@ -1211,21 +1268,21 @@
     display: grid;
     gap: 4px;
     padding: 10px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--app-border);
     border-radius: 6px;
-    background: rgba(255, 255, 255, 0.02);
+    background: var(--surface-bg);
   }
 
   .severity-blocking {
-    border-color: rgba(177, 71, 61, 0.28);
+    border-color: var(--danger-border);
   }
 
   .severity-warning {
-    border-color: rgba(201, 145, 62, 0.3);
+    border-color: var(--warn-border);
   }
 
   .severity-info {
-    border-color: rgba(66, 140, 84, 0.24);
+    border-color: var(--info-border);
   }
 
   .toggle-row {
@@ -1247,7 +1304,8 @@
     overflow: auto;
     padding: 12px;
     border-radius: 6px;
-    background: rgb(8 12 18);
+    background: var(--surface-subtle);
+    color: var(--text-primary);
     font-size: 0.85rem;
   }
 
@@ -1256,15 +1314,16 @@
     min-height: 38px;
     padding: 0 14px;
     border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.02);
-    color: inherit;
+    border: 1px solid var(--app-border-strong);
+    background: var(--surface-subtle);
+    color: var(--text-primary);
     font: inherit;
   }
 
   .primary-button {
-    background: color-mix(in srgb, var(--accent-solid, #5e92e0) 24%, white);
-    border-color: color-mix(in srgb, var(--accent-solid, #5e92e0) 34%, white);
+    background: var(--accent-text);
+    border-color: var(--accent-text);
+    color: #fff;
   }
 
   .ghost-button:disabled,

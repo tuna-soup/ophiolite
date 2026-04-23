@@ -4,4 +4,4 @@ import type { DepthReferenceKind } from "./DepthReferenceKind";
 import type { TravelTimeReference } from "./TravelTimeReference";
 import type { VelocityControlProfile } from "./VelocityControlProfile";
 
-export type VelocityControlProfileSet = { id: string, name: string, derived_from: Array<string>, coordinate_reference: CoordinateReferenceDescriptor | null, travel_time_reference: TravelTimeReference, depth_reference: DepthReferenceKind, profiles: Array<VelocityControlProfile>, notes: Array<string>, };
+export type VelocityControlProfileSet = { id: string, name: string, derived_from?: Array<string>, coordinate_reference?: CoordinateReferenceDescriptor | null, travel_time_reference: TravelTimeReference, depth_reference: DepthReferenceKind, profiles?: Array<VelocityControlProfile>, notes?: Array<string>, };

@@ -1,0 +1,93 @@
+{
+  "store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-benchmarks\\f3_dataset_regularized.tbvol",
+  "operator": "similarity",
+  "window": {
+    "gate_ms": 96.0,
+    "inline_stepout": 4,
+    "xline_stepout": 4
+  },
+  "source_shape": [
+    651,
+    951,
+    462
+  ],
+  "source_chunk_shape": [
+    82,
+    56,
+    462
+  ],
+  "include_trace_local_prefix": false,
+  "pipeline": {
+    "schema_version": 1,
+    "revision": 1,
+    "preset_id": null,
+    "name": "similarity-gate-96ms-il-4-xl-4-no-prefix",
+    "description": null,
+    "trace_local_pipeline": null,
+    "operations": [
+      {
+        "similarity": {
+          "window": {
+            "gate_ms": 96.0,
+            "inline_stepout": 4,
+            "xline_stepout": 4
+          }
+        }
+      }
+    ]
+  },
+  "plan_summary": {
+    "compute_stage_count": 1,
+    "max_memory_cost_class": "high",
+    "max_cpu_cost_class": "high",
+    "max_io_cost_class": "high",
+    "min_parallel_efficiency_class": "low",
+    "max_relative_cpu_cost": 5.0,
+    "max_estimated_peak_memory_bytes": 402653184,
+    "combined_cpu_weight": 5.0,
+    "combined_io_weight": 6.0,
+    "max_expected_partition_count": 5
+  },
+  "stage_classifications": [
+    {
+      "stage_id": "stage-01",
+      "stage_label": "Finalize Output: post-stack neighborhood step 1",
+      "stage_kind": "finalize_output",
+      "partition_family": "tile_group",
+      "expected_partition_count": 5,
+      "classification": {
+        "max_memory_cost_class": "high",
+        "max_cpu_cost_class": "high",
+        "max_io_cost_class": "high",
+        "min_parallel_efficiency_class": "low",
+        "combined_cpu_weight": 5.0,
+        "combined_io_weight": 6.0,
+        "uses_external_inputs": false,
+        "requires_full_volume": false,
+        "has_sample_halo": true,
+        "has_spatial_halo": true
+      }
+    }
+  ],
+  "runs": [
+    {
+      "label": "similarity-gate-96ms-il-4-xl-4-no-prefix",
+      "operator": "similarity",
+      "repeat_index": 1,
+      "elapsed_ms": 5920527.3001,
+      "trace_local_prefix_applied": false,
+      "output_bytes": 1303690375,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-post-stack-neighborhood-benchmarks\\f3-dataset-regularized-similarity-gate-96ms-il-4-xl-4-no-prefix-run-01.tbvol",
+      "output_retained": false
+    }
+  ],
+  "summaries": [
+    {
+      "label": "similarity-gate-96ms-il-4-xl-4-no-prefix",
+      "run_count": 1,
+      "avg_elapsed_ms": 5920527.3001,
+      "min_elapsed_ms": 5920527.3001,
+      "max_elapsed_ms": 5920527.3001
+    }
+  ]
+}

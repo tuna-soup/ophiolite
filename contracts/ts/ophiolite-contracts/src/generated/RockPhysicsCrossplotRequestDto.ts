@@ -3,4 +3,4 @@ import type { RockPhysicsColorRequestDto } from "./RockPhysicsColorRequestDto";
 import type { RockPhysicsCurveSemanticDto } from "./RockPhysicsCurveSemanticDto";
 import type { RockPhysicsTemplateIdDto } from "./RockPhysicsTemplateIdDto";
 
-export type RockPhysicsCrossplotRequestDto = { schema_version: number, wellbore_ids: Array<string>, template_id: RockPhysicsTemplateIdDto, x_semantic: RockPhysicsCurveSemanticDto, y_semantic: RockPhysicsCurveSemanticDto, color_binding: RockPhysicsColorRequestDto, depth_min: number | null, depth_max: number | null, title: string | null, subtitle: string | null, };
+export type RockPhysicsCrossplotRequestDto = { schema_version: number, wellbore_ids: Array<string>, template_id: RockPhysicsTemplateIdDto, x_semantic: RockPhysicsCurveSemanticDto, y_semantic: RockPhysicsCurveSemanticDto, color_binding: RockPhysicsColorRequestDto, depth_min?: number | null, depth_max?: number | null, title?: string | null, subtitle?: string | null, };

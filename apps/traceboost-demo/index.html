@@ -4,9 +4,164 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>TraceBoost Frontend</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "Segoe UI", "Aptos", system-ui, sans-serif;
+        background: #f5f1e8;
+        color: #1c2430;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top left, rgba(170, 129, 76, 0.18), transparent 32%),
+          linear-gradient(180deg, #f8f4ec 0%, #efe8dd 100%);
+      }
+
+      #traceboost-startup-fallback[hidden] {
+        display: none;
+      }
+
+      #traceboost-startup-fallback {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        padding: 32px;
+        overflow: auto;
+        background: rgba(245, 241, 232, 0.96);
+      }
+
+      .traceboost-startup-panel {
+        max-width: 760px;
+        margin: 8vh auto 0;
+        padding: 28px 32px;
+        border: 1px solid rgba(60, 73, 88, 0.18);
+        border-radius: 20px;
+        background: rgba(255, 252, 247, 0.96);
+        box-shadow: 0 24px 80px rgba(41, 48, 59, 0.16);
+      }
+
+      .traceboost-startup-kicker {
+        margin: 0 0 12px;
+        color: #8a5a24;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      .traceboost-startup-title {
+        margin: 0;
+        font-size: clamp(28px, 4vw, 38px);
+        line-height: 1.05;
+      }
+
+      .traceboost-startup-message {
+        margin: 16px 0 0;
+        color: #425062;
+        font-size: 16px;
+        line-height: 1.6;
+      }
+
+      .traceboost-startup-list {
+        margin: 20px 0 0;
+        padding-left: 20px;
+        color: #425062;
+        line-height: 1.6;
+      }
+
+      .traceboost-startup-detail {
+        margin: 20px 0 0;
+        padding: 14px 16px;
+        border-radius: 14px;
+        background: #1f2430;
+        color: #eef3f7;
+        font: 12px/1.5 "Cascadia Code", "Consolas", monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+    </style>
+    <script>
+      (() => {
+        const STARTUP_TIMEOUT_MS = 8000;
+        const devServerHostPattern = /^(localhost|127\.0\.0\.1)$/i;
+        const startupState = {
+          mounted: false,
+          timer: 0,
+          markMounted() {
+            this.mounted = true;
+            if (this.timer) {
+              window.clearTimeout(this.timer);
+            }
+            document.getElementById("traceboost-startup-fallback")?.setAttribute("hidden", "");
+          },
+          fail(message, detail = "") {
+            if (this.timer) {
+              window.clearTimeout(this.timer);
+            }
+            if (this.mounted) {
+              return;
+            }
+            const hintList = [];
+            if (devServerHostPattern.test(window.location.hostname)) {
+              hintList.push("The TraceBoost dev server is running. If you recently switched machines or branches, restart it so Vite can rebuild optimized dependencies.");
+              hintList.push("If the problem persists, delete apps/traceboost-demo/node_modules/.vite and launch TraceBoost again.");
+            } else {
+              hintList.push("Check the desktop session log for the launch attempt under AppData/Local/com.traceboost.app/logs.");
+            }
+            const root = document.getElementById("traceboost-startup-fallback");
+            const messageNode = document.getElementById("traceboost-startup-message");
+            const detailNode = document.getElementById("traceboost-startup-detail");
+            const listNode = document.getElementById("traceboost-startup-list");
+            if (!(root && messageNode && detailNode && listNode)) {
+              return;
+            }
+            messageNode.textContent = message;
+            detailNode.hidden = !detail;
+            detailNode.textContent = detail;
+            listNode.innerHTML = "";
+            for (const hint of hintList) {
+              const item = document.createElement("li");
+              item.textContent = hint;
+              listNode.appendChild(item);
+            }
+            root.removeAttribute("hidden");
+          }
+        };
+
+        startupState.timer = window.setTimeout(() => {
+          startupState.fail(
+            "TraceBoost did not finish loading its frontend.",
+            "The app shell opened, but the frontend never mounted. This usually means the browser failed to load part of the JavaScript module graph."
+          );
+        }, STARTUP_TIMEOUT_MS);
+
+        window.__TRACEBOOST_STARTUP__ = startupState;
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>
-    <script type="module" src="/src/main.ts"></script>
+    <div id="traceboost-startup-fallback" hidden>
+      <div class="traceboost-startup-panel">
+        <p class="traceboost-startup-kicker">Startup Diagnostics</p>
+        <h1 class="traceboost-startup-title">TraceBoost failed to start cleanly.</h1>
+        <p id="traceboost-startup-message" class="traceboost-startup-message"></p>
+        <ul id="traceboost-startup-list" class="traceboost-startup-list"></ul>
+        <pre id="traceboost-startup-detail" class="traceboost-startup-detail" hidden></pre>
+      </div>
+    </div>
+    <script type="module">
+      import("/src/main.ts").catch((error) => {
+        const detail =
+          error instanceof Error ? error.stack || error.message : String(error);
+        window.__TRACEBOOST_STARTUP__?.fail(
+          "TraceBoost could not load its frontend entry module.",
+          detail
+        );
+      });
+    </script>
   </body>
 </html>

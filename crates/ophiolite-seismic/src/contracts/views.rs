@@ -146,13 +146,13 @@ pub enum SectionTimeDepthTransformMode {
 pub struct SectionTimeDepthDiagnostics {
     pub display_domain: TimeDepthDomain,
     pub transform_mode: SectionTimeDepthTransformMode,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub source_kind: Option<TimeDepthTransformSourceKind>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub velocity_kind: Option<VelocityQuantityKind>,
     pub trace_varying: bool,
     pub coverage_relationship: SpatialCoverageRelationship,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -165,7 +165,7 @@ pub struct SectionScalarOverlayValueRange {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SectionScalarOverlayView {
     pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub name: Option<String>,
     pub width: usize,
     pub height: usize,
@@ -173,7 +173,7 @@ pub struct SectionScalarOverlayView {
     pub color_map: SectionScalarOverlayColorMap,
     pub opacity: f32,
     pub value_range: SectionScalarOverlayValueRange,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub units: Option<String>,
 }
 
@@ -189,10 +189,10 @@ pub enum SectionHorizonLineStyle {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SectionHorizonStyle {
     pub color: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub line_width: Option<f32>,
     pub line_style: SectionHorizonLineStyle,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub opacity: Option<f32>,
 }
 
@@ -200,28 +200,28 @@ pub struct SectionHorizonStyle {
 pub struct SectionHorizonSample {
     pub trace_index: usize,
     pub sample_index: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub sample_value: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SectionHorizonOverlayView {
     pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub name: Option<String>,
     pub style: SectionHorizonStyle,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub samples: Vec<SectionHorizonSample>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ResolvedSectionDisplayView {
     pub section: SectionView,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub time_depth_diagnostics: Option<SectionTimeDepthDiagnostics>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub scalar_overlays: Vec<SectionScalarOverlayView>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub horizon_overlays: Vec<SectionHorizonOverlayView>,
 }
 
@@ -235,13 +235,13 @@ pub struct ImportedHorizonDescriptor {
     pub missing_cell_count: usize,
     pub vertical_domain: TimeDepthDomain,
     pub vertical_unit: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub source_coordinate_reference: Option<CoordinateReferenceDescriptor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub aligned_coordinate_reference: Option<CoordinateReferenceDescriptor>,
     #[serde(default)]
     pub transformed: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
     pub style: SectionHorizonStyle,
 }

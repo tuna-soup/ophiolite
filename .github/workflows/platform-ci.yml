@@ -18,6 +18,20 @@ jobs:
           cargo run -p traceboost-contracts-export
           git diff --exit-code -- contracts/ts/ophiolite-contracts traceboost/contracts/ts/seis-contracts
 
+  security-audits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit Rust dependencies
+        run: cargo audit
+      - name: Audit Bun dependencies
+        run: bun audit
+
   automation-surfaces:
     runs-on: ubuntu-latest
     steps:
@@ -52,6 +66,8 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - name: Install workspace dependencies
         run: bun install --frozen-lockfile
+      - name: Audit docs dependencies
+        run: bun audit
       - name: Build docs site
         run: bun run docs:build
 

@@ -885,26 +885,26 @@ pub struct SectionWellOverlayRequestDto {
 pub struct SectionWellOverlaySampleDto {
     pub trace_index: usize,
     pub trace_coordinate: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub sample_index: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub sample_value: Option<f64>,
     pub x: f64,
     pub y: f64,
     pub measured_depth_m: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub true_vertical_depth_m: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub true_vertical_depth_subsea_m: Option<f64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub twt_ms: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SectionWellOverlaySegmentDto {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub samples: Vec<SectionWellOverlaySampleDto>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -914,22 +914,22 @@ pub struct ResolvedSectionWellOverlayDto {
     pub wellbore_id: String,
     pub name: String,
     pub display_domain: SectionWellOverlayDomainDto,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub segments: Vec<SectionWellOverlaySegmentDto>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub diagnostics: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub active_model_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub depth_reference: Option<DepthReferenceKind>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub travel_time_reference: Option<TravelTimeReference>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ResolveSectionWellOverlaysResponse {
     pub schema_version: u32,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub overlays: Vec<ResolvedSectionWellOverlayDto>,
 }
 
@@ -999,4 +999,21 @@ pub struct ResolvedWellMarkerHorizonResidualSourceDto {
     pub rows: Vec<WellMarkerHorizonResidualRowDto>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub diagnostics: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn resolve_section_well_overlays_response_serializes_overlays_arrays() {
+        let response = ResolveSectionWellOverlaysResponse {
+            schema_version: 1,
+            overlays: Vec::new(),
+        };
+
+        let value = serde_json::to_value(response).expect("overlay response should serialize");
+        assert_eq!(value["overlays"], json!([]));
+    }
 }

@@ -1,4 +1,9 @@
-import { isTauriEnvironment } from "./bridge";
+import {
+  isTauriEnvironment,
+  pickDesktopOutputPath,
+  pickDesktopProjectRoot,
+  pickDesktopRuntimeStore
+} from "./bridge";
 
 function normalizeDialogPath(result: string | null): string | null {
   if (typeof result !== "string") {
@@ -29,18 +34,7 @@ export async function pickRuntimeStoreFile(): Promise<string | null> {
     return normalizeDialogPath(prompt("Enter runtime store path (.tbvol):"));
   }
 
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const result = await open({
-    title: "Open Volume",
-    filters: [
-      { name: "Runtime Stores", extensions: ["tbvol"] },
-      { name: "All Files", extensions: ["*"] }
-    ],
-    multiple: false,
-    directory: false
-  });
-
-  return normalizeDialogPath(result);
+  return normalizeDialogPath(await pickDesktopRuntimeStore());
 }
 
 export async function pickImportSeismicFile(): Promise<string | null> {
@@ -117,14 +111,7 @@ export async function pickProjectFolder(): Promise<string | null> {
     return normalizeDialogPath(prompt("Enter Ophiolite project root:"));
   }
 
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const result = await open({
-    title: "Select Ophiolite Project Root",
-    multiple: false,
-    directory: true
-  });
-
-  return normalizeDialogPath(result);
+  return normalizeDialogPath(await pickDesktopProjectRoot("Select Ophiolite Project Root"));
 }
 
 export async function pickVendorProjectFolder(title = "Select Vendor Project Root"): Promise<string | null> {
@@ -132,14 +119,7 @@ export async function pickVendorProjectFolder(title = "Select Vendor Project Roo
     return normalizeDialogPath(prompt("Enter vendor project root:"));
   }
 
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const result = await open({
-    title,
-    multiple: false,
-    directory: true
-  });
-
-  return normalizeDialogPath(result);
+  return normalizeDialogPath(await pickDesktopProjectRoot(title));
 }
 
 export async function pickWellFolder(): Promise<string | null> {
@@ -210,17 +190,7 @@ export async function pickOutputStorePath(defaultPath = "survey.tbvol"): Promise
     return normalizeDialogPath(prompt("Enter output store path:"));
   }
 
-  const { save } = await import("@tauri-apps/plugin-dialog");
-  const result = await save({
-    title: "Set Runtime Store Output Path",
-    defaultPath,
-    filters: [
-      { name: "Runtime Store", extensions: ["tbvol"] },
-      { name: "All Files", extensions: ["*"] }
-    ]
-  });
-
-  return normalizeDialogPath(result);
+  return normalizeDialogPath(await pickDesktopOutputPath(defaultPath, "runtime_store_output"));
 }
 
 export const pickOutputFolder = pickOutputStorePath;
@@ -230,17 +200,7 @@ export async function pickSegyExportPath(defaultPath = "survey.export.sgy"): Pro
     return normalizeDialogPath(prompt("Enter SEG-Y export path:"));
   }
 
-  const { save } = await import("@tauri-apps/plugin-dialog");
-  const result = await save({
-    title: "Export SEG-Y",
-    defaultPath,
-    filters: [
-      { name: "SEG-Y", extensions: ["sgy", "segy"] },
-      { name: "All Files", extensions: ["*"] }
-    ]
-  });
-
-  return normalizeDialogPath(result);
+  return normalizeDialogPath(await pickDesktopOutputPath(defaultPath, "segy_export"));
 }
 
 export async function pickZarrExportPath(defaultPath = "survey.export.zarr"): Promise<string | null> {
@@ -248,17 +208,7 @@ export async function pickZarrExportPath(defaultPath = "survey.export.zarr"): Pr
     return normalizeDialogPath(prompt("Enter Zarr export path:"));
   }
 
-  const { save } = await import("@tauri-apps/plugin-dialog");
-  const result = await save({
-    title: "Export Zarr",
-    defaultPath,
-    filters: [
-      { name: "Zarr Store", extensions: ["zarr"] },
-      { name: "All Files", extensions: ["*"] }
-    ]
-  });
-
-  return normalizeDialogPath(result);
+  return normalizeDialogPath(await pickDesktopOutputPath(defaultPath, "zarr_export"));
 }
 
 export async function confirmOverwriteStore(outputStorePath: string): Promise<boolean> {

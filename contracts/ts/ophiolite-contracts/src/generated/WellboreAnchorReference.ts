@@ -3,4 +3,4 @@ import type { CoordinateReferenceDescriptor } from "./CoordinateReferenceDescrip
 import type { ProjectedPoint2 } from "./ProjectedPoint2";
 import type { WellboreAnchorKind } from "./WellboreAnchorKind";
 
-export type WellboreAnchorReference = { kind: WellboreAnchorKind, coordinate_reference: CoordinateReferenceDescriptor | null, location: ProjectedPoint2, parent_wellbore_id: string | null, parent_measured_depth_m: number | null, notes: Array<string>, };
+export type WellboreAnchorReference = { kind: WellboreAnchorKind, coordinate_reference?: CoordinateReferenceDescriptor | null, location: ProjectedPoint2, parent_wellbore_id?: string | null, parent_measured_depth_m?: number | null, notes?: Array<string>, };

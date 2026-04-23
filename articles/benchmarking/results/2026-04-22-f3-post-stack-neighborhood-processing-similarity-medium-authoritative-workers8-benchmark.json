@@ -1,0 +1,113 @@
+{
+  "store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-benchmarks\\f3_dataset_regularized.tbvol",
+  "operator": "similarity",
+  "window": {
+    "gate_ms": 48.0,
+    "inline_stepout": 2,
+    "xline_stepout": 2
+  },
+  "source_shape": [
+    651,
+    951,
+    462
+  ],
+  "source_chunk_shape": [
+    82,
+    56,
+    462
+  ],
+  "include_trace_local_prefix": false,
+  "pipeline": {
+    "schema_version": 1,
+    "revision": 1,
+    "preset_id": null,
+    "name": "similarity-gate-48ms-il-2-xl-2-no-prefix",
+    "description": null,
+    "trace_local_pipeline": null,
+    "operations": [
+      {
+        "similarity": {
+          "window": {
+            "gate_ms": 48.0,
+            "inline_stepout": 2,
+            "xline_stepout": 2
+          }
+        }
+      }
+    ]
+  },
+  "plan_summary": {
+    "compute_stage_count": 1,
+    "max_memory_cost_class": "high",
+    "max_cpu_cost_class": "high",
+    "max_io_cost_class": "high",
+    "min_parallel_efficiency_class": "low",
+    "max_relative_cpu_cost": 5.0,
+    "max_estimated_peak_memory_bytes": 402653184,
+    "combined_cpu_weight": 5.0,
+    "combined_io_weight": 6.0,
+    "max_expected_partition_count": 5
+  },
+  "stage_classifications": [
+    {
+      "stage_id": "stage-01",
+      "stage_label": "Finalize Output: post-stack neighborhood step 1",
+      "stage_kind": "finalize_output",
+      "partition_family": "tile_group",
+      "expected_partition_count": 5,
+      "classification": {
+        "max_memory_cost_class": "high",
+        "max_cpu_cost_class": "high",
+        "max_io_cost_class": "high",
+        "min_parallel_efficiency_class": "low",
+        "combined_cpu_weight": 5.0,
+        "combined_io_weight": 6.0,
+        "uses_external_inputs": false,
+        "requires_full_volume": false,
+        "has_sample_halo": true,
+        "has_spatial_halo": true
+      }
+    }
+  ],
+  "runs": [
+    {
+      "label": "similarity-gate-48ms-il-2-xl-2-no-prefix",
+      "operator": "similarity",
+      "repeat_index": 1,
+      "elapsed_ms": 1403444.6290000002,
+      "trace_local_prefix_applied": false,
+      "output_bytes": 1303690375,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-post-stack-neighborhood-benchmarks\\f3-dataset-regularized-similarity-gate-48ms-il-2-xl-2-no-prefix-run-01.tbvol",
+      "output_retained": false
+    },
+    {
+      "label": "similarity-gate-48ms-il-2-xl-2-no-prefix",
+      "operator": "similarity",
+      "repeat_index": 2,
+      "elapsed_ms": 1402238.2479,
+      "trace_local_prefix_applied": false,
+      "output_bytes": 1303690375,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-post-stack-neighborhood-benchmarks\\f3-dataset-regularized-similarity-gate-48ms-il-2-xl-2-no-prefix-run-02.tbvol",
+      "output_retained": false
+    },
+    {
+      "label": "similarity-gate-48ms-il-2-xl-2-no-prefix",
+      "operator": "similarity",
+      "repeat_index": 3,
+      "elapsed_ms": 1403175.1502,
+      "trace_local_prefix_applied": false,
+      "output_bytes": 1303690375,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-post-stack-neighborhood-benchmarks\\f3-dataset-regularized-similarity-gate-48ms-il-2-xl-2-no-prefix-run-03.tbvol",
+      "output_retained": false
+    }
+  ],
+  "summaries": [
+    {
+      "label": "similarity-gate-48ms-il-2-xl-2-no-prefix",
+      "run_count": 3,
+      "avg_elapsed_ms": 1402952.6757000003,
+      "min_elapsed_ms": 1402238.2479,
+      "max_elapsed_ms": 1403444.6290000002
+    }
+  ]
+}

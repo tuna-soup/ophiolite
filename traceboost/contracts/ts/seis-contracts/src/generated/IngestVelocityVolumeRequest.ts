@@ -3,4 +3,4 @@ import type { SegyGeometryOverride } from "./SegyGeometryOverride";
 import type { TimeDepthDomain } from "./TimeDepthDomain";
 import type { VelocityQuantityKind } from "./VelocityQuantityKind";
 
-export type IngestVelocityVolumeRequest = { schema_version: number, input_path: string, output_store_path: string, velocity_kind: VelocityQuantityKind, vertical_domain: TimeDepthDomain, vertical_unit: string | null, vertical_start: number | null, vertical_step: number | null, overwrite_existing: boolean, delete_input_on_success: boolean, geometry_override: SegyGeometryOverride | null, };
+export type IngestVelocityVolumeRequest = { schema_version: number, input_path: string, output_store_path: string, velocity_kind: VelocityQuantityKind, vertical_domain: TimeDepthDomain, vertical_unit?: string | null, vertical_start?: number | null, vertical_step?: number | null, overwrite_existing: boolean, delete_input_on_success: boolean, geometry_override?: SegyGeometryOverride | null, };

@@ -11,9 +11,13 @@ libc = "0.2"
 ophiolite = { path = "../../.." }
 seis_contracts_operations = { package = "seis-contracts-operations", path = "../../contracts/seis-contracts-operations" }
 seis_runtime = { package = "seis-runtime", path = "../../runtime" }
+ophiolite_seismic_execution = { package = "ophiolite-seismic-execution", path = "../../../crates/ophiolite-seismic-execution" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 seis_io = { package = "seis-io", path = "../../io" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_SystemInformation"] }
 
 [dev-dependencies]
 ndarray = "0.17.2"

@@ -37,6 +37,7 @@
     type WellSourceImportSessionState
   } from "../well-source-import-session";
   import { getViewerModelContext } from "../viewer-model.svelte";
+  import type { ImportManagerNormalizedResult } from "../import-manager-types";
   import {
     compactImportReviewFields,
     type ImportConfirmationStage,
@@ -51,6 +52,7 @@
     sourcePaths?: string[];
     close: () => void;
     embedded?: boolean;
+    onCommitResult?: ((result: ImportManagerNormalizedResult) => void) | undefined;
   }
 
   interface ReviewAsciiLogMappingRow {
@@ -62,7 +64,7 @@
     unit: string;
   }
 
-  let { sourceRootPath, sourcePaths = [], close, embedded = false }: Props = $props();
+  let { sourceRootPath, sourcePaths = [], close, embedded = false, onCommitResult }: Props = $props();
   const REVIEW_ROW_LIMIT = 12;
   const REVIEW_MAPPING_LIMIT = 24;
 
@@ -844,10 +846,6 @@
         "info",
         `${response.wellId}:${response.importedAssets.map((asset) => asset.assetKind).join(", ")}`
       );
-      await viewerModel.refreshProjectWellOverlayInventory(
-        projectRoot,
-        viewerModel.displayCoordinateReferenceId
-      );
       saveImportMemory();
       recordWellImportDiagnostics("commit_well_sources", "info", "Well source commit completed", {
         projectRoot,
@@ -860,10 +858,25 @@
         issueCount: response.issues.length
       });
       commitResponse = response;
+      onCommitResult?.(normalizeWellSourceCommitResult(response));
       stage = "result";
     } catch (error) {
       errorMessage = error instanceof Error ? error.message : String(error);
       viewerModel.note("Failed to commit selected well sources.", "backend", "warn", errorMessage);
+      onCommitResult?.({
+        providerId: "well_sources",
+        status: "commit_failed",
+        outcome: "commit_failed",
+        canonicalAssets: [],
+        preservedSources: [],
+        droppedItems: [],
+        warnings: [],
+        blockers: [errorMessage],
+        diagnostics: [errorMessage],
+        refreshScopes: [],
+        activationEffects: [],
+        providerDetail: null
+      });
       recordWellImportDiagnostics("commit_well_sources", "error", "Well source commit failed", {
         projectRoot,
         sourceRootPath,
@@ -873,6 +886,53 @@
     } finally {
       committing = false;
     }
+  }
+
+  function normalizeWellSourceCommitResult(
+    response: ProjectWellSourceImportCommitResponse
+  ): ImportManagerNormalizedResult {
+    return {
+      providerId: "well_sources",
+      status: "commit_succeeded",
+      outcome:
+        response.omissions.length > 0 ? "partial_canonical_commit" : "canonical_commit",
+      canonicalAssets: response.importedAssets.map((asset) => ({
+        kind: asset.assetKind,
+        id: asset.assetId,
+        label: asset.collectionName,
+        detail: asset.sourcePath
+      })),
+      preservedSources: response.omissions
+        .filter((omission) => !!omission.sourcePath)
+        .map((omission) => ({
+          kind: omission.kind,
+          label: omission.slice,
+          sourceRef: omission.sourcePath ?? null,
+          detail: omission.message
+        })),
+      droppedItems: response.omissions
+        .filter((omission) => !omission.sourcePath)
+        .map((omission) => ({
+          kind: omission.kind,
+          label: omission.slice,
+          reason: omission.message
+        })),
+      warnings: response.issues
+        .filter((issue) => issue.severity === "warning")
+        .map((issue) => issue.message),
+      blockers: response.issues
+        .filter((issue) => issue.severity === "blocking")
+        .map((issue) => issue.message),
+      diagnostics: response.issues.map((issue) => issue.message),
+      refreshScopes: ["project_well_inventory"],
+      activationEffects: [],
+      providerDetail: {
+        wellId: response.wellId,
+        wellboreId: response.wellboreId,
+        createdWell: response.createdWell,
+        createdWellbore: response.createdWellbore
+      }
+    };
   }
 
   function topsRowsForRequest(rows: EditableTopRow[]): ProjectWellSourceTopDraftRow[] {
@@ -2260,13 +2320,15 @@
     align-items: center;
     justify-content: center;
     padding: 20px;
-    background: rgb(0 0 0 / 0.45);
+    background: rgba(38, 55, 71, 0.2);
+    backdrop-filter: blur(4px);
   }
 
   .well-folder-import-backdrop.embedded {
     position: static;
     padding: 0;
     background: transparent;
+    backdrop-filter: none;
   }
 
   .well-folder-import-dialog {
@@ -2274,16 +2336,19 @@
     max-height: calc(100vh - 40px);
     display: grid;
     grid-template-rows: auto 1fr auto;
-    background: #12161d;
-    border: 1px solid rgb(255 255 255 / 0.12);
-    border-radius: 8px;
+    background: var(--panel-bg);
+    border: 1px solid var(--app-border);
+    border-radius: var(--ui-radius-lg);
     overflow: hidden;
+    color: var(--text-primary);
+    box-shadow: var(--ui-shadow-dialog);
   }
 
   .well-folder-import-dialog.embedded {
     width: 100%;
     max-height: none;
     border-radius: 10px;
+    box-shadow: none;
   }
 
   .dialog-header,
@@ -2293,11 +2358,11 @@
     justify-content: space-between;
     gap: 16px;
     padding: 16px 20px;
-    border-bottom: 1px solid rgb(255 255 255 / 0.08);
+    border-bottom: 1px solid var(--app-border);
   }
 
   .dialog-footer {
-    border-top: 1px solid rgb(255 255 255 / 0.08);
+    border-top: 1px solid var(--app-border);
     border-bottom: none;
     justify-content: flex-end;
   }
@@ -2309,7 +2374,7 @@
 
   .dialog-header p {
     margin: 4px 0 0;
-    color: rgb(255 255 255 / 0.72);
+    color: var(--text-muted);
     word-break: break-all;
   }
 
@@ -2382,7 +2447,7 @@
     display: grid;
     gap: 12px;
     padding-top: 16px;
-    border-top: 1px solid rgb(255 255 255 / 0.08);
+    border-top: 1px solid var(--app-border);
   }
 
   .summary-label,
@@ -2390,7 +2455,7 @@
   .tops-grid-header {
     display: block;
     margin-bottom: 6px;
-    color: rgb(255 255 255 / 0.72);
+    color: var(--text-muted);
     font-size: 0.9rem;
   }
 
@@ -2408,10 +2473,10 @@
     width: 100%;
     min-width: 0;
     padding: 10px 12px;
-    border: 1px solid rgb(255 255 255 / 0.12);
+    border: 1px solid var(--app-border-strong);
     border-radius: 6px;
-    background: #0d1117;
-    color: #f5f7fa;
+    background: #fff;
+    color: var(--text-primary);
     font: inherit;
   }
 
@@ -2444,9 +2509,9 @@
 
   .choice-row {
     padding: 10px 12px;
-    border: 1px solid rgb(255 255 255 / 0.08);
+    border: 1px solid var(--app-border);
     border-radius: 6px;
-    background: rgb(255 255 255 / 0.02);
+    background: var(--surface-bg);
   }
 
   .choice-row div {
@@ -2462,14 +2527,14 @@
   .choice-row p,
   .detail-block p {
     margin: 4px 0 0;
-    color: rgb(255 255 255 / 0.72);
+    color: var(--text-muted);
   }
 
   .detail-block {
     padding: 10px 12px;
-    border: 1px solid rgb(255 255 255 / 0.08);
+    border: 1px solid var(--app-border);
     border-radius: 6px;
-    background: rgb(255 255 255 / 0.02);
+    background: var(--surface-bg);
   }
 
   .detail-actions {
@@ -2484,7 +2549,7 @@
   .issue-list span,
   .muted-item span,
   .tops-row-reference {
-    color: rgb(255 255 255 / 0.72);
+    color: var(--text-muted);
   }
 
   .tops-row-reference {
@@ -2495,10 +2560,10 @@
   .review-row-value {
     min-width: 0;
     padding: 10px 12px;
-    border: 1px solid rgb(255 255 255 / 0.08);
+    border: 1px solid var(--app-border);
     border-radius: 6px;
-    background: rgb(255 255 255 / 0.02);
-    color: rgb(255 255 255 / 0.88);
+    background: var(--surface-bg);
+    color: var(--text-primary);
     word-break: break-word;
   }
 
@@ -2515,10 +2580,10 @@
     margin: 0;
     padding: 12px;
     overflow: auto;
-    border: 1px solid rgb(255 255 255 / 0.08);
+    border: 1px solid var(--app-border);
     border-radius: 6px;
-    background: #0d1117;
-    color: #d8e1ea;
+    background: var(--surface-subtle);
+    color: var(--text-primary);
     font: 0.85rem/1.5 ui-monospace, SFMono-Regular, SFMono-Regular, Consolas, "Liberation Mono",
       Menlo, monospace;
     white-space: pre-wrap;
@@ -2527,9 +2592,9 @@
 
   .raw-payload-toggle {
     padding: 10px 12px;
-    border: 1px solid rgb(255 255 255 / 0.08);
+    border: 1px solid var(--app-border);
     border-radius: 6px;
-    background: rgb(255 255 255 / 0.02);
+    background: var(--surface-bg);
   }
 
   .ghost-button,
@@ -2537,9 +2602,9 @@
   .primary-button {
     padding: 10px 14px;
     border-radius: 6px;
-    border: 1px solid rgb(255 255 255 / 0.12);
-    background: transparent;
-    color: #f5f7fa;
+    border: 1px solid var(--app-border-strong);
+    background: var(--surface-subtle);
+    color: var(--text-primary);
   }
 
   .dialog-actions {
@@ -2560,7 +2625,7 @@
 
   .footer-note {
     padding: 0 20px 16px;
-    color: rgb(255 255 255 / 0.72);
+    color: var(--text-muted);
     font-size: 0.9rem;
   }
 
@@ -2582,12 +2647,13 @@
   }
 
   .primary-button {
-    background: #1b8f52;
-    border-color: #1b8f52;
+    background: var(--accent-text);
+    border-color: var(--accent-text);
+    color: #fff;
   }
 
   .error-text {
-    color: #ff8f8f;
+    color: var(--danger-text);
   }
 
   .muted-item {

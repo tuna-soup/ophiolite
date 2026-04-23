@@ -18,6 +18,7 @@
   } from "../bridge";
   import { pickRuntimeStoreFile } from "../file-dialog";
   import { getViewerModelContext } from "../viewer-model.svelte";
+  import type { ImportManagerNormalizedResult } from "../import-manager-types";
   import {
     compactImportReviewFields,
     type ImportConfirmationStage,
@@ -31,6 +32,7 @@
     inputPaths: string[];
     close: () => void;
     embedded?: boolean;
+    onCommitResult?: ((result: ImportManagerNormalizedResult) => void) | undefined;
   }
 
   interface ReviewFileSummary {
@@ -47,7 +49,7 @@
     issues: string[];
   }
 
-  let { inputPaths, close, embedded = false }: Props = $props();
+  let { inputPaths, close, embedded = false, onCommitResult }: Props = $props();
 
   const viewerModel = getViewerModelContext();
   let sourceMode = $state<"survey" | "custom" | "unresolved">("unresolved");
@@ -539,11 +541,48 @@
     const imported = await viewerModel.importHorizonDraft(canonicalDraft);
     if (!viewerModel.error && imported) {
       importResult = imported;
+      onCommitResult?.({
+        providerId: "horizons",
+        status: "commit_succeeded",
+        outcome: "canonical_commit",
+        canonicalAssets: imported.map((item) => ({
+          kind: "horizon",
+          id: item.id,
+          label: item.name,
+          detail: item.source_path
+        })),
+        preservedSources: [],
+        droppedItems: [],
+        warnings: preview?.issues ?? [],
+        blockers: [],
+        diagnostics: preview?.notes ?? [],
+        refreshScopes: [],
+        activationEffects: [],
+        providerDetail: {
+          importedCount: imported.length,
+          storePath: activeStorePath
+        }
+      });
       stage = "result";
       recordHorizonImportDiagnostics("commit_horizon_sources", "info", "Horizon source import completed.", {
         storePath: activeStorePath,
         inputPathCount: inputPaths.length,
         importedCount: imported.length
+      });
+    } else if (viewerModel.error) {
+      onCommitResult?.({
+        providerId: "horizons",
+        status: "commit_failed",
+        outcome: "commit_failed",
+        canonicalAssets: [],
+        preservedSources: [],
+        droppedItems: [],
+        warnings: [],
+        blockers: [viewerModel.error],
+        diagnostics: [viewerModel.error],
+        refreshScopes: [],
+        activationEffects: [],
+        providerDetail: null
       });
     }
   }

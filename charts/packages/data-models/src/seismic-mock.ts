@@ -7,7 +7,7 @@ import type {
 } from "./seismic";
 import { validateSectionPayload, OphioliteSeismicValidationError } from "./ophiolite-seismic-adapter";
 
-export type MockSectionKind = "inline" | "arbitrary";
+export type MockSectionKind = "inline" | "xline" | "arbitrary";
 export type MockSectionDomain = "time" | "depth";
 
 export const MOCK_SECTION_VELOCITY_MODEL_LABEL = "Synthetic Spatial Interval Velocity Field";
@@ -43,10 +43,25 @@ export function createMockSection(
   const sampleUnit = domain === "depth" ? "m" : "ms";
   const sampleAxisLabel = domain === "depth" ? "Depth" : "Time";
   const titleSuffix = domain === "depth" ? "Depth" : "TWT";
+  const axis = kind === "xline" ? "xline" : "inline";
+  const coordinate =
+    kind === "arbitrary"
+      ? { index: 42, value: 1042 }
+      : kind === "xline"
+        ? { index: 0, value: 875 }
+        : { index: 0, value: 111 };
+  const axisLabel = kind === "xline" ? "Xline" : "Inline";
+  const horizontalUnit = kind === "arbitrary" ? "trace" : axis === "inline" ? "xline" : "inline";
+  const annotationNote =
+    kind === "arbitrary"
+      ? "Synthetic arbitrary section annotation demo."
+      : kind === "xline"
+        ? "Synthetic xline section demo resembling xline 875."
+        : "Synthetic inline section demo resembling inline 111.";
 
   const payload: SectionPayload = {
-    axis: "inline",
-    coordinate: kind === "arbitrary" ? { index: 42, value: 1042 } : { index: 0, value: 111 },
+    axis,
+    coordinate,
     horizontalAxis: model.horizontalAxis,
     inlineAxis: model.inlineAxis,
     xlineAxis: model.xlineAxis,
@@ -54,7 +69,7 @@ export function createMockSection(
     amplitudes,
     dimensions: { traces: model.traces, samples: model.samples },
     units: {
-      horizontal: kind === "arbitrary" ? "trace" : "xline",
+      horizontal: horizontalUnit,
       sample: sampleUnit,
       amplitude: "arb"
     },
@@ -62,9 +77,7 @@ export function createMockSection(
       storeId: "mock-zarr-store",
       notes: [
         `sample_domain:${domain}`,
-        kind === "arbitrary"
-          ? "Synthetic arbitrary section annotation demo."
-          : "Synthetic inline section demo resembling inline 111.",
+        annotationNote,
         `velocity_model:${MOCK_SECTION_VELOCITY_MODEL_LABEL}`
       ]
     },
@@ -74,7 +87,7 @@ export function createMockSection(
       colormap: "grayscale"
     },
     presentation: {
-      title: kind === "arbitrary" ? `Arbitrary Section ${titleSuffix}` : `Inline 111 ${titleSuffix}`,
+      title: kind === "arbitrary" ? `Arbitrary Section ${titleSuffix}` : `${axisLabel} ${coordinate.value} ${titleSuffix}`,
       sampleAxisLabel
     },
     overlay: {
@@ -208,7 +221,9 @@ function buildMockSectionModel(kind: MockSectionKind): MockSectionModel {
   const horizontalAxis =
     kind === "arbitrary"
       ? Float64Array.from({ length: traces }, (_, index) => index + 1)
-      : Float64Array.from({ length: traces }, (_, index) => 875 + index);
+      : kind === "xline"
+        ? Float64Array.from({ length: traces }, (_, index) => 111 + index)
+        : Float64Array.from({ length: traces }, (_, index) => 875 + index);
   const inlineAxis =
     kind === "arbitrary"
       ? Float64Array.from({ length: traces }, (_, index) => 1042 + index * 0.38 + Math.sin(index / 19) * 6)
@@ -222,6 +237,7 @@ function buildMockSectionModel(kind: MockSectionKind): MockSectionModel {
   for (let trace = 0; trace < traces; trace += 1) {
     const traceOffset = trace * samples;
     let cumulativeDepth = 0;
+    const sectionPhase = kind === "xline" ? 0.7 : 0;
     const layer1 = 46 + Math.sin(trace / 24) * 6;
     const layer2 = 92 + Math.sin(trace / 17 + 0.6) * 8;
     const layer3 = 136 + Math.sin(trace / 20 + 1.3) * 10;
@@ -244,12 +260,12 @@ function buildMockSectionModel(kind: MockSectionKind): MockSectionModel {
       cumulativeDepth += velocity * (dtMs / 1000) * 0.5;
       depthByTrace[index] = cumulativeDepth;
 
-      const layered = Math.sin(sample / 8 + trace / 20) * 0.52;
-      const dipping = Math.sin(sample / 20 - trace / 13) * 0.34;
-      const reflector1 = gaussian(sample, layer1 + 6, 2.4) * 0.9;
-      const reflector2 = gaussian(sample, layer2 + 5, 2.6) * -1.1;
-      const reflector3 = gaussian(sample, layer3 + 3, 3.2) * 0.85;
-      const reflector4 = gaussian(sample, layer4, 3.4) * -0.95;
+      const layered = Math.sin(sample / 8 + trace / 20 + sectionPhase) * 0.52;
+      const dipping = Math.sin(sample / 20 - trace / 13 + sectionPhase * 0.4) * 0.34;
+      const reflector1 = gaussian(sample, layer1 + 6, 2.4) * (kind === "xline" ? 0.82 : 0.9);
+      const reflector2 = gaussian(sample, layer2 + 5, 2.6) * (kind === "xline" ? -0.96 : -1.1);
+      const reflector3 = gaussian(sample, layer3 + 3, 3.2) * (kind === "xline" ? 0.78 : 0.85);
+      const reflector4 = gaussian(sample, layer4, 3.4) * (kind === "xline" ? -0.88 : -0.95);
       const brightSpot = Math.exp(-((trace - 108) ** 2 + (sample - 150) ** 2) / 1500) * 0.9;
 
       amplitudesTime[index] = layered + dipping + reflector1 + reflector2 + reflector3 + reflector4 + brightSpot;

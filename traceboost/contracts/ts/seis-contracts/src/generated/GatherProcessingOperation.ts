@@ -2,4 +2,4 @@
 import type { GatherInterpolationMode } from "./GatherInterpolationMode";
 import type { VelocityFunctionSource } from "./VelocityFunctionSource";
 
-export type GatherProcessingOperation = { "nmo_correction": { velocity_model: VelocityFunctionSource, interpolation: GatherInterpolationMode, } } | { "stretch_mute": { velocity_model: VelocityFunctionSource, max_stretch_ratio: number, } } | { "offset_mute": { min_offset: number | null, max_offset: number | null, } };
+export type GatherProcessingOperation = { "nmo_correction": { velocity_model: VelocityFunctionSource, interpolation: GatherInterpolationMode, } } | { "stretch_mute": { velocity_model: VelocityFunctionSource, max_stretch_ratio: number, } } | { "offset_mute": { min_offset?: number | null, max_offset?: number | null, } };

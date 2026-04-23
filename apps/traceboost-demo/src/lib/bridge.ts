@@ -3,12 +3,14 @@ import type {
   AmplitudeSpectrumResponse,
   BuildSurveyTimeDepthTransformRequest,
   ExportSegyResponse,
+  CancelProcessingBatchResponse,
   CancelProcessingJobResponse,
   DescribeVelocityVolumeRequest,
   DescribeVelocityVolumeResponse,
   DatasetRegistryEntry,
   DatasetRegistryStatus,
   GetProcessingJobResponse,
+  GetProcessingBatchResponse,
   IngestVelocityVolumeRequest,
   IngestVelocityVolumeResponse,
   ImportDatasetResponse,
@@ -20,14 +22,26 @@ import type {
   ListPipelinePresetsResponse,
   ListSegyImportRecipesResponse,
   OpenDatasetResponse,
+  PostStackNeighborhoodProcessingPipeline,
+  ProcessingPipelineSpec,
   PreviewSubvolumeProcessingRequest,
   PreviewSubvolumeProcessingResponse,
+  PreviewPostStackNeighborhoodProcessingRequest,
+  PreviewPostStackNeighborhoodProcessingResponse,
   PreviewTraceLocalProcessingResponse as PreviewProcessingResponse,
-  TraceLocalProcessingPreset as ProcessingPreset,
+  ProcessingPreset,
   RemoveDatasetEntryResponse,
+  RunPostStackNeighborhoodProcessingRequest,
+  RunPostStackNeighborhoodProcessingResponse,
   RunSubvolumeProcessingRequest,
   RunSubvolumeProcessingResponse,
   RunTraceLocalProcessingResponse as RunProcessingResponse,
+  TraceLocalProcessingOperation,
+  TraceLocalProcessingPipeline,
+  SubmitProcessingBatchRequest,
+  SubmitProcessingBatchResponse,
+  SubmitTraceLocalProcessingBatchRequest,
+  SubmitTraceLocalProcessingBatchResponse,
   SaveWorkspaceSessionRequest,
   SaveWorkspaceSessionResponse,
   SavePipelinePresetResponse,
@@ -113,11 +127,80 @@ export interface DiagnosticsEvent {
   fields?: Record<string, unknown> | null;
 }
 
+interface GrantedPathSelection {
+  path: string;
+  handleId: string;
+}
+
+interface OutputPathGrantSelection {
+  path: string;
+  grantId: string;
+}
+
+export type OutputGrantPurpose =
+  | "runtime_store_output"
+  | "gather_store_output"
+  | "segy_export"
+  | "zarr_export";
+
 export interface FrontendDiagnosticsEventRequest {
   stage: string;
   level: "debug" | "info" | "warn" | "error";
   message: string;
   fields?: Record<string, unknown> | null;
+}
+
+export interface DatasetOperatorContractRef {
+  schema_id: string;
+  contract_id: string;
+}
+
+export type DatasetOperatorAvailability =
+  | "available"
+  | {
+      unavailable: {
+        reasons: string[];
+      };
+    };
+
+export interface DatasetOperatorDocumentation {
+  short_help: string;
+  help_markdown: string | null;
+  help_url: string | null;
+}
+
+export interface DatasetOperatorParameterDoc {
+  name: string;
+  label: string;
+  description: string;
+  value_kind: string;
+  required: boolean;
+  default_value: string | null;
+  units: string | null;
+  options: string[];
+  minimum: string | null;
+  maximum: string | null;
+}
+
+export interface DatasetOperatorCatalogEntry {
+  id: string;
+  family: string;
+  provider: string;
+  name: string;
+  group: string;
+  group_id: string;
+  description: string;
+  tags: string[];
+  documentation: DatasetOperatorDocumentation;
+  parameter_docs: DatasetOperatorParameterDoc[];
+  request_contract: DatasetOperatorContractRef;
+  response_contract: DatasetOperatorContractRef;
+  availability: DatasetOperatorAvailability;
+}
+
+export interface DatasetOperatorCatalog {
+  schema_version: number;
+  operators: DatasetOperatorCatalogEntry[];
 }
 
 export type ImportProviderId =
@@ -135,9 +218,18 @@ export interface ImportProviderDescriptor {
   providerId: ImportProviderId;
   label: string;
   description: string;
+  iconId: string;
+  group: string;
+  ordering: number;
   destinationKind: "runtime_store" | "project_asset" | string;
   selectionMode: "single_file" | "multi_file" | string;
   supportedExtensions: string[];
+  supportsDirectory: boolean;
+  requiresActiveStore: boolean;
+  requiresProjectRoot: boolean;
+  requiresProjectWellBinding: boolean;
+  supportsDragDrop: boolean;
+  supportsDeepLink: boolean;
   implemented: boolean;
 }
 
@@ -1352,16 +1444,604 @@ export function isTauriEnvironment(): boolean {
 const DATASET_REGISTRY_STORAGE_KEY = "traceboost.dataset-registry";
 const WORKSPACE_SESSION_STORAGE_KEY = "traceboost.workspace-session";
 const PROJECT_GEOSPATIAL_SETTINGS_STORAGE_KEY_PREFIX = "traceboost.project-geospatial-settings:";
+const storeHandleCache = new Map<string, string>();
+const projectHandleCache = new Map<string, string>();
+const outputGrantCache = new Map<string, string>();
+
+function normalizeAuthorizedPath(path: string): string {
+  return path.trim();
+}
+
+function outputGrantCacheKey(path: string, purpose: OutputGrantPurpose): string {
+  return `${purpose}:${normalizeAuthorizedPath(path)}`;
+}
+
+function rememberStoreHandle(selection: GrantedPathSelection): void {
+  const normalizedPath = normalizeAuthorizedPath(selection.path);
+  const normalizedHandle = selection.handleId.trim();
+  if (!normalizedPath || !normalizedHandle) {
+    return;
+  }
+  storeHandleCache.set(normalizedPath, normalizedHandle);
+}
+
+function rememberProjectHandle(selection: GrantedPathSelection): void {
+  const normalizedPath = normalizeAuthorizedPath(selection.path);
+  const normalizedHandle = selection.handleId.trim();
+  if (!normalizedPath || !normalizedHandle) {
+    return;
+  }
+  projectHandleCache.set(normalizedPath, normalizedHandle);
+}
+
+function rememberOutputGrant(path: string, purpose: OutputGrantPurpose, grantId: string): void {
+  const normalizedPath = normalizeAuthorizedPath(path);
+  const normalizedGrant = grantId.trim();
+  if (!normalizedPath || !normalizedGrant) {
+    return;
+  }
+  outputGrantCache.set(outputGrantCacheKey(normalizedPath, purpose), normalizedGrant);
+}
+
+const secureTauriArgs = (
+  command: string,
+  args: Record<string, unknown>
+): Promise<Record<string, unknown>> => secureTauriArgsImpl(command, args);
 
 async function invokeTauri<T>(command: string, args: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<T>(command, args);
+  return invoke<T>(command, await secureTauriArgs(command, args));
 }
 
 async function invokeTauriRaw(command: string, args: Record<string, unknown>): Promise<Uint8Array> {
   const { invoke } = await import("@tauri-apps/api/core");
-  const response = await invoke<Uint8Array | ArrayBuffer>(command, args);
+  const response = await invoke<Uint8Array | ArrayBuffer>(command, await secureTauriArgs(command, args));
   return response instanceof Uint8Array ? response : new Uint8Array(response);
+}
+
+async function pickGrantedPath(
+  command: "pick_runtime_store_command" | "pick_project_root_command",
+  args: Record<string, unknown> = {}
+): Promise<GrantedPathSelection | null> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const selection = await invoke<GrantedPathSelection | null>(command, args);
+  if (selection) {
+    if (command === "pick_runtime_store_command") {
+      rememberStoreHandle(selection);
+    } else {
+      rememberProjectHandle(selection);
+    }
+  }
+  return selection;
+}
+
+async function pickOutputGrant(
+  defaultPath: string,
+  purpose: OutputGrantPurpose
+): Promise<OutputPathGrantSelection | null> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const selection = await invoke<OutputPathGrantSelection | null>("pick_output_path_command", {
+    defaultPath,
+    purpose
+  });
+  if (selection) {
+    rememberOutputGrant(selection.path, purpose, selection.grantId);
+  }
+  return selection;
+}
+
+async function authorizeManagedStore(path: string): Promise<string | null> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  try {
+    const selection = await invoke<GrantedPathSelection>("authorize_managed_store_command", { path });
+    rememberStoreHandle(selection);
+    return selection.handleId;
+  } catch {
+    return null;
+  }
+}
+
+async function takeOutputGrant(path: string, purpose: OutputGrantPurpose): Promise<string> {
+  const normalizedPath = normalizeAuthorizedPath(path);
+  const cacheKey = outputGrantCacheKey(normalizedPath, purpose);
+  const cached = outputGrantCache.get(cacheKey);
+  if (cached) {
+    outputGrantCache.delete(cacheKey);
+    return cached;
+  }
+
+  if (purpose === "runtime_store_output" || purpose === "gather_store_output") {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const selection = await invoke<OutputPathGrantSelection>("authorize_managed_output_command", {
+      path: normalizedPath,
+      purpose
+    });
+    return selection.grantId;
+  }
+
+  throw new Error("Output path is not authorized for this session. Use Browse to choose a save location first.");
+}
+
+async function ensureStoreHandle(storePath: string): Promise<string> {
+  const normalizedPath = normalizeAuthorizedPath(storePath);
+  if (!normalizedPath) {
+    throw new Error("Runtime store path is required.");
+  }
+  if (normalizedPath.startsWith("storeh:")) {
+    return normalizedPath;
+  }
+  const cached = storeHandleCache.get(normalizedPath);
+  if (cached) {
+    return cached;
+  }
+  const authorized = await authorizeManagedStore(normalizedPath);
+  if (authorized) {
+    return authorized;
+  }
+  throw new Error("Runtime store is not authorized for this session. Reopen it through the native picker.");
+}
+
+async function ensureProjectHandle(projectRoot: string): Promise<string> {
+  const normalizedPath = normalizeAuthorizedPath(projectRoot);
+  if (!normalizedPath) {
+    throw new Error("Project root is required.");
+  }
+  if (normalizedPath.startsWith("projh:")) {
+    return normalizedPath;
+  }
+  const cached = projectHandleCache.get(normalizedPath);
+  if (cached) {
+    return cached;
+  }
+  throw new Error("Project root is not authorized for this session. Re-select it through the native picker.");
+}
+
+async function secureTraceLocalPipeline<T extends { steps: Array<{ operation: unknown }> }>(
+  pipeline: T
+): Promise<T> {
+  const nextSteps = await Promise.all(
+    pipeline.steps.map(async (step) => {
+      const operation = step.operation as Record<string, unknown>;
+      if (
+        operation &&
+        typeof operation === "object" &&
+        "volume_arithmetic" in operation &&
+        operation.volume_arithmetic &&
+        typeof operation.volume_arithmetic === "object"
+      ) {
+        const volumeArithmetic = operation.volume_arithmetic as Record<string, unknown>;
+        return {
+          ...step,
+          operation: {
+            ...operation,
+            volume_arithmetic: {
+              ...volumeArithmetic,
+              secondary_store_path: await ensureStoreHandle(String(volumeArithmetic.secondary_store_path ?? ""))
+            }
+          }
+        };
+      }
+      return step;
+    })
+  );
+  return {
+    ...pipeline,
+    steps: nextSteps
+  };
+}
+
+async function secureSubvolumePipeline<T extends { trace_local_pipeline?: unknown | null }>(
+  pipeline: T
+): Promise<T> {
+  if (!pipeline.trace_local_pipeline || typeof pipeline.trace_local_pipeline !== "object") {
+    return pipeline;
+  }
+  return {
+    ...pipeline,
+    trace_local_pipeline: await secureTraceLocalPipeline(
+      pipeline.trace_local_pipeline as { steps: Array<{ operation: unknown }> }
+    )
+  };
+}
+
+async function securePostStackNeighborhoodPipeline<T extends { trace_local_pipeline?: unknown | null }>(
+  pipeline: T
+): Promise<T> {
+  if (!pipeline.trace_local_pipeline || typeof pipeline.trace_local_pipeline !== "object") {
+    return pipeline;
+  }
+  return {
+    ...pipeline,
+    trace_local_pipeline: await secureTraceLocalPipeline(
+      pipeline.trace_local_pipeline as { steps: Array<{ operation: unknown }> }
+    )
+  };
+}
+
+async function secureGatherPipeline<T extends { trace_local_pipeline?: unknown | null }>(
+  pipeline: T
+): Promise<T> {
+  if (!pipeline.trace_local_pipeline || typeof pipeline.trace_local_pipeline !== "object") {
+    return pipeline;
+  }
+  return {
+    ...pipeline,
+    trace_local_pipeline: await secureTraceLocalPipeline(
+      pipeline.trace_local_pipeline as { steps: Array<{ operation: unknown }> }
+    )
+  };
+}
+
+async function secureProcessingPipelineSpec(pipeline: ProcessingPipelineSpec): Promise<ProcessingPipelineSpec> {
+  if ("trace_local" in pipeline) {
+    return {
+      trace_local: {
+        ...pipeline.trace_local,
+        pipeline: await secureTraceLocalPipeline(pipeline.trace_local.pipeline)
+      }
+    };
+  }
+  if ("subvolume" in pipeline) {
+    return {
+      subvolume: {
+        ...pipeline.subvolume,
+        pipeline: await secureSubvolumePipeline(pipeline.subvolume.pipeline)
+      }
+    };
+  }
+  if ("post_stack_neighborhood" in pipeline) {
+    return {
+      post_stack_neighborhood: {
+        ...pipeline.post_stack_neighborhood,
+        pipeline: await securePostStackNeighborhoodPipeline(
+          pipeline.post_stack_neighborhood.pipeline
+        )
+      }
+    };
+  }
+  return {
+    gather: {
+      ...pipeline.gather,
+      pipeline: await secureGatherPipeline(pipeline.gather.pipeline)
+    }
+  };
+}
+
+async function secureTauriArgsImpl(
+  command: string,
+  args: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  switch (command) {
+    case "open_dataset_command":
+    case "dataset_operator_catalog_command":
+    case "get_dataset_export_capabilities_command":
+    case "ensure_demo_survey_time_depth_transform_command":
+    case "load_velocity_models_command":
+    case "load_horizon_assets_command":
+      return { ...args, storePath: await ensureStoreHandle(String(args.storePath ?? "")) };
+    case "default_processing_store_path_command":
+    case "default_subvolume_processing_store_path_command":
+    case "default_post_stack_neighborhood_processing_store_path_command":
+    case "default_gather_processing_store_path_command":
+      return { ...args, storePath: await ensureStoreHandle(String(args.storePath ?? "")) };
+    case "export_dataset_segy_command":
+      return {
+        ...args,
+        storePath: await ensureStoreHandle(String(args.storePath ?? "")),
+        outputPath: await takeOutputGrant(String(args.outputPath ?? ""), "segy_export")
+      };
+    case "export_dataset_zarr_command":
+      return {
+        ...args,
+        storePath: await ensureStoreHandle(String(args.storePath ?? "")),
+        outputPath: await takeOutputGrant(String(args.outputPath ?? ""), "zarr_export")
+      };
+    case "preview_horizon_xyz_import_command":
+    case "import_horizon_xyz_command":
+      return { ...args, storePath: await ensureStoreHandle(String(args.storePath ?? "")) };
+    case "commit_horizon_source_import_command": {
+      const request = args.request as Record<string, unknown>;
+      return {
+        request: {
+          ...request,
+          store_path: await ensureStoreHandle(String(request.store_path ?? ""))
+        }
+      };
+    }
+    case "load_section_horizons_command":
+    case "load_section_command":
+    case "load_section_binary_command":
+    case "load_section_tile_binary_command":
+    case "load_depth_converted_section_binary_command":
+    case "load_resolved_section_display_binary_command":
+    case "load_gather_command":
+      return { ...args, storePath: await ensureStoreHandle(String(args.storePath ?? "")) };
+    case "describe_velocity_volume_command":
+    case "build_velocity_model_transform_command":
+    case "set_dataset_native_coordinate_reference_command":
+    case "resolve_survey_map_command": {
+      const request = args.request as Record<string, unknown>;
+      return {
+        request: {
+          ...request,
+          store_path: await ensureStoreHandle(String(request.store_path ?? request.storePath ?? ""))
+        }
+      };
+    }
+    case "ingest_velocity_volume_command": {
+      const request = args.request as Record<string, unknown>;
+      return {
+        request: {
+          ...request,
+          output_store_path: await takeOutputGrant(
+            String(request.output_store_path ?? ""),
+            "runtime_store_output"
+          )
+        }
+      };
+    }
+    case "import_dataset_command":
+      return {
+        ...args,
+        outputStorePath: await takeOutputGrant(String(args.outputStorePath ?? ""), "runtime_store_output")
+      };
+    case "import_segy_with_plan_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      const plan = request.plan as Record<string, unknown>;
+      const policy = plan.policy as Record<string, unknown>;
+      policy.output_store_path = await takeOutputGrant(
+        String(policy.output_store_path ?? ""),
+        "runtime_store_output"
+      );
+      return { request };
+    }
+    case "preview_processing_command":
+    case "preview_processing_binary_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
+      request.pipeline = await secureTraceLocalPipeline(
+        request.pipeline as { steps: Array<{ operation: unknown }> }
+      );
+      return { request };
+    }
+    case "preview_subvolume_processing_command":
+    case "preview_subvolume_processing_binary_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
+      request.pipeline = await secureSubvolumePipeline(
+        request.pipeline as { trace_local_pipeline?: unknown | null }
+      );
+      return { request };
+    }
+    case "preview_post_stack_neighborhood_processing_command":
+    case "preview_post_stack_neighborhood_processing_binary_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
+      request.pipeline = await securePostStackNeighborhoodPipeline(
+        request.pipeline as { trace_local_pipeline?: unknown | null }
+      );
+      return { request };
+    }
+    case "preview_gather_processing_command":
+    case "run_gather_processing_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
+      request.pipeline = await secureGatherPipeline(
+        request.pipeline as { trace_local_pipeline?: unknown | null }
+      );
+      if (command === "run_gather_processing_command" && request.output_store_path) {
+        request.output_store_path = await takeOutputGrant(
+          String(request.output_store_path),
+          "gather_store_output"
+        );
+      }
+      return { request };
+    }
+    case "amplitude_spectrum_command":
+    case "velocity_scan_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
+      return { request };
+    }
+    case "run_processing_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
+      request.pipeline = await secureTraceLocalPipeline(
+        request.pipeline as { steps: Array<{ operation: unknown }> }
+      );
+      if (request.output_store_path) {
+        request.output_store_path = await takeOutputGrant(
+          String(request.output_store_path),
+          "runtime_store_output"
+        );
+      }
+      return { request };
+    }
+    case "submit_trace_local_processing_batch_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.pipeline = await secureTraceLocalPipeline(
+        request.pipeline as { steps: Array<{ operation: unknown }> }
+      );
+      request.items = await Promise.all(
+        (request.items as Array<Record<string, unknown>>).map(async (item) => {
+          const nextItem: Record<string, unknown> = {
+            ...item,
+            store_path: await ensureStoreHandle(String(item.store_path ?? ""))
+          };
+          if (item.output_store_path) {
+            nextItem.output_store_path = await takeOutputGrant(
+              String(item.output_store_path),
+              "runtime_store_output"
+            );
+          }
+          return nextItem;
+        })
+      );
+      return { request };
+    }
+    case "submit_processing_batch_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.pipeline = await secureProcessingPipelineSpec(
+        request.pipeline as ProcessingPipelineSpec
+      );
+      const outputGrantPurpose: OutputGrantPurpose =
+        "gather" in (request.pipeline as ProcessingPipelineSpec)
+          ? "gather_store_output"
+          : "runtime_store_output";
+      request.items = await Promise.all(
+        (request.items as Array<Record<string, unknown>>).map(async (item) => {
+          const nextItem: Record<string, unknown> = {
+            ...item,
+            store_path: await ensureStoreHandle(String(item.store_path ?? ""))
+          };
+          if (item.output_store_path) {
+            nextItem.output_store_path = await takeOutputGrant(
+              String(item.output_store_path),
+              outputGrantPurpose
+            );
+          }
+          return nextItem;
+        })
+      );
+      return { request };
+    }
+    case "run_subvolume_processing_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
+      request.pipeline = await secureSubvolumePipeline(
+        request.pipeline as { trace_local_pipeline?: unknown | null }
+      );
+      if (request.output_store_path) {
+        request.output_store_path = await takeOutputGrant(
+          String(request.output_store_path),
+          "runtime_store_output"
+        );
+      }
+      return { request };
+    }
+    case "run_post_stack_neighborhood_processing_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
+      request.pipeline = await securePostStackNeighborhoodPipeline(
+        request.pipeline as { trace_local_pipeline?: unknown | null }
+      );
+      if (request.output_store_path) {
+        request.output_store_path = await takeOutputGrant(
+          String(request.output_store_path),
+          "runtime_store_output"
+        );
+      }
+      return { request };
+    }
+    case "save_workspace_session_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      if (request.active_store_path) {
+        request.active_store_path = await ensureStoreHandle(String(request.active_store_path));
+      }
+      if (request.project_root) {
+        request.project_root = await ensureProjectHandle(String(request.project_root));
+      }
+      if (Array.isArray(request.native_engineering_accepted_store_paths)) {
+        request.native_engineering_accepted_store_paths = await Promise.all(
+          request.native_engineering_accepted_store_paths.map((path) => ensureStoreHandle(String(path)))
+        );
+      }
+      return { request };
+    }
+    case "upsert_dataset_entry_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      if (request.preferred_store_path) {
+        request.preferred_store_path = await ensureStoreHandle(String(request.preferred_store_path));
+      }
+      if (request.imported_store_path) {
+        request.imported_store_path = await ensureStoreHandle(String(request.imported_store_path));
+      }
+      if (request.dataset && typeof request.dataset === "object") {
+        (request.dataset as Record<string, unknown>).store_path = await ensureStoreHandle(
+          String((request.dataset as Record<string, unknown>).store_path ?? "")
+        );
+      }
+      return { request };
+    }
+    case "load_project_geospatial_settings_command":
+    case "save_project_geospatial_settings_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.projectRoot = await ensureProjectHandle(String(request.projectRoot ?? ""));
+      return { request };
+    }
+    case "resolve_project_survey_map_command":
+    case "list_project_well_time_depth_models_command":
+    case "list_project_well_time_depth_inventory_command":
+    case "list_project_well_overlay_inventory_command":
+    case "list_project_survey_horizons_command":
+    case "list_project_well_marker_residual_inventory_command":
+    case "compute_project_well_marker_residual_command":
+    case "set_project_active_well_time_depth_model_command":
+    case "import_project_well_time_depth_model_command":
+    case "import_project_well_time_depth_asset_command":
+    case "commit_project_well_time_depth_import_command":
+    case "compile_project_well_time_depth_authored_model_command":
+    case "read_project_well_time_depth_model_command":
+    case "commit_project_well_sources_command":
+    case "commit_project_well_import_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.projectRoot = await ensureProjectHandle(String(request.projectRoot ?? ""));
+      return { request };
+    }
+    case "analyze_project_well_tie_command":
+    case "accept_project_well_tie_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.projectRoot = await ensureProjectHandle(String(request.projectRoot ?? ""));
+      request.storePath = await ensureStoreHandle(String(request.storePath ?? ""));
+      return { request };
+    }
+    case "resolve_project_section_well_overlays_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      request.project_root = await ensureProjectHandle(String(request.project_root ?? ""));
+      return { request };
+    }
+    case "scan_vendor_project_command":
+    case "plan_vendor_project_import_command":
+    case "commit_vendor_project_import_command": {
+      const request = structuredClone(args.request as Record<string, unknown>);
+      if (request.project_root) {
+        request.project_root = await ensureProjectHandle(String(request.project_root));
+      }
+      if (request.target_project_root) {
+        request.target_project_root = await ensureProjectHandle(String(request.target_project_root));
+      }
+      return { request };
+    }
+    default:
+      return args;
+  }
+}
+
+export async function pickDesktopRuntimeStore(): Promise<string | null> {
+  if (!isTauriEnvironment()) {
+    return null;
+  }
+  const selection = await pickGrantedPath("pick_runtime_store_command");
+  return selection?.path ?? null;
+}
+
+export async function pickDesktopProjectRoot(title: string): Promise<string | null> {
+  if (!isTauriEnvironment()) {
+    return null;
+  }
+  const selection = await pickGrantedPath("pick_project_root_command", { title });
+  return selection?.path ?? null;
+}
+
+export async function pickDesktopOutputPath(
+  defaultPath: string,
+  purpose: OutputGrantPurpose
+): Promise<string | null> {
+  if (!isTauriEnvironment()) {
+    return null;
+  }
+  const selection = await pickOutputGrant(defaultPath, purpose);
+  return selection?.path ?? null;
 }
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -1385,7 +2065,7 @@ async function postJson<T>(url: string, body: Record<string, unknown>): Promise<
 
 function operationSlug(
   operation:
-    | ProcessingPreset["pipeline"]["steps"][number]["operation"]
+    | TraceLocalProcessingOperation
     | RunProcessingRequest["pipeline"]["steps"][number]["operation"]
 ): string {
   if (typeof operation === "string") {
@@ -1876,6 +2556,18 @@ export async function openDataset(storePath: string): Promise<OpenDatasetRespons
   return postJson<OpenDatasetResponse>("/api/open", { storePath });
 }
 
+export async function loadDatasetOperatorCatalog(
+  storePath: string
+): Promise<DatasetOperatorCatalog> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<DatasetOperatorCatalog>("dataset_operator_catalog_command", {
+      storePath
+    });
+  }
+
+  throw new Error("Dataset operator catalog is only available in the desktop runtime right now.");
+}
+
 export async function exportDatasetSegy(
   storePath: string,
   outputPath: string,
@@ -2250,6 +2942,22 @@ export async function previewSubvolumeProcessing(
   return postJson<PreviewSubvolumeProcessingResponse>("/api/processing/subvolume/preview", request as Record<string, unknown>);
 }
 
+export async function previewPostStackNeighborhoodProcessing(
+  request: PreviewPostStackNeighborhoodProcessingRequest
+): Promise<TransportPreviewProcessingResponse> {
+  if (isTauriEnvironment()) {
+    const payload = await invokeTauriRaw("preview_post_stack_neighborhood_processing_binary_command", {
+      request
+    });
+    return parsePackedPreviewProcessingResponse(payload);
+  }
+
+  return postJson<PreviewPostStackNeighborhoodProcessingResponse>(
+    "/api/processing/post-stack-neighborhood/preview",
+    request as Record<string, unknown>
+  );
+}
+
 export async function emitFrontendDiagnosticsEvent(request: FrontendDiagnosticsEventRequest): Promise<void> {
   if (!isTauriEnvironment()) {
     return;
@@ -2278,6 +2986,29 @@ export async function runProcessing(
   return postJson<RunProcessingResponse>("/api/processing/run", request as Record<string, unknown>);
 }
 
+export async function submitTraceLocalProcessingBatch(
+  request: SubmitTraceLocalProcessingBatchRequest
+): Promise<SubmitTraceLocalProcessingBatchResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<SubmitTraceLocalProcessingBatchResponse>(
+      "submit_trace_local_processing_batch_command",
+      { request }
+    );
+  }
+
+  throw new Error("Trace-local processing batches are only available in the desktop runtime.");
+}
+
+export async function submitProcessingBatch(
+  request: SubmitProcessingBatchRequest
+): Promise<SubmitProcessingBatchResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<SubmitProcessingBatchResponse>("submit_processing_batch_command", { request });
+  }
+
+  throw new Error("Processing batches are only available in the desktop runtime.");
+}
+
 export async function runSubvolumeProcessing(
   request: RunSubvolumeProcessingRequest
 ): Promise<RunSubvolumeProcessingResponse> {
@@ -2288,9 +3019,25 @@ export async function runSubvolumeProcessing(
   return postJson<RunSubvolumeProcessingResponse>("/api/processing/subvolume/run", request as Record<string, unknown>);
 }
 
+export async function runPostStackNeighborhoodProcessing(
+  request: RunPostStackNeighborhoodProcessingRequest
+): Promise<RunPostStackNeighborhoodProcessingResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<RunPostStackNeighborhoodProcessingResponse>(
+      "run_post_stack_neighborhood_processing_command",
+      { request }
+    );
+  }
+
+  return postJson<RunPostStackNeighborhoodProcessingResponse>(
+    "/api/processing/post-stack-neighborhood/run",
+    request as Record<string, unknown>
+  );
+}
+
 export async function defaultProcessingStorePath(
   storePath: string,
-  pipeline: ProcessingPreset["pipeline"] | RunProcessingRequest["pipeline"]
+  pipeline: TraceLocalProcessingPipeline | RunProcessingRequest["pipeline"]
 ): Promise<string> {
   if (isTauriEnvironment()) {
     return invokeTauri<string>("default_processing_store_path_command", {
@@ -2351,6 +3098,49 @@ export async function defaultSubvolumeProcessingStorePath(
   return `${directory}${sourceStem}.${pipelineStem || "crop-subvolume"}.${timestamp}.tbvol`;
 }
 
+export async function defaultPostStackNeighborhoodProcessingStorePath(
+  storePath: string,
+  pipeline: PostStackNeighborhoodProcessingPipeline
+): Promise<string> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<string>("default_post_stack_neighborhood_processing_store_path_command", {
+      storePath,
+      pipeline
+    });
+  }
+
+  const normalizedStorePath = storePath.trim();
+  const separatorIndex = Math.max(normalizedStorePath.lastIndexOf("/"), normalizedStorePath.lastIndexOf("\\"));
+  const directory = separatorIndex >= 0 ? normalizedStorePath.slice(0, separatorIndex + 1) : "";
+  const filename = separatorIndex >= 0 ? normalizedStorePath.slice(separatorIndex + 1) : normalizedStorePath;
+  const sourceStem = filename.replace(/\.[^.]+$/, "") || "dataset";
+  const namedPipeline = pipeline.name?.trim();
+  const prefixLabel =
+    pipeline.trace_local_pipeline?.steps.map(({ operation }) => operationSlug(operation)).join("-") ?? "";
+  const neighborhoodLabel =
+    pipeline.operations
+      .map((operation) =>
+        "similarity" in operation
+          ? `similarity-g${String(operation.similarity.window.gate_ms).replace(".", "_")}-il${operation.similarity.window.inline_stepout}-xl${operation.similarity.window.xline_stepout}`
+          : "local_volume_stats" in operation
+            ? `local-volume-stats-${operation.local_volume_stats.statistic}-g${String(operation.local_volume_stats.window.gate_ms).replace(".", "_")}-il${operation.local_volume_stats.window.inline_stepout}-xl${operation.local_volume_stats.window.xline_stepout}`
+            : "dip" in operation
+              ? `dip-${operation.dip.output}-g${String(operation.dip.window.gate_ms).replace(".", "_")}-il${operation.dip.window.inline_stepout}-xl${operation.dip.window.xline_stepout}`
+              : "neighborhood"
+      )
+      .join("-") || "post-stack-neighborhood";
+  const pipelineStem = (namedPipeline || [prefixLabel, neighborhoodLabel].filter(Boolean).join("-") || "post-stack-neighborhood")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\..+$/, "")
+    .replace("T", "-");
+  return `${directory}${sourceStem}.${pipelineStem}.${timestamp}.tbvol`;
+}
+
 export async function getProcessingJob(jobId: string): Promise<GetProcessingJobResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<GetProcessingJobResponse>("get_processing_job_command", {
@@ -2372,6 +3162,28 @@ export async function cancelProcessingJob(jobId: string): Promise<CancelProcessi
     schema_version: 1,
     job_id: jobId
   });
+}
+
+export async function getProcessingBatch(batchId: string): Promise<GetProcessingBatchResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<GetProcessingBatchResponse>("get_processing_batch_command", {
+      request: { schema_version: 1, batch_id: batchId }
+    });
+  }
+
+  throw new Error("Processing batch status is only available in the desktop runtime.");
+}
+
+export async function cancelProcessingBatch(
+  batchId: string
+): Promise<CancelProcessingBatchResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<CancelProcessingBatchResponse>("cancel_processing_batch_command", {
+      request: { schema_version: 1, batch_id: batchId }
+    });
+  }
+
+  throw new Error("Processing batch cancellation is only available in the desktop runtime.");
 }
 
 export async function listPipelinePresets(): Promise<ListPipelinePresetsResponse> {

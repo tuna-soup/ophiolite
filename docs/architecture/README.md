@@ -47,6 +47,8 @@ Current properties:
 - chart-kernel direction, rock-physics crossplot DTO guidance, the first point-cloud spike, and the AVO chart-family analysis boundary are defined in `ADR-0019-chart-kernels-rock-physics-crossplot-and-point-cloud-spike.md` and `ADR-0020-avo-chart-family-analysis-contracts-and-initial-rendering-plan.md`
 - the domain-first Python SDK surface and advanced namespace rule are defined in `ADR-0028-domain-first-python-sdk-surface-and-advanced-namespaces.md`
 - the unified TraceBoost import manager, app-local backend provider registry, and normalized import lifecycle are defined in `ADR-0029-unified-import-manager-and-provider-registry.md`
+- the unified operator catalog and seismic first-class operator discovery boundary are defined in `ADR-0030-unified-operator-catalog-and-seismic-first-class-registry.md`
+- the shared seismic execution planner and bounded local job-service direction are defined in `ADR-0031-shared-seismic-execution-planner-and-bounded-local-job-service.md`
 
 ## Layered Architecture
 
@@ -330,8 +332,11 @@ Only after those are stable should the project tighten runtime/package behavior 
 - `ADR-0027-asset-owner-scopes-for-vendor-and-survey-assets.md`
 - `ADR-0028-domain-first-python-sdk-surface-and-advanced-namespaces.md`
 - `ADR-0029-unified-import-manager-and-provider-registry.md`
+- `ADR-0030-unified-operator-catalog-and-seismic-first-class-registry.md`
+- `ADR-0031-shared-seismic-execution-planner-and-bounded-local-job-service.md`
 
 ## Related Docs
 
 - `../lasio_non_v3_parity.md`
 - `../../lasio-basic-example.md`
+- `seismic-execution-service-implementation-sketch.md`

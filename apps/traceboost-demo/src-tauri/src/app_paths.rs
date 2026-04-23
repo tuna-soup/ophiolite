@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager};
 
+#[cfg(target_os = "macos")]
 const LEGACY_TRACEBOOST_LOGS_DIR_NAME: &str = "TraceBoost";
 
 pub fn preferred_traceboost_logs_dir() -> Option<PathBuf> {

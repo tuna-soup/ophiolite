@@ -2,4 +2,4 @@
 import type { RockPhysicsTextAlignDto } from "./RockPhysicsTextAlignDto";
 import type { RockPhysicsTextBaselineDto } from "./RockPhysicsTextBaselineDto";
 
-export type RockPhysicsTemplateTextOverlayDto = { id: string, text: string, color: string, x: number, y: number, rotation_deg: number | null, align: RockPhysicsTextAlignDto | null, baseline: RockPhysicsTextBaselineDto | null, };
+export type RockPhysicsTemplateTextOverlayDto = { id: string, text: string, color: string, x: number, y: number, rotation_deg?: number | null, align?: RockPhysicsTextAlignDto | null, baseline?: RockPhysicsTextBaselineDto | null, };

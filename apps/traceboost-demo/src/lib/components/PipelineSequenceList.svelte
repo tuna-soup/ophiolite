@@ -1,11 +1,19 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
-  import type { OperatorCatalogId, WorkspaceOperation } from "../processing-model.svelte";
-  import { describeOperation, operatorCatalogItems } from "../processing-model.svelte";
+  import type {
+    OperatorCatalogId,
+    OperatorCatalogItem,
+    WorkspaceOperation
+  } from "../processing-model.svelte";
+  import { describeOperation, findOperatorCatalogItemForOperation } from "../processing-model.svelte";
 
   let {
     operations,
+    operatorCatalogItems,
+    catalogSourceLabel,
+    catalogSourceDetail,
+    catalogEmptyMessage,
     traceLocalOperationCount,
     hasSubvolumeCrop,
     selectedIndex,
@@ -19,6 +27,10 @@
     onToggleCheckpoint
   }: {
     operations: WorkspaceOperation[];
+    operatorCatalogItems: readonly OperatorCatalogItem[];
+    catalogSourceLabel: string;
+    catalogSourceDetail: string;
+    catalogEmptyMessage: string;
     traceLocalOperationCount: number;
     hasSubvolumeCrop: boolean;
     selectedIndex: number;
@@ -44,7 +56,30 @@
       if (!normalizedQuery) {
         return true;
       }
-      const haystack = [item.label, item.description, ...item.keywords, item.shortcut].join(" ").toLowerCase();
+      const haystack = [
+        item.label,
+        item.description,
+        item.shortHelp,
+        item.helpMarkdown,
+        item.canonicalName,
+        item.aliasLabel,
+        item.group,
+        item.groupId,
+        item.provider,
+        ...item.tags,
+        ...item.keywords,
+        ...item.parameterDocs.flatMap((parameter) => [
+          parameter.name,
+          parameter.label,
+          parameter.description,
+          parameter.default_value,
+          parameter.units,
+          ...parameter.options
+        ]),
+        item.shortcut
+      ]
+        .join(" ")
+        .toLowerCase();
       return haystack.includes(normalizedQuery);
     })
   );
@@ -57,6 +92,10 @@
 
   function summary(operation: WorkspaceOperation): string {
     return describeOperation(operation);
+  }
+
+  function metadata(operation: WorkspaceOperation): OperatorCatalogItem | null {
+    return findOperatorCatalogItemForOperation(operation, operatorCatalogItems);
   }
 
   function focusSearch(): void {
@@ -190,6 +229,10 @@
       />
     </div>
     <div class="search-meta">
+      <span class="catalog-source">{catalogSourceLabel}</span>
+      <span>{catalogSourceDetail}</span>
+    </div>
+    <div class="search-meta">
       <span><code>/</code> or <code>Ctrl/Cmd+K</code> focus</span>
       <span><code>Enter</code> insert</span>
     </div>
@@ -210,6 +253,12 @@
               <span class="catalog-copy">
                 <strong>{item.label}</strong>
                 <span>{item.description}</span>
+                <span class="catalog-meta-line">
+                  {item.group}
+                  {#if item.aliasLabel && item.canonicalName !== item.aliasLabel}
+                    | Canonical: {item.canonicalName}
+                  {/if}
+                </span>
               </span>
               {#if item.shortcut}
                 <span class="catalog-meta">
@@ -219,7 +268,13 @@
             </button>
           {/each}
         {:else}
-          <div class="catalog-empty">No operators match "{query.trim()}".</div>
+          <div class="catalog-empty">
+            {#if query.trim()}
+              No operators match "{query.trim()}".
+            {:else}
+              {catalogEmptyMessage}
+            {/if}
+          </div>
         {/if}
       </div>
     {/if}
@@ -247,6 +302,7 @@
 
       {#each traceLocalOperations as operation, index (`trace:${index}:${summary(operation)}`)}
         {@const label = summary(operation)}
+        {@const item = metadata(operation)}
         {@const checkpointArmed = checkpointIndexSet.has(index)}
         {@const canToggleCheckpoint = index < traceLocalOperationCount - 1 || hasSubvolumeCrop}
         <div
@@ -292,7 +348,8 @@
           >
             <span class="step-index">{index + 1}</span>
             <span class="step-copy">
-              <strong>{label}</strong>
+              <strong>{item?.label ?? label}</strong>
+              <span>{label}</span>
             </span>
           </button>
           <button
@@ -316,6 +373,7 @@
         </div>
 
         {@const label = summary(runOnlyOperation)}
+        {@const item = metadata(runOnlyOperation)}
         {@const cropIndex = traceLocalOperationCount}
         <div class="sequence-row-shell tail-shell" role="presentation">
           <span class="tail-spacer" aria-hidden="true"></span>
@@ -326,7 +384,8 @@
           >
             <span class="step-index">{cropIndex + 1}</span>
             <span class="step-copy">
-              <strong>{label}</strong>
+              <strong>{item?.label ?? label}</strong>
+              <span>{label}</span>
               <span class="step-note">Run Only</span>
             </span>
           </button>
@@ -449,6 +508,11 @@
     font-size: 10px;
   }
 
+  .catalog-source {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+
   .search-meta code,
   .catalog-meta kbd {
     font-family: "Cascadia Mono", "Consolas", monospace;
@@ -505,6 +569,13 @@
   .catalog-copy span {
     color: var(--text-muted);
     font-size: 11px;
+  }
+
+  .catalog-meta-line {
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-dim);
+    font-size: 10px;
   }
 
   .catalog-meta kbd {
@@ -728,6 +799,16 @@
     font-size: 12px;
     font-weight: 500;
     color: var(--text-primary);
+  }
+
+  .step-copy span {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 10px;
+    color: var(--text-muted);
   }
 
   .step-note {

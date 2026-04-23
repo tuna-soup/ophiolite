@@ -86,3 +86,175 @@ button {
   appearance: none;
   -webkit-appearance: none;
 }
+
+/* ── Shared dialog base styles ── */
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(38, 55, 71, 0.2);
+  backdrop-filter: blur(4px);
+}
+
+.dialog-shell {
+  display: grid;
+  border: 1px solid var(--app-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--panel-bg);
+  color: var(--text-primary);
+  box-shadow: var(--ui-shadow-dialog);
+  overflow: auto;
+}
+
+.dialog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--app-border);
+}
+
+.dialog-header h2,
+.dialog-header p {
+  margin: 0;
+}
+
+.dialog-header p {
+  margin-top: 6px;
+  color: var(--text-muted);
+}
+
+.dialog-section-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dialog-section-header h3,
+.dialog-section-header p {
+  margin: 0;
+}
+
+.dialog-section-header p {
+  margin-top: 6px;
+  color: var(--text-muted);
+}
+
+.dialog-card {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--surface-bg);
+}
+
+.dialog-chip {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--ui-radius-lg);
+  background: #fff;
+}
+
+.dialog-chip span,
+.dialog-card .muted {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.dialog-label {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.dialog-field {
+  display: grid;
+  gap: 6px;
+}
+
+.dialog-field input,
+.dialog-field select {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border-strong);
+  border-radius: var(--ui-radius-md);
+  background: #fff;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.dialog-btn-primary,
+.dialog-btn-secondary,
+.dialog-btn-ghost {
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: var(--ui-radius-lg);
+  font: inherit;
+  cursor: pointer;
+}
+
+.dialog-btn-primary {
+  border: 1px solid var(--accent-text);
+  background: var(--accent-text);
+  color: #fff;
+}
+
+.dialog-btn-secondary,
+.dialog-btn-ghost {
+  border: 1px solid var(--app-border-strong);
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+}
+
+.dialog-status {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--surface-bg);
+}
+
+.dialog-status.error {
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
+.dialog-status.warning {
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
+}
+
+.dialog-status.success {
+  border-color: rgba(46, 174, 107, 0.35);
+  background: rgba(46, 174, 107, 0.08);
+}
+
+.dialog-empty-state {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--app-border);
+  border-radius: var(--ui-radius-lg);
+  background: var(--surface-bg);
+}
+
+.dialog-empty-state p {
+  color: var(--text-muted);
+  margin: 0;
+}

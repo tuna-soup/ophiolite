@@ -29,6 +29,10 @@ These parts can widen or move more freely:
 - app-facing integration adapters
 - incomplete wrapper coverage around deeper Rust capabilities
 
+In practice, `TraceBoostApp` and `SeismicDataset` sit in this category. They remain supported for direct loose-store seismic workflows, but they should not be taught as the primary project-owned execution model when `Project` and `Survey` can carry the same workflow through canonical asset ids.
+
+Their batch helper, `TraceBoostApp.run_processing_batch_compatibility(...)`, is intentionally synchronous and thread-pooled. It is a convenience wrapper over repeated one-shot CLI calls, not the shared desktop job service.
+
 ## Deprecation rule
 
 When a public Python name needs to move:
@@ -45,8 +49,10 @@ The docs should always reflect the preferred public surface, not just the existe
 That means:
 
 - examples should teach the current preferred names
+- examples should teach `Project` and `Survey` first for project-owned seismic execution
 - reference pages should call out advanced namespaces explicitly
 - deprecated names can be noted, but they should not lead the story
+- compatibility lanes such as direct loose-store seismic access can be noted, but they should not lead the story
 
 ## Current guidance
 

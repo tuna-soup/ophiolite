@@ -3,4 +3,4 @@ import type { GatherRequest } from "./GatherRequest";
 import type { TraceLocalProcessingPipeline } from "./TraceLocalProcessingPipeline";
 import type { VelocityAutopickParameters } from "./VelocityAutopickParameters";
 
-export type VelocityScanRequest = { schema_version: number, store_path: string, gather: GatherRequest, trace_local_pipeline: TraceLocalProcessingPipeline | null, min_velocity_m_per_s: number, max_velocity_m_per_s: number, velocity_step_m_per_s: number, autopick: VelocityAutopickParameters | null, };
+export type VelocityScanRequest = { schema_version: number, store_path: string, gather: GatherRequest, trace_local_pipeline?: TraceLocalProcessingPipeline | null, min_velocity_m_per_s: number, max_velocity_m_per_s: number, velocity_step_m_per_s: number, autopick?: VelocityAutopickParameters | null, };

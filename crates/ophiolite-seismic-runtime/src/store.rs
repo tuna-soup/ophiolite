@@ -229,6 +229,9 @@ fn processing_lineage_summary(
         ophiolite_seismic::ProcessingPipelineSpec::TraceLocal { pipeline } => {
             (pipeline.name.clone(), pipeline.revision)
         }
+        ophiolite_seismic::ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
+            (pipeline.name.clone(), pipeline.revision)
+        }
         ophiolite_seismic::ProcessingPipelineSpec::Subvolume { pipeline } => {
             (pipeline.name.clone(), pipeline.revision)
         }

@@ -11,6 +11,7 @@ from .models import (
     ComputeRequest,
     ComputeRun,
     LogAssetImportResult,
+    OperatorCatalog,
     OperatorLock,
     OperatorPackageInstallResult,
     PlatformCatalog,
@@ -22,6 +23,18 @@ from .models import (
     WellboreSummary,
 )
 from .platform import catalog as load_platform_catalog
+from .seismic import (
+    GatherPipeline,
+    GatherPreview,
+    GatherSelection,
+    PostStackNeighborhoodPipeline,
+    ProcessingPreview,
+    SectionSelection,
+    SubvolumePipeline,
+    TraceLocalPipeline,
+    VelocityScanResult,
+    VelocityScanSpec,
+)
 from .surveys import Survey
 from .views import ProjectViews
 from .wells import Well, Wellbore
@@ -29,6 +42,8 @@ from .wells import Well, Wellbore
 
 @dataclass(frozen=True)
 class Project:
+    """Canonical project-owned builder surface for Ophiolite workflows."""
+
     root: Path
     app: OphioliteApp
 
@@ -145,9 +160,161 @@ class Project:
         payload = self.app.list_project_compute_catalog(str(self.root), asset_id)
         return ComputeCatalog.from_json(payload)
 
+    def operator_catalog(self, asset_id: str) -> OperatorCatalog:
+        payload = self.app.list_project_operator_catalog(str(self.root), asset_id)
+        return OperatorCatalog.from_json(payload)
+
     def run_compute(self, request: ComputeRequest) -> ComputeRun:
         payload = self.app.run_project_compute(str(self.root), request.to_payload())
         return ComputeRun.from_json(payload)
+
+    def preview_trace_local_processing(
+        self,
+        *,
+        source_asset_id: str,
+        selection: SectionSelection,
+        pipeline: TraceLocalPipeline,
+    ) -> ProcessingPreview:
+        payload = self.app.preview_project_trace_local_processing(
+            str(self.root),
+            {
+                "source_asset_id": source_asset_id,
+                "section": selection.to_project_payload(),
+                "pipeline": pipeline.to_payload(),
+            },
+        )
+        return ProcessingPreview.from_json(payload, pipeline=pipeline)
+
+    def run_trace_local_processing(
+        self,
+        *,
+        source_asset_id: str,
+        pipeline: TraceLocalPipeline,
+        output_collection_name: str | None = None,
+    ) -> LogAssetImportResult:
+        request = {
+            "source_asset_id": source_asset_id,
+            "pipeline": pipeline.to_payload(),
+        }
+        if output_collection_name is not None:
+            request["output_collection_name"] = output_collection_name
+        payload = self.app.run_project_trace_local_processing(str(self.root), request)
+        return LogAssetImportResult.from_json(payload)
+
+    def preview_subvolume_processing(
+        self,
+        *,
+        source_asset_id: str,
+        selection: SectionSelection,
+        pipeline: SubvolumePipeline,
+    ) -> ProcessingPreview:
+        payload = self.app.preview_project_subvolume_processing(
+            str(self.root),
+            {
+                "source_asset_id": source_asset_id,
+                "section": selection.to_project_payload(),
+                "pipeline": pipeline.to_payload(),
+            },
+        )
+        return ProcessingPreview.from_json(payload, pipeline=pipeline)
+
+    def run_subvolume_processing(
+        self,
+        *,
+        source_asset_id: str,
+        pipeline: SubvolumePipeline,
+        output_collection_name: str | None = None,
+    ) -> LogAssetImportResult:
+        request = {
+            "source_asset_id": source_asset_id,
+            "pipeline": pipeline.to_payload(),
+        }
+        if output_collection_name is not None:
+            request["output_collection_name"] = output_collection_name
+        payload = self.app.run_project_subvolume_processing(str(self.root), request)
+        return LogAssetImportResult.from_json(payload)
+
+    def preview_post_stack_neighborhood_processing(
+        self,
+        *,
+        source_asset_id: str,
+        selection: SectionSelection,
+        pipeline: PostStackNeighborhoodPipeline,
+    ) -> ProcessingPreview:
+        payload = self.app.preview_project_post_stack_neighborhood_processing(
+            str(self.root),
+            {
+                "source_asset_id": source_asset_id,
+                "section": selection.to_project_payload(),
+                "pipeline": pipeline.to_payload(),
+            },
+        )
+        return ProcessingPreview.from_json(payload, pipeline=pipeline)
+
+    def run_post_stack_neighborhood_processing(
+        self,
+        *,
+        source_asset_id: str,
+        pipeline: PostStackNeighborhoodPipeline,
+        output_collection_name: str | None = None,
+    ) -> LogAssetImportResult:
+        request = {
+            "source_asset_id": source_asset_id,
+            "pipeline": pipeline.to_payload(),
+        }
+        if output_collection_name is not None:
+            request["output_collection_name"] = output_collection_name
+        payload = self.app.run_project_post_stack_neighborhood_processing(
+            str(self.root),
+            request,
+        )
+        return LogAssetImportResult.from_json(payload)
+
+    def preview_gather_processing(
+        self,
+        *,
+        source_asset_id: str,
+        gather: GatherSelection,
+        pipeline: GatherPipeline,
+    ) -> GatherPreview:
+        payload = self.app.preview_project_gather_processing(
+            str(self.root),
+            {
+                "source_asset_id": source_asset_id,
+                "gather": gather.to_project_payload(),
+                "pipeline": pipeline.to_payload(),
+            },
+        )
+        return GatherPreview.from_json(payload, pipeline=pipeline)
+
+    def run_gather_processing(
+        self,
+        *,
+        source_asset_id: str,
+        pipeline: GatherPipeline,
+        output_collection_name: str | None = None,
+    ) -> LogAssetImportResult:
+        request = {
+            "source_asset_id": source_asset_id,
+            "pipeline": pipeline.to_payload(),
+        }
+        if output_collection_name is not None:
+            request["output_collection_name"] = output_collection_name
+        payload = self.app.run_project_gather_processing(str(self.root), request)
+        return LogAssetImportResult.from_json(payload)
+
+    def run_velocity_scan(
+        self,
+        *,
+        source_asset_id: str,
+        gather: GatherSelection,
+        spec: VelocityScanSpec,
+    ) -> VelocityScanResult:
+        payload = self.app.run_project_velocity_scan(
+            str(self.root),
+            spec.to_project_payload(source_asset_id=source_asset_id, gather=gather),
+        )
+        return VelocityScanResult.from_json(payload)
 
     def run_elastic_impedance(
         self,

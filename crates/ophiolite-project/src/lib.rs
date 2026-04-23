@@ -18,6 +18,16 @@ pub use ophiolite_core::{
     IndexKind, IngestIssue, LasError, LasFile, Provenance, Result, WellInfo, package_metadata_for,
     revision_token_for_bytes,
 };
+pub use ophiolite_operators::{
+    DrillingComputeDetail, GatherProcessingDetail, LogComputeDetail,
+    OPERATOR_CATALOG_SCHEMA_VERSION, OperatorAvailability, OperatorCatalog, OperatorCatalogEntry,
+    OperatorContractRef, OperatorDetail, OperatorDocumentation, OperatorExecutionKind,
+    OperatorFamily, OperatorOutputLifecycle as OperatorCatalogOutputLifecycle,
+    OperatorParameterDoc, OperatorStability as OperatorCatalogStability, OperatorSubjectKind,
+    PostStackNeighborhoodProcessingDetail, PressureComputeDetail, SeismicAnalysisDetail,
+    SubvolumeProcessingDetail, TopSetComputeDetail, TraceLocalProcessingDetail,
+    TrajectoryComputeDetail, WellMarkerComputeDetail,
+};
 pub use ophiolite_package::write_package_overwrite;
 pub use ophiolite_parser::read_path;
 
@@ -44,18 +54,25 @@ pub use project::{
     ExternalReference, ImportResolution, LocatedPoint, LogAssetDiffSummary, LogAssetImportResult,
     OperatorAssignment, OperatorPackageLockEntry, OperatorPackageSourceKind, OphioliteProject,
     OphioliteProjectManifest, ProjectAssetImportResult, ProjectAssetSummary,
-    ProjectComputeRunRequest, ProjectComputeRunResult, ProjectOperatorLock,
-    ProjectOperatorPackageInstallResult, ProjectSummary, ProjectSurveyAssetInventoryItem,
-    ProjectWellOverlayInventory, ProjectWellTimeDepthAssetPreview,
+    ProjectComputeRunRequest, ProjectComputeRunResult, ProjectGatherProcessingPreviewRequest,
+    ProjectGatherProcessingRunRequest, ProjectGatherSelection, ProjectOperatorLock,
+    ProjectOperatorPackageInstallResult, ProjectPostStackNeighborhoodProcessingPreviewRequest,
+    ProjectPostStackNeighborhoodProcessingRunRequest, ProjectSectionSelection,
+    ProjectSeismicAssetRunResult, ProjectSeismicSecondaryInputRef,
+    ProjectSubvolumeProcessingPreviewRequest, ProjectSubvolumeProcessingRunRequest, ProjectSummary,
+    ProjectSurveyAssetInventoryItem, ProjectTraceLocalProcessingOperation,
+    ProjectTraceLocalProcessingPipeline, ProjectTraceLocalProcessingPreviewRequest,
+    ProjectTraceLocalProcessingRunRequest, ProjectTraceLocalProcessingStep,
+    ProjectVelocityScanRequest, ProjectWellOverlayInventory, ProjectWellTimeDepthAssetPreview,
     ProjectWellTimeDepthImportCanonicalDraft, ProjectWellTimeDepthImportPreview,
     ProjectWellTimeDepthPreviewIssue, ProjectWellTimeDepthPreviewIssueSeverity,
     ProjectWellboreInventoryItem, SeismicAssetImportResult, SeismicAssetMetadata,
-    SourceArtifactRef, StructuredAssetDiffSummary, UnitSystem, VerticalDatum, VerticalMeasurement,
-    VerticalMeasurementPath, WellId, WellIdentifierSet, WellMarkerHorizonResidualPointRecord,
-    WellMarkerId, WellMarkerRecord, WellMetadata, WellRecord, WellSummary, WellboreId,
-    WellboreMetadata, WellboreRecord, WellboreSummary, preview_well_time_depth_import_draft,
-    preview_well_time_depth_json_asset, preview_well_time_depth_json_payload,
-    resolve_dataset_summary_survey_map_source,
+    SeismicStoreManifest, SourceArtifactRef, StructuredAssetDiffSummary, UnitSystem, VerticalDatum,
+    VerticalMeasurement, VerticalMeasurementPath, WellId, WellIdentifierSet,
+    WellMarkerHorizonResidualPointRecord, WellMarkerId, WellMarkerRecord, WellMetadata, WellRecord,
+    WellSummary, WellboreId, WellboreMetadata, WellboreRecord, WellboreSummary,
+    preview_well_time_depth_import_draft, preview_well_time_depth_json_asset,
+    preview_well_time_depth_json_payload, resolve_dataset_summary_survey_map_source,
 };
 pub use project_assets::{
     AssetBindingInput, AssetColumnMetadata, AssetColumnType, AssetTableMetadata, DepthRangeQuery,

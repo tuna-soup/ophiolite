@@ -1,22 +1,13 @@
-import type { AmplitudeSpectrumResponse } from "@traceboost/seis-contracts";
+import type { DerivedWavelet, SpectrumResponseLike } from "./types";
 
-export interface DerivedWavelet {
-  assumption: "zero_phase";
-  dominantFrequencyHz: number | null;
-  timesMs: number[];
-  amplitudes: number[];
-}
-
-export function deriveZeroPhaseWavelet(
-  response: AmplitudeSpectrumResponse | null
-): DerivedWavelet | null {
+export function deriveZeroPhaseWavelet(response: SpectrumResponseLike | null): DerivedWavelet | null {
   if (!response) {
     return null;
   }
 
-  const frequencies = response.curve.frequencies_hz;
+  const frequencies = response.curve.frequenciesHz;
   const amplitudes = response.curve.amplitudes;
-  const sampleIntervalMs = response.sample_interval_ms;
+  const sampleIntervalMs = response.sampleIntervalMs;
   if (frequencies.length < 2 || amplitudes.length < 2 || frequencies.length !== amplitudes.length) {
     return null;
   }

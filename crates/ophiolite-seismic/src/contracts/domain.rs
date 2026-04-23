@@ -65,7 +65,7 @@ pub struct SampleDataFidelity {
     pub working_sample_type: String,
     pub conversion: SampleDataConversionKind,
     pub preservation: SampleValuePreservation,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub notes: Vec<String>,
 }
 
@@ -290,5 +290,25 @@ impl From<SeismicSampleDomain> for GatherSampleDomain {
             SeismicSampleDomain::Time => Self::Time,
             SeismicSampleDomain::Depth => Self::Depth,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn sample_data_fidelity_serializes_notes_array() {
+        let fidelity = SampleDataFidelity {
+            source_sample_type: "ibm32".to_string(),
+            working_sample_type: "f32".to_string(),
+            conversion: SampleDataConversionKind::FormatTranscode,
+            preservation: SampleValuePreservation::PotentiallyLossy,
+            notes: Vec::new(),
+        };
+
+        let value = serde_json::to_value(fidelity).expect("sample fidelity should serialize");
+        assert_eq!(value["notes"], json!([]));
     }
 }

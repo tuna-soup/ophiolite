@@ -2,4 +2,4 @@
 import type { ProcessingArtifactRole } from "./ProcessingArtifactRole";
 import type { ProcessingPipelineFamily } from "./ProcessingPipelineFamily";
 
-export type ProcessingLineageSummary = { parent_store_path: string, parent_store_id: string, artifact_role: ProcessingArtifactRole, pipeline_family: ProcessingPipelineFamily, pipeline_name: string | null, pipeline_revision: number, };
+export type ProcessingLineageSummary = { parent_store_path: string, parent_store_id: string, artifact_role: ProcessingArtifactRole, pipeline_family: ProcessingPipelineFamily, pipeline_name?: string | null, pipeline_revision: number, };

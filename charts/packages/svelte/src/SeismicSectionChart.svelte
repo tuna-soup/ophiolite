@@ -3,6 +3,8 @@
 <script lang="ts">
   import {
     formatSeismicCssFont,
+    formatSeismicAxisValue,
+    isArbitrarySeismicSection,
     resolveProbePanelPresentation,
     resolveSeismicPresentationProfile
   } from "@ophiolite/charts-core";
@@ -34,6 +36,19 @@
   const EMPTY_SECTION_SCALAR_OVERLAYS: readonly SectionScalarOverlay[] = [];
   const EMPTY_SECTION_HORIZONS: readonly SectionHorizonOverlay[] = [];
   const EMPTY_SECTION_WELL_OVERLAYS: readonly SectionWellOverlay[] = [];
+  const BROWSE_AXIS_LABEL: Record<"inline" | "xline", string> = {
+    inline: "Inline",
+    xline: "Xline"
+  };
+  const ANALYSIS_KIND_LABEL = {
+    "amplitude-spectrum": "Amplitude spectrum",
+    "amplitude-distribution": "Amplitude distribution"
+  } as const;
+  const ANALYSIS_KIND_ORDER = ["amplitude-spectrum", "amplitude-distribution"] as const;
+  const ANALYSIS_SELECTION_MODE_LABEL = {
+    "whole-section": "Section",
+    viewport: "View"
+  } as const;
 
   interface ScrollbarDragState {
     axis: ScrollbarAxis;
@@ -57,6 +72,8 @@
     viewport = null,
     displayTransform = undefined,
     interactions = undefined,
+    browse = undefined,
+    analysis = undefined,
     compareMode = "single",
     splitPosition = 0.5,
     crosshairEnabled = true,
@@ -111,6 +128,68 @@
     )
   );
   let decodedSectionPayload = $derived(section ? decodeSectionView(section) : null);
+  let browseRequestContext = $derived.by(() => {
+    if (
+      !browse?.enabled ||
+      !browse.current ||
+      !browse.onRequest ||
+      !section ||
+      loading ||
+      errorMessage ||
+      !decodedSectionPayload ||
+      isArbitrarySeismicSection(decodedSectionPayload)
+    ) {
+      return null;
+    }
+
+    return {
+      current: browse.current,
+      canStepBackward: browse.canStepBackward === true && !browse.pending,
+      canStepForward: browse.canStepForward === true && !browse.pending,
+      canSwitchAxis: browse.canSwitchAxis !== false && !browse.pending
+    };
+  });
+  let browseChromeVisible = $derived(Boolean(browseRequestContext && browse?.showChrome !== false));
+  let browseCurrentLabel = $derived(
+    browseRequestContext
+      ? `${BROWSE_AXIS_LABEL[browseRequestContext.current.axis]} ${formatSeismicAxisValue(browseRequestContext.current.value)}`
+      : ""
+  );
+  let analysisRequestContext = $derived.by(() => {
+    if (!analysis?.enabled || !analysis.onRequest || !section || loading || errorMessage) {
+      return null;
+    }
+
+    const availableKinds = ANALYSIS_KIND_ORDER.filter((kind) =>
+      kind === "amplitude-spectrum" ? analysis.spectrumEnabled !== false : analysis.distributionEnabled !== false
+    );
+    if (availableKinds.length === 0) {
+      return null;
+    }
+
+    const selectionModes = (analysis.selectionModes?.length
+      ? analysis.selectionModes
+      : [analysis.selectionMode ?? "whole-section"]) as readonly ("whole-section" | "viewport")[];
+    const selectionMode = selectionModes.includes(analysis.selectionMode ?? "whole-section")
+      ? (analysis.selectionMode ?? "whole-section")
+      : selectionModes[0] ?? "whole-section";
+    const canRequestSelection = selectionMode === "whole-section" || currentViewport !== null;
+
+    return {
+      current: {
+        axis: section.axis,
+        index: section.coordinate.index,
+        value: section.coordinate.value
+      },
+      selectionMode,
+      selectionModes,
+      canRequestSelection,
+      availableKinds,
+      openKinds: new Set(analysis.openKinds ?? []),
+      pendingKinds: new Set(analysis.pendingKinds ?? [])
+    };
+  });
+  let analysisChromeVisible = $derived(Boolean(analysisRequestContext && analysis?.showChrome !== false));
   let overlayViewport = $derived(
     currentViewport
       ? {
@@ -411,6 +490,73 @@
     });
   }
 
+  function requestBrowseStep(direction: -1 | 1): void {
+    if (!browseRequestContext) {
+      return;
+    }
+
+    if ((direction < 0 && !browseRequestContext.canStepBackward) || (direction > 0 && !browseRequestContext.canStepForward)) {
+      return;
+    }
+
+    browse?.onRequest?.({
+      kind: "step",
+      direction,
+      current: browseRequestContext.current,
+      viewport: currentViewport ? { ...currentViewport } : null,
+      preserveViewport: true
+    });
+  }
+
+  function requestBrowseAxisSwitch(axis: "inline" | "xline"): void {
+    if (!browseRequestContext || !browseRequestContext.canSwitchAxis || browseRequestContext.current.axis === axis) {
+      return;
+    }
+
+    browse?.onRequest?.({
+      kind: "switch-axis",
+      axis,
+      current: browseRequestContext.current,
+      viewport: currentViewport ? { ...currentViewport } : null,
+      preserveViewport: true
+    });
+  }
+
+  function requestAnalysis(kind: "amplitude-spectrum" | "amplitude-distribution"): void {
+    if (!analysisRequestContext || !analysisRequestContext.availableKinds.includes(kind)) {
+      return;
+    }
+
+    if (analysisRequestContext.pendingKinds.has(kind) || !analysisRequestContext.canRequestSelection) {
+      return;
+    }
+
+    const selection =
+      analysisRequestContext.selectionMode === "viewport" && currentViewport
+        ? {
+            kind: "viewport" as const,
+            viewport: { ...currentViewport }
+          }
+        : ({
+            kind: "whole-section" as const
+          });
+
+    analysis?.onRequest?.({
+      kind,
+      selection,
+      current: analysisRequestContext.current,
+      viewport: currentViewport ? { ...currentViewport } : null
+    });
+  }
+
+  function requestAnalysisSelectionMode(mode: "whole-section" | "viewport"): void {
+    if (!analysisRequestContext || analysisRequestContext.selectionMode === mode) {
+      return;
+    }
+
+    analysis?.onSelectionModeChange?.(mode);
+  }
+
   function handlePointerMove(event: PointerEvent): void {
     if (!controller || splitDragPointerId !== null) {
       return;
@@ -526,6 +672,20 @@
       setEffectiveTool("pointer");
       event.preventDefault();
       return;
+    }
+
+    if (!activeDragKind && !scrollbarDrag && browseRequestContext) {
+      if (event.key === "ArrowLeft") {
+        requestBrowseStep(-1);
+        event.preventDefault();
+        return;
+      }
+
+      if (event.key === "ArrowRight") {
+        requestBrowseStep(1);
+        event.preventDefault();
+        return;
+      }
     }
 
     const state = controller.getState();
@@ -984,6 +1144,139 @@
           </div>
         </div>
       {/if}
+      {#if browseChromeVisible || analysisChromeVisible}
+        <div class="ophiolite-charts-seismic-tools">
+          {#if browseChromeVisible && browseRequestContext}
+            <div class="ophiolite-charts-seismic-browse" data-pending={browse?.pending ? "true" : "false"}>
+              <div class="ophiolite-charts-seismic-browse-row">
+                <button
+                  type="button"
+                  class="ophiolite-charts-seismic-browse-button"
+                  disabled={!browseRequestContext.canStepBackward}
+                  onclick={() => requestBrowseStep(-1)}
+                  aria-label={`Browse previous ${browseRequestContext.current.axis}`}
+                >
+                  Prev
+                </button>
+                <div class="ophiolite-charts-seismic-browse-current">
+                  <span class="ophiolite-charts-seismic-browse-current-label">{browseCurrentLabel}</span>
+                  {#if browse?.pending}
+                    <span class="ophiolite-charts-seismic-browse-status">Loading</span>
+                  {/if}
+                </div>
+                <button
+                  type="button"
+                  class="ophiolite-charts-seismic-browse-button"
+                  disabled={!browseRequestContext.canStepForward}
+                  onclick={() => requestBrowseStep(1)}
+                  aria-label={`Browse next ${browseRequestContext.current.axis}`}
+                >
+                  Next
+                </button>
+              </div>
+              <div class="ophiolite-charts-seismic-browse-row ophiolite-charts-seismic-browse-axis-row">
+                <button
+                  type="button"
+                  class={[
+                    "ophiolite-charts-seismic-browse-axis-button",
+                    browseRequestContext.current.axis === "inline" && "ophiolite-charts-seismic-browse-axis-button-active"
+                  ]}
+                  aria-pressed={browseRequestContext.current.axis === "inline"}
+                  disabled={browseRequestContext.current.axis === "inline" || !browseRequestContext.canSwitchAxis}
+                  onclick={() => requestBrowseAxisSwitch("inline")}
+                >
+                  Inline
+                </button>
+                <button
+                  type="button"
+                  class={[
+                    "ophiolite-charts-seismic-browse-axis-button",
+                    browseRequestContext.current.axis === "xline" && "ophiolite-charts-seismic-browse-axis-button-active"
+                  ]}
+                  aria-pressed={browseRequestContext.current.axis === "xline"}
+                  disabled={browseRequestContext.current.axis === "xline" || !browseRequestContext.canSwitchAxis}
+                  onclick={() => requestBrowseAxisSwitch("xline")}
+                >
+                  Xline
+                </button>
+              </div>
+            </div>
+          {/if}
+          {#if analysisChromeVisible && analysisRequestContext}
+            <div class="ophiolite-charts-seismic-analysis">
+              {#if analysisRequestContext.selectionModes.length > 1}
+                <div class="ophiolite-charts-seismic-analysis-selection">
+                  {#each analysisRequestContext.selectionModes as mode (mode)}
+                    <button
+                      type="button"
+                      class={[
+                        "ophiolite-charts-seismic-analysis-selection-button",
+                        analysisRequestContext.selectionMode === mode &&
+                          "ophiolite-charts-seismic-analysis-selection-button-active"
+                      ]}
+                      aria-pressed={analysisRequestContext.selectionMode === mode}
+                      onclick={() => requestAnalysisSelectionMode(mode)}
+                    >
+                      {ANALYSIS_SELECTION_MODE_LABEL[mode]}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
+              {#if analysisRequestContext.availableKinds.includes("amplitude-spectrum")}
+                <button
+                  type="button"
+                  class={[
+                    "ophiolite-charts-seismic-analysis-button",
+                    analysisRequestContext.openKinds.has("amplitude-spectrum") &&
+                      "ophiolite-charts-seismic-analysis-button-active"
+                  ]}
+                  disabled={
+                    analysisRequestContext.pendingKinds.has("amplitude-spectrum") ||
+                    !analysisRequestContext.canRequestSelection
+                  }
+                  onclick={() => requestAnalysis("amplitude-spectrum")}
+                  aria-label={ANALYSIS_KIND_LABEL["amplitude-spectrum"]}
+                  title={ANALYSIS_KIND_LABEL["amplitude-spectrum"]}
+                >
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M4 18.5V13.5" />
+                    <path d="M8 18.5V8.5" />
+                    <path d="M12 18.5V5.5" />
+                    <path d="M16 18.5V10.5" />
+                    <path d="M20 18.5V7.5" />
+                    <path d="M3 18.5h18" />
+                  </svg>
+                </button>
+              {/if}
+              {#if analysisRequestContext.availableKinds.includes("amplitude-distribution")}
+                <button
+                  type="button"
+                  class={[
+                    "ophiolite-charts-seismic-analysis-button",
+                    analysisRequestContext.openKinds.has("amplitude-distribution") &&
+                      "ophiolite-charts-seismic-analysis-button-active"
+                  ]}
+                  disabled={
+                    analysisRequestContext.pendingKinds.has("amplitude-distribution") ||
+                    !analysisRequestContext.canRequestSelection
+                  }
+                  onclick={() => requestAnalysis("amplitude-distribution")}
+                  aria-label={ANALYSIS_KIND_LABEL["amplitude-distribution"]}
+                  title={ANALYSIS_KIND_LABEL["amplitude-distribution"]}
+                >
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M3 18.5h18" />
+                    <path d="M6 18.5V14.5" />
+                    <path d="M10 18.5V8.5" />
+                    <path d="M14 18.5V5.5" />
+                    <path d="M18 18.5V11.5" />
+                  </svg>
+                </button>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
       {#if plotBottomRight}
         <div class="ophiolite-charts-chart-anchor ophiolite-charts-chart-anchor-bottom-right">
           <div class="ophiolite-charts-chart-anchor-content">
@@ -1151,6 +1444,163 @@
   .ophiolite-charts-chart-anchor-bottom-left {
     left: calc(var(--ophiolite-charts-plot-left) + var(--ophiolite-charts-overlay-pad));
     bottom: calc(var(--ophiolite-charts-plot-bottom) + var(--ophiolite-charts-overlay-pad));
+  }
+
+  .ophiolite-charts-seismic-tools {
+    position: absolute;
+    top: calc(var(--ophiolite-charts-plot-top) + var(--ophiolite-charts-overlay-pad));
+    right: calc(var(--ophiolite-charts-plot-right) + var(--ophiolite-charts-overlay-pad));
+    z-index: 5;
+    display: grid;
+    gap: 8px;
+    justify-items: end;
+  }
+
+  .ophiolite-charts-seismic-browse {
+    min-width: 184px;
+    display: grid;
+    gap: 6px;
+    padding: 8px;
+    border: 1px solid rgba(176, 212, 238, 0.74);
+    border-radius: 10px;
+    background: rgba(250, 252, 253, 0.96);
+    box-shadow:
+      0 10px 22px rgba(42, 64, 84, 0.16),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(10px);
+  }
+
+  .ophiolite-charts-seismic-analysis {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 8px;
+    border: 1px solid rgba(176, 212, 238, 0.74);
+    border-radius: 10px;
+    background: rgba(250, 252, 253, 0.96);
+    box-shadow:
+      0 10px 22px rgba(42, 64, 84, 0.16),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.72);
+    backdrop-filter: blur(10px);
+  }
+
+  .ophiolite-charts-seismic-browse-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 6px;
+  }
+
+  .ophiolite-charts-seismic-browse-axis-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ophiolite-charts-seismic-browse-button,
+  .ophiolite-charts-seismic-browse-axis-button {
+    min-width: 0;
+    min-height: 30px;
+    padding: 0 10px;
+    border: 1px solid rgba(153, 186, 208, 0.76);
+    border-radius: 7px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(231, 239, 245, 0.98));
+    color: #284052;
+    font: var(--ophiolite-chart-overlay-font, 500 14px/1.4 sans-serif);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .ophiolite-charts-seismic-analysis-button {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(153, 186, 208, 0.76);
+    border-radius: 8px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(231, 239, 245, 0.98));
+    color: #284052;
+    cursor: pointer;
+  }
+
+  .ophiolite-charts-seismic-analysis-selection {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: 2px;
+  }
+
+  .ophiolite-charts-seismic-analysis-selection-button {
+    min-height: 28px;
+    padding: 0 9px;
+    border: 1px solid rgba(153, 186, 208, 0.76);
+    border-radius: 7px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(231, 239, 245, 0.98));
+    color: #284052;
+    font: var(--ophiolite-chart-overlay-font, 500 14px/1.4 sans-serif);
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .ophiolite-charts-seismic-browse-button:disabled,
+  .ophiolite-charts-seismic-browse-axis-button:disabled,
+  .ophiolite-charts-seismic-analysis-button:disabled,
+  .ophiolite-charts-seismic-analysis-selection-button:disabled {
+    cursor: default;
+    opacity: 0.54;
+  }
+
+  .ophiolite-charts-seismic-browse-axis-button-active {
+    background: linear-gradient(180deg, rgba(193, 224, 239, 0.98), rgba(166, 203, 223, 0.98));
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.7),
+      0 0 0 1px rgba(89, 123, 145, 0.12);
+  }
+
+  .ophiolite-charts-seismic-analysis-button-active {
+    background: linear-gradient(180deg, rgba(193, 224, 239, 0.98), rgba(166, 203, 223, 0.98));
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.7),
+      0 0 0 1px rgba(89, 123, 145, 0.12);
+  }
+
+  .ophiolite-charts-seismic-analysis-selection-button-active {
+    background: linear-gradient(180deg, rgba(193, 224, 239, 0.98), rgba(166, 203, 223, 0.98));
+    box-shadow:
+      inset 0 0 0 1px rgba(255, 255, 255, 0.7),
+      0 0 0 1px rgba(89, 123, 145, 0.12);
+  }
+
+  .ophiolite-charts-seismic-browse-current {
+    min-width: 0;
+    display: grid;
+    justify-items: center;
+    gap: 3px;
+    padding: 0 6px;
+    color: #284052;
+    text-align: center;
+  }
+
+  .ophiolite-charts-seismic-browse-current-label {
+    font: var(--ophiolite-chart-overlay-font, 500 14px/1.4 sans-serif);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.15;
+    white-space: nowrap;
+  }
+
+  .ophiolite-charts-seismic-browse-status {
+    font: var(--ophiolite-chart-overlay-font, 500 14px/1.4 sans-serif);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(70, 98, 119, 0.84);
   }
 
   .ophiolite-charts-split-divider {

@@ -4,4 +4,4 @@ import type { TimeDepthDomain } from "./TimeDepthDomain";
 import type { VelocityControlProfileSet } from "./VelocityControlProfileSet";
 import type { VelocityQuantityKind } from "./VelocityQuantityKind";
 
-export type BuildSurveyPropertyFieldRequest = { schema_version: number, store_path: string, model: LayeredVelocityModel, control_profile_sets: Array<VelocityControlProfileSet>, output_id: string | null, output_name: string | null, property_name: string, property_unit: string, preferred_velocity_kind: VelocityQuantityKind, output_vertical_domain: TimeDepthDomain, notes: Array<string>, };
+export type BuildSurveyPropertyFieldRequest = { schema_version: number, store_path: string, model: LayeredVelocityModel, control_profile_sets?: Array<VelocityControlProfileSet>, output_id?: string | null, output_name?: string | null, property_name: string, property_unit: string, preferred_velocity_kind: VelocityQuantityKind, output_vertical_domain: TimeDepthDomain, notes?: Array<string>, };

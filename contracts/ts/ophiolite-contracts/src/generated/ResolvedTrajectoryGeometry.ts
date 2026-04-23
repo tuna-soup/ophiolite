@@ -2,4 +2,4 @@
 import type { CoordinateReferenceDescriptor } from "./CoordinateReferenceDescriptor";
 import type { ResolvedTrajectoryStation } from "./ResolvedTrajectoryStation";
 
-export type ResolvedTrajectoryGeometry = { id: string, wellbore_id: string, source_asset_ids: Array<string>, coordinate_reference: CoordinateReferenceDescriptor | null, anchor_fingerprint: string | null, stations: Array<ResolvedTrajectoryStation>, notes: Array<string>, };
+export type ResolvedTrajectoryGeometry = { id: string, wellbore_id: string, source_asset_ids?: Array<string>, coordinate_reference?: CoordinateReferenceDescriptor | null, anchor_fingerprint?: string | null, stations?: Array<ResolvedTrajectoryStation>, notes?: Array<string>, };

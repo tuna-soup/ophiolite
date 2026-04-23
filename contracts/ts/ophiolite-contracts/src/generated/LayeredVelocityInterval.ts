@@ -5,4 +5,4 @@ import type { VelocityIntervalTrend } from "./VelocityIntervalTrend";
 import type { VelocityQuantityKind } from "./VelocityQuantityKind";
 import type { VerticalInterpolationMethod } from "./VerticalInterpolationMethod";
 
-export type LayeredVelocityInterval = { id: string, name: string, top_boundary: StratigraphicBoundaryReference, base_boundary: StratigraphicBoundaryReference, trend: VelocityIntervalTrend, control_profile_set_id: string | null, control_profile_velocity_kind: VelocityQuantityKind | null, lateral_interpolation: LateralInterpolationMethod | null, vertical_interpolation: VerticalInterpolationMethod | null, control_blend_weight: number | null, notes: Array<string>, };
+export type LayeredVelocityInterval = { id: string, name: string, top_boundary: StratigraphicBoundaryReference, base_boundary: StratigraphicBoundaryReference, trend: VelocityIntervalTrend, control_profile_set_id?: string | null, control_profile_velocity_kind?: VelocityQuantityKind | null, lateral_interpolation?: LateralInterpolationMethod | null, vertical_interpolation?: VerticalInterpolationMethod | null, control_blend_weight?: number | null, notes?: Array<string>, };

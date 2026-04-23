@@ -2,4 +2,4 @@
 import type { CoordinateReferenceDto } from "./CoordinateReferenceDto";
 import type { CoordinateReferenceSourceDto } from "./CoordinateReferenceSourceDto";
 
-export type CoordinateReferenceBindingDto = { detected: CoordinateReferenceDto | null, effective: CoordinateReferenceDto | null, source: CoordinateReferenceSourceDto, notes: Array<string>, };
+export type CoordinateReferenceBindingDto = { detected?: CoordinateReferenceDto | null, effective?: CoordinateReferenceDto | null, source: CoordinateReferenceSourceDto, notes?: Array<string>, };

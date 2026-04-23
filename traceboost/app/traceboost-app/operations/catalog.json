@@ -106,6 +106,22 @@
       }
     },
     {
+      "id": "traceboost.import_prestack_offset_dataset",
+      "summary": "Import a prestack offset dataset into a local TraceBoost gather store.",
+      "owner": "traceboost",
+      "domain": "ingest",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli", "python-api", "python-cli"],
+      "request_type": "ImportPrestackOffsetDatasetRequest",
+      "response_type": "ImportPrestackOffsetDatasetResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::import_prestack_offset_dataset",
+        "rust_cli": "import-prestack-offset-dataset",
+        "python_method": "import_prestack_offset_dataset",
+        "python_cli": "import-prestack-offset-dataset"
+      }
+    },
+    {
       "id": "traceboost.open_dataset",
       "summary": "Open a stored dataset and return its summary DTO.",
       "owner": "traceboost",
@@ -229,6 +245,19 @@
       }
     },
     {
+      "id": "traceboost.dataset_operator_catalog",
+      "summary": "List canonical seismic operators available for a dataset store based on its resolved layout.",
+      "owner": "traceboost",
+      "domain": "processing",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "response_type": "OperatorCatalog",
+      "bindings": {
+        "rust_function": "traceboost_app::dataset_operator_catalog",
+        "rust_cli": "dataset-operator-catalog"
+      }
+    },
+    {
       "id": "traceboost.run_processing",
       "summary": "Materialize a trace-local processing pipeline to a derived dataset store.",
       "owner": "traceboost",
@@ -240,6 +269,76 @@
       "bindings": {
         "rust_function": "traceboost_app::apply_processing",
         "rust_cli": "run-processing"
+      }
+    },
+    {
+      "id": "traceboost.preview_subvolume_processing",
+      "summary": "Preview a subvolume derivation pipeline on a seismic section.",
+      "owner": "traceboost",
+      "domain": "processing",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "request_type": "PreviewSubvolumeProcessingRequest",
+      "response_type": "PreviewSubvolumeProcessingResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::preview_subvolume_processing",
+        "rust_cli": "preview-subvolume-processing"
+      }
+    },
+    {
+      "id": "traceboost.run_subvolume_processing",
+      "summary": "Materialize a subvolume derivation pipeline to a derived dataset store.",
+      "owner": "traceboost",
+      "domain": "processing",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "request_type": "RunSubvolumeProcessingRequest",
+      "response_type": "DatasetSummary",
+      "bindings": {
+        "rust_function": "traceboost_app::apply_subvolume_processing",
+        "rust_cli": "run-subvolume-processing"
+      }
+    },
+    {
+      "id": "traceboost.preview_gather_processing",
+      "summary": "Preview a gather-native processing pipeline on a prestack gather.",
+      "owner": "traceboost",
+      "domain": "processing",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "request_type": "PreviewGatherProcessingRequest",
+      "response_type": "PreviewGatherProcessingResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::preview_gather_processing",
+        "rust_cli": "preview-gather-processing"
+      }
+    },
+    {
+      "id": "traceboost.run_gather_processing",
+      "summary": "Materialize a gather-native processing pipeline to a derived prestack dataset store.",
+      "owner": "traceboost",
+      "domain": "processing",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "request_type": "RunGatherProcessingRequest",
+      "response_type": "DatasetSummary",
+      "bindings": {
+        "rust_function": "traceboost_app::apply_gather_processing",
+        "rust_cli": "run-gather-processing"
+      }
+    },
+    {
+      "id": "traceboost.run_velocity_scan",
+      "summary": "Run a velocity scan analysis against a prestack gather.",
+      "owner": "traceboost",
+      "domain": "processing",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "request_type": "VelocityScanRequest",
+      "response_type": "VelocityScanResponse",
+      "bindings": {
+        "rust_function": "traceboost_app::run_velocity_scan",
+        "rust_cli": "run-velocity-scan"
       }
     },
     {

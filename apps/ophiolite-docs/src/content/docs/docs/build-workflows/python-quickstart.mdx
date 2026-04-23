@@ -18,9 +18,7 @@ The main Python story should be learned through stable nouns first:
 - `Well`
 - `Wellbore`
 - `WellboreBinding`
-- `TraceBoostApp`
-- `SeismicDataset`
-- `TraceProcessingPipeline`
+- `TraceLocalPipeline`
 
 Advanced transport and extension details still exist, but they should not define the beginner story.
 
@@ -57,6 +55,7 @@ Today the Python SDK is strongest for:
 
 - project lifecycle
 - survey-backed seismic discovery
+- project-owned seismic operator discovery and execution
 - well and wellbore navigation
 - typed seismic operator chains
 - operator lock inspection
@@ -64,6 +63,30 @@ Today the Python SDK is strongest for:
 - compute catalog and compute execution
 
 Some import and broader project-manipulation flows are still more complete in Rust than in the Python wrapper.
+
+## Project-owned seismic workflow
+
+```python
+from ophiolite_sdk import Project, SectionSelection, TraceLocalPipeline
+
+project = Project.open("demo-project")
+survey = project.surveys()[0]
+selection = SectionSelection.inline(120)
+pipeline = (
+    TraceLocalPipeline.named("Bandpass + RMS AGC")
+    .bandpass(8.0, 12.0, 45.0, 60.0)
+    .agc_rms(40.0)
+)
+
+catalog = survey.operator_catalog()
+preview = survey.preview_processing(selection, pipeline)
+processed = survey.run_processing(
+    pipeline,
+    output_collection_name="derived-seismic",
+)
+```
+
+If you are working directly on `.tbvol` or `.tbgath` stores outside an `OphioliteProject`, use `TraceBoostApp` and `SeismicDataset` as the compatibility lane instead of the main builder path.
 
 ## When to stay in Python
 

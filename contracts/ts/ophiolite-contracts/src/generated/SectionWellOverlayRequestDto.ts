@@ -2,4 +2,4 @@
 import type { SectionAxis } from "./SectionAxis";
 import type { SectionWellOverlayDomainDto } from "./SectionWellOverlayDomainDto";
 
-export type SectionWellOverlayRequestDto = { schema_version: number, project_root: string, survey_asset_id: string, wellbore_ids: Array<string>, axis: SectionAxis, index: number, tolerance_m: number | null, display_domain: SectionWellOverlayDomainDto, active_well_model_ids: Array<string>, };
+export type SectionWellOverlayRequestDto = { schema_version: number, project_root: string, survey_asset_id: string, wellbore_ids: Array<string>, axis: SectionAxis, index: number, tolerance_m?: number | null, display_domain: SectionWellOverlayDomainDto, active_well_model_ids?: Array<string>, };

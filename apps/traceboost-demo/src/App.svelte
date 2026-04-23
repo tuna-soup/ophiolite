@@ -26,7 +26,7 @@
 
   const viewerModel = setViewerModelContext(new ViewerModel({ tauriRuntime: isTauriEnvironment() }));
   const processingModel = setProcessingModelContext(new ProcessingModel({ viewerModel }));
-  const importManager = setImportManagerContext(new ImportManagerModel());
+  const importManager = setImportManagerContext(new ImportManagerModel({ viewerModel }));
   let startupSetupBlockers = $derived.by(() =>
     buildStartupSetupBlockers({
       workspaceReady: viewerModel.workspaceReady,
@@ -86,6 +86,15 @@
     }
     lastStartupSetupDiagnosticsSignature = signature;
     logSettingsDialogEvent("Startup setup state evaluated.", fields);
+  });
+
+  $effect(() => {
+    viewerModel.activeStorePath;
+    viewerModel.projectRoot;
+    viewerModel.projectSurveyAssetId;
+    viewerModel.projectWellboreId;
+    viewerModel.selectedProjectWellboreInventoryItem;
+    importManager.syncContext();
   });
 
   function openSettings(source = "unknown"): void {
@@ -246,10 +255,12 @@
   onMount(() => {
     let disposed = false;
     let disposeNativeMenu = () => {};
+    let disposeDragDrop = () => {};
 
     if (viewerModel.tauriRuntime) {
       void (async () => {
         const { listen } = await import("@tauri-apps/api/event");
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
         const unlistenSettings = await listen("menu:app-settings", () => {
           logSettingsDialogEvent("Received native settings menu event.", {
             event: "menu:app-settings"
@@ -303,6 +314,23 @@
         const unlistenImportCompiledModel = await listen("menu:file-import-compiled-well-model", () => {
           void handleImportProjectWellTimeDepthAsset("well_time_depth_model");
         });
+        const unlistenDragDrop = await getCurrentWindow().onDragDropEvent((event) => {
+          if (event.payload.type === "enter") {
+            importManager.setDragDropState(true, event.payload.paths);
+            return;
+          }
+          if (event.payload.type === "over") {
+            return;
+          }
+          if (event.payload.type === "leave") {
+            importManager.setDragDropState(false);
+            return;
+          }
+          if (event.payload.type === "drop") {
+            importManager.setDragDropState(false);
+            void importManager.handleDroppedSourceRefs(event.payload.paths);
+          }
+        });
 
         if (disposed) {
           unlistenSettings();
@@ -320,6 +348,7 @@
           unlistenImportManualPicks();
           unlistenImportAuthoredModel();
           unlistenImportCompiledModel();
+          unlistenDragDrop();
           return;
         }
 
@@ -340,6 +369,9 @@
           unlistenImportAuthoredModel();
           unlistenImportCompiledModel();
         };
+        disposeDragDrop = () => {
+          unlistenDragDrop();
+        };
       })();
     }
 
@@ -348,6 +380,7 @@
     return () => {
       disposed = true;
       disposeNativeMenu();
+      disposeDragDrop();
       disposeProcessing();
       disposeViewer();
     };

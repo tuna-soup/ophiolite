@@ -3,4 +3,4 @@ import type { AvoAxisDto } from "./AvoAxisDto";
 import type { AvoChiProjectionSeriesDto } from "./AvoChiProjectionSeriesDto";
 import type { AvoInterfaceDto } from "./AvoInterfaceDto";
 
-export type ResolvedAvoChiProjectionSourceDto = { schema_version: number, id: string, name: string, title: string | null, subtitle: string | null, chi_angle_deg: number, projection_label: string | null, x_axis: AvoAxisDto, interfaces: Array<AvoInterfaceDto>, series: Array<AvoChiProjectionSeriesDto>, preferred_bin_count: number | null, };
+export type ResolvedAvoChiProjectionSourceDto = { schema_version: number, id: string, name: string, title?: string | null, subtitle?: string | null, chi_angle_deg: number, projection_label?: string | null, x_axis: AvoAxisDto, interfaces: Array<AvoInterfaceDto>, series: Array<AvoChiProjectionSeriesDto>, preferred_bin_count?: number | null, };

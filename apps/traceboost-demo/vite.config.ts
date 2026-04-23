@@ -308,7 +308,9 @@ function traceboostDevApi(): Plugin {
 export default defineConfig({
   plugins: [svelte(), traceboostDevApi()],
   clearScreen: false,
+  cacheDir: path.join("node_modules", ".vite", process.platform),
   optimizeDeps: {
+    force: true,
     exclude: [
       "@ophiolite/contracts",
       "@ophiolite/charts",

@@ -1,12 +1,7 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
-  import type {
-    ImportConfirmationStage,
-    ImportFlowStep
-  } from "./import-review";
-  import ImportFlowStepper from "./ImportFlowStepper.svelte";
-  import type { ViewerModel } from "../viewer-model.svelte";
+  import { emitFrontendDiagnosticsEvent, type CoordinateReferenceSelection } from "../bridge";
   import {
     deleteSegyImportRecipe,
     listSegyImportRecipes,
@@ -14,12 +9,18 @@
     scanSegyImport,
     validateSegyImportPlan
   } from "../bridge";
+  import CoordinateReferencePicker from "./CoordinateReferencePicker.svelte";
+  import { pickOutputStorePath } from "../file-dialog";
+  import type { ImportManagerNormalizedResult } from "../import-manager-types";
+  import type { ViewerModel } from "../viewer-model.svelte";
   import type {
     SegyHeaderField,
     SegyHeaderValueType,
+    SegyImportCandidatePlan,
     SegyImportIssue,
     SegyImportPlan,
     SegyImportRecipe,
+    SegyImportRiskSummary,
     SegyImportScanResponse,
     SegyImportValidationResponse
   } from "@traceboost/seis-contracts";
@@ -30,36 +31,14 @@
     viewerModel: ViewerModel;
     onClose: () => void;
     embedded?: boolean;
+    onCommitResult?: ((result: ImportManagerNormalizedResult) => void) | undefined;
   }
 
-  type WizardStage = "scan" | "structure" | "spatial" | "review" | "import" | "raw_inspect";
-  type EditableFieldTarget =
-    | "inline_3d"
-    | "crossline_3d"
-    | "third_axis"
-    | "x_field"
-    | "y_field"
-    | "coordinate_scalar_field";
+  type GeometryFieldTarget = "inline_3d" | "crossline_3d" | "third_axis";
+  type SpatialFieldTarget = "x_field" | "y_field" | "coordinate_scalar_field";
 
-  let { open, inputPath, viewerModel, onClose, embedded = false }: Props = $props();
+  let { open, inputPath, viewerModel, onClose, embedded = false, onCommitResult }: Props = $props();
 
-  const baseSteps: ImportFlowStep[] = [
-    { key: "scan", label: "1. Scan", description: "Read the SEG-Y structure and suggested mappings." },
-    {
-      key: "structure",
-      label: "2. Structure",
-      description: "Set the header mapping and sparse-grid import policy."
-    },
-    {
-      key: "spatial",
-      label: "3. Spatial",
-      description: "Optional spatial header and CRS metadata for this source."
-    },
-    { key: "review", label: "4. Review", description: "Validate the plan and inspect the risks." },
-    { key: "import", label: "5. Import", description: "Run the validated plan into a runtime store." }
-  ];
-
-  let stage = $state<WizardStage>("scan");
   let scanResponse = $state<SegyImportScanResponse | null>(null);
   let plan = $state.raw<SegyImportPlan | null>(null);
   let validation = $state<SegyImportValidationResponse | null>(null);
@@ -70,6 +49,10 @@
   let savingRecipe = $state(false);
   let importing = $state(false);
   let recipeName = $state("");
+  let showAdvancedSpatial = $state(false);
+  let showInspection = $state(false);
+  let showRecipes = $state(false);
+  let coordinateReferencePickerOpen = $state(false);
   let lastLoadedInputPath = "";
   let lastValidatedPlanSignature = "";
   let validationTimer: ReturnType<typeof setTimeout> | null = null;
@@ -84,57 +67,34 @@
     }
     return planSignature(plan) !== lastValidatedPlanSignature;
   });
+  const canImport = $derived(
+    !!validation &&
+      validation.can_import &&
+      !validationStale &&
+      !validating &&
+      !importing &&
+      !viewerModel.loading
+  );
   const sourceRecipes = $derived(
     recipes.filter((recipe) => recipe.scope === "source_fingerprint")
   );
   const globalRecipes = $derived(recipes.filter((recipe) => recipe.scope === "global"));
-  const denseGridWarning = $derived(
-    currentIssues.find(
-      (issue) =>
-        issue.code === "sparse_policy_required" || issue.code === "sparse_regularization"
-    ) ?? null
+  const displayedRecipes = $derived([...sourceRecipes, ...globalRecipes]);
+  const resolvedRiskSummary = $derived(
+    (validation?.risk_summary ?? scanResponse?.risk_summary ?? null) as SegyImportRiskSummary | null
   );
-  const canImport = $derived(
-    !!validation && validation.can_import && !validationStale && !importing && !viewerModel.loading
-  );
-  const flowSteps = $derived.by((): ImportFlowStep[] => {
-    const scanReady = !!scanResponse;
-    const currentIndex = stageIndex(stage);
-
-    return baseSteps.map((step, index) => {
-      const severity = highestSeverityForStep(step.key);
-      let status: ImportFlowStep["status"] = "pending";
-      if (step.key === "scan") {
-        if (scanLoading || !scanReady) {
-          status = "active";
-        } else if (severity) {
-          status = severity;
-        } else {
-          status = currentIndex > index ? "completed" : "active";
-        }
-      } else if (!scanReady) {
-        status = "pending";
-      } else if (step.key === "import") {
-        if (stage === "import") {
-          status = canImport ? "active" : highestSeverityForStep("review") ?? "warning";
-        } else {
-          status = canImport ? "completed" : "pending";
-        }
-      } else if (severity) {
-        status = severity;
-      } else if (currentIndex > index) {
-        status = "completed";
-      } else if (currentIndex === index) {
-        status = "active";
-      }
-
-      return {
-        ...step,
-        disabled: !scanReady && step.key !== "scan",
-        status,
-        detail: stepDetail(step.key, status)
-      };
-    });
+  const showThirdAxis = $derived.by(() => {
+    if (plan?.header_mapping.third_axis) {
+      return true;
+    }
+    if ((validation?.resolved_dataset.third_axis_count ?? 0) > 1) {
+      return true;
+    }
+    return (
+      scanResponse?.field_observations.some((field) =>
+        field.label.toLowerCase().includes("third axis")
+      ) ?? false
+    );
   });
 
   $effect(() => {
@@ -150,73 +110,6 @@
     void loadScan(normalizedPath);
   });
 
-  function stageIndex(currentStage: WizardStage): number {
-    switch (currentStage) {
-      case "scan":
-        return 0;
-      case "structure":
-        return 1;
-      case "spatial":
-        return 2;
-      case "review":
-        return 3;
-      case "import":
-        return 4;
-      default:
-        return 0;
-    }
-  }
-
-  function sectionsForStep(stepKey: ImportConfirmationStage): Array<SegyImportIssue["section"]> {
-    switch (stepKey) {
-      case "scan":
-        return ["scan"];
-      case "structure":
-        return ["scan", "structure"];
-      case "spatial":
-        return ["spatial"];
-      case "review":
-      case "import":
-        return ["scan", "structure", "spatial", "review", "import"];
-      default:
-        return [];
-    }
-  }
-
-  function highestSeverityForStep(
-    stepKey: ImportConfirmationStage
-  ): "warning" | "blocking" | null {
-    const matchingIssues = currentIssues.filter((issue) =>
-      sectionsForStep(stepKey).includes(issue.section)
-    );
-    if (matchingIssues.some((issue) => issue.severity === "blocking")) {
-      return "blocking";
-    }
-    if (matchingIssues.some((issue) => issue.severity === "warning")) {
-      return "warning";
-    }
-    return null;
-  }
-
-  function stepDetail(
-    stepKey: ImportConfirmationStage,
-    status: ImportFlowStep["status"]
-  ): string | undefined {
-    if (status === "completed") {
-      return stepKey === "import" ? "Ready" : "Passed";
-    }
-    if (status === "warning") {
-      return "Needs review";
-    }
-    if (status === "blocking") {
-      return "Fix required";
-    }
-    if (status === "active") {
-      return stepKey === "scan" && scanLoading ? "Scanning..." : "Current";
-    }
-    return "Pending";
-  }
-
   function clearValidationTimer(): void {
     if (validationTimer) {
       clearTimeout(validationTimer);
@@ -226,34 +119,107 @@
 
   function resetState(): void {
     clearValidationTimer();
-    stage = "scan";
     scanResponse = null;
     plan = null;
     validation = null;
     recipes = [];
     dialogError = null;
     recipeName = "";
+    showAdvancedSpatial = false;
+    showInspection = false;
+    showRecipes = false;
+    coordinateReferencePickerOpen = false;
     lastValidatedPlanSignature = "";
+  }
+
+  function logSegyDiagnostics(
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    fields: Record<string, unknown> | null = null
+  ): void {
+    void emitFrontendDiagnosticsEvent({
+      stage: "segy_import_dialog",
+      level,
+      message,
+      fields
+    }).catch(() => {});
+  }
+
+  function normalizeIssue(issue: SegyImportIssue): SegyImportIssue {
+    return {
+      ...issue,
+      field_path: issue.field_path ?? null,
+      source_path: issue.source_path ?? null,
+      suggested_fix: issue.suggested_fix ?? null
+    };
+  }
+
+  function normalizeCandidate(candidate: SegyImportCandidatePlan): SegyImportCandidatePlan {
+    return {
+      ...candidate,
+      issues: Array.isArray(candidate.issues) ? candidate.issues.map(normalizeIssue) : []
+    };
+  }
+
+  function normalizeScanResponse(response: SegyImportScanResponse): SegyImportScanResponse {
+    return {
+      ...response,
+      candidate_plans: Array.isArray(response.candidate_plans)
+        ? response.candidate_plans.map(normalizeCandidate)
+        : [],
+      field_observations: Array.isArray(response.field_observations) ? response.field_observations : [],
+      issues: Array.isArray(response.issues) ? response.issues.map(normalizeIssue) : []
+    };
+  }
+
+  function normalizeValidationResponse(
+    response: SegyImportValidationResponse
+  ): SegyImportValidationResponse {
+    return {
+      ...response,
+      issues: Array.isArray(response.issues) ? response.issues.map(normalizeIssue) : [],
+      resolved_spatial: {
+        ...response.resolved_spatial,
+        notes: Array.isArray(response.resolved_spatial?.notes)
+          ? response.resolved_spatial.notes
+          : []
+      }
+    };
   }
 
   async function loadScan(path: string): Promise<void> {
     resetState();
     scanLoading = true;
+    logSegyDiagnostics("info", "Started SEG-Y dialog scan request.", {
+      inputPath: path
+    });
     try {
-      const response = await scanSegyImport(path);
+      const response = normalizeScanResponse(await scanSegyImport(path));
       const recipeResponse = await listSegyImportRecipes(response.source_fingerprint);
       const availableRecipes = recipeResponse.recipes;
+      const rememberedPlan = selectRememberedPlan(availableRecipes, response);
       recipes = availableRecipes;
       scanResponse = response;
-      const rememberedPlan = selectRememberedPlan(availableRecipes, response.source_fingerprint);
-      plan = rememberedPlan ?? structuredClone(response.default_plan);
-      stage = rememberedPlan ? "review" : wizardStageFromScan(response.recommended_next_stage);
-      await validateCurrentPlan(false);
+      plan = rememberedPlan ?? preferredPlanFromScan(response);
+      logSegyDiagnostics("info", "SEG-Y dialog scan payload normalized.", {
+        inputPath: response.input_path,
+        traceCount: Number(response.trace_count),
+        candidateCount: response.candidate_plans.length,
+        fieldObservationCount: response.field_observations.length,
+        issueCount: response.issues.length,
+        recommendedNextStage: response.recommended_next_stage,
+        selectedPlanSource: rememberedPlan ? "source_memory" : plan?.provenance.plan_source ?? "scan_default"
+      });
+      await validateCurrentPlan();
       if (rememberedPlan) {
-        dialogError = null;
+        showRecipes = true;
       }
     } catch (error) {
       dialogError = errorMessage(error);
+      logSegyDiagnostics("error", "SEG-Y dialog scan failed.", {
+        inputPath: path,
+        error: dialogError
+      });
     } finally {
       scanLoading = false;
     }
@@ -261,12 +227,13 @@
 
   function selectRememberedPlan(
     availableRecipes: SegyImportRecipe[],
-    sourceFingerprint: string
+    response: SegyImportScanResponse
   ): SegyImportPlan | null {
     const remembered = [...availableRecipes]
       .filter(
         (recipe) =>
-          recipe.scope === "source_fingerprint" && recipe.source_fingerprint === sourceFingerprint
+          recipe.scope === "source_fingerprint" &&
+          recipe.source_fingerprint === response.source_fingerprint
       )
       .sort((left, right) => {
         if (left.updated_at_unix_s === right.updated_at_unix_s) {
@@ -274,26 +241,88 @@
         }
         return left.updated_at_unix_s > right.updated_at_unix_s ? -1 : 1;
       })[0];
+
     if (!remembered) {
       return null;
     }
-    return materializeRecipePlan(remembered);
+    return materializeRecipePlan(remembered, response);
   }
 
-  function materializeRecipePlan(recipe: SegyImportRecipe): SegyImportPlan {
-    if (!scanResponse) {
-      return structuredClone(recipe.plan);
+  function preferredPlanFromScan(response: SegyImportScanResponse): SegyImportPlan {
+    const autoCandidate =
+      response.candidate_plans.find(
+        (candidate) =>
+          candidate.auto_selectable &&
+          !candidate.issues.some((issue) => issue.severity === "blocking")
+      ) ?? null;
+    if (autoCandidate) {
+      return materializeCandidatePlan(autoCandidate, response, null);
     }
+    return materializeDefaultPlan(response, null);
+  }
+
+  function materializeDefaultPlan(
+    response: SegyImportScanResponse,
+    currentPlan: SegyImportPlan | null
+  ): SegyImportPlan {
     const outputStorePath =
-      plan?.policy.output_store_path?.trim() || scanResponse.default_plan.policy.output_store_path;
+      currentPlan?.policy.output_store_path?.trim() ||
+      response.default_plan.policy.output_store_path;
+    return {
+      ...structuredClone(response.default_plan),
+      input_path: response.input_path,
+      source_fingerprint: response.source_fingerprint,
+      policy: {
+        ...structuredClone(response.default_plan.policy),
+        output_store_path: outputStorePath,
+        overwrite_existing: false,
+        acknowledge_warnings: currentPlan?.policy.acknowledge_warnings ?? false
+      },
+      provenance: {
+        ...structuredClone(response.default_plan.provenance),
+        selected_candidate_id: null,
+        recipe_id: null,
+        recipe_name: null
+      }
+    };
+  }
+
+  function materializeCandidatePlan(
+    candidate: SegyImportCandidatePlan,
+    response: SegyImportScanResponse,
+    currentPlan: SegyImportPlan | null
+  ): SegyImportPlan {
+    const outputStorePath =
+      currentPlan?.policy.output_store_path?.trim() ||
+      response.default_plan.policy.output_store_path;
+    return {
+      ...structuredClone(candidate.plan_patch),
+      input_path: response.input_path,
+      source_fingerprint: response.source_fingerprint,
+      policy: {
+        ...structuredClone(candidate.plan_patch.policy),
+        output_store_path: outputStorePath,
+        overwrite_existing: false,
+        acknowledge_warnings: currentPlan?.policy.acknowledge_warnings ?? false
+      }
+    };
+  }
+
+  function materializeRecipePlan(
+    recipe: SegyImportRecipe,
+    response: SegyImportScanResponse
+  ): SegyImportPlan {
+    const outputStorePath =
+      plan?.policy.output_store_path?.trim() || response.default_plan.policy.output_store_path;
     return {
       ...structuredClone(recipe.plan),
-      input_path: scanResponse.input_path,
-      source_fingerprint: scanResponse.source_fingerprint,
+      input_path: response.input_path,
+      source_fingerprint: response.source_fingerprint,
       policy: {
         ...structuredClone(recipe.plan.policy),
         output_store_path: outputStorePath,
-        overwrite_existing: false
+        overwrite_existing: false,
+        acknowledge_warnings: plan?.policy.acknowledge_warnings ?? false
       },
       provenance: {
         ...structuredClone(recipe.plan.provenance),
@@ -302,36 +331,6 @@
         recipe_name: recipe.name
       }
     };
-  }
-
-  function wizardStageFromScan(nextStage: string): WizardStage {
-    switch (nextStage) {
-      case "structure":
-        return "structure";
-      case "spatial":
-        return "spatial";
-      case "review":
-        return "review";
-      case "import":
-        return "import";
-      case "raw_inspect":
-        return "raw_inspect";
-      default:
-        return "scan";
-    }
-  }
-
-  function wizardStageFromValidation(nextStage: string): WizardStage {
-    switch (nextStage) {
-      case "structure":
-        return "structure";
-      case "spatial":
-        return "spatial";
-      case "import":
-        return "import";
-      default:
-        return "review";
-    }
   }
 
   function planSignature(value: SegyImportPlan): string {
@@ -344,27 +343,43 @@
       return;
     }
     validationTimer = setTimeout(() => {
-      void validateCurrentPlan(false);
+      void validateCurrentPlan();
     }, 250);
   }
 
-  async function validateCurrentPlan(advanceStage: boolean): Promise<void> {
+  async function validateCurrentPlan(): Promise<void> {
     if (!plan) {
       return;
     }
     clearValidationTimer();
     validating = true;
     dialogError = null;
+    logSegyDiagnostics("debug", "Started SEG-Y dialog validation.", {
+      inputPath: plan.input_path,
+      outputStorePath: plan.policy.output_store_path,
+      planSource: plan.provenance.plan_source,
+      selectedCandidateId: plan.provenance.selected_candidate_id ?? null,
+      acknowledgeWarnings: plan.policy.acknowledge_warnings
+    });
     try {
-      const response = await validateSegyImportPlan(plan);
+      const response = normalizeValidationResponse(await validateSegyImportPlan(plan));
       validation = response;
       plan = structuredClone(response.validated_plan);
       lastValidatedPlanSignature = planSignature(response.validated_plan);
-      if (advanceStage) {
-        stage = wizardStageFromValidation(response.recommended_next_stage);
-      }
+      logSegyDiagnostics("debug", "SEG-Y dialog validation completed.", {
+        canImport: response.can_import,
+        requiresAcknowledgement: response.requires_acknowledgement,
+        issueCount: response.issues.length,
+        recommendedNextStage: response.recommended_next_stage,
+        outputStorePath: response.validated_plan.policy.output_store_path
+      });
     } catch (error) {
       dialogError = errorMessage(error);
+      logSegyDiagnostics("error", "SEG-Y dialog validation failed.", {
+        inputPath: plan.input_path,
+        outputStorePath: plan.policy.output_store_path,
+        error: dialogError
+      });
     } finally {
       validating = false;
     }
@@ -377,7 +392,7 @@
   }
 
   function updateHeaderMappingField(
-    target: "inline_3d" | "crossline_3d" | "third_axis",
+    target: GeometryFieldTarget,
     kind: "byte" | "type",
     value: string
   ): void {
@@ -385,7 +400,6 @@
       return;
     }
     const current = plan.header_mapping[target];
-    const nextField = nextHeaderField(current, kind, value);
     updatePlan({
       ...plan,
       provenance: {
@@ -395,38 +409,26 @@
       },
       header_mapping: {
         ...plan.header_mapping,
-        [target]: nextField
-      }
-    });
-  }
-
-  function updateSpatialField(
-    target: EditableFieldTarget,
-    kind: "byte" | "type",
-    value: string
-  ): void {
-    if (!plan || !isSpatialFieldTarget(target)) {
-      return;
-    }
-    const current = plan.spatial[target];
-    updatePlan({
-      ...plan,
-      provenance: {
-        ...plan.provenance,
-        plan_source: "manual",
-        selected_candidate_id: null
-      },
-      spatial: {
-        ...plan.spatial,
         [target]: nextHeaderField(current, kind, value)
       }
     });
   }
 
-  function isSpatialFieldTarget(
-    target: EditableFieldTarget
-  ): target is "x_field" | "y_field" | "coordinate_scalar_field" {
-    return target === "x_field" || target === "y_field" || target === "coordinate_scalar_field";
+  function updateSpatialField(
+    target: SpatialFieldTarget,
+    kind: "byte" | "type",
+    value: string
+  ): void {
+    if (!plan) {
+      return;
+    }
+    updatePlan({
+      ...plan,
+      spatial: {
+        ...plan.spatial,
+        [target]: nextHeaderField(plan.spatial[target], kind, value)
+      }
+    });
   }
 
   function nextHeaderField(
@@ -491,10 +493,7 @@
   }
 
   function updateSpatialText(
-    field:
-      | "coordinate_units"
-      | "coordinate_reference_id"
-      | "coordinate_reference_name",
+    target: "coordinate_units" | "coordinate_reference_id" | "coordinate_reference_name",
     value: string
   ): void {
     if (!plan) {
@@ -504,9 +503,19 @@
       ...plan,
       spatial: {
         ...plan.spatial,
-        [field]: value
+        [target]: value
       }
     });
+  }
+
+  function applyScannedDefault(): void {
+    if (!scanResponse) {
+      return;
+    }
+    logSegyDiagnostics("debug", "Applied scanned default SEG-Y mapping.", {
+      inputPath: scanResponse.input_path
+    });
+    updatePlan(materializeDefaultPlan(scanResponse, plan));
   }
 
   function applyCandidate(candidateId: string): void {
@@ -517,23 +526,20 @@
     if (!candidate) {
       return;
     }
-    const outputStorePath =
-      plan?.policy.output_store_path?.trim() || scanResponse.default_plan.policy.output_store_path;
-    updatePlan({
-      ...structuredClone(candidate.plan_patch),
-      input_path: scanResponse.input_path,
-      source_fingerprint: scanResponse.source_fingerprint,
-      policy: {
-        ...structuredClone(candidate.plan_patch.policy),
-        output_store_path: outputStorePath,
-        acknowledge_warnings: plan?.policy.acknowledge_warnings ?? false,
-        overwrite_existing: false
-      }
+    logSegyDiagnostics("debug", "Applied SEG-Y candidate mapping.", {
+      inputPath: scanResponse.input_path,
+      candidateId,
+      candidateLabel: candidate.label,
+      candidateIssueCount: candidate.issues.length
     });
+    updatePlan(materializeCandidatePlan(candidate, scanResponse, plan));
   }
 
   function applyRecipe(recipe: SegyImportRecipe): void {
-    updatePlan(materializeRecipePlan(recipe));
+    if (!scanResponse) {
+      return;
+    }
+    updatePlan(materializeRecipePlan(recipe, scanResponse));
   }
 
   async function saveRecipe(scope: "global" | "source_fingerprint"): Promise<void> {
@@ -546,8 +552,10 @@
         : recipeName.trim();
     if (!normalizedName) {
       dialogError = "Enter a recipe name before saving.";
+      showRecipes = true;
       return;
     }
+
     savingRecipe = true;
     dialogError = null;
     try {
@@ -572,6 +580,7 @@
       }
     } catch (error) {
       dialogError = errorMessage(error);
+      showRecipes = true;
     } finally {
       savingRecipe = false;
     }
@@ -587,282 +596,197 @@
       recipes = updated.recipes;
     } catch (error) {
       dialogError = errorMessage(error);
+      showRecipes = true;
     }
+  }
+
+  async function browseOutputPath(): Promise<void> {
+    if (!plan) {
+      return;
+    }
+    const selectedPath = await pickOutputStorePath(suggestedOutputPath());
+    if (selectedPath) {
+      updateOutputPath(selectedPath);
+    }
+  }
+
+  function suggestedOutputPath(): string {
+    const currentOutputPath = plan?.policy.output_store_path?.trim();
+    if (currentOutputPath) {
+      return currentOutputPath;
+    }
+    const scannedDefault = scanResponse?.default_plan.policy.output_store_path?.trim();
+    if (scannedDefault) {
+      return scannedDefault;
+    }
+    const inputName = basename(inputPath ?? "survey.sgy");
+    return inputName.replace(/\.(sgy|segy)$/i, ".tbvol");
+  }
+
+  function openCoordinateReferencePicker(): void {
+    coordinateReferencePickerOpen = true;
+  }
+
+  function closeCoordinateReferencePicker(): void {
+    coordinateReferencePickerOpen = false;
+  }
+
+  function clearCoordinateReference(): void {
+    if (!plan) {
+      return;
+    }
+    updatePlan({
+      ...plan,
+      spatial: {
+        ...plan.spatial,
+        coordinate_reference_id: null,
+        coordinate_reference_name: null
+      }
+    });
+  }
+
+  function handleCoordinateReferenceSelection(selection: CoordinateReferenceSelection): void {
+    if (!plan) {
+      return;
+    }
+    if (selection.kind === "authority_code") {
+      updatePlan({
+        ...plan,
+        spatial: {
+          ...plan.spatial,
+          coordinate_reference_id: selection.authId,
+          coordinate_reference_name: selection.name?.trim() ?? ""
+        }
+      });
+      coordinateReferencePickerOpen = false;
+      return;
+    }
+
+    if (selection.kind === "local_engineering") {
+      updatePlan({
+        ...plan,
+        spatial: {
+          ...plan.spatial,
+          coordinate_reference_id: null,
+          coordinate_reference_name: selection.label.trim()
+        }
+      });
+    }
+    coordinateReferencePickerOpen = false;
+  }
+
+  async function retryScan(): Promise<void> {
+    if (!inputPath) {
+      return;
+    }
+    await loadScan(inputPath);
   }
 
   async function confirmImport(): Promise<void> {
     if (!plan || !validation || validationStale) {
-      dialogError = "The import plan changed. Validate again before importing.";
+      dialogError = "The import plan changed. Wait for validation to finish before importing.";
+      logSegyDiagnostics("warn", "SEG-Y dialog import blocked because validation is stale.", {
+        inputPath: plan?.input_path ?? null
+      });
       return;
     }
     if (!validation.can_import) {
       dialogError = "Resolve the remaining blocking issues before importing.";
+      logSegyDiagnostics("warn", "SEG-Y dialog import blocked by validation issues.", {
+        inputPath: plan.input_path,
+        issueCount: validation.issues.length
+      });
       return;
     }
 
     importing = true;
     dialogError = null;
+    logSegyDiagnostics("info", "Started SEG-Y dialog import.", {
+      inputPath: validation.validated_plan.input_path,
+      outputStorePath: validation.validated_plan.policy.output_store_path,
+      issueCount: validation.issues.length,
+      warningCount: warningIssues.length
+    });
     try {
       const activePlan = plan;
       const matchingEntry =
         viewerModel.workspaceEntries.find(
           (entry) => (entry.source_path ?? "").trim() === activePlan.input_path
-        ) ??
-        null;
-      await viewerModel.importSegySurveyPlan(validation.validated_plan, validation.validation_fingerprint, {
-        entryId: matchingEntry?.entry_id ?? null,
-        sourcePath: activePlan.input_path,
-        sessionPipelines: matchingEntry?.session_pipelines
-          ? structuredClone(matchingEntry.session_pipelines)
-          : null,
-        activeSessionPipelineId: matchingEntry?.active_session_pipeline_id ?? null,
-        makeActive: true,
-        loadSection: true,
-        reuseExistingStore: true
-      });
+        ) ?? null;
+
+      await viewerModel.importSegySurveyPlan(
+        validation.validated_plan,
+        validation.validation_fingerprint,
+        {
+          entryId: matchingEntry?.entry_id ?? null,
+          sourcePath: activePlan.input_path,
+          sessionPipelines: matchingEntry?.session_pipelines
+            ? structuredClone(matchingEntry.session_pipelines)
+            : null,
+          activeSessionPipelineId: matchingEntry?.active_session_pipeline_id ?? null,
+          makeActive: true,
+          loadSection: true,
+          reuseExistingStore: true
+        }
+      );
+
       await saveRecipe("source_fingerprint");
-      handleClose();
+
+      onCommitResult?.({
+        providerId: "seismic_volume",
+        status: "commit_succeeded",
+        outcome: "canonical_commit",
+        canonicalAssets: [
+          {
+            kind: "runtime_store",
+            id: validation.validated_plan.policy.output_store_path,
+            label: basename(validation.validated_plan.policy.output_store_path),
+            detail: activePlan.input_path
+          }
+        ],
+        preservedSources: [],
+        droppedItems: [],
+        warnings: warningIssues.map((issue) => issue.message),
+        blockers: [],
+        diagnostics: currentIssues.map((issue) => issue.message),
+        refreshScopes: [],
+        activationEffects: [],
+        requestActions: ["close_after_success"],
+        providerDetail: {
+          outputStorePath: validation.validated_plan.policy.output_store_path
+        }
+      });
+      logSegyDiagnostics("info", "SEG-Y dialog import completed.", {
+        inputPath: validation.validated_plan.input_path,
+        outputStorePath: validation.validated_plan.policy.output_store_path
+      });
+      resetState();
+      lastLoadedInputPath = "";
+      onClose();
     } catch (error) {
-      dialogError = errorMessage(error);
+      const message = errorMessage(error);
+      dialogError = message;
+      logSegyDiagnostics("error", "SEG-Y dialog import failed.", {
+        inputPath: validation.validated_plan.input_path,
+        outputStorePath: validation.validated_plan.policy.output_store_path,
+        error: message
+      });
+      onCommitResult?.({
+        providerId: "seismic_volume",
+        status: "commit_failed",
+        outcome: "commit_failed",
+        canonicalAssets: [],
+        preservedSources: [],
+        droppedItems: [],
+        warnings: [],
+        blockers: [message],
+        diagnostics: [message],
+        refreshScopes: [],
+        activationEffects: [],
+        providerDetail: null
+      });
     } finally {
       importing = false;
-    }
-  }
-
-  function goToStage(nextStage: ImportConfirmationStage): void {
-    if (nextStage === "scan" || nextStage === "structure" || nextStage === "spatial" || nextStage === "review" || nextStage === "import") {
-      stage = nextStage;
-    }
-  }
-
-  function previousStage(currentStage: WizardStage): WizardStage {
-    switch (currentStage) {
-      case "structure":
-        return "scan";
-      case "spatial":
-        return "structure";
-      case "review":
-        return "spatial";
-      case "import":
-        return "review";
-      default:
-        return currentStage;
-    }
-  }
-
-  function issuesForStep(stepKey: ImportConfirmationStage): SegyImportIssue[] {
-    return currentIssues.filter((issue) => sectionsForStep(stepKey).includes(issue.section));
-  }
-
-  function currentScanNextStage(): WizardStage {
-    if (!scanResponse) {
-      return "scan";
-    }
-    const nextStage = wizardStageFromScan(scanResponse.recommended_next_stage);
-    return nextStage === "scan" ? "structure" : nextStage;
-  }
-
-  function statusCardTone(): "info" | "warning" | "blocking" | "success" {
-    if (dialogError) {
-      return "blocking";
-    }
-    if (scanLoading || validating || importing) {
-      return "info";
-    }
-    if (!scanResponse) {
-      return "warning";
-    }
-    if (stage === "import" && canImport) {
-      return "success";
-    }
-    const severity =
-      highestSeverityForStep(stage === "import" ? "review" : stage === "raw_inspect" ? "scan" : stage);
-    if (severity === "blocking") {
-      return "blocking";
-    }
-    if (severity === "warning" || validationStale) {
-      return "warning";
-    }
-    return "success";
-  }
-
-  function statusCardTitle(): string {
-    if (dialogError) {
-      return "SEG-Y scan failed";
-    }
-    if (scanLoading) {
-      return "Scanning SEG-Y structure";
-    }
-    if (validating) {
-      return "Validating import plan";
-    }
-    if (importing) {
-      return "Importing survey";
-    }
-    if (!scanResponse) {
-      return "Scan did not populate";
-    }
-    if (stage === "scan") {
-      return currentScanNextStage() === "import"
-        ? "Scan passed"
-        : currentScanNextStage() === "structure"
-          ? "Structure review required"
-          : "Review the scanned survey";
-    }
-    if (stage === "structure") {
-      return highestSeverityForStep("structure") === "blocking"
-        ? "Confirm the geometry mapping"
-        : "Structure fields are ready to review";
-    }
-    if (stage === "spatial") {
-      return "Spatial metadata is optional";
-    }
-    if (stage === "review") {
-      if (validationStale) {
-        return "Validate the updated plan";
-      }
-      return canImport ? "Plan validated" : "Review remaining issues";
-    }
-    if (stage === "import") {
-      return canImport ? "Ready to import" : "Import is blocked";
-    }
-    return "Inspecting raw headers";
-  }
-
-  function statusCardMessage(): string {
-    if (dialogError) {
-      return dialogError;
-    }
-    if (scanLoading) {
-      return "Reading trace headers, geometry, and candidate mappings. For clean surveys this should advance automatically.";
-    }
-    if (validating) {
-      return "Rechecking the current mapping, sparse-grid risk, and output store plan.";
-    }
-    if (importing) {
-      return "Writing the validated SEG-Y plan into a runtime store.";
-    }
-    if (!scanResponse) {
-      return "Retry the scan. A clean survey like F3 should populate the next stages without manual guessing.";
-    }
-    if (stage === "scan" && currentScanNextStage() === "import") {
-      return "This survey looks like a clean dense SEG-Y. The mapped fields are populated below, and you can jump straight to import.";
-    }
-    if (stage === "scan" && currentScanNextStage() === "structure") {
-      return (
-        issuesForStep("structure")[0]?.message ??
-        "The scan found a geometry issue. Review the inline and crossline mapping before importing."
-      );
-    }
-    if (stage === "structure") {
-      return (
-        issuesForStep("structure")[0]?.message ??
-        "The current inline, crossline, and sparse-grid policy are populated. Adjust them only if the scan looks wrong."
-      );
-    }
-    if (stage === "spatial") {
-      return (
-        issuesForStep("spatial")[0]?.message ??
-        "Add X/Y/scalar or CRS metadata if you need it. Otherwise continue to review."
-      );
-    }
-    if (stage === "review") {
-      return validationStale
-        ? "The import plan changed. Validate again before importing."
-        : (issuesForStep("review")[0]?.message ??
-          "Review the resolved layout, footprint estimate, and any warnings before importing.");
-    }
-    if (stage === "import") {
-      return canImport
-        ? "Validation passed. You can import immediately or go back and inspect the populated fields."
-        : (issuesForStep("review")[0]?.message ??
-          "Resolve the remaining review issues before importing.");
-    }
-    return "This mode only inspects raw trace header observations. It does not create a runtime store.";
-  }
-
-  function primaryStatusActionLabel(): string | null {
-    if (scanLoading || validating) {
-      return null;
-    }
-    if (dialogError || !scanResponse) {
-      return "Retry Scan";
-    }
-    switch (stage) {
-      case "scan":
-        return currentScanNextStage() === "import" ? "Go To Import" : "Continue";
-      case "structure":
-        return "Continue";
-      case "spatial":
-        return "Continue";
-      case "review":
-        return validationStale || !validation ? "Validate Plan" : "Continue";
-      case "import":
-        return importing ? "Importing…" : "Import";
-      case "raw_inspect":
-        return "Back To Structure";
-      default:
-        return null;
-    }
-  }
-
-  function secondaryStatusActionLabel(): string | null {
-    if (!scanResponse || scanLoading || validating || dialogError) {
-      return null;
-    }
-    if (stage === "scan") {
-      return currentScanNextStage() === "import" ? "Review Structure" : "Inspect Raw";
-    }
-    if (stage === "review" && !validationStale) {
-      return "Inspect Raw";
-    }
-    return null;
-  }
-
-  async function handlePrimaryStatusAction(): Promise<void> {
-    if (!inputPath) {
-      return;
-    }
-    if (dialogError || !scanResponse) {
-      await loadScan(inputPath);
-      return;
-    }
-    switch (stage) {
-      case "scan":
-        stage = currentScanNextStage();
-        return;
-      case "structure":
-        stage = "spatial";
-        return;
-      case "spatial":
-        stage = "review";
-        return;
-      case "review":
-        if (validationStale || !validation) {
-          await validateCurrentPlan(true);
-        } else {
-          stage = "import";
-        }
-        return;
-      case "import":
-        await confirmImport();
-        return;
-      case "raw_inspect":
-        stage = "structure";
-        return;
-    }
-  }
-
-  function handleSecondaryStatusAction(): void {
-    if (!scanResponse) {
-      return;
-    }
-    if (stage === "scan") {
-      stage = currentScanNextStage() === "import" ? "structure" : "raw_inspect";
-      return;
-    }
-    if (stage === "review" && !validationStale) {
-      stage = "raw_inspect";
     }
   }
 
@@ -875,6 +799,61 @@
     onClose();
   }
 
+  function issueMatchesField(issue: SegyImportIssue, path: string): boolean {
+    return issue.field_path === path || issue.field_path?.startsWith(`${path}.`) === true;
+  }
+
+  function outputPathIssues(): SegyImportIssue[] {
+    return currentIssues.filter(
+      (issue) =>
+        issue.code === "output_store_path_required" ||
+        issueMatchesField(issue, "policy.output_store_path") ||
+        issue.section === "import"
+    );
+  }
+
+  function geometrySectionIssues(): SegyImportIssue[] {
+    return currentIssues.filter(
+      (issue) =>
+        issue.section === "structure" &&
+        !issueMatchesField(issue, "policy.sparse_handling")
+    );
+  }
+
+  function sparsePolicyIssues(): SegyImportIssue[] {
+    return currentIssues.filter((issue) => issueMatchesField(issue, "policy.sparse_handling"));
+  }
+
+  function spatialSectionIssues(): SegyImportIssue[] {
+    return currentIssues.filter((issue) => issue.section === "spatial");
+  }
+
+  function scanSectionIssues(): SegyImportIssue[] {
+    return currentIssues.filter((issue) => issue.section === "scan");
+  }
+
+  function leadingIssue(issues: SegyImportIssue[]): SegyImportIssue | null {
+    return (
+      issues.find((issue) => issue.severity === "blocking") ??
+      issues.find((issue) => issue.severity === "warning") ??
+      issues[0] ??
+      null
+    );
+  }
+
+  function issueTone(issue: SegyImportIssue | null): "blocking" | "warning" | "info" | null {
+    if (!issue) {
+      return null;
+    }
+    if (issue.severity === "blocking") {
+      return "blocking";
+    }
+    if (issue.severity === "warning") {
+      return "warning";
+    }
+    return "info";
+  }
+
   function headerByte(field: SegyHeaderField | null | undefined): string {
     return field?.start_byte ? String(field.start_byte) : "";
   }
@@ -885,14 +864,9 @@
 
   function describeField(field: SegyHeaderField | null | undefined): string {
     if (!field) {
-      return "unset";
+      return "Unset";
     }
     return `${field.start_byte} (${field.value_type.toUpperCase()})`;
-  }
-
-  function basename(path: string): string {
-    const normalized = path.replace(/\\/g, "/");
-    return normalized.split("/").pop() || normalized;
   }
 
   function formatBytes(bytes: bigint | number): string {
@@ -903,15 +877,25 @@
       value /= 1024;
       unitIndex += 1;
     }
-    return unitIndex === 0 ? `${Math.round(value)} ${units[unitIndex]}` : `${value.toFixed(1)} ${units[unitIndex]}`;
+    return unitIndex === 0
+      ? `${Math.round(value)} ${units[unitIndex]}`
+      : `${value.toFixed(1)} ${units[unitIndex]}`;
   }
 
   function formatPercent(value: number): string {
     return `${(value * 100).toFixed(value < 0.01 ? 4 : 2)}%`;
   }
 
-  function severityClass(issue: SegyImportIssue): string {
-    return issue.severity;
+  function formatCount(value: bigint | number | null | undefined): string {
+    if (value === null || value === undefined) {
+      return "0";
+    }
+    return value.toLocaleString();
+  }
+
+  function basename(path: string): string {
+    const normalized = path.replace(/\\/g, "/");
+    return normalized.split("/").pop() || normalized;
   }
 
   function slugify(value: string): string {
@@ -920,6 +904,110 @@
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "")
       .slice(0, 64);
+  }
+
+  function candidateSummary(candidate: SegyImportCandidatePlan): string {
+    const issue = leadingIssue(candidate.issues);
+    if (issue) {
+      return issue.message;
+    }
+    return `${candidate.resolved_dataset.layout} with ${formatCount(candidate.risk_summary.observed_trace_count)} observed traces.`;
+  }
+
+  function formatCoordinateReference(): string {
+    const identifier = plan?.spatial.coordinate_reference_id?.trim() ?? "";
+    const name = plan?.spatial.coordinate_reference_name?.trim() ?? "";
+    if (identifier && name) {
+      return `${identifier} - ${name}`;
+    }
+    if (identifier) {
+      return identifier;
+    }
+    if (name) {
+      return name;
+    }
+    return "Unset";
+  }
+
+  function statusTone(): "info" | "blocking" | "warning" | "success" {
+    if (dialogError) {
+      return "blocking";
+    }
+    if (scanLoading || validating || importing) {
+      return "info";
+    }
+    if (blockingIssues.length > 0) {
+      return "blocking";
+    }
+    if (validation?.requires_acknowledgement && !plan?.policy.acknowledge_warnings) {
+      return "warning";
+    }
+    if (validationStale) {
+      return "warning";
+    }
+    if (canImport) {
+      return "success";
+    }
+    return "info";
+  }
+
+  function statusTitle(): string {
+    if (dialogError) {
+      return "SEG-Y import requires attention";
+    }
+    if (scanLoading) {
+      return "Scanning SEG-Y structure";
+    }
+    if (validating) {
+      return "Revalidating import plan";
+    }
+    if (importing) {
+      return "Importing survey";
+    }
+    if (blockingIssues.length > 0) {
+      return `${blockingIssues.length} blocking issue${blockingIssues.length === 1 ? "" : "s"} to resolve`;
+    }
+    if (validation?.requires_acknowledgement && !plan?.policy.acknowledge_warnings) {
+      return `${warningIssues.length === 1 ? "1 warning requires" : `${warningIssues.length} warnings require`} acknowledgement`;
+    }
+    if (validationStale) {
+      return "Waiting for the updated validation result";
+    }
+    if (canImport) {
+      return "Ready to import";
+    }
+    if (scanResponse) {
+      return "Review the detected mapping";
+    }
+    return "Choose a SEG-Y file to begin";
+  }
+
+  function statusMessage(): string {
+    if (dialogError) {
+      return dialogError;
+    }
+    if (scanLoading) {
+      return "Reading trace headers, geometry, and candidate mappings.";
+    }
+    if (validating) {
+      return "Validation updates automatically after each edit.";
+    }
+    if (importing) {
+      return "Writing the validated SEG-Y plan into a runtime store.";
+    }
+    if (blockingIssues.length > 0) {
+      return "Fix the highlighted mapping or import-option issues in this dialog. There is no separate review page.";
+    }
+    if (validation?.requires_acknowledgement && !plan?.policy.acknowledge_warnings) {
+      return "The remaining warnings do not block import, but they do require explicit acknowledgement.";
+    }
+    if (validationStale) {
+      return "The latest edit is still being validated.";
+    }
+    if (canImport) {
+      return "The current scan, mapping, and output plan are valid.";
+    }
+    return "Scan results and import readiness update inline as you edit the form.";
   }
 
   function errorMessage(error: unknown): string {
@@ -956,150 +1044,173 @@
         </button>
       </header>
 
-      <ImportFlowStepper stage={stage} steps={flowSteps} onSelect={goToStage} />
-
-      <section class={`segy-import-status-card ${statusCardTone()}`}>
+      <section class={`status-strip ${statusTone()}`}>
         <div>
-          <h3>{statusCardTitle()}</h3>
-          <p>{statusCardMessage()}</p>
+          <h3>{statusTitle()}</h3>
+          <p>{statusMessage()}</p>
         </div>
-        <div class="segy-import-actions-row">
-          {#if secondaryStatusActionLabel()}
-            <button class="settings-btn secondary" type="button" onclick={handleSecondaryStatusAction}>
-              {secondaryStatusActionLabel()}
-            </button>
-          {/if}
-          {#if primaryStatusActionLabel()}
-            <button
-              class="settings-btn primary"
-              type="button"
-              onclick={() => void handlePrimaryStatusAction()}
-              disabled={importing || viewerModel.loading}
-            >
-              {primaryStatusActionLabel()}
-            </button>
-          {/if}
-        </div>
+        {#if dialogError && inputPath}
+          <button class="settings-btn secondary" type="button" onclick={() => void retryScan()} disabled={scanLoading}>
+            Retry Scan
+          </button>
+        {/if}
       </section>
 
-      {#if scanLoading}
-        <p class="segy-import-status">Scanning SEG-Y layout and candidate mappings…</p>
-      {:else if dialogError}
-        <p class="segy-import-error">{dialogError}</p>
-      {/if}
-
-      {#if scanResponse && plan}
-        <section class="segy-import-summary">
-          <div>
-            <span>Source</span>
-            <strong>{scanResponse.trace_count.toLocaleString()} traces</strong>
-          </div>
-          <div>
-            <span>Samples</span>
-            <strong>{scanResponse.samples_per_trace.toLocaleString()} per trace</strong>
-          </div>
-          <div>
-            <span>Format</span>
-            <strong>code {scanResponse.sample_format_code} • {scanResponse.endianness}</strong>
-          </div>
-          <div>
-            <span>Output</span>
-            <strong>{plan.policy.output_store_path || "unset"}</strong>
-          </div>
+      {#if scanLoading && !scanResponse}
+        <section class="section-card empty-state">
+          <h3>Scanning SEG-Y structure</h3>
+          <p>The dialog will populate automatically when the header scan finishes.</p>
         </section>
+      {:else if !scanResponse && !scanLoading}
+        <section class="section-card empty-state">
+          <h3>No SEG-Y scan available</h3>
+          <p>Retry the scan to populate detected geometry, candidate mappings, and import readiness.</p>
+        </section>
+      {:else if scanResponse && plan}
+        <fieldset class="fieldset">
+          <legend>Scan Summary</legend>
+          <table class="summary-table">
+            <tbody>
+              <tr><td>File</td><td>{basename(scanResponse.input_path)}</td></tr>
+              <tr><td>Traces</td><td>{formatCount(scanResponse.trace_count)}</td></tr>
+              <tr><td>Samples / trace</td><td>{formatCount(scanResponse.samples_per_trace)}</td></tr>
+              <tr><td>Sample interval</td><td>{formatCount(scanResponse.sample_interval_us)} us</td></tr>
+              <tr><td>Format</td><td>Code {scanResponse.sample_format_code} / {scanResponse.endianness}</td></tr>
+              <tr><td>Layout</td><td>{validation?.resolved_dataset.layout ?? "Pending"}</td></tr>
+              <tr><td>Classification</td><td>{validation?.resolved_dataset.classification ?? resolvedRiskSummary?.classification ?? "Detected survey"}</td></tr>
+              <tr><td>Completeness</td><td>{resolvedRiskSummary ? formatPercent(resolvedRiskSummary.completeness_ratio) : "Pending"}</td></tr>
+              <tr>
+                <td>Observed / expected</td>
+                <td>
+                  {resolvedRiskSummary
+                    ? `${formatCount(resolvedRiskSummary.observed_trace_count)} / ${formatCount(resolvedRiskSummary.expected_trace_count)}`
+                    : "Pending"}
+                </td>
+              </tr>
+              <tr><td>Blow-up</td><td>{resolvedRiskSummary ? `${resolvedRiskSummary.blowup_ratio.toFixed(2)}x` : "Pending"}</td></tr>
+              <tr><td>Est. store</td><td>{resolvedRiskSummary ? formatBytes(resolvedRiskSummary.estimated_total_bytes) : "Pending"}</td></tr>
+              <tr>
+                <td>Mapping</td>
+                <td>
+                  {plan.provenance.plan_source === "candidate"
+                    ? "Suggested candidate"
+                    : plan.provenance.plan_source === "source_memory"
+                      ? "Remembered for this source"
+                      : plan.provenance.plan_source === "saved_recipe"
+                        ? "Saved recipe"
+                        : plan.provenance.plan_source === "manual"
+                          ? "Manual"
+                          : "Scanned default"}
+                </td>
+              </tr>
+            </tbody>
+          </table>
 
-        {#if stage === "scan"}
-          <section class="segy-import-panel">
-            <h3>Scan</h3>
-            <p>This mode inspects trace headers and layout only. It does not create a runtime store.</p>
-            <div class="segy-import-actions-row">
-              <button class="settings-btn secondary" type="button" onclick={() => (stage = "raw_inspect")}>
-                Inspect Raw
-              </button>
-              <button class="settings-btn primary" type="button" onclick={() => (stage = "structure")}>
-                Continue
-              </button>
-            </div>
-          </section>
-        {/if}
-
-        {#if stage === "structure"}
-          <section class="segy-import-panel">
-            <h3>Structure</h3>
-            {#if denseGridWarning}
-              <p class="segy-import-banner">{denseGridWarning.message}</p>
-            {/if}
-
-            {#if scanResponse.candidate_plans.length > 0}
-              <div class="segy-import-subsection">
-                <h4>Suggested mappings</h4>
-                <div class="segy-import-candidate-list">
-                  {#each scanResponse.candidate_plans as candidate (candidate.candidate_id)}
-                    <label class="segy-import-candidate">
-                      <input
-                        type="radio"
-                        name="segy-candidate"
-                        checked={plan.provenance.selected_candidate_id === candidate.candidate_id}
-                        onchange={() => applyCandidate(candidate.candidate_id)}
-                      />
-                      <div>
-                        <strong>{candidate.label}</strong>
-                        <span>
-                          {candidate.resolved_dataset.classification} • {candidate.risk_summary.observed_trace_count.toLocaleString()}
-                          / {candidate.risk_summary.expected_trace_count.toLocaleString()}
-                        </span>
-                      </div>
-                    </label>
-                  {/each}
+          {#if scanSectionIssues().length > 0}
+            <div class="section-issues info">
+              {#each scanSectionIssues() as issue (`scan-${issue.code}-${issue.message}`)}
+                <div class="issue-row">
+                  <strong>{issue.severity}</strong>
+                  <span>{issue.message}</span>
                 </div>
-              </div>
-            {/if}
+              {/each}
+            </div>
+          {/if}
+        </fieldset>
 
-            <div class="segy-import-grid">
-              <label>
-                <span>Inline byte</span>
+        <fieldset class="fieldset">
+          <legend>Geometry Mapping</legend>
+
+          {#if leadingIssue(geometrySectionIssues())}
+            <div class={`section-banner ${issueTone(leadingIssue(geometrySectionIssues()))}`}>
+              <strong>{leadingIssue(geometrySectionIssues())?.message}</strong>
+              {#if leadingIssue(geometrySectionIssues())?.suggested_fix}
+                <span>{leadingIssue(geometrySectionIssues())?.suggested_fix}</span>
+              {/if}
+            </div>
+          {/if}
+
+          <div class="candidate-list">
+            <label class={["candidate-card", !plan.provenance.selected_candidate_id && "selected"]}>
+              <input
+                type="radio"
+                name="segy-candidate"
+                checked={!plan.provenance.selected_candidate_id}
+                onchange={applyScannedDefault}
+              />
+              <div>
+                <strong>Scanned default</strong>
+                <span>Use the mapping inferred directly from the SEG-Y scan.</span>
+              </div>
+            </label>
+
+            {#each scanResponse.candidate_plans as candidate (candidate.candidate_id)}
+              <label class={["candidate-card", plan.provenance.selected_candidate_id === candidate.candidate_id && "selected"]}>
                 <input
-                  type="number"
-                  min="1"
-                  value={headerByte(plan.header_mapping.inline_3d)}
-                  oninput={(event) =>
-                    updateHeaderMappingField("inline_3d", "byte", (event.currentTarget as HTMLInputElement).value)}
+                  type="radio"
+                  name="segy-candidate"
+                  checked={plan.provenance.selected_candidate_id === candidate.candidate_id}
+                  onchange={() => applyCandidate(candidate.candidate_id)}
                 />
+                <div>
+                  <div class="candidate-title-row">
+                    <strong>{candidate.label}</strong>
+                    {#if candidate.auto_selectable}
+                      <small class="auto-tag">auto</small>
+                    {/if}
+                  </div>
+                  <span>{candidate.resolved_dataset.classification} / {candidate.resolved_dataset.layout} &mdash; {formatCount(candidate.risk_summary.observed_trace_count)} / {formatCount(candidate.risk_summary.expected_trace_count)} traces</span>
+                </div>
               </label>
-              <label>
-                <span>Inline type</span>
-                <select
-                  value={headerType(plan.header_mapping.inline_3d)}
-                  onchange={(event) =>
-                    updateHeaderMappingField("inline_3d", "type", (event.currentTarget as HTMLSelectElement).value)}
-                >
-                  <option value="i32">I32</option>
-                  <option value="i16">I16</option>
-                </select>
-              </label>
-              <label>
-                <span>Crossline byte</span>
-                <input
-                  type="number"
-                  min="1"
-                  value={headerByte(plan.header_mapping.crossline_3d)}
-                  oninput={(event) =>
-                    updateHeaderMappingField("crossline_3d", "byte", (event.currentTarget as HTMLInputElement).value)}
-                />
-              </label>
-              <label>
-                <span>Crossline type</span>
-                <select
-                  value={headerType(plan.header_mapping.crossline_3d)}
-                  onchange={(event) =>
-                    updateHeaderMappingField("crossline_3d", "type", (event.currentTarget as HTMLSelectElement).value)}
-                >
-                  <option value="i32">I32</option>
-                  <option value="i16">I16</option>
-                </select>
-              </label>
-              <label>
-                <span>Third-axis byte</span>
+            {/each}
+          </div>
+
+          <div class="form-grid">
+            <label class="inline-field">
+              <span>Inline byte</span>
+              <input
+                type="number"
+                min="1"
+                value={headerByte(plan.header_mapping.inline_3d)}
+                oninput={(event) =>
+                  updateHeaderMappingField("inline_3d", "byte", (event.currentTarget as HTMLInputElement).value)}
+              />
+            </label>
+            <label class="inline-field">
+              <span>Inline type</span>
+              <select
+                value={headerType(plan.header_mapping.inline_3d)}
+                onchange={(event) =>
+                  updateHeaderMappingField("inline_3d", "type", (event.currentTarget as HTMLSelectElement).value)}
+              >
+                <option value="i32">I32</option>
+                <option value="i16">I16</option>
+              </select>
+            </label>
+            <label class="inline-field">
+              <span>Crossline byte</span>
+              <input
+                type="number"
+                min="1"
+                value={headerByte(plan.header_mapping.crossline_3d)}
+                oninput={(event) =>
+                  updateHeaderMappingField("crossline_3d", "byte", (event.currentTarget as HTMLInputElement).value)}
+              />
+            </label>
+            <label class="inline-field">
+              <span>Crossline type</span>
+              <select
+                value={headerType(plan.header_mapping.crossline_3d)}
+                onchange={(event) =>
+                  updateHeaderMappingField("crossline_3d", "type", (event.currentTarget as HTMLSelectElement).value)}
+              >
+                <option value="i32">I32</option>
+                <option value="i16">I16</option>
+              </select>
+            </label>
+            {#if showThirdAxis}
+              <label class="inline-field">
+                <span>Third axis byte</span>
                 <input
                   type="number"
                   min="1"
@@ -1108,8 +1219,8 @@
                     updateHeaderMappingField("third_axis", "byte", (event.currentTarget as HTMLInputElement).value)}
                 />
               </label>
-              <label>
-                <span>Third-axis type</span>
+              <label class="inline-field">
+                <span>Third axis type</span>
                 <select
                   value={headerType(plan.header_mapping.third_axis)}
                   onchange={(event) =>
@@ -1119,97 +1230,175 @@
                   <option value="i16">I16</option>
                 </select>
               </label>
-            </div>
+            {/if}
+          </div>
+        </fieldset>
 
-            <div class="segy-import-grid">
-              <label>
-                <span>Sparse handling</span>
-                <select
-                  value={plan.policy.sparse_handling}
-                  onchange={(event) =>
-                    updateSparseHandling((event.currentTarget as HTMLSelectElement).value)}
-                >
-                  <option value="block_import">Review before import</option>
-                  <option value="regularize_to_dense">Regularize to dense grid</option>
-                </select>
-              </label>
-              <label class="wide">
-                <span>Runtime store path</span>
-                <input
-                  type="text"
-                  value={plan.policy.output_store_path}
-                  oninput={(event) => updateOutputPath((event.currentTarget as HTMLInputElement).value)}
-                />
-              </label>
-            </div>
-          </section>
-        {/if}
+        <fieldset class="fieldset">
+          <legend>Import Options</legend>
 
-        {#if stage === "spatial"}
-          <section class="segy-import-panel">
-            <h3>Spatial</h3>
-            <div class="segy-import-grid">
-              <label>
+          {#if leadingIssue(sparsePolicyIssues())}
+            <div class={`section-banner ${issueTone(leadingIssue(sparsePolicyIssues()))}`}>
+              <strong>{leadingIssue(sparsePolicyIssues())?.message}</strong>
+              {#if leadingIssue(sparsePolicyIssues())?.suggested_fix}
+                <span>{leadingIssue(sparsePolicyIssues())?.suggested_fix}</span>
+              {/if}
+            </div>
+          {/if}
+
+          <div class="form-grid">
+            <label class="inline-field wide">
+              <span>Sparse handling</span>
+              <select
+                value={plan.policy.sparse_handling}
+                onchange={(event) => updateSparseHandling((event.currentTarget as HTMLSelectElement).value)}
+              >
+                <option value="block_import">Stop and review</option>
+                <option value="regularize_to_dense">Regularize to dense grid</option>
+              </select>
+            </label>
+          </div>
+
+          {#if resolvedRiskSummary}
+            <p class="field-help">
+              {formatCount(resolvedRiskSummary.observed_trace_count)} observed,
+              {formatCount(resolvedRiskSummary.expected_trace_count)} bins,
+              {formatBytes(resolvedRiskSummary.estimated_total_bytes)} store.
+            </p>
+          {/if}
+
+          <label class="inline-field wide">
+            <span>Output path</span>
+            <div class="path-row">
+              <input
+                type="text"
+                value={plan.policy.output_store_path}
+                oninput={(event) => updateOutputPath((event.currentTarget as HTMLInputElement).value)}
+              />
+              <button class="settings-btn secondary" type="button" onclick={() => void browseOutputPath()}>
+                Browse...
+              </button>
+            </div>
+          </label>
+
+          {#if outputPathIssues().length > 0}
+            <div class="field-issues">
+              {#each outputPathIssues() as issue (`output-${issue.code}-${issue.message}`)}
+                <div class={`inline-issue ${issue.severity}`}>
+                  <strong>{issue.message}</strong>
+                  {#if issue.suggested_fix}
+                    <span>{issue.suggested_fix}</span>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+
+          {#if validation?.requires_acknowledgement}
+            <label class="checkbox-row">
+              <input
+                type="checkbox"
+                checked={plan.policy.acknowledge_warnings}
+                onchange={(event) =>
+                  updateWarningAcknowledgement((event.currentTarget as HTMLInputElement).checked)}
+              />
+              <span>I understand the remaining warnings and want to continue.</span>
+            </label>
+          {/if}
+        </fieldset>
+
+        <fieldset class="fieldset collapsible">
+          <legend>
+            <button type="button" class="fieldset-toggle" onclick={() => (showAdvancedSpatial = !showAdvancedSpatial)}>
+              <span class="toggle-indicator">{showAdvancedSpatial ? "\u25BC" : "\u25B6"}</span>
+              Advanced Spatial Metadata
+            </button>
+          </legend>
+
+          {#if showAdvancedSpatial}
+            {#if leadingIssue(spatialSectionIssues())}
+              <div class={`section-banner ${issueTone(leadingIssue(spatialSectionIssues()))}`}>
+                <strong>{leadingIssue(spatialSectionIssues())?.message}</strong>
+                {#if leadingIssue(spatialSectionIssues())?.suggested_fix}
+                  <span>{leadingIssue(spatialSectionIssues())?.suggested_fix}</span>
+                {/if}
+              </div>
+            {/if}
+
+            <div class="form-grid">
+              <label class="inline-field">
                 <span>X byte</span>
                 <input
                   type="number"
                   min="1"
                   value={headerByte(plan.spatial.x_field)}
-                  oninput={(event) => updateSpatialField("x_field", "byte", (event.currentTarget as HTMLInputElement).value)}
+                  oninput={(event) =>
+                    updateSpatialField("x_field", "byte", (event.currentTarget as HTMLInputElement).value)}
                 />
               </label>
-              <label>
+              <label class="inline-field">
                 <span>X type</span>
                 <select
                   value={headerType(plan.spatial.x_field)}
-                  onchange={(event) => updateSpatialField("x_field", "type", (event.currentTarget as HTMLSelectElement).value)}
+                  onchange={(event) =>
+                    updateSpatialField("x_field", "type", (event.currentTarget as HTMLSelectElement).value)}
                 >
                   <option value="i32">I32</option>
                   <option value="i16">I16</option>
                 </select>
               </label>
-              <label>
+              <label class="inline-field">
                 <span>Y byte</span>
                 <input
                   type="number"
                   min="1"
                   value={headerByte(plan.spatial.y_field)}
-                  oninput={(event) => updateSpatialField("y_field", "byte", (event.currentTarget as HTMLInputElement).value)}
+                  oninput={(event) =>
+                    updateSpatialField("y_field", "byte", (event.currentTarget as HTMLInputElement).value)}
                 />
               </label>
-              <label>
+              <label class="inline-field">
                 <span>Y type</span>
                 <select
                   value={headerType(plan.spatial.y_field)}
-                  onchange={(event) => updateSpatialField("y_field", "type", (event.currentTarget as HTMLSelectElement).value)}
+                  onchange={(event) =>
+                    updateSpatialField("y_field", "type", (event.currentTarget as HTMLSelectElement).value)}
                 >
                   <option value="i32">I32</option>
                   <option value="i16">I16</option>
                 </select>
               </label>
-              <label>
+              <label class="inline-field">
                 <span>Scalar byte</span>
                 <input
                   type="number"
                   min="1"
                   value={headerByte(plan.spatial.coordinate_scalar_field)}
                   oninput={(event) =>
-                    updateSpatialField("coordinate_scalar_field", "byte", (event.currentTarget as HTMLInputElement).value)}
+                    updateSpatialField(
+                      "coordinate_scalar_field",
+                      "byte",
+                      (event.currentTarget as HTMLInputElement).value
+                    )}
                 />
               </label>
-              <label>
+              <label class="inline-field">
                 <span>Scalar type</span>
                 <select
                   value={headerType(plan.spatial.coordinate_scalar_field)}
                   onchange={(event) =>
-                    updateSpatialField("coordinate_scalar_field", "type", (event.currentTarget as HTMLSelectElement).value)}
+                    updateSpatialField(
+                      "coordinate_scalar_field",
+                      "type",
+                      (event.currentTarget as HTMLSelectElement).value
+                    )}
                 >
                   <option value="i32">I32</option>
                   <option value="i16">I16</option>
                 </select>
               </label>
-              <label>
-                <span>Coordinate units</span>
+              <label class="inline-field wide">
+                <span>Coord. units</span>
                 <input
                   type="text"
                   value={plan.spatial.coordinate_units ?? ""}
@@ -1217,196 +1406,172 @@
                     updateSpatialText("coordinate_units", (event.currentTarget as HTMLInputElement).value)}
                 />
               </label>
-              <label>
-                <span>CRS ID</span>
-                <input
-                  type="text"
-                  value={plan.spatial.coordinate_reference_id ?? ""}
-                  oninput={(event) =>
-                    updateSpatialText("coordinate_reference_id", (event.currentTarget as HTMLInputElement).value)}
-                />
-              </label>
-              <label class="wide">
-                <span>CRS name</span>
-                <input
-                  type="text"
-                  value={plan.spatial.coordinate_reference_name ?? ""}
-                  oninput={(event) =>
-                    updateSpatialText("coordinate_reference_name", (event.currentTarget as HTMLInputElement).value)}
-                />
+              <label class="inline-field wide">
+                <span>Source CRS</span>
+                <div class="crs-inline">
+                  <strong class="crs-value">{formatCoordinateReference()}</strong>
+                  <button class="settings-btn secondary" type="button" onclick={openCoordinateReferencePicker}>
+                    Choose
+                  </button>
+                  <button class="settings-btn secondary" type="button" onclick={clearCoordinateReference}>
+                    Clear
+                  </button>
+                </div>
               </label>
             </div>
-          </section>
-        {/if}
 
-        {#if stage === "review" || stage === "import"}
-          <section class="segy-import-panel">
-            <div class="segy-import-panel-header">
-              <h3>Review</h3>
-              <button class="settings-btn secondary" type="button" onclick={() => void validateCurrentPlan(true)} disabled={validating}>
-                {validating ? "Validating…" : "Validate Plan"}
-              </button>
-            </div>
-
-            {#if validationStale}
-              <p class="segy-import-banner">The import plan changed. Validate again before importing.</p>
-            {/if}
-
-            {#if validation}
-              <div class="segy-import-review-grid">
-                <div>
-                  <span>Resolved mapping</span>
-                  <strong>{describeField(validation.validated_plan.header_mapping.inline_3d)} / {describeField(validation.validated_plan.header_mapping.crossline_3d)}</strong>
-                </div>
-                <div>
-                  <span>Layout</span>
-                  <strong>{validation.resolved_dataset.layout}</strong>
-                </div>
-                <div>
-                  <span>Grid</span>
-                  <strong>{validation.risk_summary.observed_trace_count.toLocaleString()} / {validation.risk_summary.expected_trace_count.toLocaleString()}</strong>
-                </div>
-                <div>
-                  <span>Completeness</span>
-                  <strong>{formatPercent(validation.risk_summary.completeness_ratio)}</strong>
-                </div>
-                <div>
-                  <span>Blow-up</span>
-                  <strong>{validation.risk_summary.blowup_ratio.toFixed(2)}x</strong>
-                </div>
-                <div>
-                  <span>Estimated store</span>
-                  <strong>{formatBytes(validation.risk_summary.estimated_total_bytes)}</strong>
-                </div>
+            {#if validation?.resolved_spatial.notes.length}
+              <div class="field-help-list">
+                {#each validation.resolved_spatial.notes as note (`spatial-note-${note}`)}
+                  <span>{note}</span>
+                {/each}
               </div>
             {/if}
+          {/if}
+        </fieldset>
 
-            {#if currentIssues.length > 0}
-              <div class="segy-import-issues">
-                {#each currentIssues as issue (`${issue.code}-${issue.message}`)}
-                  <div class={`segy-import-issue ${severityClass(issue)}`}>
+        <fieldset class="fieldset collapsible">
+          <legend>
+            <button type="button" class="fieldset-toggle" onclick={() => (showInspection = !showInspection)}>
+              <span class="toggle-indicator">{showInspection ? "\u25BC" : "\u25B6"}</span>
+              Inspection Details
+            </button>
+          </legend>
+
+          {#if showInspection}
+            <table class="summary-table inspection">
+              <thead>
+                <tr><th>Field</th><th>Mapping</th><th>Unique</th></tr>
+              </thead>
+              <tbody>
+                {#each scanResponse.field_observations as field (`${field.label}-${field.field.start_byte}`)}
+                  <tr>
+                    <td>{field.label}</td>
+                    <td>{describeField(field.field)}</td>
+                    <td>{formatCount(field.unique_count)}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+
+            {#if infoIssues.length > 0}
+              <div class="section-issues info">
+                {#each infoIssues as issue (`info-${issue.code}-${issue.message}`)}
+                  <div class="issue-row">
                     <strong>{issue.severity}</strong>
                     <span>{issue.message}</span>
-                    {#if issue.suggested_fix}
-                      <small>{issue.suggested_fix}</small>
-                    {/if}
                   </div>
                 {/each}
               </div>
             {/if}
+          {/if}
+        </fieldset>
 
-            {#if validation?.requires_acknowledgement}
-              <label class="segy-import-checkbox">
-                <input
-                  type="checkbox"
-                  checked={plan.policy.acknowledge_warnings}
-                  onchange={(event) =>
-                    updateWarningAcknowledgement((event.currentTarget as HTMLInputElement).checked)}
-                />
-                <span>I understand the remaining warnings and want to continue with this import plan.</span>
-              </label>
-            {/if}
+        <fieldset class="fieldset collapsible">
+          <legend>
+            <button type="button" class="fieldset-toggle" onclick={() => (showRecipes = !showRecipes)}>
+              <span class="toggle-indicator">{showRecipes ? "\u25BC" : "\u25B6"}</span>
+              Saved Settings
+            </button>
+          </legend>
 
-            <div class="segy-import-recipes">
-              <div class="segy-import-panel-header">
-                <h4>Recipes</h4>
-              </div>
-              <div class="segy-import-recipe-actions">
-                <input
-                  type="text"
-                  value={recipeName}
-                  placeholder="Recipe name"
-                  oninput={(event) => (recipeName = (event.currentTarget as HTMLInputElement).value)}
-                />
-                <button class="settings-btn secondary" type="button" onclick={() => void saveRecipe("global")} disabled={savingRecipe}>
-                  Save Recipe
-                </button>
-                <button class="settings-btn secondary" type="button" onclick={() => void saveRecipe("source_fingerprint")} disabled={savingRecipe || !scanResponse}>
-                  Remember For This Source
-                </button>
-              </div>
+          {#if showRecipes}
+            <div class="recipe-actions">
+              <input
+                type="text"
+                value={recipeName}
+                placeholder="Recipe name"
+                oninput={(event) => (recipeName = (event.currentTarget as HTMLInputElement).value)}
+              />
+              <button class="settings-btn secondary" type="button" onclick={() => void saveRecipe("global")} disabled={savingRecipe}>
+                Save
+              </button>
+              <button
+                class="settings-btn secondary"
+                type="button"
+                onclick={() => void saveRecipe("source_fingerprint")}
+                disabled={savingRecipe || !scanResponse}
+              >
+                Remember
+              </button>
+            </div>
 
-              {#if sourceRecipes.length > 0 || globalRecipes.length > 0}
-                <div class="segy-import-recipe-list">
-                  {#each [...sourceRecipes, ...globalRecipes] as recipe (recipe.recipe_id)}
-                    <div class="segy-import-recipe-row">
-                      <div>
-                        <strong>{recipe.name}</strong>
-                        <span>{recipe.scope === "source_fingerprint" ? "source memory" : "saved recipe"}</span>
-                      </div>
-                      <div class="segy-import-actions-row">
-                        <button class="settings-btn secondary" type="button" onclick={() => applyRecipe(recipe)}>
-                          Apply Recipe
-                        </button>
-                        <button class="settings-btn secondary" type="button" onclick={() => void removeRecipe(recipe.recipe_id)}>
-                          Delete Recipe
-                        </button>
-                      </div>
+            {#if displayedRecipes.length > 0}
+              <div class="recipe-list">
+                {#each displayedRecipes as recipe (recipe.recipe_id)}
+                  <div class="recipe-row">
+                    <div>
+                      <strong>{recipe.name}</strong>
+                      <span>{recipe.scope === "source_fingerprint" ? "source memory" : "saved recipe"}</span>
                     </div>
-                  {/each}
-                </div>
-              {/if}
-            </div>
-          </section>
-        {/if}
-
-        {#if stage === "raw_inspect"}
-          <section class="segy-import-panel">
-            <h3>Inspect Raw</h3>
-            <p>This mode inspects trace headers and layout only. It does not create a runtime store.</p>
-            <div class="segy-import-review-grid">
-              {#each scanResponse.field_observations as field (`${field.label}-${field.field.start_byte}`)}
-                <div>
-                  <span>{field.label}</span>
-                  <strong>{describeField(field.field)} • {field.unique_count.toLocaleString()} unique</strong>
-                </div>
-              {/each}
-            </div>
-            <div class="segy-import-actions-row">
-              <button class="settings-btn secondary" type="button" onclick={() => (stage = "structure")}>
-                Back To Structure
-              </button>
-            </div>
-          </section>
-        {/if}
-
-        <footer class="segy-import-footer">
-          <div class="segy-import-actions-row">
-            {#if stage !== "scan" && stage !== "raw_inspect"}
-              <button class="settings-btn secondary" type="button" onclick={() => (stage = previousStage(stage))}>
-                Back
-              </button>
+                    <div class="button-row">
+                      <button class="settings-btn secondary" type="button" onclick={() => applyRecipe(recipe)}>
+                        Apply
+                      </button>
+                      <button class="settings-btn secondary" type="button" onclick={() => void removeRecipe(recipe.recipe_id)}>
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                {/each}
+              </div>
             {/if}
-            {#if stage === "structure"}
-              <button class="settings-btn primary" type="button" onclick={() => (stage = "spatial")}>
-                Continue
-              </button>
-            {:else if stage === "spatial"}
-              <button class="settings-btn primary" type="button" onclick={() => (stage = "review")}>
-                Continue
-              </button>
-            {:else if stage === "review"}
-              <button class="settings-btn primary" type="button" onclick={() => void handlePrimaryStatusAction()}>
-                {validationStale || !validation ? "Validate Plan" : "Continue"}
-              </button>
-            {:else if stage === "import"}
-              <button class="settings-btn primary" type="button" onclick={() => void confirmImport()} disabled={!canImport}>
-                {importing ? "Importing…" : "Import"}
-              </button>
+          {/if}
+        </fieldset>
+
+        <footer class="dialog-footer">
+          <div class="footer-status">
+            <strong>{statusTitle()}</strong>
+            {#if validationStale}
+              <span>Validation is still catching up with the latest edit.</span>
+            {:else if validating}
+              <span>Validating updated plan...</span>
+            {:else if canImport && validation}
+              <span>Import will use {basename(validation.validated_plan.policy.output_store_path)}.</span>
+            {:else if blockingIssues.length > 0}
+              <span>Resolve the highlighted blocking issues to enable import.</span>
+            {:else if validation?.requires_acknowledgement && !plan.policy.acknowledge_warnings}
+              <span>Acknowledge the remaining warnings to continue.</span>
             {/if}
           </div>
+          <div class="button-row">
+            <button class="settings-btn secondary" type="button" onclick={handleClose} disabled={importing}>
+              Cancel
+            </button>
+            <button
+              class="settings-btn primary"
+              type="button"
+              onclick={() => void confirmImport()}
+              disabled={!canImport}
+            >
+              {importing ? "Importing..." : "Import Survey"}
+            </button>
+          </div>
         </footer>
-      {:else if !scanLoading && !dialogError}
-        <section class="segy-import-panel">
-          <h3>Scan</h3>
-          <p>Run the SEG-Y scan again. This dialog should populate the stage details automatically before you choose anything.</p>
-        </section>
       {/if}
     </div>
   </div>
+
+  {#if coordinateReferencePickerOpen}
+    <CoordinateReferencePicker
+      close={closeCoordinateReferencePicker}
+      confirm={handleCoordinateReferenceSelection}
+      title="SEG-Y Source CRS"
+      description="Choose the CRS used by the imported SEG-Y coordinates, or record them as local engineering coordinates."
+      allowLocalEngineering={true}
+      localEngineeringLabel="Local engineering coordinates"
+      selectedAuthId={plan?.spatial.coordinate_reference_id ?? null}
+      projectRoot={viewerModel.projectRoot}
+      projectedOnly={false}
+      includeGeographic={true}
+      includeVertical={false}
+    />
+  {/if}
 {/if}
 
 <style>
+  /* ── backdrop / shell ── */
+
   .segy-import-backdrop {
     position: fixed;
     inset: 0;
@@ -1414,8 +1579,8 @@
     display: grid;
     place-items: center;
     padding: 24px;
-    background: rgba(6, 10, 18, 0.68);
-    backdrop-filter: blur(6px);
+    background: rgba(38, 55, 71, 0.2);
+    backdrop-filter: blur(4px);
   }
 
   .segy-import-backdrop.embedded {
@@ -1426,237 +1591,510 @@
   }
 
   .segy-import-dialog {
-    width: min(1080px, 100%);
+    width: min(820px, 100%);
     max-height: min(92vh, 980px);
     overflow: auto;
-    padding: 20px;
+    padding: 14px 16px;
     border: 1px solid var(--app-border-strong);
-    border-radius: 8px;
+    border-radius: 6px;
     background: var(--panel-bg);
     display: grid;
-    gap: 16px;
+    gap: 10px;
   }
 
   .segy-import-dialog.embedded {
     width: 100%;
     max-height: none;
-    border-radius: 10px;
+    border-radius: 6px;
     box-shadow: none;
   }
 
-  .segy-import-header,
-  .segy-import-panel-header,
-  .segy-import-recipe-row,
-  .segy-import-actions-row {
+  /* ── header ── */
+
+  .segy-import-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
-  }
-
-  .segy-import-header h2,
-  .segy-import-panel h3,
-  .segy-import-panel h4 {
-    margin: 0;
-  }
-
-  .segy-import-header p,
-  .segy-import-panel p {
-    margin: 4px 0 0;
-    color: var(--text-muted);
-  }
-
-  .segy-import-status,
-  .segy-import-error,
-  .segy-import-banner,
-  .segy-import-status-card {
-    margin: 0;
-    padding: 12px 14px;
-    border-radius: 6px;
-  }
-
-  .segy-import-status {
-    background: color-mix(in srgb, var(--accent-solid, #4f8cff) 12%, transparent);
-  }
-
-  .segy-import-error {
-    color: #ffd0d0;
-    background: rgba(146, 27, 27, 0.28);
-  }
-
-  .segy-import-banner {
-    color: #ffe7b8;
-    background: rgba(150, 94, 0, 0.22);
-  }
-
-  .segy-import-status-card {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    border: 1px solid var(--app-border);
-    background: var(--surface-subtle);
-  }
-
-  .segy-import-status-card h3 {
-    margin: 0;
-  }
-
-  .segy-import-status-card p {
-    margin: 4px 0 0;
-    color: var(--text-muted);
-  }
-
-  .segy-import-status-card.success {
-    border-color: color-mix(in srgb, #2eae6b 38%, var(--app-border));
-    background: color-mix(in srgb, rgba(46, 174, 107, 0.12) 75%, transparent);
-  }
-
-  .segy-import-status-card.warning {
-    border-color: rgba(214, 154, 42, 0.5);
-    background: rgba(150, 94, 0, 0.16);
-  }
-
-  .segy-import-status-card.blocking {
-    border-color: rgba(220, 76, 76, 0.5);
-    background: rgba(146, 27, 27, 0.18);
-  }
-
-  .segy-import-status-card.info {
-    border-color: color-mix(in srgb, var(--accent-solid, #4f8cff) 35%, var(--app-border));
-    background: color-mix(in srgb, var(--accent-solid, #4f8cff) 10%, transparent);
-  }
-
-  .segy-import-summary,
-  .segy-import-review-grid {
-    display: grid;
-    gap: 12px;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .segy-import-summary > div,
-  .segy-import-review-grid > div {
-    display: grid;
-    gap: 4px;
-    padding: 12px;
-    border: 1px solid var(--app-border);
-    border-radius: 6px;
-    background: var(--surface-subtle);
-  }
-
-  .segy-import-summary span,
-  .segy-import-review-grid span,
-  .segy-import-candidate span,
-  .segy-import-recipe-row span {
-    color: var(--text-muted);
-    font-size: 0.9rem;
-  }
-
-  .segy-import-panel {
-    display: grid;
-    gap: 14px;
-  }
-
-  .segy-import-subsection,
-  .segy-import-recipes,
-  .segy-import-issues {
-    display: grid;
     gap: 10px;
   }
 
-  .segy-import-grid {
-    display: grid;
-    gap: 12px;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .segy-import-header h2 {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 650;
   }
 
-  .segy-import-grid label,
-  .segy-import-candidate,
-  .segy-import-checkbox {
+  .segy-import-header p {
+    margin: 2px 0 0;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  /* ── status strip ── */
+
+  .status-strip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--app-border);
+    border-radius: 4px;
+    background: var(--surface-subtle);
+  }
+
+  .status-strip h3 {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 650;
+  }
+
+  .status-strip p {
+    margin: 2px 0 0;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .status-strip.info {
+    border-color: var(--info-border);
+    background: var(--info-bg);
+  }
+
+  .status-strip.warning {
+    border-color: var(--warn-border);
+    background: var(--warn-bg);
+  }
+
+  .status-strip.blocking {
+    border-color: var(--danger-border);
+    background: var(--danger-bg);
+  }
+
+  .status-strip.success {
+    border-color: rgba(46, 174, 107, 0.35);
+    background: rgba(46, 174, 107, 0.08);
+  }
+
+  /* ── fieldset sections (QGIS-style) ── */
+
+  .fieldset {
+    margin: 0;
+    padding: 8px 10px 10px;
+    border: 1px solid var(--app-border);
+    border-radius: 4px;
+    background: var(--surface-bg);
+    display: grid;
+    gap: 8px;
+  }
+
+  .fieldset > legend {
+    padding: 0 4px;
+    font-size: 11px;
+    font-weight: 650;
+    color: var(--text-primary);
+  }
+
+  .fieldset.collapsible > legend {
+    padding: 0;
+  }
+
+  .fieldset-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 4px;
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 650;
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+
+  .toggle-indicator {
+    font-size: 8px;
+    width: 10px;
+    text-align: center;
+    color: var(--text-dim);
+  }
+
+  /* ── section-card (empty states) ── */
+
+  .section-card {
+    padding: 10px 12px;
+    border: 1px solid var(--app-border);
+    border-radius: 4px;
+    background: var(--surface-bg);
     display: grid;
     gap: 6px;
   }
 
-  .segy-import-grid label.wide {
+  .section-card h3 {
+    margin: 0;
+    font-size: 11px;
+    font-weight: 650;
+  }
+
+  .empty-state {
+    min-height: 80px;
+    align-content: center;
+  }
+
+  .empty-state p,
+  .field-help {
+    margin: 2px 0 0;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  /* ── summary table ── */
+
+  .summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+  }
+
+  .summary-table td,
+  .summary-table th {
+    padding: 3px 8px;
+    border: 1px solid var(--app-border);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .summary-table td:first-child,
+  .summary-table th:first-child {
+    color: var(--text-muted);
+    white-space: nowrap;
+    width: 130px;
+  }
+
+  .summary-table th {
+    background: var(--surface-subtle);
+    font-weight: 600;
+  }
+
+  .summary-table.inspection td:first-child {
+    width: auto;
+  }
+
+  /* ── inline form fields (QGIS-style label | input on same row) ── */
+
+  .form-grid {
+    display: grid;
+    gap: 6px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .inline-field {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+  }
+
+  .inline-field > span {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .inline-field.wide {
     grid-column: 1 / -1;
   }
 
-  .segy-import-grid input,
-  .segy-import-grid select,
-  .segy-import-recipe-actions input {
+  /* ── inputs ── */
+
+  input,
+  select {
     min-width: 0;
-    padding: 10px 12px;
-    border: 1px solid var(--app-border);
-    border-radius: 6px;
-    background: var(--surface-subtle);
-    color: inherit;
+    height: 26px;
+    padding: 0 6px;
+    border: 1px solid var(--app-border-strong);
+    border-radius: 3px;
+    background: #fff;
+    color: var(--text-primary);
     font: inherit;
+    font-size: 11px;
   }
 
-  .segy-import-candidate-list,
-  .segy-import-recipe-list {
-    display: grid;
-    gap: 10px;
+  select {
+    padding-right: 18px;
   }
 
-  .segy-import-candidate,
-  .segy-import-recipe-row,
-  .segy-import-issue {
-    padding: 12px;
-    border: 1px solid var(--app-border);
-    border-radius: 6px;
+  input[type="checkbox"] {
+    height: auto;
+    width: 14px;
+    padding: 0;
+  }
+
+  /* ── path row ── */
+
+  .path-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .path-row input {
+    flex: 1 1 auto;
+  }
+
+  /* ── CRS inline ── */
+
+  .crs-inline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .crs-value {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  /* ── buttons ── */
+
+  .settings-btn {
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--app-border-strong);
+    border-radius: 3px;
     background: var(--surface-subtle);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 11px;
+    white-space: nowrap;
+    cursor: pointer;
   }
 
-  .segy-import-candidate {
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: start;
+  .settings-btn.primary {
+    border-color: var(--accent-text);
+    background: var(--accent-text);
+    color: #fff;
+    font-weight: 600;
   }
 
-  .segy-import-issue {
+  .settings-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  /* ── candidate cards ── */
+
+  .candidate-list {
     display: grid;
     gap: 4px;
   }
 
-  .segy-import-issue.blocking {
-    border-color: rgba(220, 76, 76, 0.5);
-  }
-
-  .segy-import-issue.warning {
-    border-color: rgba(214, 154, 42, 0.5);
-  }
-
-  .segy-import-recipe-actions {
+  .candidate-card {
     display: grid;
-    gap: 10px;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-  }
-
-  .segy-import-checkbox {
     grid-template-columns: auto minmax(0, 1fr);
     align-items: start;
+    gap: 6px;
+    padding: 6px 8px;
+    border: 1px solid var(--app-border);
+    border-radius: 3px;
+    background: #fff;
+    cursor: pointer;
   }
 
-  .segy-import-footer {
+  .candidate-card.selected {
+    border-color: var(--accent-border);
+    background: var(--accent-bg);
+  }
+
+  .candidate-card input[type="radio"] {
+    margin-top: 2px;
+    height: auto;
+  }
+
+  .candidate-card strong {
+    font-size: 11px;
+  }
+
+  .candidate-card span,
+  .candidate-card small {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .candidate-title-row {
     display: flex;
-    justify-content: flex-end;
+    align-items: center;
+    gap: 6px;
   }
 
-  @media (max-width: 900px) {
-    .segy-import-summary,
-    .segy-import-review-grid,
-    .segy-import-grid,
-    .segy-import-recipe-actions {
+  .auto-tag {
+    padding: 0 4px;
+    border-radius: 2px;
+    background: var(--accent-bg);
+    color: var(--accent-text);
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── banners / issues ── */
+
+  .section-banner,
+  .inline-issue {
+    padding: 6px 8px;
+    border: 1px solid var(--app-border);
+    border-radius: 3px;
+    background: var(--surface-subtle);
+    display: grid;
+    gap: 2px;
+    font-size: 11px;
+  }
+
+  .section-banner.info,
+  .inline-issue.info,
+  .section-issues.info {
+    border-color: var(--info-border);
+    background: var(--info-bg);
+  }
+
+  .section-banner.warning,
+  .inline-issue.warning {
+    border-color: var(--warn-border);
+    background: var(--warn-bg);
+  }
+
+  .section-banner.blocking,
+  .inline-issue.blocking {
+    border-color: var(--danger-border);
+    background: var(--danger-bg);
+  }
+
+  .section-banner span,
+  .inline-issue span {
+    color: var(--text-muted);
+  }
+
+  .section-issues {
+    padding: 6px 8px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+  }
+
+  .issue-row {
+    display: grid;
+    gap: 2px;
+    font-size: 11px;
+  }
+
+  .field-issues {
+    display: grid;
+    gap: 4px;
+  }
+
+  /* ── checkbox row ── */
+
+  .checkbox-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    gap: 6px;
+    font-size: 11px;
+  }
+
+  /* ── field help ── */
+
+  .field-help-list {
+    display: grid;
+    gap: 2px;
+  }
+
+  .field-help-list span,
+  .footer-status span {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  /* ── recipe section ── */
+
+  .recipe-actions {
+    display: grid;
+    gap: 6px;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+  }
+
+  .recipe-list {
+    display: grid;
+    gap: 4px;
+  }
+
+  .recipe-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 5px 8px;
+    border: 1px solid var(--app-border);
+    border-radius: 3px;
+    background: #fff;
+    font-size: 11px;
+  }
+
+  .recipe-row span {
+    color: var(--text-muted);
+  }
+
+  .button-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* ── footer ── */
+
+  .dialog-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border-top: 1px solid var(--app-border);
+    padding-top: 10px;
+  }
+
+  .footer-status {
+    display: grid;
+    gap: 2px;
+  }
+
+  .footer-status strong {
+    font-size: 11px;
+  }
+
+  /* ── responsive ── */
+
+  @media (max-width: 760px) {
+    .form-grid {
       grid-template-columns: 1fr;
     }
 
-    .segy-import-recipe-row,
-    .segy-import-header,
-    .segy-import-panel-header,
-    .segy-import-actions-row,
-    .segy-import-status-card {
-      align-items: stretch;
+    .inline-field {
+      grid-template-columns: 1fr;
+    }
+
+    .recipe-actions {
+      grid-template-columns: 1fr;
+    }
+
+    .dialog-footer {
       flex-direction: column;
+      align-items: stretch;
     }
   }
 </style>

@@ -2,4 +2,4 @@
 import type { WellAzimuthReferenceKind } from "./WellAzimuthReferenceKind";
 import type { WellboreAnchorReference } from "./WellboreAnchorReference";
 
-export type WellboreGeometry = { anchor: WellboreAnchorReference | null, vertical_datum: string | null, depth_unit: string | null, azimuth_reference: WellAzimuthReferenceKind, notes: Array<string>, };
+export type WellboreGeometry = { anchor?: WellboreAnchorReference | null, vertical_datum?: string | null, depth_unit?: string | null, azimuth_reference: WellAzimuthReferenceKind, notes?: Array<string>, };

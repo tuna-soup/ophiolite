@@ -2,4 +2,4 @@
 import type { TimeDepthDomain } from "./TimeDepthDomain";
 import type { VelocityQuantityKind } from "./VelocityQuantityKind";
 
-export type DescribeVelocityVolumeRequest = { schema_version: number, store_path: string, velocity_kind: VelocityQuantityKind, vertical_domain: TimeDepthDomain | null, vertical_unit: string | null, vertical_start: number | null, vertical_step: number | null, };
+export type DescribeVelocityVolumeRequest = { schema_version: number, store_path: string, velocity_kind: VelocityQuantityKind, vertical_domain?: TimeDepthDomain | null, vertical_unit?: string | null, vertical_start?: number | null, vertical_step?: number | null, };

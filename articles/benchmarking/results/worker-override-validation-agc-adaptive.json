@@ -1,0 +1,104 @@
+{
+  "store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-benchmarks\\f3_dataset_regularized.tbvol",
+  "scenario": "agc",
+  "source_shape": [
+    651,
+    951,
+    462
+  ],
+  "source_chunk_shape": [
+    82,
+    56,
+    462
+  ],
+  "adaptive_partition_target": true,
+  "adaptive_recommendation": {
+    "target_bytes": 76415472,
+    "bytes_per_tile": 8490608,
+    "total_tiles": 136,
+    "preferred_partition_count": 16,
+    "recommended_partition_count": 16,
+    "available_memory_bytes": 14229098496,
+    "reserved_memory_bytes": 3557274624,
+    "usable_memory_bytes": 10671823872
+  },
+  "pipeline": {
+    "schema_version": 1,
+    "revision": 1,
+    "preset_id": null,
+    "name": "benchmark-agc",
+    "description": "Headless trace-local benchmark pipeline",
+    "steps": [
+      {
+        "operation": "trace_rms_normalize",
+        "checkpoint": false
+      },
+      {
+        "operation": {
+          "agc_rms": {
+            "window_ms": 250.0
+          }
+        },
+        "checkpoint": false
+      }
+    ]
+  },
+  "runs": [
+    {
+      "label": "serial",
+      "scenario": "agc",
+      "repeat_index": 1,
+      "elapsed_ms": 6768.4093,
+      "total_tiles": 136,
+      "completed_tiles": 136,
+      "total_partitions": 1,
+      "completed_partitions": 1,
+      "peak_active_partitions": 1,
+      "retry_count": 0,
+      "output_bytes": 1303690406,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-benchmarks\\f3-dataset-regularized-agc-run-serial-run-01.tbvol",
+      "output_retained": false
+    },
+    {
+      "label": "adaptive-72mib",
+      "scenario": "agc",
+      "partition_target_bytes": 76415472,
+      "repeat_index": 1,
+      "elapsed_ms": 6253.3604000000005,
+      "total_tiles": 136,
+      "completed_tiles": 136,
+      "total_partitions": 16,
+      "completed_partitions": 16,
+      "peak_active_partitions": 8,
+      "retry_count": 0,
+      "output_bytes": 1303690406,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-benchmarks\\f3-dataset-regularized-agc-run-adaptive-72mib-run-01.tbvol",
+      "output_retained": false
+    }
+  ],
+  "variants": [
+    {
+      "label": "adaptive-72mib",
+      "scenario": "agc",
+      "partition_target_bytes": 76415472,
+      "run_count": 1,
+      "avg_elapsed_ms": 6253.3604000000005,
+      "min_elapsed_ms": 6253.3604000000005,
+      "max_elapsed_ms": 6253.3604000000005,
+      "total_tiles": 136,
+      "avg_total_partitions": 16.0,
+      "avg_peak_active_partitions": 8.0
+    },
+    {
+      "label": "serial",
+      "scenario": "agc",
+      "run_count": 1,
+      "avg_elapsed_ms": 6768.4093,
+      "min_elapsed_ms": 6768.4093,
+      "max_elapsed_ms": 6768.4093,
+      "total_tiles": 136,
+      "avg_total_partitions": 1.0,
+      "avg_peak_active_partitions": 1.0
+    }
+  ]
+}

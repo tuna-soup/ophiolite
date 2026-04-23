@@ -20,10 +20,12 @@ The top-level package should teach durable subsurface and workflow language firs
 - `Well`
 - `Wellbore`
 - `WellboreBinding`
-- `TraceBoostApp`
-- `SeismicDataset`
 - `SectionSelection`
-- `TraceProcessingPipeline`
+- `TraceLocalPipeline`
+- `SubvolumePipeline`
+- `GatherPipeline`
+- `PostStackNeighborhoodPipeline`
+- `VelocityScanSpec`
 - `BandpassFilter`
 - `RmsAgc`
 - `avo_reflectivity(...)`
@@ -56,10 +58,11 @@ For logs and AVO:
 
 For seismic processing:
 
-- `TraceBoostApp.open_dataset(...)`
-- `TraceProcessingPipeline.named(...).bandpass(...).agc_rms(...)`
-- `dataset.preview_processing(selection, pipeline)`
-- `dataset.run_processing(pipeline, output_store_path=...)`
+- `project.surveys()`
+- `survey.operator_catalog()`
+- `TraceLocalPipeline.named(...).bandpass(...).agc_rms(...)`
+- `survey.preview_processing(selection, pipeline)`
+- `survey.run_processing(pipeline, output_collection_name=...)`
 
 For external Python operator authoring:
 
@@ -73,6 +76,7 @@ This keeps built-in workflow composition and external operator authoring visible
 
 - local project lifecycle
 - survey-backed seismic discovery
+- project-owned seismic execution
 - well and wellbore navigation
 - typed built-in operator composition
 - operator package installation
@@ -91,7 +95,8 @@ This keeps built-in workflow composition and external operator authoring visible
 - use `ophiolite_sdk` for the main builder story
 - use `Well`, `Wellbore`, and `Survey` for the main object graph and convenience helpers
 - use `WellboreBinding` when a later ingest needs to attach explicitly to an existing canonical wellbore
-- use `TraceBoostApp`, `SeismicDataset`, and `TraceProcessingPipeline` when the workflow is seismic and operator-chain oriented
+- use `Survey` plus typed seismic workflow objects when the data already lives in an `OphioliteProject`
+- use `TraceBoostApp` and `SeismicDataset` only when the workflow is intentionally loose-store and outside project asset ownership
 - use `project.views` when you want explicit project-scoped well-panel, survey-map, and section-overlay resolution
 - use `Wellbore.log_curves()` when you want the current well-log curves resolved through the project layer
 - use `Wellbore.elastic_log_set(bindings=...)` when you want semantic elastic inputs for log-derived workflows such as AVO
@@ -109,6 +114,8 @@ The intended builder flow is:
 - `Project.import_las(...)` can seed canonical log assets directly, with `binding=wellbore.binding()` when vendor headers need explicit wellbore attachment
 - `Project.wells()` and `Project.surveys()` discover the main domain objects
 - `Well.wellbores()` and `Well.surveys()` continue the project graph without dropping back to raw ids
+- `Survey.operator_catalog()` discovers the available seismic operator families for that project-owned asset
+- `Survey.preview_processing(...)`, `Survey.run_processing(...)`, `Survey.preview_subvolume(...)`, `Survey.run_subvolume(...)`, `Survey.preview_gather(...)`, `Survey.run_gather(...)`, `Survey.preview_post_stack_neighborhood(...)`, and `Survey.velocity_scan(...)` keep seismic execution on canonical asset ids instead of raw store paths
 - `Well.panel()`, `Wellbore.panel()`, `Wellbore.trajectory()`, `Survey.map_view()`, and `Survey.section_well_overlays()` delegate to the same Rust-owned view resolvers exposed under `project.views`
 - `Wellbore.log_curves()` and `Wellbore.elastic_log_set(bindings=...)` keep log and AVO preparation object-first without exposing storage internals as the primary abstraction
 - `elastic.run_avo(layering=..., experiment=...)` applies domain-first AVO spec objects instead of requiring raw request payloads in the main builder story
@@ -178,16 +185,16 @@ That keeps LAS ingest canonical and reusable. A sonic curve can remain the sourc
 
 ## Seismic operator workflow notes
 
-The same domain-first rule applies to seismic processing. The public story should read as typed datasets and typed operators, not raw command plumbing:
+The same domain-first rule applies to seismic processing. For project-owned seismic assets, the public story should read as typed surveys and typed operators, not raw command plumbing:
 
 ```python
-from ophiolite_sdk import SectionSelection, TraceBoostApp, TraceProcessingPipeline
+from ophiolite_sdk import Project, SectionSelection, TraceLocalPipeline
 
-app = TraceBoostApp()
-dataset = app.open_dataset("input.tbvol")
+project = Project.open("demo-project")
+survey = project.surveys()[0]
 selection = SectionSelection.inline(120)
 pipeline = (
-    TraceProcessingPipeline.named(
+    TraceLocalPipeline.named(
         "Bandpass + RMS AGC",
         description="Trace-local seismic golden path.",
     )
@@ -195,14 +202,17 @@ pipeline = (
     .agc_rms(40.0)
 )
 
-preview = dataset.preview_processing(selection, pipeline)
-processed = dataset.run_processing(
+catalog = survey.operator_catalog()
+preview = survey.preview_processing(selection, pipeline)
+processed = survey.run_processing(
     pipeline,
-    output_store_path="input_bandpass_agc.tbvol",
+    output_collection_name="derived-seismic",
 )
 ```
 
-That exposes operators as explicit workflow objects while still keeping the runtime contract strongly typed.
+That keeps discovery and execution on project-owned asset ids while still exposing operators as explicit workflow objects.
+
+If the workflow is intentionally outside project ownership, `TraceBoostApp` and `SeismicDataset` remain available as the loose-store compatibility lane for direct `.tbvol` and `.tbgath` work.
 
 ## Relationship to the CLI
 

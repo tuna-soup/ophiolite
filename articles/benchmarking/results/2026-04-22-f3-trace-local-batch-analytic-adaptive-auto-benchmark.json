@@ -1,0 +1,248 @@
+{
+  "store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-benchmarks\\f3_dataset_regularized.tbvol",
+  "scenario": "analytic",
+  "source_shape": [
+    651,
+    951,
+    462
+  ],
+  "source_chunk_shape": [
+    82,
+    56,
+    462
+  ],
+  "job_count": 4,
+  "partition_target_bytes": 50943648,
+  "adaptive_partition_target": true,
+  "adaptive_recommendation": {
+    "target_bytes": 50943648,
+    "bytes_per_tile": 8490608,
+    "total_tiles": 136,
+    "preferred_partition_count": 24,
+    "recommended_partition_count": 23,
+    "available_memory_bytes": 12012453888,
+    "reserved_memory_bytes": 3003113472,
+    "usable_memory_bytes": 9009340416
+  },
+  "pipeline": {
+    "schema_version": 1,
+    "revision": 1,
+    "preset_id": null,
+    "name": "benchmark-analytic",
+    "description": "Headless trace-local benchmark pipeline",
+    "steps": [
+      {
+        "operation": "trace_rms_normalize",
+        "checkpoint": false
+      },
+      {
+        "operation": "envelope",
+        "checkpoint": false
+      },
+      {
+        "operation": "instantaneous_phase",
+        "checkpoint": false
+      },
+      {
+        "operation": "instantaneous_frequency",
+        "checkpoint": false
+      },
+      {
+        "operation": "sweetness",
+        "checkpoint": false
+      }
+    ]
+  },
+  "variants": [
+    {
+      "label": "auto-requested-auto-effective-3",
+      "effective_max_active_jobs": 3,
+      "execution_mode": "auto",
+      "scheduler_reason": "auto_medium_cost_batch",
+      "worker_budget": 24,
+      "global_cap": 24,
+      "max_memory_cost_class": "medium",
+      "max_estimated_peak_memory_bytes": 201326592,
+      "max_expected_partition_count": 5,
+      "repeat_index": 1,
+      "batch_elapsed_ms": 86179.221,
+      "completed_jobs": 4,
+      "total_jobs": 4,
+      "avg_queue_wait_ms": 15979.787575,
+      "max_queue_wait_ms": 63918.8338,
+      "avg_job_elapsed_ms": 53418.536174999994,
+      "min_job_elapsed_ms": 22078.272599999997,
+      "max_job_elapsed_ms": 64584.2387,
+      "avg_total_partitions": 23.0,
+      "avg_peak_active_partitions": 23.0,
+      "jobs": [
+        {
+          "job_label": "job-01",
+          "job_id": "processing-1776869627-0001",
+          "state": "completed",
+          "queue_wait_ms": 0.1339,
+          "elapsed_ms": 63585.858700000004,
+          "total_tiles": 136,
+          "completed_tiles": 136,
+          "total_partitions": 23,
+          "completed_partitions": 23,
+          "peak_active_partitions": 23,
+          "retry_count": 0,
+          "output_bytes": 1303690669,
+          "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-batch-benchmarks\\f3-dataset-regularized-analytic-batch-adaptive-auto-run-01-job-01.tbvol",
+          "output_retained": false
+        },
+        {
+          "job_label": "job-02",
+          "job_id": "processing-1776869627-0002",
+          "state": "completed",
+          "queue_wait_ms": 0.1147,
+          "elapsed_ms": 64584.2387,
+          "total_tiles": 136,
+          "completed_tiles": 136,
+          "total_partitions": 23,
+          "completed_partitions": 23,
+          "peak_active_partitions": 23,
+          "retry_count": 0,
+          "output_bytes": 1303690669,
+          "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-batch-benchmarks\\f3-dataset-regularized-analytic-batch-adaptive-auto-run-01-job-02.tbvol",
+          "output_retained": false
+        },
+        {
+          "job_label": "job-03",
+          "job_id": "processing-1776869627-0003",
+          "state": "completed",
+          "queue_wait_ms": 0.0679,
+          "elapsed_ms": 63425.774699999994,
+          "total_tiles": 136,
+          "completed_tiles": 136,
+          "total_partitions": 23,
+          "completed_partitions": 23,
+          "peak_active_partitions": 23,
+          "retry_count": 0,
+          "output_bytes": 1303690669,
+          "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-batch-benchmarks\\f3-dataset-regularized-analytic-batch-adaptive-auto-run-01-job-03.tbvol",
+          "output_retained": false
+        },
+        {
+          "job_label": "job-04",
+          "job_id": "processing-1776869627-0004",
+          "state": "completed",
+          "queue_wait_ms": 63918.8338,
+          "elapsed_ms": 22078.272599999997,
+          "total_tiles": 136,
+          "completed_tiles": 136,
+          "total_partitions": 23,
+          "completed_partitions": 23,
+          "peak_active_partitions": 23,
+          "retry_count": 0,
+          "output_bytes": 1303690669,
+          "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-batch-benchmarks\\f3-dataset-regularized-analytic-batch-adaptive-auto-run-01-job-04.tbvol",
+          "output_retained": false
+        }
+      ]
+    },
+    {
+      "label": "auto-requested-auto-effective-3",
+      "effective_max_active_jobs": 3,
+      "execution_mode": "auto",
+      "scheduler_reason": "auto_medium_cost_batch",
+      "worker_budget": 24,
+      "global_cap": 24,
+      "max_memory_cost_class": "medium",
+      "max_estimated_peak_memory_bytes": 201326592,
+      "max_expected_partition_count": 5,
+      "repeat_index": 2,
+      "batch_elapsed_ms": 83838.6715,
+      "completed_jobs": 4,
+      "total_jobs": 4,
+      "avg_queue_wait_ms": 11905.185425000001,
+      "max_queue_wait_ms": 47620.5048,
+      "avg_job_elapsed_ms": 60127.791574999996,
+      "min_job_elapsed_ms": 26293.2332,
+      "max_job_elapsed_ms": 83645.7904,
+      "avg_total_partitions": 23.0,
+      "avg_peak_active_partitions": 23.0,
+      "jobs": [
+        {
+          "job_label": "job-01",
+          "job_id": "processing-1776869713-0001",
+          "state": "completed",
+          "queue_wait_ms": 0.1226,
+          "elapsed_ms": 83139.0993,
+          "total_tiles": 136,
+          "completed_tiles": 136,
+          "total_partitions": 23,
+          "completed_partitions": 23,
+          "peak_active_partitions": 23,
+          "retry_count": 0,
+          "output_bytes": 1303690669,
+          "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-batch-benchmarks\\f3-dataset-regularized-analytic-batch-adaptive-auto-run-02-job-01.tbvol",
+          "output_retained": false
+        },
+        {
+          "job_label": "job-02",
+          "job_id": "processing-1776869713-0002",
+          "state": "completed",
+          "queue_wait_ms": 0.0648,
+          "elapsed_ms": 47433.0434,
+          "total_tiles": 136,
+          "completed_tiles": 136,
+          "total_partitions": 23,
+          "completed_partitions": 23,
+          "peak_active_partitions": 23,
+          "retry_count": 0,
+          "output_bytes": 1303690669,
+          "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-batch-benchmarks\\f3-dataset-regularized-analytic-batch-adaptive-auto-run-02-job-02.tbvol",
+          "output_retained": false
+        },
+        {
+          "job_label": "job-03",
+          "job_id": "processing-1776869713-0003",
+          "state": "completed",
+          "queue_wait_ms": 0.049499999999999995,
+          "elapsed_ms": 83645.7904,
+          "total_tiles": 136,
+          "completed_tiles": 136,
+          "total_partitions": 23,
+          "completed_partitions": 23,
+          "peak_active_partitions": 23,
+          "retry_count": 0,
+          "output_bytes": 1303690669,
+          "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-batch-benchmarks\\f3-dataset-regularized-analytic-batch-adaptive-auto-run-02-job-03.tbvol",
+          "output_retained": false
+        },
+        {
+          "job_label": "job-04",
+          "job_id": "processing-1776869713-0004",
+          "state": "completed",
+          "queue_wait_ms": 47620.5048,
+          "elapsed_ms": 26293.2332,
+          "total_tiles": 136,
+          "completed_tiles": 136,
+          "total_partitions": 23,
+          "completed_partitions": 23,
+          "peak_active_partitions": 23,
+          "retry_count": 0,
+          "output_bytes": 1303690669,
+          "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-batch-benchmarks\\f3-dataset-regularized-analytic-batch-adaptive-auto-run-02-job-04.tbvol",
+          "output_retained": false
+        }
+      ]
+    }
+  ],
+  "summaries": [
+    {
+      "label": "auto-requested-auto-effective-3",
+      "effective_max_active_jobs": 3,
+      "execution_mode": "auto",
+      "scheduler_reason": "auto_medium_cost_batch",
+      "run_count": 2,
+      "avg_batch_elapsed_ms": 85008.94625000001,
+      "min_batch_elapsed_ms": 83838.6715,
+      "max_batch_elapsed_ms": 86179.221,
+      "avg_queue_wait_ms": 13942.4865,
+      "avg_job_elapsed_ms": 56773.163875
+    }
+  ]
+}

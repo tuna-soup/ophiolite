@@ -3,11 +3,15 @@ use std::time::Instant;
 
 use seis_contracts_operations::IPC_SCHEMA_VERSION;
 use seis_runtime::{
-    DatasetId, FrequencyPhaseMode, FrequencyWindowShape, PreviewTraceLocalProcessingRequest,
-    PreviewTraceLocalProcessingResponse, ProcessingOperation, SectionAxis, SectionRequest,
-    TraceLocalProcessingPipeline, TraceLocalProcessingStep, open_store,
+    DatasetId, FrequencyPhaseMode, FrequencyWindowShape, LocalVolumeStatistic,
+    NeighborhoodDipOutput, PostStackNeighborhoodProcessingOperation,
+    PostStackNeighborhoodProcessingPipeline, PostStackNeighborhoodWindow,
+    PreviewPostStackNeighborhoodProcessingRequest, PreviewPostStackNeighborhoodProcessingResponse,
+    PreviewTraceLocalProcessingRequest, PreviewTraceLocalProcessingResponse, ProcessingOperation,
+    SectionAxis, SectionRequest, TraceLocalProcessingPipeline, TraceLocalProcessingStep,
+    open_store,
 };
-use traceboost_app::preview_processing;
+use traceboost_app::{preview_post_stack_neighborhood_processing, preview_processing};
 
 use crate::preview_session::PreviewSessionState;
 
@@ -19,6 +23,15 @@ struct Scenario {
     warmup_pipeline: TraceLocalProcessingPipeline,
     full_pipeline: TraceLocalProcessingPipeline,
     prefix_len: usize,
+}
+
+#[derive(Debug, Clone)]
+struct NeighborhoodScenario {
+    name: &'static str,
+    warmup_pipeline: PostStackNeighborhoodProcessingPipeline,
+    full_pipeline: PostStackNeighborhoodProcessingPipeline,
+    expect_prefix_cache_hit: bool,
+    min_reused_prefix_operations: usize,
 }
 
 #[derive(Debug)]
@@ -65,6 +78,20 @@ fn steps(operations: Vec<ProcessingOperation>) -> Vec<TraceLocalProcessingStep> 
             checkpoint: false,
         })
         .collect()
+}
+
+fn trace_local_pipeline_named(
+    name: &str,
+    steps: Vec<TraceLocalProcessingStep>,
+) -> TraceLocalProcessingPipeline {
+    TraceLocalProcessingPipeline {
+        schema_version: 2,
+        revision: 1,
+        preset_id: None,
+        name: Some(name.to_string()),
+        description: None,
+        steps,
+    }
 }
 
 fn scenarios() -> Vec<Scenario> {
@@ -238,6 +265,191 @@ fn scenarios() -> Vec<Scenario> {
     ]
 }
 
+fn bandpass_10_20_60_80() -> ProcessingOperation {
+    ProcessingOperation::BandpassFilter {
+        f1_hz: 10.0,
+        f2_hz: 20.0,
+        f3_hz: 60.0,
+        f4_hz: 80.0,
+        phase: FrequencyPhaseMode::Zero,
+        window: FrequencyWindowShape::CosineTaper,
+    }
+}
+
+fn neighborhood_window(
+    gate_ms: f32,
+    inline_stepout: usize,
+    xline_stepout: usize,
+) -> PostStackNeighborhoodWindow {
+    PostStackNeighborhoodWindow {
+        gate_ms,
+        inline_stepout,
+        xline_stepout,
+    }
+}
+
+fn neighborhood_pipeline_named(
+    name: &str,
+    trace_local_pipeline: Option<TraceLocalProcessingPipeline>,
+    operation: PostStackNeighborhoodProcessingOperation,
+) -> PostStackNeighborhoodProcessingPipeline {
+    PostStackNeighborhoodProcessingPipeline {
+        schema_version: 1,
+        revision: 1,
+        preset_id: None,
+        name: Some(name.to_string()),
+        description: None,
+        trace_local_pipeline,
+        operations: vec![operation],
+    }
+}
+
+fn neighborhood_scenarios() -> Vec<NeighborhoodScenario> {
+    let balanced_bandpass_prefix = trace_local_pipeline_named(
+        "Bandpass 10-20-60-80 Hz",
+        vec![TraceLocalProcessingStep {
+            operation: bandpass_10_20_60_80(),
+            checkpoint: false,
+        }],
+    );
+    vec![
+        NeighborhoodScenario {
+            name: "similarity_tight_no_prefix",
+            warmup_pipeline: neighborhood_pipeline_named(
+                "Similarity Tight",
+                None,
+                PostStackNeighborhoodProcessingOperation::Similarity {
+                    window: neighborhood_window(24.0, 1, 1),
+                },
+            ),
+            full_pipeline: neighborhood_pipeline_named(
+                "Similarity Tight",
+                None,
+                PostStackNeighborhoodProcessingOperation::Similarity {
+                    window: neighborhood_window(24.0, 1, 1),
+                },
+            ),
+            expect_prefix_cache_hit: false,
+            min_reused_prefix_operations: 0,
+        },
+        NeighborhoodScenario {
+            name: "similarity_balanced_bandpass_prefix",
+            warmup_pipeline: neighborhood_pipeline_named(
+                "Similarity Warmup",
+                Some(balanced_bandpass_prefix.clone()),
+                PostStackNeighborhoodProcessingOperation::Similarity {
+                    window: neighborhood_window(24.0, 1, 1),
+                },
+            ),
+            full_pipeline: neighborhood_pipeline_named(
+                "Similarity Balanced",
+                Some(balanced_bandpass_prefix.clone()),
+                PostStackNeighborhoodProcessingOperation::Similarity {
+                    window: neighborhood_window(32.0, 2, 2),
+                },
+            ),
+            expect_prefix_cache_hit: true,
+            min_reused_prefix_operations: 1,
+        },
+        NeighborhoodScenario {
+            name: "local_stats_balanced_no_prefix",
+            warmup_pipeline: neighborhood_pipeline_named(
+                "Local RMS Balanced",
+                None,
+                PostStackNeighborhoodProcessingOperation::LocalVolumeStats {
+                    window: neighborhood_window(32.0, 2, 2),
+                    statistic: LocalVolumeStatistic::Rms,
+                },
+            ),
+            full_pipeline: neighborhood_pipeline_named(
+                "Local RMS Balanced",
+                None,
+                PostStackNeighborhoodProcessingOperation::LocalVolumeStats {
+                    window: neighborhood_window(32.0, 2, 2),
+                    statistic: LocalVolumeStatistic::Rms,
+                },
+            ),
+            expect_prefix_cache_hit: false,
+            min_reused_prefix_operations: 0,
+        },
+        NeighborhoodScenario {
+            name: "dip_balanced_bandpass_prefix",
+            warmup_pipeline: neighborhood_pipeline_named(
+                "Dip Warmup",
+                Some(balanced_bandpass_prefix.clone()),
+                PostStackNeighborhoodProcessingOperation::Dip {
+                    window: neighborhood_window(24.0, 1, 1),
+                    output: NeighborhoodDipOutput::Inline,
+                },
+            ),
+            full_pipeline: neighborhood_pipeline_named(
+                "Dip Balanced",
+                Some(balanced_bandpass_prefix),
+                PostStackNeighborhoodProcessingOperation::Dip {
+                    window: neighborhood_window(32.0, 2, 2),
+                    output: NeighborhoodDipOutput::Inline,
+                },
+            ),
+            expect_prefix_cache_hit: true,
+            min_reused_prefix_operations: 1,
+        },
+    ]
+}
+
+fn dip_profile_scenarios() -> Vec<NeighborhoodScenario> {
+    let balanced_bandpass_prefix = trace_local_pipeline_named(
+        "Bandpass 10-20-60-80 Hz",
+        vec![TraceLocalProcessingStep {
+            operation: bandpass_10_20_60_80(),
+            checkpoint: false,
+        }],
+    );
+    vec![
+        NeighborhoodScenario {
+            name: "dip_balanced_no_prefix",
+            warmup_pipeline: neighborhood_pipeline_named(
+                "Dip Balanced",
+                None,
+                PostStackNeighborhoodProcessingOperation::Dip {
+                    window: neighborhood_window(32.0, 2, 2),
+                    output: NeighborhoodDipOutput::Inline,
+                },
+            ),
+            full_pipeline: neighborhood_pipeline_named(
+                "Dip Balanced",
+                None,
+                PostStackNeighborhoodProcessingOperation::Dip {
+                    window: neighborhood_window(32.0, 2, 2),
+                    output: NeighborhoodDipOutput::Inline,
+                },
+            ),
+            expect_prefix_cache_hit: false,
+            min_reused_prefix_operations: 0,
+        },
+        NeighborhoodScenario {
+            name: "dip_balanced_bandpass_prefix",
+            warmup_pipeline: neighborhood_pipeline_named(
+                "Dip Warmup",
+                Some(balanced_bandpass_prefix.clone()),
+                PostStackNeighborhoodProcessingOperation::Dip {
+                    window: neighborhood_window(24.0, 1, 1),
+                    output: NeighborhoodDipOutput::Inline,
+                },
+            ),
+            full_pipeline: neighborhood_pipeline_named(
+                "Dip Balanced",
+                Some(balanced_bandpass_prefix),
+                PostStackNeighborhoodProcessingOperation::Dip {
+                    window: neighborhood_window(32.0, 2, 2),
+                    output: NeighborhoodDipOutput::Inline,
+                },
+            ),
+            expect_prefix_cache_hit: true,
+            min_reused_prefix_operations: 1,
+        },
+    ]
+}
+
 fn make_request(
     store_path: &str,
     dataset_id: &DatasetId,
@@ -257,9 +469,48 @@ fn make_request(
     }
 }
 
+fn make_neighborhood_request(
+    store_path: &str,
+    dataset_id: &DatasetId,
+    axis: SectionAxis,
+    index: usize,
+    pipeline: &PostStackNeighborhoodProcessingPipeline,
+) -> PreviewPostStackNeighborhoodProcessingRequest {
+    PreviewPostStackNeighborhoodProcessingRequest {
+        schema_version: IPC_SCHEMA_VERSION,
+        store_path: store_path.to_string(),
+        section: SectionRequest {
+            dataset_id: dataset_id.clone(),
+            axis,
+            index,
+        },
+        pipeline: pipeline.clone(),
+    }
+}
+
 fn assert_same_preview(
     left: &PreviewTraceLocalProcessingResponse,
     right: &PreviewTraceLocalProcessingResponse,
+) {
+    assert_eq!(left.preview.section.traces, right.preview.section.traces);
+    assert_eq!(left.preview.section.samples, right.preview.section.samples);
+    assert_eq!(
+        left.preview.section.amplitudes_f32le,
+        right.preview.section.amplitudes_f32le
+    );
+    assert_eq!(
+        left.preview.section.sample_axis_f32le,
+        right.preview.section.sample_axis_f32le
+    );
+    assert_eq!(
+        left.preview.section.horizontal_axis_f64le,
+        right.preview.section.horizontal_axis_f64le
+    );
+}
+
+fn assert_same_neighborhood_preview(
+    left: &PreviewPostStackNeighborhoodProcessingResponse,
+    right: &PreviewPostStackNeighborhoodProcessingResponse,
 ) {
     assert_eq!(left.preview.section.traces, right.preview.section.traces);
     assert_eq!(left.preview.section.samples, right.preview.section.samples);
@@ -364,6 +615,151 @@ fn run_session_case(
     }
 }
 
+fn run_neighborhood_stateless_case(
+    store_path: &str,
+    dataset_id: &DatasetId,
+    axis: SectionAxis,
+    index: usize,
+    scenario: &NeighborhoodScenario,
+) -> BenchmarkCase {
+    let mut iterations_ms = Vec::with_capacity(BENCH_ITERATIONS);
+    for _ in 0..BENCH_ITERATIONS {
+        let full =
+            make_neighborhood_request(store_path, dataset_id, axis, index, &scenario.full_pipeline);
+        let started = Instant::now();
+        let _ = preview_post_stack_neighborhood_processing(full)
+            .expect("stateless neighborhood preview");
+        iterations_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+    }
+    BenchmarkCase {
+        axis: axis_label(axis),
+        index,
+        scenario: scenario.name,
+        strategy: "desktop_stateless_preview",
+        median_ms: median(&iterations_ms),
+        iterations_ms,
+    }
+}
+
+fn run_neighborhood_session_repeat_case(
+    store_path: &str,
+    dataset_id: &DatasetId,
+    axis: SectionAxis,
+    index: usize,
+    scenario: &NeighborhoodScenario,
+) -> BenchmarkCase {
+    let mut iterations_ms = Vec::with_capacity(BENCH_ITERATIONS);
+    for _ in 0..BENCH_ITERATIONS {
+        let baseline_request =
+            make_neighborhood_request(store_path, dataset_id, axis, index, &scenario.full_pipeline);
+        let baseline = preview_post_stack_neighborhood_processing(baseline_request)
+            .expect("stateless neighborhood baseline preview");
+        let state = PreviewSessionState::default();
+        let full_request =
+            make_neighborhood_request(store_path, dataset_id, axis, index, &scenario.full_pipeline);
+        let (_, cold_reuse) = state
+            .preview_post_stack_neighborhood_processing(full_request.clone())
+            .expect("neighborhood session cold preview");
+        assert!(
+            !cold_reuse.cache_hit,
+            "cold neighborhood preview should not hit session cache"
+        );
+        let started = Instant::now();
+        let (response, reuse) = state
+            .preview_post_stack_neighborhood_processing(full_request)
+            .expect("neighborhood session repeated preview");
+        iterations_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        if scenario.expect_prefix_cache_hit {
+            assert!(reuse.cache_hit, "expected neighborhood preview cache hit");
+            assert!(
+                reuse.reused_prefix_operations >= scenario.min_reused_prefix_operations,
+                "expected at least {} reused prefix operations, got {}",
+                scenario.min_reused_prefix_operations,
+                reuse.reused_prefix_operations
+            );
+        } else {
+            assert!(
+                !reuse.cache_hit,
+                "unexpected neighborhood preview cache hit for {}",
+                scenario.name
+            );
+            assert_eq!(reuse.reused_prefix_operations, 0);
+        }
+        assert_same_neighborhood_preview(&response, &baseline);
+    }
+    BenchmarkCase {
+        axis: axis_label(axis),
+        index,
+        scenario: scenario.name,
+        strategy: "desktop_session_repeat",
+        median_ms: median(&iterations_ms),
+        iterations_ms,
+    }
+}
+
+fn run_neighborhood_session_prefix_edit_case(
+    store_path: &str,
+    dataset_id: &DatasetId,
+    axis: SectionAxis,
+    index: usize,
+    scenario: &NeighborhoodScenario,
+) -> BenchmarkCase {
+    let mut iterations_ms = Vec::with_capacity(BENCH_ITERATIONS);
+    for _ in 0..BENCH_ITERATIONS {
+        let baseline_request =
+            make_neighborhood_request(store_path, dataset_id, axis, index, &scenario.full_pipeline);
+        let baseline = preview_post_stack_neighborhood_processing(baseline_request)
+            .expect("stateless neighborhood baseline preview");
+        let state = PreviewSessionState::default();
+        let warmup_request = make_neighborhood_request(
+            store_path,
+            dataset_id,
+            axis,
+            index,
+            &scenario.warmup_pipeline,
+        );
+        let full_request =
+            make_neighborhood_request(store_path, dataset_id, axis, index, &scenario.full_pipeline);
+        let (_, warmup_reuse) = state
+            .preview_post_stack_neighborhood_processing(warmup_request)
+            .expect("neighborhood session warmup preview");
+        assert!(
+            !warmup_reuse.cache_hit,
+            "warmup neighborhood preview should not hit session cache"
+        );
+        let started = Instant::now();
+        let (response, reuse) = state
+            .preview_post_stack_neighborhood_processing(full_request)
+            .expect("neighborhood session prefix-edit preview");
+        iterations_ms.push(started.elapsed().as_secs_f64() * 1000.0);
+        if scenario.expect_prefix_cache_hit {
+            assert!(reuse.cache_hit, "expected neighborhood preview cache hit");
+            assert!(
+                reuse.reused_prefix_operations >= scenario.min_reused_prefix_operations,
+                "expected at least {} reused prefix operations, got {}",
+                scenario.min_reused_prefix_operations,
+                reuse.reused_prefix_operations
+            );
+        } else {
+            assert!(
+                !reuse.cache_hit,
+                "unexpected neighborhood preview cache hit for {}",
+                scenario.name
+            );
+            assert_eq!(reuse.reused_prefix_operations, 0);
+        }
+        assert_same_neighborhood_preview(&response, &baseline);
+    }
+    BenchmarkCase {
+        axis: axis_label(axis),
+        index,
+        scenario: scenario.name,
+        strategy: "desktop_session_prefix_edit",
+        median_ms: median(&iterations_ms),
+        iterations_ms,
+    }
+}
+
 fn print_cases(store_path: &str, cases: &[BenchmarkCase]) {
     println!("Desktop Preview Session Benchmark: {store_path}");
     println!("Iterations per case: {BENCH_ITERATIONS}");
@@ -410,6 +806,108 @@ fn benchmark_desktop_preview_session_large_f3() {
             &scenario,
         ));
         cases.push(run_session_case(
+            &store_path.to_string_lossy(),
+            &dataset_id,
+            SectionAxis::Xline,
+            xline_index,
+            &scenario,
+        ));
+    }
+    for scenario in neighborhood_scenarios() {
+        cases.push(run_neighborhood_stateless_case(
+            &store_path.to_string_lossy(),
+            &dataset_id,
+            SectionAxis::Inline,
+            inline_index,
+            &scenario,
+        ));
+        cases.push(run_neighborhood_session_repeat_case(
+            &store_path.to_string_lossy(),
+            &dataset_id,
+            SectionAxis::Inline,
+            inline_index,
+            &scenario,
+        ));
+        cases.push(run_neighborhood_session_prefix_edit_case(
+            &store_path.to_string_lossy(),
+            &dataset_id,
+            SectionAxis::Inline,
+            inline_index,
+            &scenario,
+        ));
+        cases.push(run_neighborhood_stateless_case(
+            &store_path.to_string_lossy(),
+            &dataset_id,
+            SectionAxis::Xline,
+            xline_index,
+            &scenario,
+        ));
+        cases.push(run_neighborhood_session_repeat_case(
+            &store_path.to_string_lossy(),
+            &dataset_id,
+            SectionAxis::Xline,
+            xline_index,
+            &scenario,
+        ));
+        cases.push(run_neighborhood_session_prefix_edit_case(
+            &store_path.to_string_lossy(),
+            &dataset_id,
+            SectionAxis::Xline,
+            xline_index,
+            &scenario,
+        ));
+    }
+
+    print_cases(&store_path.display().to_string(), &cases);
+}
+
+#[test]
+#[ignore]
+fn benchmark_desktop_preview_session_dip_profile_large_f3() {
+    let store_path = benchmark_store_path();
+    let handle = open_store(&store_path).expect("open desktop preview benchmark store");
+    let dataset_id = handle.dataset_id();
+    let inline_index = handle.manifest.volume.shape[0] / 2;
+    let xline_index = handle.manifest.volume.shape[1] / 2;
+
+    let mut cases = Vec::new();
+    for scenario in dip_profile_scenarios() {
+        cases.push(run_neighborhood_stateless_case(
+            &store_path.to_string_lossy(),
+            &dataset_id,
+            SectionAxis::Inline,
+            inline_index,
+            &scenario,
+        ));
+        cases.push(run_neighborhood_session_repeat_case(
+            &store_path.to_string_lossy(),
+            &dataset_id,
+            SectionAxis::Inline,
+            inline_index,
+            &scenario,
+        ));
+        cases.push(run_neighborhood_session_prefix_edit_case(
+            &store_path.to_string_lossy(),
+            &dataset_id,
+            SectionAxis::Inline,
+            inline_index,
+            &scenario,
+        ));
+        cases.push(run_neighborhood_stateless_case(
+            &store_path.to_string_lossy(),
+            &dataset_id,
+            SectionAxis::Xline,
+            xline_index,
+            &scenario,
+        ));
+        cases.push(run_neighborhood_session_repeat_case(
+            &store_path.to_string_lossy(),
+            &dataset_id,
+            SectionAxis::Xline,
+            xline_index,
+            &scenario,
+        ));
+        cases.push(run_neighborhood_session_prefix_edit_case(
             &store_path.to_string_lossy(),
             &dataset_id,
             SectionAxis::Xline,

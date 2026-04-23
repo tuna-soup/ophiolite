@@ -78,6 +78,8 @@ function Test-HeavyBenchmarkCommand {
     $patterns = @(
         'traceboost-app(?:\.exe)?\s+benchmark-trace-local-processing',
         'traceboost-app(?:\.exe)?\s+benchmark-trace-local-batch-processing',
+        'traceboost-app(?:\.exe)?\s+benchmark-post-stack-neighborhood-preview',
+        'traceboost-app(?:\.exe)?\s+benchmark-post-stack-neighborhood-processing',
         'benchmark_desktop_preview_session_',
         'benchmark_processing_cache_',
         'cargo\s+bench',

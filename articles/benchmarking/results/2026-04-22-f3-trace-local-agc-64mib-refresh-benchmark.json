@@ -1,0 +1,125 @@
+{
+  "store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-benchmarks\\f3_dataset_regularized.tbvol",
+  "scenario": "agc",
+  "source_shape": [
+    651,
+    951,
+    462
+  ],
+  "source_chunk_shape": [
+    82,
+    56,
+    462
+  ],
+  "adaptive_partition_target": false,
+  "pipeline": {
+    "schema_version": 1,
+    "revision": 1,
+    "preset_id": null,
+    "name": "benchmark-agc",
+    "description": "Headless trace-local benchmark pipeline",
+    "steps": [
+      {
+        "operation": "trace_rms_normalize",
+        "checkpoint": false
+      },
+      {
+        "operation": {
+          "agc_rms": {
+            "window_ms": 250.0
+          }
+        },
+        "checkpoint": false
+      }
+    ]
+  },
+  "runs": [
+    {
+      "label": "serial",
+      "scenario": "agc",
+      "repeat_index": 1,
+      "elapsed_ms": 3996.4408000000003,
+      "total_tiles": 136,
+      "completed_tiles": 136,
+      "total_partitions": 1,
+      "completed_partitions": 1,
+      "peak_active_partitions": 1,
+      "retry_count": 0,
+      "output_bytes": 1303690406,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-benchmarks\\f3-dataset-regularized-agc-run-serial-run-01.tbvol",
+      "output_retained": false
+    },
+    {
+      "label": "serial",
+      "scenario": "agc",
+      "repeat_index": 2,
+      "elapsed_ms": 4119.9262,
+      "total_tiles": 136,
+      "completed_tiles": 136,
+      "total_partitions": 1,
+      "completed_partitions": 1,
+      "peak_active_partitions": 1,
+      "retry_count": 0,
+      "output_bytes": 1303690406,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-benchmarks\\f3-dataset-regularized-agc-run-serial-run-02.tbvol",
+      "output_retained": false
+    },
+    {
+      "label": "partitioned-64mib",
+      "scenario": "agc",
+      "partition_target_bytes": 67108864,
+      "repeat_index": 1,
+      "elapsed_ms": 3331.5307000000003,
+      "total_tiles": 136,
+      "completed_tiles": 136,
+      "total_partitions": 20,
+      "completed_partitions": 20,
+      "peak_active_partitions": 20,
+      "retry_count": 0,
+      "output_bytes": 1303690406,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-benchmarks\\f3-dataset-regularized-agc-run-partitioned-64mib-run-01.tbvol",
+      "output_retained": false
+    },
+    {
+      "label": "partitioned-64mib",
+      "scenario": "agc",
+      "partition_target_bytes": 67108864,
+      "repeat_index": 2,
+      "elapsed_ms": 3150.9631,
+      "total_tiles": 136,
+      "completed_tiles": 136,
+      "total_partitions": 20,
+      "completed_partitions": 20,
+      "peak_active_partitions": 20,
+      "retry_count": 0,
+      "output_bytes": 1303690406,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-benchmarks\\f3-dataset-regularized-agc-run-partitioned-64mib-run-02.tbvol",
+      "output_retained": false
+    }
+  ],
+  "variants": [
+    {
+      "label": "partitioned-64mib",
+      "scenario": "agc",
+      "partition_target_bytes": 67108864,
+      "run_count": 2,
+      "avg_elapsed_ms": 3241.2469,
+      "min_elapsed_ms": 3150.9631,
+      "max_elapsed_ms": 3331.5307000000003,
+      "total_tiles": 136,
+      "avg_total_partitions": 20.0,
+      "avg_peak_active_partitions": 20.0
+    },
+    {
+      "label": "serial",
+      "scenario": "agc",
+      "run_count": 2,
+      "avg_elapsed_ms": 4058.1835,
+      "min_elapsed_ms": 3996.4408000000003,
+      "max_elapsed_ms": 4119.9262,
+      "total_tiles": 136,
+      "avg_total_partitions": 1.0,
+      "avg_peak_active_partitions": 1.0
+    }
+  ]
+}

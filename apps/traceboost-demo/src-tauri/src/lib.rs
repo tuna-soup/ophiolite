@@ -6,6 +6,7 @@ mod preview_session;
 mod processing;
 mod processing_cache;
 mod project_settings;
+mod security;
 mod segy_import_recipes;
 mod workspace;
 
@@ -16,9 +17,9 @@ mod processing_cache_bench;
 
 use ophiolite::{
     AssetBindingInput, AssetKind, AssetStatus, CheckshotVspObservationSet1D, ComputeParameterValue,
-    ManualTimeDepthPickSet1D, OphioliteProject, ProjectComputeRunRequest,
+    ManualTimeDepthPickSet1D, OperatorCatalog, OphioliteProject, ProjectComputeRunRequest,
     ProjectSurveyMapRequestDto, ResolveSectionWellOverlaysResponse, SURVEY_MAP_CONTRACT_VERSION,
-    SectionWellOverlayRequestDto, SurveyMapTransformStatusDto,
+    SectionWellOverlayRequestDto, SeismicLayout, SurveyMapTransformStatusDto,
     WellMarkerHorizonResidualPointRecord, WellTieAnalysis1D, WellTieObservationSet1D,
     WellTimeDepthAuthoredModel1D, WellTimeDepthModel1D, resolve_dataset_summary_survey_map_source,
 };
@@ -38,15 +39,21 @@ use seis_contracts_operations::import_ops::{
     SurveyPreflightResponse, ValidateSegyImportPlanRequest,
 };
 use seis_contracts_operations::processing_ops::{
-    AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, CancelProcessingJobRequest,
-    CancelProcessingJobResponse, DeletePipelinePresetRequest, DeletePipelinePresetResponse,
-    GatherProcessingPipeline, GatherRequest, GatherView, GetProcessingJobRequest,
-    GetProcessingJobResponse, ListPipelinePresetsResponse, PreviewGatherProcessingRequest,
-    PreviewGatherProcessingResponse, PreviewSubvolumeProcessingRequest,
-    PreviewSubvolumeProcessingResponse, PreviewTraceLocalProcessingRequest,
-    PreviewTraceLocalProcessingResponse, RunGatherProcessingRequest, RunGatherProcessingResponse,
+    AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, CancelProcessingBatchRequest,
+    CancelProcessingBatchResponse, CancelProcessingJobRequest, CancelProcessingJobResponse,
+    DeletePipelinePresetRequest, DeletePipelinePresetResponse, GatherProcessingPipeline,
+    GatherRequest, GatherView, GetProcessingBatchRequest, GetProcessingBatchResponse,
+    GetProcessingJobRequest, GetProcessingJobResponse, ListPipelinePresetsResponse,
+    NeighborhoodDipOutput, PreviewGatherProcessingRequest, PreviewGatherProcessingResponse,
+    PreviewPostStackNeighborhoodProcessingRequest, PreviewPostStackNeighborhoodProcessingResponse,
+    PreviewSubvolumeProcessingRequest, PreviewSubvolumeProcessingResponse,
+    PreviewTraceLocalProcessingRequest, PreviewTraceLocalProcessingResponse,
+    RunGatherProcessingRequest, RunGatherProcessingResponse,
+    RunPostStackNeighborhoodProcessingRequest, RunPostStackNeighborhoodProcessingResponse,
     RunSubvolumeProcessingRequest, RunSubvolumeProcessingResponse, RunTraceLocalProcessingRequest,
     RunTraceLocalProcessingResponse, SavePipelinePresetRequest, SavePipelinePresetResponse,
+    SubmitProcessingBatchRequest, SubmitProcessingBatchResponse,
+    SubmitTraceLocalProcessingBatchRequest, SubmitTraceLocalProcessingBatchResponse,
     VelocityScanRequest, VelocityScanResponse,
 };
 use seis_contracts_operations::resolve::{
@@ -59,13 +66,17 @@ use seis_contracts_operations::workspace::{
     SaveWorkspaceSessionResponse,
 };
 use seis_runtime::{
-    ImportedHorizonDescriptor, MaterializeOptions, ProcessingArtifactRole, ProcessingJobArtifact,
-    ProcessingJobArtifactKind, ProcessingPipelineSpec, SectionAxis, SectionHorizonOverlayView,
-    SectionTileView, SectionView, SubvolumeProcessingPipeline, TbvolManifest, TimeDepthDomain,
-    TraceLocalProcessingPipeline, VelocityFunctionSource, VelocityQuantityKind,
-    materialize_gather_processing_store_with_progress, materialize_processing_volume_with_progress,
+    ExecutionPlan, ExecutionPriorityClass, ImportedHorizonDescriptor, MaterializeOptions,
+    PartitionExecutionProgress, PlanningMode, PostStackNeighborhoodProcessingPipeline,
+    ProcessingArtifactRole, ProcessingBatchItemRequest, ProcessingJobArtifact,
+    ProcessingJobArtifactKind, ProcessingJobChunkPlanSummary, ProcessingPipelineSpec, SectionAxis,
+    SectionHorizonOverlayView, SectionTileView, SectionView, SubvolumeProcessingPipeline,
+    TbvolManifest, TimeDepthDomain, TraceLocalProcessingPipeline, VelocityFunctionSource,
+    VelocityQuantityKind, build_execution_plan, materialize_gather_processing_store_with_progress,
+    materialize_post_stack_neighborhood_processing_volume_with_progress,
+    materialize_processing_volume_with_partition_progress,
     materialize_subvolume_processing_volume_with_progress, open_store,
-    set_any_store_native_coordinate_reference,
+    resolve_trace_local_materialize_options, set_any_store_native_coordinate_reference,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -82,10 +93,11 @@ use tauri::{
 };
 use traceboost_app::{
     ExportZarrResponse, TraceBoostWorkflowService, amplitude_spectrum,
-    build_velocity_model_transform, convert_horizon_domain, default_export_segy_path,
-    default_export_zarr_path, export_dataset_zarr, import_horizon_xyz,
+    build_velocity_model_transform, convert_horizon_domain, dataset_operator_catalog,
+    default_export_segy_path, default_export_zarr_path, export_dataset_zarr, import_horizon_xyz,
     load_depth_converted_section, load_gather, load_horizon_assets, load_resolved_section_display,
-    open_dataset_summary, preview_gather_processing, preview_subvolume_processing,
+    open_dataset_summary, preview_gather_processing,
+    preview_post_stack_neighborhood_processing_label, preview_subvolume_processing,
     run_velocity_scan,
 };
 
@@ -106,6 +118,9 @@ use crate::processing_cache::ProcessingCacheState;
 use crate::project_settings::{
     ProjectDisplayCoordinateReference, ProjectGeospatialSettings, load_project_geospatial_settings,
     save_project_geospatial_settings,
+};
+use crate::security::{
+    GrantedPathSelection, OutputGrantPurpose, OutputPathGrantSelection, SecurityState,
 };
 use crate::segy_import_recipes::SegyImportRecipeState;
 use crate::workspace::WorkspaceState;
@@ -148,6 +163,123 @@ fn workflow_service() -> TraceBoostWorkflowService {
     TraceBoostWorkflowService
 }
 
+fn resolve_store_path_argument(
+    security: &SecurityState,
+    store_path: impl AsRef<str>,
+) -> Result<String, String> {
+    Ok(security
+        .resolve_store_path(store_path.as_ref().trim())?
+        .display()
+        .to_string())
+}
+
+fn resolve_optional_store_path_argument(
+    security: &SecurityState,
+    store_path: Option<String>,
+) -> Result<Option<String>, String> {
+    store_path
+        .map(|value| resolve_store_path_argument(security, value))
+        .transpose()
+}
+
+fn resolve_store_path_list_argument(
+    security: &SecurityState,
+    paths: &[String],
+) -> Result<Vec<String>, String> {
+    paths
+        .iter()
+        .map(|value| resolve_store_path_argument(security, value))
+        .collect()
+}
+
+fn resolve_project_root_argument(
+    security: &SecurityState,
+    project_root: impl AsRef<str>,
+) -> Result<String, String> {
+    Ok(security
+        .resolve_project_root(project_root.as_ref().trim())?
+        .display()
+        .to_string())
+}
+
+fn consume_output_path_argument(
+    security: &SecurityState,
+    grant_id: impl AsRef<str>,
+    purpose: OutputGrantPurpose,
+) -> Result<String, String> {
+    Ok(security
+        .consume_output_path(grant_id.as_ref().trim(), purpose)?
+        .display()
+        .to_string())
+}
+
+fn resolve_trace_local_pipeline_store_paths(
+    security: &SecurityState,
+    pipeline: &mut seis_runtime::TraceLocalProcessingPipeline,
+) -> Result<(), String> {
+    for step in &mut pipeline.steps {
+        if let seis_runtime::TraceLocalProcessingOperation::VolumeArithmetic {
+            secondary_store_path,
+            ..
+        } = &mut step.operation
+        {
+            *secondary_store_path =
+                resolve_store_path_argument(security, secondary_store_path.as_str())?;
+        }
+    }
+    Ok(())
+}
+
+fn resolve_subvolume_pipeline_store_paths(
+    security: &SecurityState,
+    pipeline: &mut SubvolumeProcessingPipeline,
+) -> Result<(), String> {
+    if let Some(trace_local_pipeline) = pipeline.trace_local_pipeline.as_mut() {
+        resolve_trace_local_pipeline_store_paths(security, trace_local_pipeline)?;
+    }
+    Ok(())
+}
+
+fn resolve_post_stack_neighborhood_pipeline_store_paths(
+    security: &SecurityState,
+    pipeline: &mut PostStackNeighborhoodProcessingPipeline,
+) -> Result<(), String> {
+    if let Some(trace_local_pipeline) = pipeline.trace_local_pipeline.as_mut() {
+        resolve_trace_local_pipeline_store_paths(security, trace_local_pipeline)?;
+    }
+    Ok(())
+}
+
+fn resolve_gather_pipeline_store_paths(
+    security: &SecurityState,
+    pipeline: &mut GatherProcessingPipeline,
+) -> Result<(), String> {
+    if let Some(trace_local_pipeline) = pipeline.trace_local_pipeline.as_mut() {
+        resolve_trace_local_pipeline_store_paths(security, trace_local_pipeline)?;
+    }
+    Ok(())
+}
+
+fn resolve_processing_pipeline_spec_store_paths(
+    security: &SecurityState,
+    pipeline: &mut ProcessingPipelineSpec,
+) -> Result<(), String> {
+    match pipeline {
+        ProcessingPipelineSpec::TraceLocal { pipeline } => {
+            resolve_trace_local_pipeline_store_paths(security, pipeline)
+        }
+        ProcessingPipelineSpec::Subvolume { pipeline } => {
+            resolve_subvolume_pipeline_store_paths(security, pipeline)
+        }
+        ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
+            resolve_post_stack_neighborhood_pipeline_store_paths(security, pipeline)
+        }
+        ProcessingPipelineSpec::Gather { pipeline } => {
+            resolve_gather_pipeline_store_paths(security, pipeline)
+        }
+    }
+}
+
 #[tauri::command]
 fn list_import_providers_command(
     import_manager: State<'_, ImportManagerState>,
@@ -161,6 +293,54 @@ fn begin_import_session_command(
     request: BeginImportSessionRequest,
 ) -> Result<ImportSessionEnvelope, String> {
     import_manager.begin_session(request)
+}
+
+#[tauri::command]
+fn pick_runtime_store_command(
+    app: AppHandle,
+    security: State<SecurityState>,
+) -> Result<Option<GrantedPathSelection>, String> {
+    security.pick_runtime_store(&app)
+}
+
+#[tauri::command]
+fn pick_project_root_command(
+    app: AppHandle,
+    security: State<SecurityState>,
+    title: Option<String>,
+) -> Result<Option<GrantedPathSelection>, String> {
+    security.pick_project_root(&app, title.as_deref())
+}
+
+#[tauri::command]
+fn pick_output_path_command(
+    app: AppHandle,
+    security: State<SecurityState>,
+    default_path: String,
+    purpose: OutputGrantPurpose,
+) -> Result<Option<OutputPathGrantSelection>, String> {
+    security.pick_output_path(&app, &default_path, purpose)
+}
+
+#[tauri::command]
+fn authorize_managed_store_command(
+    app: AppHandle,
+    security: State<SecurityState>,
+    path: String,
+) -> Result<GrantedPathSelection, String> {
+    let app_paths = AppPaths::resolve(&app)?;
+    security.authorize_managed_store(&app_paths, Path::new(&path))
+}
+
+#[tauri::command]
+fn authorize_managed_output_command(
+    app: AppHandle,
+    security: State<SecurityState>,
+    path: String,
+    purpose: OutputGrantPurpose,
+) -> Result<OutputPathGrantSelection, String> {
+    let app_paths = AppPaths::resolve(&app)?;
+    security.authorize_managed_output(&app_paths, Path::new(&path), purpose)
 }
 
 const PACKED_PREVIEW_MAGIC: &[u8; 8] = b"TBPRV001";
@@ -2859,6 +3039,14 @@ fn pipeline_output_slug(pipeline: &seis_runtime::TraceLocalProcessingPipeline) -
             seis_runtime::ProcessingOperation::PhaseRotation { angle_degrees } => {
                 format!("phase-rotation-{}", format_factor(*angle_degrees))
             }
+            seis_runtime::ProcessingOperation::Envelope => "envelope".to_string(),
+            seis_runtime::ProcessingOperation::InstantaneousPhase => {
+                "instantaneous-phase".to_string()
+            }
+            seis_runtime::ProcessingOperation::InstantaneousFrequency => {
+                "instantaneous-frequency".to_string()
+            }
+            seis_runtime::ProcessingOperation::Sweetness => "sweetness".to_string(),
             seis_runtime::ProcessingOperation::LowpassFilter { f3_hz, f4_hz, .. } => format!(
                 "lowpass-{}-{}",
                 format_factor(*f3_hz),
@@ -3086,6 +3274,26 @@ fn default_subvolume_processing_store_path(
     )
 }
 
+fn default_post_stack_neighborhood_processing_store_path(
+    app_paths: &AppPaths,
+    input_store_path: &str,
+    pipeline: &PostStackNeighborhoodProcessingPipeline,
+) -> Result<String, String> {
+    fs::create_dir_all(app_paths.derived_volumes_dir()).map_err(|error| error.to_string())?;
+    let source_stem = source_store_stem(input_store_path);
+    let pipeline_stem = sanitized_stem(
+        &preview_post_stack_neighborhood_processing_label(pipeline),
+        "post-stack-neighborhood",
+    );
+    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S").to_string();
+    let base_name = format!("{source_stem}.{pipeline_stem}.{timestamp}");
+    Ok(
+        unique_store_candidate(app_paths.derived_volumes_dir(), &base_name, "tbvol")
+            .display()
+            .to_string(),
+    )
+}
+
 fn default_gather_processing_store_path(
     app_paths: &AppPaths,
     input_store_path: &str,
@@ -3109,6 +3317,103 @@ struct TraceLocalProcessingStage {
     lineage_pipeline: TraceLocalProcessingPipeline,
     stage_label: String,
     artifact: ProcessingJobArtifact,
+    partition_target_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone)]
+struct StageExecutionSummaryState {
+    stage_label: String,
+    completed_partitions: usize,
+    total_partitions: Option<usize>,
+    retry_count: usize,
+}
+
+#[derive(Debug, Clone, Default)]
+struct JobExecutionSummaryState {
+    completed_partitions: usize,
+    total_partitions: Option<usize>,
+    active_partitions: usize,
+    peak_active_partitions: usize,
+    retry_count: usize,
+    resolved_chunk_plan: Option<ProcessingJobChunkPlanSummary>,
+    stages: Vec<StageExecutionSummaryState>,
+}
+
+impl JobExecutionSummaryState {
+    fn ensure_stage(&mut self, stage_label: &str) -> usize {
+        if let Some(index) = self
+            .stages
+            .iter()
+            .position(|stage| stage.stage_label == stage_label)
+        {
+            return index;
+        }
+        self.stages.push(StageExecutionSummaryState {
+            stage_label: stage_label.to_string(),
+            completed_partitions: 0,
+            total_partitions: None,
+            retry_count: 0,
+        });
+        self.stages.len() - 1
+    }
+
+    fn apply_partition_progress(
+        &mut self,
+        stage_label: &str,
+        progress: PartitionExecutionProgress,
+    ) {
+        let stage_index = self.ensure_stage(stage_label);
+        let previous_stage_completed = self.stages[stage_index].completed_partitions;
+        self.stages[stage_index].completed_partitions = progress.completed_partitions;
+        self.stages[stage_index].total_partitions = Some(progress.total_partitions);
+        self.stages[stage_index].retry_count = progress.retry_count;
+        self.completed_partitions = self.completed_partitions.saturating_add(
+            progress
+                .completed_partitions
+                .saturating_sub(previous_stage_completed),
+        );
+        self.total_partitions = Some(
+            self.stages
+                .iter()
+                .filter_map(|stage| stage.total_partitions)
+                .sum::<usize>(),
+        );
+        self.active_partitions = progress.active_partitions;
+        self.peak_active_partitions = self
+            .peak_active_partitions
+            .max(progress.peak_active_partitions);
+        self.retry_count = self.stages.iter().map(|stage| stage.retry_count).sum();
+    }
+
+    fn set_resolved_chunk_plan(
+        &mut self,
+        resolved_chunk_plan: Option<ProcessingJobChunkPlanSummary>,
+    ) {
+        if let Some(resolved_chunk_plan) = resolved_chunk_plan {
+            self.resolved_chunk_plan = Some(resolved_chunk_plan);
+        }
+    }
+
+    fn into_contract(self) -> seis_runtime::ProcessingJobExecutionSummary {
+        seis_runtime::ProcessingJobExecutionSummary {
+            completed_partitions: self.completed_partitions,
+            total_partitions: self.total_partitions,
+            active_partitions: self.active_partitions,
+            peak_active_partitions: self.peak_active_partitions,
+            retry_count: self.retry_count,
+            resolved_chunk_plan: self.resolved_chunk_plan,
+            stages: self
+                .stages
+                .into_iter()
+                .map(|stage| seis_runtime::ProcessingJobStageExecutionSummary {
+                    stage_label: stage.stage_label,
+                    completed_partitions: stage.completed_partitions,
+                    total_partitions: stage.total_partitions,
+                    retry_count: stage.retry_count,
+                })
+                .collect(),
+        }
+    }
 }
 
 fn processing_operation_display_label(operation: &seis_runtime::ProcessingOperation) -> String {
@@ -3123,6 +3428,12 @@ fn processing_operation_display_label(operation: &seis_runtime::ProcessingOperat
         seis_runtime::ProcessingOperation::PhaseRotation { angle_degrees } => {
             format!("phase rotation ({angle_degrees} deg)")
         }
+        seis_runtime::ProcessingOperation::Envelope => "envelope".to_string(),
+        seis_runtime::ProcessingOperation::InstantaneousPhase => "instantaneous phase".to_string(),
+        seis_runtime::ProcessingOperation::InstantaneousFrequency => {
+            "instantaneous frequency".to_string()
+        }
+        seis_runtime::ProcessingOperation::Sweetness => "sweetness".to_string(),
         seis_runtime::ProcessingOperation::LowpassFilter { f3_hz, f4_hz, .. } => {
             format!("lowpass ({f3_hz}/{f4_hz} Hz)")
         }
@@ -3161,6 +3472,94 @@ fn preview_processing_operation_labels(pipeline: &TraceLocalProcessingPipeline) 
         .operations()
         .map(processing_operation_display_label)
         .collect()
+}
+
+fn preview_post_stack_neighborhood_operation_ids(
+    pipeline: &PostStackNeighborhoodProcessingPipeline,
+) -> Vec<&'static str> {
+    pipeline
+        .operations
+        .iter()
+        .map(seis_runtime::PostStackNeighborhoodProcessingOperation::operator_id)
+        .collect()
+}
+
+fn preview_post_stack_neighborhood_operation_labels(
+    pipeline: &PostStackNeighborhoodProcessingPipeline,
+) -> Vec<String> {
+    pipeline
+        .operations
+        .iter()
+        .map(describe_post_stack_neighborhood_operation)
+        .collect()
+}
+
+fn describe_post_stack_neighborhood_operation(
+    operation: &seis_runtime::PostStackNeighborhoodProcessingOperation,
+) -> String {
+    match operation {
+        seis_runtime::PostStackNeighborhoodProcessingOperation::Similarity { window } => {
+            format!(
+                "similarity (gate {} ms, IL {}, XL {})",
+                window.gate_ms, window.inline_stepout, window.xline_stepout
+            )
+        }
+        seis_runtime::PostStackNeighborhoodProcessingOperation::LocalVolumeStats {
+            window,
+            statistic,
+        } => {
+            format!(
+                "local volume stats {} (gate {} ms, IL {}, XL {})",
+                local_volume_statistic_label(*statistic),
+                window.gate_ms,
+                window.inline_stepout,
+                window.xline_stepout
+            )
+        }
+        seis_runtime::PostStackNeighborhoodProcessingOperation::Dip { window, output } => {
+            format!(
+                "dip {} (gate {} ms, IL {}, XL {})",
+                neighborhood_dip_output_label(*output),
+                window.gate_ms,
+                window.inline_stepout,
+                window.xline_stepout
+            )
+        }
+    }
+}
+
+fn local_volume_statistic_label(statistic: seis_runtime::LocalVolumeStatistic) -> &'static str {
+    match statistic {
+        seis_runtime::LocalVolumeStatistic::Mean => "mean",
+        seis_runtime::LocalVolumeStatistic::Rms => "rms",
+        seis_runtime::LocalVolumeStatistic::Variance => "variance",
+        seis_runtime::LocalVolumeStatistic::Minimum => "minimum",
+        seis_runtime::LocalVolumeStatistic::Maximum => "maximum",
+    }
+}
+
+fn neighborhood_dip_output_label(output: NeighborhoodDipOutput) -> &'static str {
+    match output {
+        NeighborhoodDipOutput::Inline => "inline",
+        NeighborhoodDipOutput::Xline => "xline",
+        NeighborhoodDipOutput::Azimuth => "azimuth",
+        NeighborhoodDipOutput::AbsDip => "absolute dip",
+    }
+}
+
+fn post_stack_neighborhood_progress_label(
+    pipeline: &PostStackNeighborhoodProcessingPipeline,
+) -> &'static str {
+    match pipeline.operations.first() {
+        Some(seis_runtime::PostStackNeighborhoodProcessingOperation::Similarity { .. }) => {
+            "Similarity"
+        }
+        Some(seis_runtime::PostStackNeighborhoodProcessingOperation::LocalVolumeStats {
+            ..
+        }) => "Local Volume Stats",
+        Some(seis_runtime::PostStackNeighborhoodProcessingOperation::Dip { .. }) => "Dip",
+        None => "Neighborhood",
+    }
 }
 
 fn display_store_stem(store_path: &str) -> String {
@@ -3263,21 +3662,37 @@ fn checkpoint_output_store_path(
         .to_string()
 }
 
-fn build_trace_local_processing_stages_from(
+fn build_trace_local_processing_stages_from_plan(
     request: &RunTraceLocalProcessingRequest,
+    plan: &ExecutionPlan,
     final_output_store_path: &str,
     job_id: &str,
     start_operation_index: usize,
 ) -> Result<Vec<TraceLocalProcessingStage>, String> {
-    let checkpoint_indexes = resolve_trace_local_checkpoint_indexes(&request.pipeline, false)?;
-    let mut stage_end_indexes = checkpoint_indexes;
-    let final_step_index = request.pipeline.operation_count().saturating_sub(1);
-    stage_end_indexes.push(final_step_index);
-    stage_end_indexes.retain(|index| *index >= start_operation_index);
+    if !matches!(
+        plan.pipeline.family,
+        seis_runtime::ProcessingPipelineFamily::TraceLocal
+    ) {
+        return Err("execution plan family does not match trace-local processing".to_string());
+    }
 
-    let mut stages = Vec::with_capacity(stage_end_indexes.len());
-    let mut segment_start = start_operation_index;
-    for end_index in stage_end_indexes {
+    let mut stages = Vec::new();
+    for stage in &plan.stages {
+        let Some(segment) = stage.pipeline_segment.as_ref() else {
+            continue;
+        };
+        if !matches!(
+            segment.family,
+            seis_runtime::ProcessingPipelineFamily::TraceLocal
+        ) {
+            continue;
+        }
+        if segment.end_step_index < start_operation_index {
+            continue;
+        }
+
+        let segment_start = segment.start_step_index.max(start_operation_index);
+        let end_index = segment.end_step_index;
         let operation = request
             .pipeline
             .steps
@@ -3290,14 +3705,20 @@ fn build_trace_local_processing_stages_from(
             processing_operation_display_label(operation)
         );
         let artifact = ProcessingJobArtifact {
-            kind: if end_index == final_step_index {
+            kind: if matches!(
+                stage.stage_kind,
+                seis_runtime::ExecutionStageKind::FinalizeOutput
+            ) {
                 ProcessingJobArtifactKind::FinalOutput
             } else {
                 ProcessingJobArtifactKind::Checkpoint
             },
             step_index: end_index,
             label: stage_label.clone(),
-            store_path: if end_index == final_step_index {
+            store_path: if matches!(
+                stage.stage_kind,
+                seis_runtime::ExecutionStageKind::FinalizeOutput
+            ) {
                 final_output_store_path.to_string()
             } else {
                 checkpoint_output_store_path(final_output_store_path, job_id, end_index, operation)
@@ -3308,8 +3729,8 @@ fn build_trace_local_processing_stages_from(
             lineage_pipeline: pipeline_prefix(&request.pipeline, end_index),
             stage_label,
             artifact,
+            partition_target_bytes: stage.partition_spec.target_bytes,
         });
-        segment_start = end_index + 1;
     }
 
     Ok(stages)
@@ -3357,6 +3778,7 @@ fn build_trace_local_checkpoint_stages_from_pipeline(
             lineage_pipeline: pipeline_prefix(pipeline, end_index),
             stage_label,
             artifact,
+            partition_target_bytes: None,
         });
         segment_start = end_index + 1;
     }
@@ -3512,14 +3934,90 @@ fn trace_local_pipeline_hash(pipeline: &TraceLocalProcessingPipeline) -> Result<
     })
 }
 
-fn materialize_options_for_store(input_store_path: &str) -> Result<MaterializeOptions, String> {
+fn materialize_options_for_store(
+    input_store_path: &str,
+    partition_target_bytes: Option<u64>,
+) -> Result<MaterializeOptions, String> {
     let chunk_shape = open_store(input_store_path)
         .map_err(|error| error.to_string())?
         .manifest
         .tile_shape;
     Ok(MaterializeOptions {
         chunk_shape,
+        partition_target_bytes,
         ..MaterializeOptions::default()
+    })
+}
+
+fn resolve_trace_local_materialize_options_for_store(
+    input_store_path: &str,
+    plan: Option<&ExecutionPlan>,
+    partition_target_bytes: Option<u64>,
+) -> Result<seis_runtime::TraceLocalMaterializeOptionsResolution, String> {
+    let chunk_shape = open_store(input_store_path)
+        .map_err(|error| error.to_string())?
+        .manifest
+        .tile_shape;
+    let worker_count = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(4)
+        .saturating_sub(1)
+        .max(1);
+    Ok(resolve_trace_local_materialize_options(
+        plan,
+        chunk_shape,
+        false,
+        partition_target_bytes,
+        worker_count,
+        None,
+        1,
+    ))
+}
+
+fn planning_mode_for_priority(priority: ExecutionPriorityClass) -> PlanningMode {
+    match priority {
+        ExecutionPriorityClass::InteractivePreview => PlanningMode::InteractivePreview,
+        ExecutionPriorityClass::ForegroundMaterialize => PlanningMode::ForegroundMaterialize,
+        ExecutionPriorityClass::BackgroundBatch => PlanningMode::BackgroundBatch,
+    }
+}
+
+fn resolve_store_plan_source(
+    store_path: &str,
+) -> Result<(SeismicLayout, [usize; 3], [usize; 3]), String> {
+    let descriptor = open_dataset_summary(OpenDatasetRequest {
+        schema_version: IPC_SCHEMA_VERSION,
+        store_path: store_path.to_string(),
+    })
+    .map_err(|error| error.to_string())?
+    .dataset
+    .descriptor;
+    let layout = descriptor
+        .geometry
+        .summary
+        .layout
+        .ok_or_else(|| format!("Store '{store_path}' does not expose a seismic layout"))?;
+    Ok((layout, descriptor.shape, descriptor.chunk_shape))
+}
+
+fn build_processing_execution_plan_for_store(
+    store_path: &str,
+    layout: SeismicLayout,
+    source_shape: [usize; 3],
+    source_chunk_shape: [usize; 3],
+    pipeline: ProcessingPipelineSpec,
+    output_store_path: Option<String>,
+    priority: ExecutionPriorityClass,
+) -> Result<ExecutionPlan, String> {
+    build_execution_plan(&seis_runtime::PlanProcessingRequest {
+        store_path: store_path.to_string(),
+        layout,
+        source_shape: Some(source_shape),
+        source_chunk_shape: Some(source_chunk_shape),
+        pipeline,
+        output_store_path,
+        planning_mode: planning_mode_for_priority(priority),
+        max_active_partitions: None,
     })
 }
 
@@ -3640,30 +4138,48 @@ fn default_import_prestack_store_path_command(
 #[tauri::command]
 fn default_processing_store_path_command(
     app: AppHandle,
+    security: State<SecurityState>,
     store_path: String,
     pipeline: seis_runtime::TraceLocalProcessingPipeline,
 ) -> Result<String, String> {
     let app_paths = AppPaths::resolve(&app)?;
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     default_processing_store_path(&app_paths, &store_path, &pipeline)
 }
 
 #[tauri::command]
 fn default_subvolume_processing_store_path_command(
     app: AppHandle,
+    security: State<SecurityState>,
     store_path: String,
     pipeline: SubvolumeProcessingPipeline,
 ) -> Result<String, String> {
     let app_paths = AppPaths::resolve(&app)?;
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     default_subvolume_processing_store_path(&app_paths, &store_path, &pipeline)
+}
+
+#[tauri::command]
+fn default_post_stack_neighborhood_processing_store_path_command(
+    app: AppHandle,
+    security: State<SecurityState>,
+    store_path: String,
+    pipeline: PostStackNeighborhoodProcessingPipeline,
+) -> Result<String, String> {
+    let app_paths = AppPaths::resolve(&app)?;
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
+    default_post_stack_neighborhood_processing_store_path(&app_paths, &store_path, &pipeline)
 }
 
 #[tauri::command]
 fn default_gather_processing_store_path_command(
     app: AppHandle,
+    security: State<SecurityState>,
     store_path: String,
     pipeline: seis_runtime::GatherProcessingPipeline,
 ) -> Result<String, String> {
     let app_paths = AppPaths::resolve(&app)?;
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     default_gather_processing_store_path(&app_paths, &store_path, &pipeline)
 }
 
@@ -4011,8 +4527,14 @@ fn validate_segy_import_plan_command(
 fn import_segy_with_plan_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
-    request: ImportSegyWithPlanRequest,
+    security: State<SecurityState>,
+    mut request: ImportSegyWithPlanRequest,
 ) -> Result<ImportSegyWithPlanResponse, String> {
+    request.plan.policy.output_store_path = consume_output_path_argument(
+        &security,
+        &request.plan.policy.output_store_path,
+        OutputGrantPurpose::RuntimeStoreOutput,
+    )?;
     let operation = diagnostics.start_operation(
         &app,
         "import_segy_with_plan",
@@ -4067,11 +4589,17 @@ fn import_segy_with_plan_command(
 fn import_dataset_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     input_path: String,
     output_store_path: String,
     geometry_override: Option<seis_contracts_operations::SegyGeometryOverride>,
     overwrite_existing: bool,
 ) -> Result<ImportDatasetResponse, String> {
+    let output_store_path = consume_output_path_argument(
+        &security,
+        &output_store_path,
+        OutputGrantPurpose::RuntimeStoreOutput,
+    )?;
     let operation = diagnostics.start_operation(
         &app,
         "import_dataset",
@@ -4261,8 +4789,10 @@ fn import_prestack_offset_dataset_command(
 fn open_dataset_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
 ) -> Result<OpenDatasetResponse, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "open_dataset",
@@ -4320,13 +4850,65 @@ fn open_dataset_command(
 }
 
 #[tauri::command]
+fn dataset_operator_catalog_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
+    store_path: String,
+) -> Result<OperatorCatalog, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
+    let operation = diagnostics.start_operation(
+        &app,
+        "dataset_operator_catalog",
+        "Loading canonical dataset operator catalog",
+        Some(build_fields([
+            ("storePath", json_value(&store_path)),
+            ("stage", json_value("resolve_catalog")),
+        ])),
+    );
+
+    let result = dataset_operator_catalog(&store_path);
+    match result {
+        Ok(response) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Dataset operator catalog loaded",
+                Some(build_fields([
+                    ("storePath", json_value(&store_path)),
+                    ("operatorCount", json_value(response.operators.len())),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Dataset operator catalog failed",
+                Some(build_fields([
+                    ("storePath", json_value(&store_path)),
+                    ("error", json_value(&message)),
+                ])),
+            );
+            Err(message)
+        }
+    }
+}
+
+#[tauri::command]
 fn export_dataset_segy_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     output_path: String,
     overwrite_existing: bool,
 ) -> Result<ExportSegyResponse, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
+    let output_path =
+        consume_output_path_argument(&security, &output_path, OutputGrantPurpose::SegyExport)?;
     let operation = diagnostics.start_operation(
         &app,
         "export_dataset_segy",
@@ -4386,8 +4968,10 @@ fn export_dataset_segy_command(
 fn ensure_demo_survey_time_depth_transform_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
 ) -> Result<String, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "ensure_demo_survey_time_depth_transform",
@@ -4439,8 +5023,10 @@ fn ensure_demo_survey_time_depth_transform_command(
 fn load_velocity_models_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
 ) -> Result<LoadVelocityModelsResponse, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "load_velocity_models",
@@ -4486,8 +5072,10 @@ fn load_velocity_models_command(
 fn load_horizon_assets_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
 ) -> Result<Vec<seis_runtime::ImportedHorizonDescriptor>, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "load_horizon_assets",
@@ -4533,10 +5121,12 @@ fn load_horizon_assets_command(
 fn import_velocity_functions_model_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     input_path: String,
     velocity_kind: VelocityQuantityKind,
 ) -> Result<traceboost_app::ImportVelocityFunctionsModelResponse, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "import_velocity_functions_model",
@@ -4595,8 +5185,10 @@ fn import_velocity_functions_model_command(
 fn describe_velocity_volume_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
-    request: DescribeVelocityVolumeRequest,
+    security: State<SecurityState>,
+    mut request: DescribeVelocityVolumeRequest,
 ) -> Result<DescribeVelocityVolumeResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "describe_velocity_volume",
@@ -4657,8 +5249,14 @@ fn describe_velocity_volume_command(
 fn ingest_velocity_volume_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
-    request: IngestVelocityVolumeRequest,
+    security: State<SecurityState>,
+    mut request: IngestVelocityVolumeRequest,
 ) -> Result<IngestVelocityVolumeResponse, String> {
+    request.output_store_path = consume_output_path_argument(
+        &security,
+        &request.output_store_path,
+        OutputGrantPurpose::RuntimeStoreOutput,
+    )?;
     let operation = diagnostics.start_operation(
         &app,
         "ingest_velocity_volume",
@@ -4718,8 +5316,10 @@ fn ingest_velocity_volume_command(
 fn build_velocity_model_transform_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
-    request: BuildSurveyTimeDepthTransformRequest,
+    security: State<SecurityState>,
+    mut request: BuildSurveyTimeDepthTransformRequest,
 ) -> Result<seis_contracts_operations::SurveyTimeDepthTransform3D, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "build_velocity_model_transform",
@@ -4767,10 +5367,14 @@ fn build_velocity_model_transform_command(
 fn export_dataset_zarr_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     output_path: String,
     overwrite_existing: bool,
 ) -> Result<ExportZarrResponse, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
+    let output_path =
+        consume_output_path_argument(&security, &output_path, OutputGrantPurpose::ZarrExport)?;
     let operation = diagnostics.start_operation(
         &app,
         "export_dataset_zarr",
@@ -4823,6 +5427,7 @@ fn export_dataset_zarr_command(
 fn convert_horizon_domain_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     source_horizon_id: String,
     transform_id: String,
@@ -4830,6 +5435,7 @@ fn convert_horizon_domain_command(
     output_id: Option<String>,
     output_name: Option<String>,
 ) -> Result<seis_runtime::ImportedHorizonDescriptor, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let target_domain_label = match &target_domain {
         seis_runtime::TimeDepthDomain::Time => "time",
         seis_runtime::TimeDepthDomain::Depth => "depth",
@@ -4893,8 +5499,10 @@ fn convert_horizon_domain_command(
 
 #[tauri::command]
 fn get_dataset_export_capabilities_command(
+    security: State<SecurityState>,
     store_path: String,
 ) -> Result<DatasetExportCapabilitiesResponse, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let handle = open_store(&store_path).map_err(|error| error.to_string())?;
     let segy = match handle.manifest.volume.segy_export.as_ref() {
         Some(descriptor) if descriptor.contains_synthetic_traces => DatasetExportFormatCapability {
@@ -4942,6 +5550,7 @@ fn get_dataset_export_capabilities_command(
 fn preview_horizon_xyz_import_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     input_paths: Vec<String>,
     vertical_domain: Option<TimeDepthDomain>,
@@ -4950,6 +5559,7 @@ fn preview_horizon_xyz_import_command(
     source_coordinate_reference_name: Option<String>,
     assume_same_as_survey: bool,
 ) -> Result<seis_runtime::HorizonImportPreview, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "preview_horizon_xyz_import",
@@ -5159,8 +5769,10 @@ fn inspect_horizon_xyz_files_command(
 fn commit_horizon_source_import_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
-    request: CommitHorizonSourceImportRequest,
+    security: State<SecurityState>,
+    mut request: CommitHorizonSourceImportRequest,
 ) -> Result<ImportHorizonXyzResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "commit_horizon_source_import",
@@ -5222,6 +5834,7 @@ fn commit_horizon_source_import_command(
 fn import_horizon_xyz_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     input_paths: Vec<String>,
     vertical_domain: Option<TimeDepthDomain>,
@@ -5230,6 +5843,7 @@ fn import_horizon_xyz_command(
     source_coordinate_reference_name: Option<String>,
     assume_same_as_survey: bool,
 ) -> Result<ImportHorizonXyzResponse, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "import_horizon_xyz",
@@ -5295,10 +5909,12 @@ fn import_horizon_xyz_command(
 fn load_section_horizons_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     axis: SectionAxis,
     index: usize,
 ) -> Result<LoadSectionHorizonsResponse, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let axis_name = format!("{axis:?}").to_ascii_lowercase();
     let operation = diagnostics.start_operation(
         &app,
@@ -5358,10 +5974,12 @@ fn load_section_horizons_command(
 fn load_section_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     axis: SectionAxis,
     index: usize,
 ) -> Result<SectionView, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let axis_name = format!("{axis:?}").to_ascii_lowercase();
     let handle = open_store(&store_path).ok();
     let mut start_fields = vec![
@@ -5452,10 +6070,12 @@ fn load_section_command(
 fn load_section_binary_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     axis: SectionAxis,
     index: usize,
 ) -> Result<Response, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let axis_name = format!("{axis:?}").to_ascii_lowercase();
     let handle = open_store(&store_path).ok();
     let mut start_fields = vec![
@@ -5560,6 +6180,7 @@ fn load_section_binary_command(
 fn load_section_tile_binary_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     axis: SectionAxis,
     index: usize,
@@ -5567,6 +6188,7 @@ fn load_section_tile_binary_command(
     sample_range: [usize; 2],
     lod: u8,
 ) -> Result<Response, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let axis_name = format!("{axis:?}").to_ascii_lowercase();
     let handle = open_store(&store_path).ok();
     let mut start_fields = vec![
@@ -5672,12 +6294,14 @@ fn load_section_tile_binary_command(
 fn load_depth_converted_section_binary_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     axis: SectionAxis,
     index: usize,
     velocity_model: VelocityFunctionSource,
     velocity_kind: VelocityQuantityKind,
 ) -> Result<Response, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let axis_name = format!("{axis:?}").to_ascii_lowercase();
     let velocity_kind_name = format!("{velocity_kind:?}").to_ascii_lowercase();
     let handle = open_store(&store_path).ok();
@@ -5783,6 +6407,7 @@ fn load_depth_converted_section_binary_command(
 fn load_resolved_section_display_binary_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     axis: SectionAxis,
     index: usize,
@@ -5791,6 +6416,7 @@ fn load_resolved_section_display_binary_command(
     velocity_kind: Option<VelocityQuantityKind>,
     include_velocity_overlay: bool,
 ) -> Result<Response, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let axis_name = format!("{axis:?}").to_ascii_lowercase();
     let domain_name = format!("{domain:?}").to_ascii_lowercase();
     let velocity_kind_name = velocity_kind
@@ -5931,9 +6557,11 @@ fn load_resolved_section_display_binary_command(
 fn load_gather_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     store_path: String,
     request: GatherRequest,
 ) -> Result<GatherView, String> {
+    let store_path = resolve_store_path_argument(&security, &store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "load_gather",
@@ -5978,8 +6606,11 @@ async fn preview_processing_command(
     app: AppHandle,
     diagnostics: State<'_, DiagnosticsState>,
     preview_sessions: State<'_, PreviewSessionState>,
-    request: PreviewTraceLocalProcessingRequest,
+    security: State<'_, SecurityState>,
+    mut request: PreviewTraceLocalProcessingRequest,
 ) -> Result<PreviewTraceLocalProcessingResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
+    resolve_trace_local_pipeline_store_paths(&security, &mut request.pipeline)?;
     let axis_name = format!("{:?}", request.section.axis).to_ascii_lowercase();
     let operator_ids = preview_processing_operation_ids(&request.pipeline);
     let operator_labels = preview_processing_operation_labels(&request.pipeline);
@@ -6079,8 +6710,11 @@ async fn preview_processing_binary_command(
     app: AppHandle,
     diagnostics: State<'_, DiagnosticsState>,
     preview_sessions: State<'_, PreviewSessionState>,
-    request: PreviewTraceLocalProcessingRequest,
+    security: State<'_, SecurityState>,
+    mut request: PreviewTraceLocalProcessingRequest,
 ) -> Result<Response, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
+    resolve_trace_local_pipeline_store_paths(&security, &mut request.pipeline)?;
     let axis_name = format!("{:?}", request.section.axis).to_ascii_lowercase();
     let operator_ids = preview_processing_operation_ids(&request.pipeline);
     let operator_labels = preview_processing_operation_labels(&request.pipeline);
@@ -6169,11 +6803,202 @@ async fn preview_processing_binary_command(
 }
 
 #[tauri::command]
+async fn preview_post_stack_neighborhood_processing_command(
+    app: AppHandle,
+    diagnostics: State<'_, DiagnosticsState>,
+    preview_sessions: State<'_, PreviewSessionState>,
+    security: State<'_, SecurityState>,
+    mut request: PreviewPostStackNeighborhoodProcessingRequest,
+) -> Result<PreviewPostStackNeighborhoodProcessingResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
+    resolve_post_stack_neighborhood_pipeline_store_paths(&security, &mut request.pipeline)?;
+    let axis_name = format!("{:?}", request.section.axis).to_ascii_lowercase();
+    let operator_ids = preview_post_stack_neighborhood_operation_ids(&request.pipeline);
+    let operator_labels = preview_post_stack_neighborhood_operation_labels(&request.pipeline);
+    let pipeline_name = request.pipeline.name.clone();
+    let pipeline_revision = request.pipeline.revision;
+    let dataset_id = request.section.dataset_id.0.clone();
+    let operation = diagnostics.start_operation(
+        &app,
+        "preview_post_stack_neighborhood_processing",
+        "Generating post-stack neighborhood preview",
+        Some(build_fields([
+            ("storePath", json_value(&request.store_path)),
+            ("datasetId", json_value(&dataset_id)),
+            ("axis", json_value(&axis_name)),
+            ("index", json_value(request.section.index)),
+            (
+                "operatorCount",
+                json_value(request.pipeline.operations.len()),
+            ),
+            ("pipelineRevision", json_value(pipeline_revision)),
+            ("pipelineName", json_value(&pipeline_name)),
+            ("operatorIds", json_value(&operator_ids)),
+            ("operatorLabels", json_value(&operator_labels)),
+            ("stage", json_value("preview_post_stack_neighborhood")),
+        ])),
+    );
+
+    let preview_sessions = preview_sessions.inner().clone();
+    let request_for_compute = request;
+    let compute_started = Instant::now();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        preview_sessions.preview_post_stack_neighborhood_processing(request_for_compute)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    let compute_duration_ms = compute_started.elapsed().as_millis();
+
+    match result {
+        Ok((response, reuse)) => {
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Post-stack neighborhood preview ready",
+                Some(build_fields([
+                    ("pipelineRevision", json_value(pipeline_revision)),
+                    ("pipelineName", json_value(&pipeline_name)),
+                    ("operatorIds", json_value(&operator_ids)),
+                    ("operatorLabels", json_value(&operator_labels)),
+                    ("previewReady", json_value(response.preview.preview_ready)),
+                    ("traces", json_value(response.preview.section.traces)),
+                    ("samples", json_value(response.preview.section.samples)),
+                    ("computeDurationMs", json_value(compute_duration_ms)),
+                    ("cacheHit", json_value(reuse.cache_hit)),
+                    (
+                        "reusedPrefixOperations",
+                        json_value(reuse.reused_prefix_operations),
+                    ),
+                ])),
+            );
+            Ok(response)
+        }
+        Err(error) => {
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Post-stack neighborhood preview failed",
+                Some(build_fields([
+                    ("pipelineRevision", json_value(pipeline_revision)),
+                    ("pipelineName", json_value(&pipeline_name)),
+                    ("operatorIds", json_value(&operator_ids)),
+                    ("computeDurationMs", json_value(compute_duration_ms)),
+                    ("error", json_value(&error)),
+                ])),
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
+async fn preview_post_stack_neighborhood_processing_binary_command(
+    app: AppHandle,
+    diagnostics: State<'_, DiagnosticsState>,
+    preview_sessions: State<'_, PreviewSessionState>,
+    security: State<'_, SecurityState>,
+    mut request: PreviewPostStackNeighborhoodProcessingRequest,
+) -> Result<Response, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
+    resolve_post_stack_neighborhood_pipeline_store_paths(&security, &mut request.pipeline)?;
+    let axis_name = format!("{:?}", request.section.axis).to_ascii_lowercase();
+    let operator_ids = preview_post_stack_neighborhood_operation_ids(&request.pipeline);
+    let operator_labels = preview_post_stack_neighborhood_operation_labels(&request.pipeline);
+    let pipeline_name = request.pipeline.name.clone();
+    let pipeline_revision = request.pipeline.revision;
+    let dataset_id = request.section.dataset_id.0.clone();
+    let operation = diagnostics.start_operation(
+        &app,
+        "preview_post_stack_neighborhood_processing_binary",
+        "Generating post-stack neighborhood preview (binary)",
+        Some(build_fields([
+            ("storePath", json_value(&request.store_path)),
+            ("datasetId", json_value(&dataset_id)),
+            ("axis", json_value(&axis_name)),
+            ("index", json_value(request.section.index)),
+            (
+                "operatorCount",
+                json_value(request.pipeline.operations.len()),
+            ),
+            ("pipelineRevision", json_value(pipeline_revision)),
+            ("pipelineName", json_value(&pipeline_name)),
+            ("operatorIds", json_value(&operator_ids)),
+            ("operatorLabels", json_value(&operator_labels)),
+            (
+                "stage",
+                json_value("preview_post_stack_neighborhood_binary"),
+            ),
+        ])),
+    );
+
+    let preview_sessions = preview_sessions.inner().clone();
+    let request_for_compute = request;
+    let compute_started = Instant::now();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        preview_sessions.preview_post_stack_neighborhood_processing(request_for_compute)
+    })
+    .await
+    .map_err(|error| error.to_string())?;
+    let compute_duration_ms = compute_started.elapsed().as_millis();
+
+    match result {
+        Ok((response, reuse)) => {
+            let traces = response.preview.section.traces;
+            let samples = response.preview.section.samples;
+            let packed = pack_preview_section_response(
+                response.preview.preview_ready,
+                response.preview.processing_label.clone(),
+                response.preview.section,
+            )?;
+            diagnostics.complete(
+                &app,
+                &operation,
+                "Post-stack neighborhood preview ready (binary)",
+                Some(build_fields([
+                    ("pipelineRevision", json_value(pipeline_revision)),
+                    ("pipelineName", json_value(&pipeline_name)),
+                    ("operatorIds", json_value(&operator_ids)),
+                    ("operatorLabels", json_value(&operator_labels)),
+                    ("previewReady", json_value(true)),
+                    ("traces", json_value(traces)),
+                    ("samples", json_value(samples)),
+                    ("computeDurationMs", json_value(compute_duration_ms)),
+                    ("cacheHit", json_value(reuse.cache_hit)),
+                    (
+                        "reusedPrefixOperations",
+                        json_value(reuse.reused_prefix_operations),
+                    ),
+                ])),
+            );
+            Ok(packed)
+        }
+        Err(error) => {
+            diagnostics.fail(
+                &app,
+                &operation,
+                "Post-stack neighborhood preview failed (binary)",
+                Some(build_fields([
+                    ("pipelineRevision", json_value(pipeline_revision)),
+                    ("pipelineName", json_value(&pipeline_name)),
+                    ("operatorIds", json_value(&operator_ids)),
+                    ("computeDurationMs", json_value(compute_duration_ms)),
+                    ("error", json_value(&error)),
+                ])),
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
 fn preview_subvolume_processing_command(
     app: AppHandle,
     diagnostics: State<'_, DiagnosticsState>,
-    request: PreviewSubvolumeProcessingRequest,
+    security: State<'_, SecurityState>,
+    mut request: PreviewSubvolumeProcessingRequest,
 ) -> Result<PreviewSubvolumeProcessingResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
+    resolve_subvolume_pipeline_store_paths(&security, &mut request.pipeline)?;
     let axis_name = format!("{:?}", request.section.axis).to_ascii_lowercase();
     let trace_local_count = request
         .pipeline
@@ -6241,8 +7066,11 @@ fn preview_subvolume_processing_command(
 fn preview_subvolume_processing_binary_command(
     app: AppHandle,
     diagnostics: State<'_, DiagnosticsState>,
-    request: PreviewSubvolumeProcessingRequest,
+    security: State<'_, SecurityState>,
+    mut request: PreviewSubvolumeProcessingRequest,
 ) -> Result<Response, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
+    resolve_subvolume_pipeline_store_paths(&security, &mut request.pipeline)?;
     let axis_name = format!("{:?}", request.section.axis).to_ascii_lowercase();
     let trace_local_count = request
         .pipeline
@@ -6317,8 +7145,11 @@ fn preview_subvolume_processing_binary_command(
 fn preview_gather_processing_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
-    request: PreviewGatherProcessingRequest,
+    security: State<SecurityState>,
+    mut request: PreviewGatherProcessingRequest,
 ) -> Result<PreviewGatherProcessingResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
+    resolve_gather_pipeline_store_paths(&security, &mut request.pipeline)?;
     let operation = diagnostics.start_operation(
         &app,
         "preview_gather_processing",
@@ -6377,8 +7208,10 @@ fn preview_gather_processing_command(
 fn amplitude_spectrum_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
-    request: AmplitudeSpectrumRequest,
+    security: State<SecurityState>,
+    mut request: AmplitudeSpectrumRequest,
 ) -> Result<AmplitudeSpectrumResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "amplitude_spectrum",
@@ -6426,8 +7259,10 @@ fn amplitude_spectrum_command(
 fn velocity_scan_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
-    request: VelocityScanRequest,
+    security: State<SecurityState>,
+    mut request: VelocityScanRequest,
 ) -> Result<VelocityScanResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
     let operation = diagnostics.start_operation(
         &app,
         "velocity_scan",
@@ -6490,13 +7325,59 @@ fn velocity_scan_command(
 fn run_processing_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     processing: State<ProcessingState>,
     processing_cache: State<ProcessingCacheState>,
-    request: RunTraceLocalProcessingRequest,
+    mut request: RunTraceLocalProcessingRequest,
 ) -> Result<RunTraceLocalProcessingResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
+    resolve_trace_local_pipeline_store_paths(&security, &mut request.pipeline)?;
+    request.output_store_path = match request.output_store_path.take() {
+        Some(output_store_path) => Some(consume_output_path_argument(
+            &security,
+            output_store_path,
+            OutputGrantPurpose::RuntimeStoreOutput,
+        )?),
+        None => None,
+    };
+    let job = submit_trace_local_processing_job(
+        &app,
+        &diagnostics,
+        &processing,
+        &processing_cache,
+        request,
+        ExecutionPriorityClass::ForegroundMaterialize,
+        None,
+    )?;
+    Ok(RunTraceLocalProcessingResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        job,
+    })
+}
+
+fn submit_trace_local_processing_job(
+    app: &AppHandle,
+    diagnostics: &DiagnosticsState,
+    processing: &ProcessingState,
+    processing_cache: &ProcessingCacheState,
+    request: RunTraceLocalProcessingRequest,
+    priority: ExecutionPriorityClass,
+    batch_gate: Option<std::sync::Arc<ophiolite_seismic_execution::BatchExecutionGate>>,
+) -> Result<seis_runtime::ProcessingJobStatus, String> {
     let pipeline_spec = seis_runtime::ProcessingPipelineSpec::TraceLocal {
         pipeline: request.pipeline.clone(),
     };
+    let (layout, source_shape, source_chunk_shape) =
+        resolve_store_plan_source(&request.store_path)?;
+    let validation_plan = build_processing_execution_plan_for_store(
+        &request.store_path,
+        layout,
+        source_shape,
+        source_chunk_shape,
+        pipeline_spec.clone(),
+        request.output_store_path.clone(),
+        priority,
+    )?;
     let allow_exact_reuse = processing_cache.enabled()
         && request.output_store_path.is_none()
         && request.pipeline.checkpoint_indexes().is_empty();
@@ -6509,6 +7390,15 @@ fn run_processing_command(
             &source_fingerprint,
             &full_pipeline_hash,
         )? {
+            let reused_plan = build_processing_execution_plan_for_store(
+                &request.store_path,
+                layout,
+                source_shape,
+                source_chunk_shape,
+                pipeline_spec.clone(),
+                Some(hit.path.clone()),
+                priority,
+            )?;
             let final_artifact = ProcessingJobArtifact {
                 kind: ProcessingJobArtifactKind::FinalOutput,
                 step_index: request.pipeline.operation_count().saturating_sub(1),
@@ -6519,10 +7409,11 @@ fn run_processing_command(
                 request.store_path.clone(),
                 hit.path.clone(),
                 pipeline_spec.clone(),
+                Some(reused_plan),
                 vec![final_artifact],
             );
             diagnostics.emit_session_event(
-                &app,
+                app,
                 "processing_job_reused",
                 log::Level::Info,
                 "Processing job reused an existing derived output",
@@ -6532,10 +7423,7 @@ fn run_processing_command(
                     ("outputStorePath", json_value(&hit.path)),
                 ])),
             );
-            return Ok(RunTraceLocalProcessingResponse {
-                schema_version: IPC_SCHEMA_VERSION,
-                job: reused,
-            });
+            return Ok(reused);
         }
     }
 
@@ -6549,53 +7437,211 @@ fn run_processing_command(
                 &request.store_path,
                 &request.pipeline,
             )?);
+    let execution_plan = if request.output_store_path.as_deref() == Some(output_store_path.as_str())
+    {
+        validation_plan
+    } else {
+        build_processing_execution_plan_for_store(
+            &request.store_path,
+            layout,
+            source_shape,
+            source_chunk_shape,
+            pipeline_spec.clone(),
+            Some(output_store_path.clone()),
+            priority,
+        )?
+    };
+    let input_store_path = request.store_path.clone();
+    let operator_count = request.pipeline.operation_count();
+    let worker_app = app.clone();
+    let worker_plan = execution_plan.clone();
+    let worker_request = RunTraceLocalProcessingRequest {
+        output_store_path: Some(output_store_path.clone()),
+        ..request
+    };
     let queued = processing.enqueue_job(
-        request.store_path.clone(),
+        input_store_path.clone(),
         Some(output_store_path.clone()),
         pipeline_spec,
+        Some(execution_plan),
+        priority,
+        batch_gate,
+        move |record| {
+            run_processing_job(&worker_app, &record, worker_request, worker_plan);
+        },
     );
     let job_id = queued.job_id.clone();
-    let record = processing.job_record(&job_id)?;
 
     diagnostics.emit_session_event(
-        &app,
+        app,
         "processing_job_queued",
         log::Level::Info,
         "Processing job queued",
         Some(build_fields([
             ("jobId", json_value(&job_id)),
-            ("storePath", json_value(&request.store_path)),
+            ("storePath", json_value(&input_store_path)),
             ("outputStorePath", json_value(&output_store_path)),
+            ("operatorCount", json_value(operator_count)),
             (
-                "operatorCount",
-                json_value(request.pipeline.operation_count()),
+                "plannedStageCount",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .map(|summary| summary.stage_count)
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "planId",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .map(|summary| summary.plan_id.clone())
+                        .unwrap_or_default(),
+                ),
+            ),
+            (
+                "plannedPartitionCount",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .and_then(|summary| summary.expected_partition_count)
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "plannedMaxActivePartitions",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .and_then(|summary| summary.max_active_partitions)
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "plannedStagePartitioning",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .map(|summary| summary.stage_partition_summaries.clone())
+                        .unwrap_or_default(),
+                ),
+            ),
+        ])),
+    );
+    Ok(queued)
+}
+
+fn submit_post_stack_neighborhood_processing_job(
+    app: &AppHandle,
+    diagnostics: &DiagnosticsState,
+    processing: &ProcessingState,
+    request: RunPostStackNeighborhoodProcessingRequest,
+    priority: ExecutionPriorityClass,
+    batch_gate: Option<std::sync::Arc<ophiolite_seismic_execution::BatchExecutionGate>>,
+) -> Result<seis_runtime::ProcessingJobStatus, String> {
+    let app_paths = AppPaths::resolve(app)?;
+    let output_store_path = request.output_store_path.clone().unwrap_or(
+        default_post_stack_neighborhood_processing_store_path(
+            &app_paths,
+            &request.store_path,
+            &request.pipeline,
+        )?,
+    );
+    let (layout, source_shape, source_chunk_shape) =
+        resolve_store_plan_source(&request.store_path)?;
+    let execution_plan = build_processing_execution_plan_for_store(
+        &request.store_path,
+        layout,
+        source_shape,
+        source_chunk_shape,
+        seis_runtime::ProcessingPipelineSpec::PostStackNeighborhood {
+            pipeline: request.pipeline.clone(),
+        },
+        Some(output_store_path.clone()),
+        priority,
+    )?;
+    let input_store_path = request.store_path.clone();
+    let neighborhood_operator_count = request.pipeline.operations.len();
+    let pipeline = request.pipeline.clone();
+    let worker_app = app.clone();
+    let worker_request = RunPostStackNeighborhoodProcessingRequest {
+        output_store_path: Some(output_store_path.clone()),
+        ..request
+    };
+    let queued = processing.enqueue_job(
+        input_store_path.clone(),
+        Some(output_store_path.clone()),
+        seis_runtime::ProcessingPipelineSpec::PostStackNeighborhood { pipeline },
+        Some(execution_plan),
+        priority,
+        batch_gate,
+        move |record| {
+            run_post_stack_neighborhood_processing_job(&worker_app, &record, worker_request);
+        },
+    );
+    let job_id = queued.job_id.clone();
+
+    diagnostics.emit_session_event(
+        app,
+        "post_stack_neighborhood_processing_job_queued",
+        log::Level::Info,
+        "Post-stack neighborhood processing job queued",
+        Some(build_fields([
+            ("jobId", json_value(&job_id)),
+            ("storePath", json_value(&input_store_path)),
+            ("outputStorePath", json_value(&output_store_path)),
+            ("operatorCount", json_value(neighborhood_operator_count)),
+            (
+                "plannedStageCount",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .map(|summary| summary.stage_count)
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "plannedPartitionCount",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .and_then(|summary| summary.expected_partition_count)
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "plannedStagePartitioning",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .map(|summary| summary.stage_partition_summaries.clone())
+                        .unwrap_or_default(),
+                ),
             ),
         ])),
     );
 
-    let worker_app = app.clone();
-    let worker_request = RunTraceLocalProcessingRequest {
-        output_store_path: Some(output_store_path.clone()),
-        ..request
-    };
-    std::thread::spawn(move || {
-        run_processing_job(&worker_app, &record, worker_request);
-    });
-
-    Ok(RunTraceLocalProcessingResponse {
-        schema_version: IPC_SCHEMA_VERSION,
-        job: queued,
-    })
+    Ok(queued)
 }
 
-#[tauri::command]
-fn run_subvolume_processing_command(
-    app: AppHandle,
-    diagnostics: State<DiagnosticsState>,
-    processing: State<ProcessingState>,
+fn submit_subvolume_processing_job(
+    app: &AppHandle,
+    diagnostics: &DiagnosticsState,
+    processing: &ProcessingState,
     request: RunSubvolumeProcessingRequest,
-) -> Result<RunSubvolumeProcessingResponse, String> {
-    let app_paths = AppPaths::resolve(&app)?;
+    priority: ExecutionPriorityClass,
+    batch_gate: Option<std::sync::Arc<ophiolite_seismic_execution::BatchExecutionGate>>,
+) -> Result<seis_runtime::ProcessingJobStatus, String> {
+    let app_paths = AppPaths::resolve(app)?;
     let output_store_path =
         request
             .output_store_path
@@ -6605,48 +7651,485 @@ fn run_subvolume_processing_command(
                 &request.store_path,
                 &request.pipeline,
             )?);
-    let queued = processing.enqueue_job(
-        request.store_path.clone(),
-        Some(output_store_path.clone()),
+    let (layout, source_shape, source_chunk_shape) =
+        resolve_store_plan_source(&request.store_path)?;
+    let execution_plan = build_processing_execution_plan_for_store(
+        &request.store_path,
+        layout,
+        source_shape,
+        source_chunk_shape,
         seis_runtime::ProcessingPipelineSpec::Subvolume {
             pipeline: request.pipeline.clone(),
         },
-    );
-    let job_id = queued.job_id.clone();
-    let record = processing.job_record(&job_id)?;
-
-    diagnostics.emit_session_event(
-        &app,
-        "subvolume_processing_job_queued",
-        log::Level::Info,
-        "Subvolume processing job queued",
-        Some(build_fields([
-            ("jobId", json_value(&job_id)),
-            ("storePath", json_value(&request.store_path)),
-            ("outputStorePath", json_value(&output_store_path)),
-            (
-                "traceLocalOperatorCount",
-                json_value(
-                    request
-                        .pipeline
-                        .trace_local_pipeline
-                        .as_ref()
-                        .map(|pipeline| pipeline.operation_count())
-                        .unwrap_or(0),
-                ),
-            ),
-        ])),
-    );
-
+        Some(output_store_path.clone()),
+        priority,
+    )?;
+    let input_store_path = request.store_path.clone();
+    let trace_local_operator_count = request
+        .pipeline
+        .trace_local_pipeline
+        .as_ref()
+        .map(|pipeline| pipeline.operation_count())
+        .unwrap_or(0);
+    let pipeline = request.pipeline.clone();
     let worker_app = app.clone();
     let worker_request = RunSubvolumeProcessingRequest {
         output_store_path: Some(output_store_path.clone()),
         ..request
     };
-    std::thread::spawn(move || {
-        run_subvolume_processing_job(&worker_app, &record, worker_request);
-    });
+    let queued = processing.enqueue_job(
+        input_store_path.clone(),
+        Some(output_store_path.clone()),
+        seis_runtime::ProcessingPipelineSpec::Subvolume { pipeline },
+        Some(execution_plan),
+        priority,
+        batch_gate,
+        move |record| {
+            run_subvolume_processing_job(&worker_app, &record, worker_request);
+        },
+    );
+    let job_id = queued.job_id.clone();
 
+    diagnostics.emit_session_event(
+        app,
+        "subvolume_processing_job_queued",
+        log::Level::Info,
+        "Subvolume processing job queued",
+        Some(build_fields([
+            ("jobId", json_value(&job_id)),
+            ("storePath", json_value(&input_store_path)),
+            ("outputStorePath", json_value(&output_store_path)),
+            (
+                "traceLocalOperatorCount",
+                json_value(trace_local_operator_count),
+            ),
+            (
+                "plannedStageCount",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .map(|summary| summary.stage_count)
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "plannedPartitionCount",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .and_then(|summary| summary.expected_partition_count)
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "plannedStagePartitioning",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .map(|summary| summary.stage_partition_summaries.clone())
+                        .unwrap_or_default(),
+                ),
+            ),
+        ])),
+    );
+
+    Ok(queued)
+}
+
+fn submit_gather_processing_job(
+    app: &AppHandle,
+    diagnostics: &DiagnosticsState,
+    processing: &ProcessingState,
+    request: RunGatherProcessingRequest,
+    priority: ExecutionPriorityClass,
+    batch_gate: Option<std::sync::Arc<ophiolite_seismic_execution::BatchExecutionGate>>,
+) -> Result<seis_runtime::ProcessingJobStatus, String> {
+    let app_paths = AppPaths::resolve(app)?;
+    let output_store_path =
+        request
+            .output_store_path
+            .clone()
+            .unwrap_or(default_gather_processing_store_path(
+                &app_paths,
+                &request.store_path,
+                &request.pipeline,
+            )?);
+    let (layout, source_shape, source_chunk_shape) =
+        resolve_store_plan_source(&request.store_path)?;
+    let execution_plan = build_processing_execution_plan_for_store(
+        &request.store_path,
+        layout,
+        source_shape,
+        source_chunk_shape,
+        seis_runtime::ProcessingPipelineSpec::Gather {
+            pipeline: request.pipeline.clone(),
+        },
+        Some(output_store_path.clone()),
+        priority,
+    )?;
+    let input_store_path = request.store_path.clone();
+    let gather_operator_count = request.pipeline.operations.len();
+    let pipeline = request.pipeline.clone();
+    let worker_app = app.clone();
+    let worker_request = RunGatherProcessingRequest {
+        output_store_path: Some(output_store_path.clone()),
+        ..request
+    };
+    let queued = processing.enqueue_job(
+        input_store_path.clone(),
+        Some(output_store_path.clone()),
+        seis_runtime::ProcessingPipelineSpec::Gather { pipeline },
+        Some(execution_plan),
+        priority,
+        batch_gate,
+        move |record| {
+            run_gather_processing_job(&worker_app, &record, worker_request);
+        },
+    );
+    let job_id = queued.job_id.clone();
+
+    diagnostics.emit_session_event(
+        app,
+        "gather_processing_job_queued",
+        log::Level::Info,
+        "Gather processing job queued",
+        Some(build_fields([
+            ("jobId", json_value(&job_id)),
+            ("storePath", json_value(&input_store_path)),
+            ("outputStorePath", json_value(&output_store_path)),
+            ("operatorCount", json_value(gather_operator_count)),
+            (
+                "plannedStageCount",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .map(|summary| summary.stage_count)
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "plannedPartitionCount",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .and_then(|summary| summary.expected_partition_count)
+                        .unwrap_or(0),
+                ),
+            ),
+            (
+                "plannedStagePartitioning",
+                json_value(
+                    queued
+                        .plan_summary
+                        .as_ref()
+                        .map(|summary| summary.stage_partition_summaries.clone())
+                        .unwrap_or_default(),
+                ),
+            ),
+        ])),
+    );
+
+    Ok(queued)
+}
+
+fn submit_processing_batch(
+    app: &AppHandle,
+    diagnostics: &DiagnosticsState,
+    processing: &ProcessingState,
+    processing_cache: &ProcessingCacheState,
+    request: SubmitProcessingBatchRequest,
+) -> Result<SubmitProcessingBatchResponse, String> {
+    if request.items.is_empty() {
+        return Err("Processing batch must include at least one dataset".to_string());
+    }
+
+    let pipeline = request.pipeline.clone();
+    let representative_plan = request
+        .items
+        .first()
+        .map(|item| {
+            let (layout, source_shape, source_chunk_shape) =
+                resolve_store_plan_source(&item.store_path)?;
+            build_processing_execution_plan_for_store(
+                &item.store_path,
+                layout,
+                source_shape,
+                source_chunk_shape,
+                pipeline.clone(),
+                item.output_store_path.clone(),
+                ExecutionPriorityClass::BackgroundBatch,
+            )
+        })
+        .transpose()?;
+    let batch_policy = processing.resolve_batch_execution_policy(
+        request.max_active_jobs,
+        request.execution_mode,
+        &pipeline,
+        representative_plan.as_ref(),
+        ExecutionPriorityClass::BackgroundBatch,
+    );
+    let batch_gate = processing.create_batch_gate(batch_policy.effective_max_active_jobs);
+    let mut batch_items = Vec::with_capacity(request.items.len());
+    let mut job_ids = Vec::with_capacity(request.items.len());
+
+    for item in &request.items {
+        let job = match &pipeline {
+            ProcessingPipelineSpec::TraceLocal { pipeline } => submit_trace_local_processing_job(
+                app,
+                diagnostics,
+                processing,
+                processing_cache,
+                RunTraceLocalProcessingRequest {
+                    schema_version: request.schema_version,
+                    store_path: item.store_path.clone(),
+                    output_store_path: item.output_store_path.clone(),
+                    overwrite_existing: request.overwrite_existing,
+                    pipeline: pipeline.clone(),
+                },
+                ExecutionPriorityClass::BackgroundBatch,
+                Some(batch_gate.clone()),
+            )?,
+            ProcessingPipelineSpec::Subvolume { pipeline } => submit_subvolume_processing_job(
+                app,
+                diagnostics,
+                processing,
+                RunSubvolumeProcessingRequest {
+                    schema_version: request.schema_version,
+                    store_path: item.store_path.clone(),
+                    output_store_path: item.output_store_path.clone(),
+                    overwrite_existing: request.overwrite_existing,
+                    pipeline: pipeline.clone(),
+                },
+                ExecutionPriorityClass::BackgroundBatch,
+                Some(batch_gate.clone()),
+            )?,
+            ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
+                submit_post_stack_neighborhood_processing_job(
+                    app,
+                    diagnostics,
+                    processing,
+                    RunPostStackNeighborhoodProcessingRequest {
+                        schema_version: request.schema_version,
+                        store_path: item.store_path.clone(),
+                        output_store_path: item.output_store_path.clone(),
+                        overwrite_existing: request.overwrite_existing,
+                        pipeline: pipeline.clone(),
+                    },
+                    ExecutionPriorityClass::BackgroundBatch,
+                    Some(batch_gate.clone()),
+                )?
+            }
+            ProcessingPipelineSpec::Gather { pipeline } => submit_gather_processing_job(
+                app,
+                diagnostics,
+                processing,
+                RunGatherProcessingRequest {
+                    schema_version: request.schema_version,
+                    store_path: item.store_path.clone(),
+                    output_store_path: item.output_store_path.clone(),
+                    overwrite_existing: request.overwrite_existing,
+                    pipeline: pipeline.clone(),
+                },
+                ExecutionPriorityClass::BackgroundBatch,
+                Some(batch_gate.clone()),
+            )?,
+        };
+        batch_items.push(ProcessingBatchItemRequest {
+            store_path: item.store_path.clone(),
+            output_store_path: job.output_store_path.clone(),
+        });
+        job_ids.push(job.job_id);
+    }
+
+    let batch = processing.register_batch(batch_items, job_ids, request.pipeline, &batch_policy)?;
+
+    diagnostics.emit_session_event(
+        app,
+        "processing_batch_queued",
+        log::Level::Info,
+        "Processing batch queued",
+        Some(build_fields([
+            ("batchId", json_value(&batch.batch_id)),
+            ("itemCount", json_value(batch.items.len())),
+            ("executionMode", json_value(batch.execution_mode)),
+            ("schedulerReason", json_value(batch.scheduler_reason)),
+            (
+                "requestedMaxActiveJobs",
+                json_value(batch.requested_max_active_jobs),
+            ),
+            (
+                "effectiveMaxActiveJobs",
+                json_value(batch.effective_max_active_jobs),
+            ),
+            (
+                "schedulerWorkerBudget",
+                json_value(batch_policy.worker_budget),
+            ),
+            ("schedulerGlobalCap", json_value(batch_policy.global_cap)),
+            (
+                "plannedWorstMemoryCostClass",
+                json_value(batch_policy.max_memory_cost_class),
+            ),
+            (
+                "plannedWorstPeakMemoryBytes",
+                json_value(batch_policy.max_estimated_peak_memory_bytes),
+            ),
+            (
+                "plannedExpectedPartitionCount",
+                json_value(batch_policy.max_expected_partition_count),
+            ),
+        ])),
+    );
+
+    Ok(SubmitProcessingBatchResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        batch,
+    })
+}
+
+#[tauri::command]
+fn submit_trace_local_processing_batch_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
+    processing: State<ProcessingState>,
+    processing_cache: State<ProcessingCacheState>,
+    mut request: SubmitTraceLocalProcessingBatchRequest,
+) -> Result<SubmitTraceLocalProcessingBatchResponse, String> {
+    resolve_trace_local_pipeline_store_paths(&security, &mut request.pipeline)?;
+    for item in &mut request.items {
+        item.store_path = resolve_store_path_argument(&security, &item.store_path)?;
+        item.output_store_path = item
+            .output_store_path
+            .take()
+            .map(|output_store_path| {
+                consume_output_path_argument(
+                    &security,
+                    output_store_path,
+                    OutputGrantPurpose::RuntimeStoreOutput,
+                )
+            })
+            .transpose()?;
+    }
+
+    let response = submit_processing_batch(
+        &app,
+        &diagnostics,
+        &processing,
+        &processing_cache,
+        SubmitProcessingBatchRequest {
+            schema_version: request.schema_version,
+            items: request.items,
+            overwrite_existing: request.overwrite_existing,
+            max_active_jobs: request.max_active_jobs,
+            execution_mode: request.execution_mode,
+            pipeline: ProcessingPipelineSpec::TraceLocal {
+                pipeline: request.pipeline,
+            },
+        },
+    )?;
+
+    Ok(SubmitTraceLocalProcessingBatchResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        batch: response.batch,
+    })
+}
+
+#[tauri::command]
+fn submit_processing_batch_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
+    processing: State<ProcessingState>,
+    processing_cache: State<ProcessingCacheState>,
+    mut request: SubmitProcessingBatchRequest,
+) -> Result<SubmitProcessingBatchResponse, String> {
+    resolve_processing_pipeline_spec_store_paths(&security, &mut request.pipeline)?;
+    let uses_gather_outputs = matches!(&request.pipeline, ProcessingPipelineSpec::Gather { .. });
+    for item in &mut request.items {
+        item.store_path = resolve_store_path_argument(&security, &item.store_path)?;
+        item.output_store_path = item
+            .output_store_path
+            .take()
+            .map(|output_store_path| {
+                consume_output_path_argument(
+                    &security,
+                    output_store_path,
+                    if uses_gather_outputs {
+                        OutputGrantPurpose::GatherStoreOutput
+                    } else {
+                        OutputGrantPurpose::RuntimeStoreOutput
+                    },
+                )
+            })
+            .transpose()?;
+    }
+    submit_processing_batch(&app, &diagnostics, &processing, &processing_cache, request)
+}
+
+#[tauri::command]
+fn run_post_stack_neighborhood_processing_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
+    processing: State<ProcessingState>,
+    mut request: RunPostStackNeighborhoodProcessingRequest,
+) -> Result<RunPostStackNeighborhoodProcessingResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
+    resolve_post_stack_neighborhood_pipeline_store_paths(&security, &mut request.pipeline)?;
+    request.output_store_path = match request.output_store_path.take() {
+        Some(output_store_path) => Some(consume_output_path_argument(
+            &security,
+            output_store_path,
+            OutputGrantPurpose::RuntimeStoreOutput,
+        )?),
+        None => None,
+    };
+    let queued = submit_post_stack_neighborhood_processing_job(
+        &app,
+        &diagnostics,
+        &processing,
+        request,
+        ExecutionPriorityClass::ForegroundMaterialize,
+        None,
+    )?;
+    Ok(RunPostStackNeighborhoodProcessingResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        job: queued,
+    })
+}
+
+#[tauri::command]
+fn run_subvolume_processing_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
+    processing: State<ProcessingState>,
+    mut request: RunSubvolumeProcessingRequest,
+) -> Result<RunSubvolumeProcessingResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
+    resolve_subvolume_pipeline_store_paths(&security, &mut request.pipeline)?;
+    request.output_store_path = match request.output_store_path.take() {
+        Some(output_store_path) => Some(consume_output_path_argument(
+            &security,
+            output_store_path,
+            OutputGrantPurpose::RuntimeStoreOutput,
+        )?),
+        None => None,
+    };
+    let queued = submit_subvolume_processing_job(
+        &app,
+        &diagnostics,
+        &processing,
+        request,
+        ExecutionPriorityClass::ForegroundMaterialize,
+        None,
+    )?;
     Ok(RunSubvolumeProcessingResponse {
         schema_version: IPC_SCHEMA_VERSION,
         job: queued,
@@ -6657,54 +8140,28 @@ fn run_subvolume_processing_command(
 fn run_gather_processing_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    security: State<SecurityState>,
     processing: State<ProcessingState>,
-    request: RunGatherProcessingRequest,
+    mut request: RunGatherProcessingRequest,
 ) -> Result<RunGatherProcessingResponse, String> {
-    let app_paths = AppPaths::resolve(&app)?;
-    let output_store_path =
-        request
-            .output_store_path
-            .clone()
-            .unwrap_or(default_gather_processing_store_path(
-                &app_paths,
-                &request.store_path,
-                &request.pipeline,
-            )?);
-    let queued = processing.enqueue_job(
-        request.store_path.clone(),
-        Some(output_store_path.clone()),
-        seis_runtime::ProcessingPipelineSpec::Gather {
-            pipeline: request.pipeline.clone(),
-        },
-    );
-    let job_id = queued.job_id.clone();
-    let record = processing.job_record(&job_id)?;
-
-    diagnostics.emit_session_event(
-        &app,
-        "gather_processing_job_queued",
-        log::Level::Info,
-        "Gather processing job queued",
-        Some(build_fields([
-            ("jobId", json_value(&job_id)),
-            ("storePath", json_value(&request.store_path)),
-            ("outputStorePath", json_value(&output_store_path)),
-            (
-                "operatorCount",
-                json_value(request.pipeline.operations.len()),
-            ),
-        ])),
-    );
-
-    let worker_app = app.clone();
-    let worker_request = RunGatherProcessingRequest {
-        output_store_path: Some(output_store_path.clone()),
-        ..request
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
+    resolve_gather_pipeline_store_paths(&security, &mut request.pipeline)?;
+    request.output_store_path = match request.output_store_path.take() {
+        Some(output_store_path) => Some(consume_output_path_argument(
+            &security,
+            output_store_path,
+            OutputGrantPurpose::GatherStoreOutput,
+        )?),
+        None => None,
     };
-    std::thread::spawn(move || {
-        run_gather_processing_job(&worker_app, &record, worker_request);
-    });
-
+    let queued = submit_gather_processing_job(
+        &app,
+        &diagnostics,
+        &processing,
+        request,
+        ExecutionPriorityClass::ForegroundMaterialize,
+        None,
+    )?;
     Ok(RunGatherProcessingResponse {
         schema_version: IPC_SCHEMA_VERSION,
         job: queued,
@@ -6719,6 +8176,17 @@ fn get_processing_job_command(
     Ok(GetProcessingJobResponse {
         schema_version: IPC_SCHEMA_VERSION,
         job: processing.job_status(&request.job_id)?,
+    })
+}
+
+#[tauri::command]
+fn get_processing_batch_command(
+    processing: State<ProcessingState>,
+    request: GetProcessingBatchRequest,
+) -> Result<GetProcessingBatchResponse, String> {
+    Ok(GetProcessingBatchResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        batch: processing.batch_status(&request.batch_id)?,
     })
 }
 
@@ -6740,6 +8208,27 @@ fn cancel_processing_job_command(
     Ok(CancelProcessingJobResponse {
         schema_version: IPC_SCHEMA_VERSION,
         job,
+    })
+}
+
+#[tauri::command]
+fn cancel_processing_batch_command(
+    app: AppHandle,
+    diagnostics: State<DiagnosticsState>,
+    processing: State<ProcessingState>,
+    request: CancelProcessingBatchRequest,
+) -> Result<CancelProcessingBatchResponse, String> {
+    let batch = processing.cancel_batch(&request.batch_id)?;
+    diagnostics.emit_session_event(
+        &app,
+        "processing_batch_cancel_requested",
+        log::Level::Warn,
+        "Processing batch cancellation requested",
+        Some(build_fields([("batchId", json_value(&request.batch_id))])),
+    );
+    Ok(CancelProcessingBatchResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        batch,
     })
 }
 
@@ -6785,8 +8274,16 @@ fn load_workspace_state_command(
 #[tauri::command]
 fn upsert_dataset_entry_command(
     workspace: State<WorkspaceState>,
-    request: UpsertDatasetEntryRequest,
+    security: State<SecurityState>,
+    mut request: UpsertDatasetEntryRequest,
 ) -> Result<UpsertDatasetEntryResponse, String> {
+    request.preferred_store_path =
+        resolve_optional_store_path_argument(&security, request.preferred_store_path)?;
+    request.imported_store_path =
+        resolve_optional_store_path_argument(&security, request.imported_store_path)?;
+    if let Some(dataset) = request.dataset.as_mut() {
+        dataset.store_path = resolve_store_path_argument(&security, &dataset.store_path)?;
+    }
     workspace.upsert_entry(request)
 }
 
@@ -6809,23 +8306,39 @@ fn set_active_dataset_entry_command(
 #[tauri::command]
 fn save_workspace_session_command(
     workspace: State<WorkspaceState>,
-    request: SaveWorkspaceSessionRequest,
+    security: State<SecurityState>,
+    mut request: SaveWorkspaceSessionRequest,
 ) -> Result<SaveWorkspaceSessionResponse, String> {
+    request.active_store_path =
+        resolve_optional_store_path_argument(&security, request.active_store_path)?;
+    request.project_root = request
+        .project_root
+        .take()
+        .map(|value| resolve_project_root_argument(&security, value))
+        .transpose()?;
+    request.native_engineering_accepted_store_paths = resolve_store_path_list_argument(
+        &security,
+        &request.native_engineering_accepted_store_paths,
+    )?;
     workspace.save_session(request)
 }
 
 #[tauri::command]
 fn load_project_geospatial_settings_command(
+    security: State<SecurityState>,
     request: ProjectRootRequest,
 ) -> Result<LoadProjectGeospatialSettingsResponse, String> {
-    let settings = load_project_geospatial_settings(Path::new(&request.project_root))?;
+    let project_root = resolve_project_root_argument(&security, &request.project_root)?;
+    let settings = load_project_geospatial_settings(Path::new(&project_root))?;
     Ok(LoadProjectGeospatialSettingsResponse { settings })
 }
 
 #[tauri::command]
 fn save_project_geospatial_settings_command(
-    request: SaveProjectGeospatialSettingsRequest,
+    security: State<SecurityState>,
+    mut request: SaveProjectGeospatialSettingsRequest,
 ) -> Result<ProjectGeospatialSettings, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     save_project_geospatial_settings(
         Path::new(&request.project_root),
         request.display_coordinate_reference,
@@ -6849,8 +8362,10 @@ fn resolve_coordinate_reference_command(
 
 #[tauri::command]
 fn set_dataset_native_coordinate_reference_command(
-    request: SetDatasetNativeCoordinateReferenceSelectionRequest,
+    security: State<SecurityState>,
+    mut request: SetDatasetNativeCoordinateReferenceSelectionRequest,
 ) -> Result<SetDatasetNativeCoordinateReferenceResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
     let normalized_id = request
         .coordinate_reference_id
         .as_deref()
@@ -6893,8 +8408,10 @@ fn set_dataset_native_coordinate_reference_command(
 #[tauri::command]
 fn resolve_survey_map_command(
     app: AppHandle,
-    request: ResolveSurveyMapRequest,
+    security: State<SecurityState>,
+    mut request: ResolveSurveyMapRequest,
 ) -> Result<ResolveSurveyMapResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
     let app_paths = AppPaths::resolve(&app)?;
     let store_path = request.store_path.clone();
     let dataset = open_dataset_summary(OpenDatasetRequest {
@@ -6918,8 +8435,10 @@ fn resolve_survey_map_command(
 
 #[tauri::command]
 fn resolve_project_survey_map_command(
-    request: ResolveProjectSurveyMapRequest,
+    security: State<SecurityState>,
+    mut request: ResolveProjectSurveyMapRequest,
 ) -> Result<ResolveProjectSurveyMapResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     let survey_map = project
@@ -6935,8 +8454,10 @@ fn resolve_project_survey_map_command(
 
 #[tauri::command]
 fn list_project_well_time_depth_models_command(
-    request: ProjectWellboreRequest,
+    security: State<SecurityState>,
+    mut request: ProjectWellboreRequest,
 ) -> Result<Vec<ProjectWellTimeDepthModelDescriptor>, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     let active_asset_id =
@@ -6950,8 +8471,10 @@ fn list_project_well_time_depth_models_command(
 
 #[tauri::command]
 fn list_project_well_time_depth_inventory_command(
-    request: ProjectWellboreRequest,
+    security: State<SecurityState>,
+    mut request: ProjectWellboreRequest,
 ) -> Result<ProjectWellTimeDepthInventoryResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     let active_asset_id =
@@ -6975,8 +8498,10 @@ fn list_project_well_time_depth_inventory_command(
 
 #[tauri::command]
 fn list_project_well_overlay_inventory_command(
-    request: ProjectWellOverlayInventoryRequest,
+    security: State<SecurityState>,
+    mut request: ProjectWellOverlayInventoryRequest,
 ) -> Result<ProjectWellOverlayInventoryResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     let display_coordinate_reference_id =
@@ -7093,8 +8618,10 @@ fn list_project_well_overlay_inventory_command(
 
 #[tauri::command]
 fn list_project_survey_horizons_command(
-    request: ProjectAssetRequest,
+    security: State<SecurityState>,
+    mut request: ProjectAssetRequest,
 ) -> Result<Vec<ImportedHorizonDescriptor>, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     let asset = project
@@ -7112,8 +8639,10 @@ fn list_project_survey_horizons_command(
 
 #[tauri::command]
 fn list_project_well_marker_residual_inventory_command(
-    request: ProjectWellboreRequest,
+    security: State<SecurityState>,
+    mut request: ProjectWellboreRequest,
 ) -> Result<ProjectWellMarkerResidualInventoryResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     Ok(ProjectWellMarkerResidualInventoryResponse {
@@ -7127,29 +8656,46 @@ fn list_project_well_marker_residual_inventory_command(
 
 #[tauri::command]
 fn scan_vendor_project_command(
-    request: ophiolite::VendorProjectScanRequest,
+    security: State<SecurityState>,
+    mut request: ophiolite::VendorProjectScanRequest,
 ) -> Result<ophiolite::VendorProjectScanResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     ophiolite::scan_vendor_project(&request).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn plan_vendor_project_import_command(
-    request: ophiolite::VendorProjectPlanRequest,
+    security: State<SecurityState>,
+    mut request: ophiolite::VendorProjectPlanRequest,
 ) -> Result<ophiolite::VendorProjectPlanResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
+    request.target_project_root = request
+        .target_project_root
+        .take()
+        .map(|value| resolve_project_root_argument(&security, value))
+        .transpose()?;
     ophiolite::plan_vendor_project_import(&request).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn commit_vendor_project_import_command(
-    request: ophiolite::VendorProjectCommitRequest,
+    security: State<SecurityState>,
+    mut request: ophiolite::VendorProjectCommitRequest,
 ) -> Result<ophiolite::VendorProjectCommitResponse, String> {
+    request.target_project_root = request
+        .target_project_root
+        .take()
+        .map(|value| resolve_project_root_argument(&security, value))
+        .transpose()?;
     ophiolite::commit_vendor_project_import(&request).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 fn compute_project_well_marker_residual_command(
-    request: ComputeProjectWellMarkerResidualRequest,
+    security: State<SecurityState>,
+    mut request: ComputeProjectWellMarkerResidualRequest,
 ) -> Result<ComputeProjectWellMarkerResidualResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let mut project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     let wellbore_id = ophiolite::WellboreId(request.wellbore_id.clone());
@@ -7212,8 +8758,10 @@ fn compute_project_well_marker_residual_command(
 
 #[tauri::command]
 fn set_project_active_well_time_depth_model_command(
-    request: SetProjectWellTimeDepthModelRequest,
+    security: State<SecurityState>,
+    mut request: SetProjectWellTimeDepthModelRequest,
 ) -> Result<(), String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     project
@@ -7231,8 +8779,10 @@ fn set_project_active_well_time_depth_model_command(
 
 #[tauri::command]
 fn import_project_well_time_depth_model_command(
-    request: ImportProjectWellTimeDepthModelRequest,
+    security: State<SecurityState>,
+    mut request: ImportProjectWellTimeDepthModelRequest,
 ) -> Result<ImportProjectWellTimeDepthModelResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let mut project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     let result = project
@@ -7583,8 +9133,10 @@ fn resolve_project_well_source_commit_request(
 fn commit_project_well_sources_command(
     app: AppHandle,
     diagnostics: State<'_, DiagnosticsState>,
-    request: CommitProjectWellSourceImportRequest,
+    security: State<'_, SecurityState>,
+    mut request: CommitProjectWellSourceImportRequest,
 ) -> Result<ophiolite::ProjectWellSourceImportCommitResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let source_root_path = request.source_root_path.clone();
     let selected_source_path_count = request
         .source_paths
@@ -7704,11 +9256,13 @@ fn commit_project_well_sources_command(
 fn commit_project_well_import_command(
     app: AppHandle,
     diagnostics: State<'_, DiagnosticsState>,
+    security: State<'_, SecurityState>,
     request: CommitProjectWellImportRequest,
 ) -> Result<ophiolite::ProjectWellFolderImportCommitResponse, String> {
     commit_project_well_sources_command(
         app,
         diagnostics,
+        security,
         CommitProjectWellSourceImportRequest {
             project_root: request.project_root,
             source_root_path: request.folder_path,
@@ -7732,8 +9286,10 @@ fn commit_project_well_import_command(
 
 #[tauri::command]
 fn import_project_well_time_depth_asset_command(
-    request: ImportProjectWellTimeDepthAssetRequest,
+    security: State<SecurityState>,
+    mut request: ImportProjectWellTimeDepthAssetRequest,
 ) -> Result<ImportProjectWellTimeDepthModelResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let mut project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     let source_path = Path::new(&request.json_path);
@@ -7860,22 +9416,29 @@ fn import_project_well_time_depth_asset_command(
 
 #[tauri::command]
 fn commit_project_well_time_depth_import_command(
+    security: State<SecurityState>,
     request: CommitProjectWellTimeDepthImportRequest,
 ) -> Result<ImportProjectWellTimeDepthModelResponse, String> {
-    import_project_well_time_depth_asset_command(ImportProjectWellTimeDepthAssetRequest {
-        project_root: request.project_root,
-        json_path: request.json_path,
-        json_payload: Some(request.draft.json_payload),
-        binding: request.binding,
-        collection_name: request.draft.collection_name,
-        asset_kind: request.draft.asset_kind,
-    })
+    import_project_well_time_depth_asset_command(
+        security,
+        ImportProjectWellTimeDepthAssetRequest {
+            project_root: request.project_root,
+            json_path: request.json_path,
+            json_payload: Some(request.draft.json_payload),
+            binding: request.binding,
+            collection_name: request.draft.collection_name,
+            asset_kind: request.draft.asset_kind,
+        },
+    )
 }
 
 #[tauri::command]
 fn analyze_project_well_tie_command(
-    request: AnalyzeProjectWellTieRequest,
+    security: State<SecurityState>,
+    mut request: AnalyzeProjectWellTieRequest,
 ) -> Result<ProjectWellTieAnalysisResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
     let project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     let source_model_asset_id = ophiolite::AssetId(request.source_model_asset_id.clone());
@@ -7919,8 +9482,11 @@ fn analyze_project_well_tie_command(
 
 #[tauri::command]
 fn accept_project_well_tie_command(
-    request: AcceptProjectWellTieRequest,
+    security: State<SecurityState>,
+    mut request: AcceptProjectWellTieRequest,
 ) -> Result<AcceptProjectWellTieResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
     let mut project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     let source_model_asset_id = ophiolite::AssetId(request.source_model_asset_id.clone());
@@ -7970,8 +9536,10 @@ fn accept_project_well_tie_command(
 
 #[tauri::command]
 fn compile_project_well_time_depth_authored_model_command(
-    request: CompileProjectWellTimeDepthAuthoredModelRequest,
+    security: State<SecurityState>,
+    mut request: CompileProjectWellTimeDepthAuthoredModelRequest,
 ) -> Result<ImportProjectWellTimeDepthModelResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let mut project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     let result = project
@@ -7986,8 +9554,10 @@ fn compile_project_well_time_depth_authored_model_command(
 
 #[tauri::command]
 fn read_project_well_time_depth_model_command(
-    request: ProjectAssetRequest,
+    security: State<SecurityState>,
+    mut request: ProjectAssetRequest,
 ) -> Result<WellTimeDepthModel1D, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     project
@@ -7997,8 +9567,10 @@ fn read_project_well_time_depth_model_command(
 
 #[tauri::command]
 fn resolve_project_section_well_overlays_command(
-    request: SectionWellOverlayRequestDto,
+    security: State<SecurityState>,
+    mut request: SectionWellOverlayRequestDto,
 ) -> Result<ResolveSectionWellOverlaysResponse, String> {
+    request.project_root = resolve_project_root_argument(&security, &request.project_root)?;
     let project = OphioliteProject::open(Path::new(&request.project_root))
         .map_err(|error| error.to_string())?;
     project
@@ -8010,6 +9582,7 @@ fn run_processing_job(
     app: &AppHandle,
     record: &JobRecord,
     request: RunTraceLocalProcessingRequest,
+    execution_plan: ExecutionPlan,
 ) {
     let app_paths = match AppPaths::resolve(app) {
         Ok(paths) => paths,
@@ -8078,8 +9651,9 @@ fn run_processing_job(
         }
         _ => None,
     };
-    let stages = match build_trace_local_processing_stages_from(
+    let stages = match build_trace_local_processing_stages_from_plan(
         &request,
+        &execution_plan,
         &output_store_path,
         &job_id,
         reused_checkpoint
@@ -8175,6 +9749,8 @@ fn run_processing_job(
         .as_ref()
         .map(|checkpoint| checkpoint.path.clone())
         .unwrap_or_else(|| request.store_path.clone());
+    let execution_summary =
+        std::sync::Arc::new(std::sync::Mutex::new(JobExecutionSummaryState::default()));
     let result = stages.iter().try_for_each(|stage| {
         let stage_started_at = Instant::now();
         if record.cancel_requested() {
@@ -8219,10 +9795,16 @@ fn run_processing_job(
             )
             .map_err(seis_runtime::SeisRefineError::Message)?;
         }
-        let materialize_options = materialize_options_for_store(&current_input_store_path)
-            .map_err(seis_runtime::SeisRefineError::Message)?;
+        let materialize_resolution = resolve_trace_local_materialize_options_for_store(
+            &current_input_store_path,
+            Some(&execution_plan),
+            stage.partition_target_bytes,
+        )
+        .map_err(seis_runtime::SeisRefineError::Message)?;
+        let resolved_chunk_plan = materialize_resolution.resolved_chunk_plan.clone();
+        let materialize_options = materialize_resolution.options;
         let materialize_started_at = Instant::now();
-        materialize_processing_volume_with_progress(
+        materialize_processing_volume_with_partition_progress(
             &current_input_store_path,
             &stage.artifact.store_path,
             &stage.segment_pipeline,
@@ -8234,6 +9816,15 @@ fn run_processing_job(
                     ));
                 }
                 let _ = record.mark_progress(completed, total, Some(&stage.stage_label));
+                Ok(())
+            },
+            |progress| {
+                let mut summary = execution_summary
+                    .lock()
+                    .expect("processing execution summary mutex poisoned");
+                summary.set_resolved_chunk_plan(resolved_chunk_plan.clone());
+                summary.apply_partition_progress(&stage.stage_label, progress);
+                let _ = record.set_execution_summary(summary.clone().into_contract());
                 Ok(())
             },
         )?;
@@ -8500,6 +10091,182 @@ fn run_processing_job(
     }
 }
 
+fn run_post_stack_neighborhood_processing_job(
+    app: &AppHandle,
+    record: &JobRecord,
+    request: RunPostStackNeighborhoodProcessingRequest,
+) {
+    let app_paths = match AppPaths::resolve(app) {
+        Ok(paths) => paths,
+        Err(error) => {
+            let _ = record.mark_failed(error.clone());
+            if let Some(diagnostics) = app.try_state::<DiagnosticsState>() {
+                diagnostics.emit_session_event(
+                    app,
+                    "post_stack_neighborhood_processing_job_failed",
+                    log::Level::Error,
+                    "Post-stack neighborhood processing job failed before initialization",
+                    Some(build_fields([("error", json_value(&error))])),
+                );
+            }
+            return;
+        }
+    };
+    let output_store_path = request.output_store_path.clone().unwrap_or_else(|| {
+        default_post_stack_neighborhood_processing_store_path(
+            &app_paths,
+            &request.store_path,
+            &request.pipeline,
+        )
+        .unwrap_or_else(|_| "derived-output.tbvol".to_string())
+    });
+    let job_started_at = Instant::now();
+    let progress_label = post_stack_neighborhood_progress_label(&request.pipeline).to_string();
+    let _ = record.mark_running(Some(progress_label.clone()));
+    if let Some(diagnostics) = app.try_state::<DiagnosticsState>() {
+        diagnostics.emit_session_event(
+            app,
+            "post_stack_neighborhood_processing_job_started",
+            log::Level::Info,
+            "Post-stack neighborhood processing job started",
+            Some(build_fields([
+                ("jobId", json_value(&record.snapshot().job_id)),
+                ("storePath", json_value(&request.store_path)),
+                ("outputStorePath", json_value(&output_store_path)),
+                (
+                    "operatorCount",
+                    json_value(request.pipeline.operations.len()),
+                ),
+            ])),
+        );
+    }
+    if let Err(error) = prepare_processing_output_store(
+        &request.store_path,
+        &output_store_path,
+        request.overwrite_existing,
+    ) {
+        let final_status = record.mark_failed(error);
+        if let Some(diagnostics) = app.try_state::<DiagnosticsState>() {
+            diagnostics.emit_session_event(
+                app,
+                "post_stack_neighborhood_processing_job_failed",
+                log::Level::Error,
+                "Post-stack neighborhood processing job failed",
+                Some(build_fields([
+                    ("jobId", json_value(&final_status.job_id)),
+                    (
+                        "error",
+                        json_value(final_status.error_message.clone().unwrap_or_default()),
+                    ),
+                ])),
+            );
+        }
+        return;
+    }
+
+    let materialize_options = match materialize_options_for_store(&request.store_path, None) {
+        Ok(options) => options,
+        Err(error) => {
+            let final_status = record.mark_failed(error.clone());
+            if let Some(diagnostics) = app.try_state::<DiagnosticsState>() {
+                diagnostics.emit_session_event(
+                    app,
+                    "post_stack_neighborhood_processing_job_failed",
+                    log::Level::Error,
+                    "Post-stack neighborhood processing job failed",
+                    Some(build_fields([
+                        ("jobId", json_value(&final_status.job_id)),
+                        ("error", json_value(&error)),
+                    ])),
+                );
+            }
+            return;
+        }
+    };
+
+    let result = materialize_post_stack_neighborhood_processing_volume_with_progress(
+        &request.store_path,
+        &output_store_path,
+        &request.pipeline,
+        materialize_options,
+        |completed, total| {
+            if record.cancel_requested() {
+                return Err(seis_runtime::SeisRefineError::Message(
+                    "processing cancelled".to_string(),
+                ));
+            }
+            let _ = record.mark_progress(completed, total, Some(progress_label.as_str()));
+            Ok(())
+        },
+    );
+
+    match result {
+        Ok(_) => {
+            let final_status = record.mark_completed(output_store_path.clone());
+            if let Some(diagnostics) = app.try_state::<DiagnosticsState>() {
+                diagnostics.emit_session_event(
+                    app,
+                    "post_stack_neighborhood_processing_job_completed",
+                    log::Level::Info,
+                    "Post-stack neighborhood processing job completed",
+                    Some(build_fields([
+                        ("jobId", json_value(&final_status.job_id)),
+                        ("outputStorePath", json_value(&output_store_path)),
+                        (
+                            "jobDurationMs",
+                            json_value(job_started_at.elapsed().as_millis() as u64),
+                        ),
+                    ])),
+                );
+            }
+        }
+        Err(error) => {
+            let final_status = if record.cancel_requested() {
+                record.mark_cancelled()
+            } else {
+                record.mark_failed(error.to_string())
+            };
+            if let Some(diagnostics) = app.try_state::<DiagnosticsState>() {
+                diagnostics.emit_session_event(
+                    app,
+                    "post_stack_neighborhood_processing_job_failed",
+                    if matches!(
+                        final_status.state,
+                        seis_runtime::ProcessingJobState::Cancelled
+                    ) {
+                        log::Level::Warn
+                    } else {
+                        log::Level::Error
+                    },
+                    if matches!(
+                        final_status.state,
+                        seis_runtime::ProcessingJobState::Cancelled
+                    ) {
+                        "Post-stack neighborhood processing job cancelled"
+                    } else {
+                        "Post-stack neighborhood processing job failed"
+                    },
+                    Some(build_fields([
+                        ("jobId", json_value(&final_status.job_id)),
+                        (
+                            "jobDurationMs",
+                            json_value(job_started_at.elapsed().as_millis() as u64),
+                        ),
+                        (
+                            "state",
+                            json_value(format!("{:?}", final_status.state).to_ascii_lowercase()),
+                        ),
+                        (
+                            "error",
+                            json_value(final_status.error_message.clone().unwrap_or_default()),
+                        ),
+                    ])),
+                );
+            }
+        }
+    }
+}
+
 fn run_subvolume_processing_job(
     app: &AppHandle,
     record: &JobRecord,
@@ -8681,7 +10448,7 @@ fn run_subvolume_processing_job(
         return;
     }
 
-    let final_materialize_options = match materialize_options_for_store(&request.store_path) {
+    let final_materialize_options = match materialize_options_for_store(&request.store_path, None) {
         Ok(options) => options,
         Err(error) => {
             let final_status = record.mark_failed(error.clone());
@@ -8724,6 +10491,8 @@ fn run_subvolume_processing_job(
         .as_ref()
         .map(|checkpoint| checkpoint.path.clone())
         .unwrap_or_else(|| request.store_path.clone());
+    let execution_summary =
+        std::sync::Arc::new(std::sync::Mutex::new(JobExecutionSummaryState::default()));
     let checkpoint_result: Result<(), seis_runtime::SeisRefineError> =
         checkpoint_stages.iter().try_for_each(|stage| {
             let stage_started_at = Instant::now();
@@ -8760,10 +10529,11 @@ fn run_subvolume_processing_job(
                 false,
             )
             .map_err(seis_runtime::SeisRefineError::Message)?;
-            let stage_materialize_options = materialize_options_for_store(&current_input_store_path)
+            let stage_materialize_options =
+                materialize_options_for_store(&current_input_store_path, None)
                 .map_err(seis_runtime::SeisRefineError::Message)?;
             let materialize_started_at = Instant::now();
-            materialize_processing_volume_with_progress(
+            materialize_processing_volume_with_partition_progress(
                 &current_input_store_path,
                 &stage.artifact.store_path,
                 &stage.segment_pipeline,
@@ -8775,6 +10545,14 @@ fn run_subvolume_processing_job(
                         ));
                     }
                     let _ = record.mark_progress(completed, total, Some(&stage.stage_label));
+                    Ok(())
+                },
+                |progress| {
+                    let mut summary = execution_summary
+                        .lock()
+                        .expect("processing execution summary mutex poisoned");
+                    summary.apply_partition_progress(&stage.stage_label, progress);
+                    let _ = record.set_execution_summary(summary.clone().into_contract());
                     Ok(())
                 },
             )?;
@@ -9306,8 +11084,9 @@ fn set_diagnostics_verbosity_command(
 fn export_diagnostics_bundle_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
+    include_sensitive_paths: Option<bool>,
 ) -> Result<ExportBundleResponse, String> {
-    let bundle_path = diagnostics.export_bundle(&app)?;
+    let bundle_path = diagnostics.export_bundle(&app, include_sensitive_paths.unwrap_or(false))?;
     diagnostics.emit_session_event(
         &app,
         "exported",
@@ -9352,8 +11131,10 @@ fn emit_frontend_diagnostics_event_command(
 fn run_section_browsing_benchmark_command(
     app: AppHandle,
     diagnostics: State<DiagnosticsState>,
-    request: RunSectionBrowsingBenchmarkRequest,
+    security: State<SecurityState>,
+    mut request: RunSectionBrowsingBenchmarkRequest,
 ) -> Result<RunSectionBrowsingBenchmarkResponse, String> {
+    request.store_path = resolve_store_path_argument(&security, &request.store_path)?;
     let store_path = request.store_path.trim().to_string();
     if store_path.is_empty() {
         return Err("Store path is required.".to_string());
@@ -9683,6 +11464,7 @@ pub fn run() {
             let diagnostics =
                 DiagnosticsState::initialize(app_paths.logs_dir(), session_basename.clone())?;
             let processing = ProcessingState::initialize(app_paths.pipeline_presets_dir())?;
+            processing.seed_builtin_presets()?;
             let segy_import_recipes =
                 SegyImportRecipeState::initialize(app_paths.segy_import_recipes_dir())?;
             fs::create_dir_all(app_paths.map_transform_cache_dir())
@@ -9719,11 +11501,17 @@ pub fn run() {
             app.manage(preview_sessions);
             app.manage(workspace);
             app.manage(import_manager);
+            app.manage(SecurityState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             list_import_providers_command,
             begin_import_session_command,
+            pick_runtime_store_command,
+            pick_project_root_command,
+            pick_output_path_command,
+            authorize_managed_store_command,
+            authorize_managed_output_command,
             preflight_import_command,
             scan_segy_import_command,
             validate_segy_import_plan_command,
@@ -9731,6 +11519,7 @@ pub fn run() {
             import_dataset_command,
             import_prestack_offset_dataset_command,
             open_dataset_command,
+            dataset_operator_catalog_command,
             ensure_demo_survey_time_depth_transform_command,
             load_velocity_models_command,
             describe_velocity_volume_command,
@@ -9756,16 +11545,23 @@ pub fn run() {
             load_gather_command,
             preview_processing_command,
             preview_processing_binary_command,
+            preview_post_stack_neighborhood_processing_command,
+            preview_post_stack_neighborhood_processing_binary_command,
             preview_subvolume_processing_command,
             preview_subvolume_processing_binary_command,
             preview_gather_processing_command,
             amplitude_spectrum_command,
             velocity_scan_command,
             run_processing_command,
+            submit_trace_local_processing_batch_command,
+            submit_processing_batch_command,
+            run_post_stack_neighborhood_processing_command,
             run_subvolume_processing_command,
             run_gather_processing_command,
             get_processing_job_command,
+            get_processing_batch_command,
             cancel_processing_job_command,
+            cancel_processing_batch_command,
             list_pipeline_presets_command,
             save_pipeline_preset_command,
             delete_pipeline_preset_command,
@@ -9811,6 +11607,7 @@ pub fn run() {
             default_import_store_path_command,
             default_import_prestack_store_path_command,
             default_processing_store_path_command,
+            default_post_stack_neighborhood_processing_store_path_command,
             default_subvolume_processing_store_path_command,
             default_gather_processing_store_path_command,
             get_diagnostics_status_command,

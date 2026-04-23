@@ -2,4 +2,4 @@
 import type { CoordinateReferenceDto } from "./CoordinateReferenceDto";
 import type { SurveyMapTransformStatusDto } from "./SurveyMapTransformStatusDto";
 
-export type ResolvedSurveyMapHorizonDto = { id: string, survey_asset_id: string, name: string, source_path: string, point_count: number, mapped_point_count: number, missing_cell_count: number, source_coordinate_reference: CoordinateReferenceDto | null, aligned_coordinate_reference: CoordinateReferenceDto | null, transformed: boolean, preview_available: boolean, preview_status: SurveyMapTransformStatusDto, notes: Array<string>, };
+export type ResolvedSurveyMapHorizonDto = { id: string, survey_asset_id: string, name: string, source_path: string, point_count: number, mapped_point_count: number, missing_cell_count: number, source_coordinate_reference?: CoordinateReferenceDto | null, aligned_coordinate_reference?: CoordinateReferenceDto | null, transformed: boolean, preview_available: boolean, preview_status: SurveyMapTransformStatusDto, notes?: Array<string>, };

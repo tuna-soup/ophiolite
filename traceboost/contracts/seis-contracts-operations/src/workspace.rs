@@ -4,10 +4,15 @@ use ts_rs::TS;
 
 use crate::import_ops::SegyGeometryOverride;
 pub use ophiolite_seismic::{
-    DatasetSummary, SectionAxis, SubvolumeCropOperation, SurveyTimeDepthTransform3D,
-    TimeDepthDomain, VelocityQuantityKind, VelocitySource3D,
+    DatasetSummary, PostStackNeighborhoodProcessingPipeline, ProcessingPipelineFamily, SectionAxis,
+    SubvolumeCropOperation, SurveyTimeDepthTransform3D, TimeDepthDomain, VelocityQuantityKind,
+    VelocitySource3D,
 };
 use seis_contracts_core::TraceLocalProcessingPipeline;
+
+fn default_workspace_pipeline_family() -> ProcessingPipelineFamily {
+    ProcessingPipelineFamily::TraceLocal
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -23,9 +28,14 @@ pub enum DatasetRegistryStatus {
 #[ts(export)]
 pub struct WorkspacePipelineEntry {
     pub pipeline_id: String,
-    pub pipeline: TraceLocalProcessingPipeline,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default = "default_workspace_pipeline_family")]
+    pub family: ProcessingPipelineFamily,
+    #[serde(default)]
+    pub pipeline: Option<TraceLocalProcessingPipeline>,
+    #[serde(default)]
     pub subvolume_crop: Option<SubvolumeCropOperation>,
+    #[serde(default)]
+    pub post_stack_neighborhood_pipeline: Option<PostStackNeighborhoodProcessingPipeline>,
     #[ts(type = "number")]
     pub updated_at_unix_s: u64,
 }
@@ -225,4 +235,31 @@ pub struct IngestVelocityVolumeResponse {
     pub store_path: String,
     pub deleted_input: bool,
     pub volume: VelocitySource3D,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn workspace_pipeline_entry_serializes_presence_stable_fields() {
+        let entry = WorkspacePipelineEntry {
+            pipeline_id: "pipe-1".to_string(),
+            family: ProcessingPipelineFamily::TraceLocal,
+            pipeline: None,
+            subvolume_crop: None,
+            post_stack_neighborhood_pipeline: None,
+            updated_at_unix_s: 42,
+        };
+
+        let value = serde_json::to_value(entry).expect("workspace entry should serialize");
+        assert_eq!(value["pipeline"], serde_json::Value::Null);
+        assert_eq!(value["subvolume_crop"], serde_json::Value::Null);
+        assert_eq!(
+            value["post_stack_neighborhood_pipeline"],
+            serde_json::Value::Null
+        );
+        assert_eq!(value["family"], json!("trace_local"));
+    }
 }

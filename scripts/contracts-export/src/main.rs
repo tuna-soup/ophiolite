@@ -59,7 +59,16 @@ use ophiolite::{
     WellboreAnchorReference, WellboreGeometry,
 };
 use schemars::schema_for;
-use ts_rs::TS;
+use ts_rs::{Config, ExportError, TS};
+
+trait ExportAllTo: TS + 'static {
+    fn export_all_to(output_dir: &Path) -> Result<(), ExportError> {
+        let config = Config::default().with_out_dir(output_dir);
+        Self::export_all(&config)
+    }
+}
+
+impl<T> ExportAllTo for T where T: TS + 'static {}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

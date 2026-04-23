@@ -63,8 +63,55 @@ export type SeismicChartPolarity = "normal" | "reversed";
 export type SeismicChartTool = "pointer" | "crosshair" | "pan";
 export type SeismicChartAction = "fitToData";
 export type SeismicChartCompareMode = "single" | "split";
+export type SeismicBrowseAxis = "inline" | "xline";
+export type SeismicSectionAnalysisKind = "amplitude-spectrum" | "amplitude-distribution";
+export type SeismicSectionAnalysisSelectionKind = "whole-section" | "viewport" | "rectangle";
+export type SeismicSectionAnalysisSelectionMode = "whole-section" | "viewport";
+export type SpectrumAmplitudeScale = "db" | "linear";
 export type EncodedSectionBytes = number[] | Uint8Array;
 export type EncodedGatherBytes = number[] | Uint8Array;
+
+export interface SpectrumCurve {
+  frequenciesHz: number[];
+  amplitudes: number[];
+}
+
+export interface SpectrumResponseLike {
+  curve: SpectrumCurve;
+  sampleIntervalMs: number;
+  processingLabel?: string | null;
+}
+
+export interface DerivedWavelet {
+  assumption: "zero_phase";
+  dominantFrequencyHz: number | null;
+  timesMs: number[];
+  amplitudes: number[];
+}
+
+export interface AmplitudeDistributionBin {
+  start: number;
+  end: number;
+  count: number;
+}
+
+export interface AmplitudeDistributionMarker {
+  id: string;
+  value: number;
+  label?: string;
+  color?: string;
+}
+
+export interface AmplitudeDistributionResult {
+  bins: AmplitudeDistributionBin[];
+  count: number;
+  min: number;
+  max: number;
+  mean: number;
+  standardDeviation: number;
+  median: number;
+  rms: number;
+}
 
 export interface SectionViewLike extends Omit<
   SectionView,
@@ -130,6 +177,86 @@ export interface SeismicChartInteractionEventPayload {
   event: InteractionEvent;
 }
 
+export interface SeismicSectionBrowseCurrent {
+  axis: SeismicBrowseAxis;
+  index: number;
+  value: number;
+}
+
+export type SeismicSectionBrowseRequest =
+  | {
+      kind: "step";
+      direction: -1 | 1;
+      current: SeismicSectionBrowseCurrent;
+      viewport: SectionViewport | null;
+      preserveViewport: boolean;
+    }
+  | {
+      kind: "switch-axis";
+      axis: SeismicBrowseAxis;
+      current: SeismicSectionBrowseCurrent;
+      viewport: SectionViewport | null;
+      preserveViewport: boolean;
+    };
+
+export interface SeismicSectionBrowseConfig {
+  enabled: boolean;
+  current: SeismicSectionBrowseCurrent | null;
+  canStepBackward?: boolean;
+  canStepForward?: boolean;
+  canSwitchAxis?: boolean;
+  pending?: boolean;
+  showChrome?: boolean;
+  onRequest?: SeismicSectionBrowseRequestHandler;
+}
+
+export interface SeismicSectionAnalysisRectangle {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+export interface SeismicSectionWholeSectionAnalysisSelection {
+  kind: "whole-section";
+}
+
+export interface SeismicSectionViewportAnalysisSelection {
+  kind: "viewport";
+  viewport: SectionViewport;
+}
+
+export interface SeismicSectionRectangleAnalysisSelection {
+  kind: "rectangle";
+  viewport: SectionViewport | null;
+  rectangle: SeismicSectionAnalysisRectangle;
+}
+
+export type SeismicSectionAnalysisSelection =
+  | SeismicSectionWholeSectionAnalysisSelection
+  | SeismicSectionViewportAnalysisSelection
+  | SeismicSectionRectangleAnalysisSelection;
+
+export interface SeismicSectionAnalysisRequest {
+  kind: SeismicSectionAnalysisKind;
+  selection: SeismicSectionAnalysisSelection;
+  current: SeismicSectionBrowseCurrent;
+  viewport: SectionViewport | null;
+}
+
+export interface SeismicSectionAnalysisConfig {
+  enabled: boolean;
+  spectrumEnabled?: boolean;
+  distributionEnabled?: boolean;
+  selectionMode?: SeismicSectionAnalysisSelectionMode;
+  selectionModes?: readonly SeismicSectionAnalysisSelectionMode[];
+  openKinds?: readonly SeismicSectionAnalysisKind[];
+  pendingKinds?: readonly SeismicSectionAnalysisKind[];
+  showChrome?: boolean;
+  onSelectionModeChange?: SeismicSectionAnalysisSelectionModeChangeHandler;
+  onRequest?: SeismicSectionAnalysisRequestHandler;
+}
+
 export interface SeismicChartOverlayProps {
   stageTopLeft?: Snippet;
   plotTopCenter?: Snippet;
@@ -150,6 +277,8 @@ export interface SeismicSectionChartProps extends SeismicChartOverlayProps {
   viewport?: SectionViewport | null;
   displayTransform?: Partial<SeismicChartDisplayTransform>;
   interactions?: SeismicChartInteractionConfig;
+  browse?: SeismicSectionBrowseConfig;
+  analysis?: SeismicSectionAnalysisConfig;
   compareMode?: SeismicChartCompareMode;
   splitPosition?: number;
   crosshairEnabled?: boolean;
@@ -172,6 +301,11 @@ export type SeismicSectionViewportChangeHandler = (payload: SectionViewportChang
 export type SeismicSectionInteractionChangeHandler = (payload: SectionInteractionChanged) => void;
 export type SeismicSectionInteractionStateChangeHandler = (payload: SeismicChartInteractionState) => void;
 export type SeismicSectionInteractionEventHandler = (payload: SeismicChartInteractionEventPayload) => void;
+export type SeismicSectionBrowseRequestHandler = (request: SeismicSectionBrowseRequest) => void;
+export type SeismicSectionAnalysisRequestHandler = (request: SeismicSectionAnalysisRequest) => void;
+export type SeismicSectionAnalysisSelectionModeChangeHandler = (
+  mode: SeismicSectionAnalysisSelectionMode
+) => void;
 export type SeismicSectionSplitPositionChangeHandler = (splitPosition: number) => void;
 
 export interface SeismicGatherChartProps extends SeismicChartOverlayProps {

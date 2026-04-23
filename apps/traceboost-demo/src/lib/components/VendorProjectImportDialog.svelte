@@ -15,15 +15,17 @@
   } from "../bridge";
   import { pickVendorProjectFolder } from "../file-dialog";
   import { getViewerModelContext } from "../viewer-model.svelte";
+  import type { ImportManagerNormalizedResult } from "../import-manager-types";
 
   interface Props {
     openSettings: () => void;
     close: () => void;
     embedded?: boolean;
     initialProjectRoot?: string | null;
+    onCommitResult?: ((result: ImportManagerNormalizedResult) => void) | undefined;
   }
 
-  let { openSettings, close, embedded = false, initialProjectRoot = null }: Props = $props();
+  let { openSettings, close, embedded = false, initialProjectRoot = null, onCommitResult }: Props = $props();
 
   const viewerModel = getViewerModelContext();
   let vendorProjectRoot = $state("");
@@ -227,15 +229,7 @@
         dryRun: false
       });
       commitResponse = response;
-      if (targetProjectRoot === viewerModel.projectRoot.trim()) {
-        await viewerModel.refreshProjectWellOverlayInventory(
-          targetProjectRoot,
-          viewerModel.displayCoordinateReferenceId
-        );
-        if (targetSurveyAssetId.trim()) {
-          await viewerModel.refreshProjectSurveyHorizons(targetProjectRoot, targetSurveyAssetId.trim());
-        }
-      }
+      onCommitResult?.(normalizeVendorProjectCommitResult(response));
       viewerModel.note(
         "Imported Petrel objects into the active project.",
         "backend",
@@ -245,9 +239,67 @@
     } catch (commitError) {
       commitResponse = null;
       error = commitError instanceof Error ? commitError.message : "Petrel import commit failed.";
+      onCommitResult?.({
+        providerId: "vendor_project",
+        status: "commit_failed",
+        outcome: "commit_failed",
+        canonicalAssets: [],
+        preservedSources: [],
+        droppedItems: [],
+        warnings: [],
+        blockers: [error],
+        diagnostics: [error],
+        refreshScopes: [],
+        activationEffects: [],
+        providerDetail: null
+      });
     } finally {
       commitLoading = false;
     }
+  }
+
+  function normalizeVendorProjectCommitResult(
+    response: VendorProjectCommitResponse
+  ): ImportManagerNormalizedResult {
+    const refreshScopes: ImportManagerNormalizedResult["refreshScopes"] =
+      response.targetProjectRoot?.trim() === viewerModel.projectRoot.trim()
+        ? [
+            "project_well_inventory",
+            ...(targetSurveyAssetId.trim() ? (["project_survey_horizons"] as const) : [])
+          ]
+        : [];
+    return {
+      providerId: "vendor_project",
+      status: "commit_succeeded",
+      outcome:
+        response.preservedRawSources.length > 0 ? "partial_canonical_commit" : "canonical_commit",
+      canonicalAssets: response.importedAssets.map((asset) => ({
+        kind: asset.canonicalTargetKind,
+        id: asset.assetId ?? null,
+        label: asset.collectionName || asset.displayName,
+        detail: asset.sourcePaths[0] ?? null
+      })),
+      preservedSources: response.preservedRawSources.map((asset) => ({
+        kind: asset.canonicalTargetKind,
+        label: asset.collectionName || asset.displayName,
+        sourceRef: asset.sourcePaths[0] ?? null,
+        detail: "Preserved as raw source content."
+      })),
+      droppedItems: [],
+      warnings: response.issues
+        .filter((issue) => issue.severity === "warning")
+        .map((issue) => issue.message),
+      blockers: response.issues
+        .filter((issue) => issue.severity === "blocking")
+        .map((issue) => issue.message),
+      diagnostics: response.validationReports.map((report) => `${report.displayName}: ${report.checks.join(" | ")}`),
+      refreshScopes,
+      activationEffects: [],
+      providerDetail: {
+        projectRoot: response.projectRoot,
+        targetProjectRoot: response.targetProjectRoot ?? null
+      }
+    };
   }
 </script>
 
@@ -524,8 +576,8 @@
     align-items: center;
     justify-content: center;
     padding: 24px;
-    background: rgba(8, 12, 18, 0.7);
-    backdrop-filter: blur(3px);
+    background: rgba(38, 55, 71, 0.2);
+    backdrop-filter: blur(4px);
   }
 
   .vendor-import-backdrop.embedded {
@@ -543,7 +595,7 @@
     border-radius: 8px;
     background: var(--panel-bg);
     color: var(--text-primary);
-    box-shadow: 0 28px 60px rgba(0, 0, 0, 0.35);
+    box-shadow: var(--ui-shadow-dialog);
   }
 
   .vendor-import-dialog.embedded {

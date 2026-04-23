@@ -3,5 +3,5 @@
   "compilerOptions": {
     "types": ["svelte"]
   },
-  "include": ["src/**/*", "vite.config.ts"]
+  "include": ["src/**/*"]
 }

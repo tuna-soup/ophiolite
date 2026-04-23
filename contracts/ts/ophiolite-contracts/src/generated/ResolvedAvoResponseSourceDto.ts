@@ -3,4 +3,4 @@ import type { AvoAxisDto } from "./AvoAxisDto";
 import type { AvoInterfaceDto } from "./AvoInterfaceDto";
 import type { AvoResponseSeriesDto } from "./AvoResponseSeriesDto";
 
-export type ResolvedAvoResponseSourceDto = { schema_version: number, id: string, name: string, title: string | null, subtitle: string | null, x_axis: AvoAxisDto, y_axis: AvoAxisDto, interfaces: Array<AvoInterfaceDto>, series: Array<AvoResponseSeriesDto>, };
+export type ResolvedAvoResponseSourceDto = { schema_version: number, id: string, name: string, title?: string | null, subtitle?: string | null, x_axis: AvoAxisDto, y_axis: AvoAxisDto, interfaces: Array<AvoInterfaceDto>, series: Array<AvoResponseSeriesDto>, };

@@ -20,6 +20,10 @@ pub enum TraceLocalProcessingOperation {
     PhaseRotation {
         angle_degrees: f32,
     },
+    Envelope,
+    InstantaneousPhase,
+    InstantaneousFrequency,
+    Sweetness,
     LowpassFilter {
         f3_hz: f32,
         f4_hz: f32,
@@ -118,7 +122,7 @@ impl ProcessingLayoutCompatibility {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProcessingOperatorScope {
     TraceLocal,
-    SectionMatrix,
+    PostStackNeighborhood,
     GatherMatrix,
     InverseWavelet,
 }
@@ -127,7 +131,7 @@ impl ProcessingOperatorScope {
     pub fn label(self) -> &'static str {
         match self {
             Self::TraceLocal => "trace-local",
-            Self::SectionMatrix => "section-matrix",
+            Self::PostStackNeighborhood => "post-stack-neighborhood",
             Self::GatherMatrix => "gather-matrix",
             Self::InverseWavelet => "inverse-wavelet",
         }
@@ -189,6 +193,10 @@ impl TraceLocalProcessingOperation {
             Self::TraceRmsNormalize => "trace_rms_normalize",
             Self::AgcRms { .. } => "agc_rms",
             Self::PhaseRotation { .. } => "phase_rotation",
+            Self::Envelope => "envelope",
+            Self::InstantaneousPhase => "instantaneous_phase",
+            Self::InstantaneousFrequency => "instantaneous_frequency",
+            Self::Sweetness => "sweetness",
             Self::LowpassFilter { .. } => "lowpass_filter",
             Self::HighpassFilter { .. } => "highpass_filter",
             Self::BandpassFilter { .. } => "bandpass_filter",
@@ -202,6 +210,10 @@ impl TraceLocalProcessingOperation {
             | Self::TraceRmsNormalize
             | Self::AgcRms { .. }
             | Self::PhaseRotation { .. }
+            | Self::Envelope
+            | Self::InstantaneousPhase
+            | Self::InstantaneousFrequency
+            | Self::Sweetness
             | Self::LowpassFilter { .. }
             | Self::HighpassFilter { .. }
             | Self::BandpassFilter { .. }
@@ -215,6 +227,10 @@ impl TraceLocalProcessingOperation {
             Self::TraceRmsNormalize => ProcessingLayoutCompatibility::AnyTraceMatrix,
             Self::AgcRms { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
             Self::PhaseRotation { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
+            Self::Envelope => ProcessingLayoutCompatibility::AnyTraceMatrix,
+            Self::InstantaneousPhase => ProcessingLayoutCompatibility::AnyTraceMatrix,
+            Self::InstantaneousFrequency => ProcessingLayoutCompatibility::AnyTraceMatrix,
+            Self::Sweetness => ProcessingLayoutCompatibility::AnyTraceMatrix,
             Self::LowpassFilter { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
             Self::HighpassFilter { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
             Self::BandpassFilter { .. } => ProcessingLayoutCompatibility::AnyTraceMatrix,
@@ -251,6 +267,10 @@ impl TraceLocalProcessingOperation {
                 same_section_ephemeral_reuse_safe: true,
             },
             Self::PhaseRotation { .. }
+            | Self::Envelope
+            | Self::InstantaneousPhase
+            | Self::InstantaneousFrequency
+            | Self::Sweetness
             | Self::LowpassFilter { .. }
             | Self::HighpassFilter { .. }
             | Self::BandpassFilter { .. } => ProcessingOperatorDependencyProfile {
@@ -286,11 +306,11 @@ pub struct TraceLocalProcessingPipeline {
     pub schema_version: u32,
     #[serde(default = "default_pipeline_revision")]
     pub revision: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub preset_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub description: Option<String>,
     pub steps: Vec<TraceLocalProcessingStep>,
 }
@@ -377,15 +397,112 @@ pub struct SubvolumeProcessingPipeline {
     pub schema_version: u32,
     #[serde(default = "default_pipeline_revision")]
     pub revision: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub preset_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub trace_local_pipeline: Option<TraceLocalProcessingPipeline>,
     pub crop: SubvolumeCropOperation,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PostStackNeighborhoodWindow {
+    pub gate_ms: f32,
+    pub inline_stepout: usize,
+    pub xline_stepout: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum LocalVolumeStatistic {
+    Mean,
+    Rms,
+    Variance,
+    Minimum,
+    Maximum,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum NeighborhoodDipOutput {
+    Inline,
+    Xline,
+    Azimuth,
+    AbsDip,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum PostStackNeighborhoodProcessingOperation {
+    Similarity {
+        window: PostStackNeighborhoodWindow,
+    },
+    LocalVolumeStats {
+        window: PostStackNeighborhoodWindow,
+        statistic: LocalVolumeStatistic,
+    },
+    Dip {
+        window: PostStackNeighborhoodWindow,
+        output: NeighborhoodDipOutput,
+    },
+}
+
+impl PostStackNeighborhoodProcessingOperation {
+    pub fn operator_id(&self) -> &'static str {
+        match self {
+            Self::Similarity { .. } => "similarity",
+            Self::LocalVolumeStats { .. } => "local_volume_stats",
+            Self::Dip { .. } => "dip",
+        }
+    }
+
+    pub fn scope(&self) -> ProcessingOperatorScope {
+        ProcessingOperatorScope::PostStackNeighborhood
+    }
+
+    pub fn compatibility(&self) -> ProcessingLayoutCompatibility {
+        ProcessingLayoutCompatibility::PostStackOnly
+    }
+
+    pub fn dependency_profile(&self) -> ProcessingOperatorDependencyProfile {
+        match self {
+            Self::Similarity { window }
+            | Self::LocalVolumeStats { window, .. }
+            | Self::Dip { window, .. } => ProcessingOperatorDependencyProfile {
+                deterministic: true,
+                sample_dependency: ProcessingSampleDependency::BoundedWindow {
+                    window_ms_hint: window.gate_ms,
+                },
+                spatial_dependency: ProcessingSpatialDependency::SectionNeighborhood,
+                inline_radius: window.inline_stepout,
+                crossline_radius: window.xline_stepout,
+                same_section_ephemeral_reuse_safe: true,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PostStackNeighborhoodProcessingPipeline {
+    #[serde(default = "default_pipeline_schema_version")]
+    pub schema_version: u32,
+    #[serde(default = "default_pipeline_revision")]
+    pub revision: u32,
+    #[serde(default)]
+    pub preset_id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub trace_local_pipeline: Option<TraceLocalProcessingPipeline>,
+    pub operations: Vec<PostStackNeighborhoodProcessingOperation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -439,13 +556,13 @@ pub struct GatherProcessingPipeline {
     pub schema_version: u32,
     #[serde(default = "default_pipeline_revision")]
     pub revision: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub preset_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub trace_local_pipeline: Option<TraceLocalProcessingPipeline>,
     pub operations: Vec<GatherProcessingOperation>,
 }
@@ -455,6 +572,7 @@ pub struct GatherProcessingPipeline {
 #[ts(rename_all = "snake_case")]
 pub enum ProcessingPipelineFamily {
     TraceLocal,
+    PostStackNeighborhood,
     Subvolume,
     Gather,
 }
@@ -465,6 +583,9 @@ pub enum ProcessingPipelineFamily {
 pub enum ProcessingPipelineSpec {
     TraceLocal {
         pipeline: TraceLocalProcessingPipeline,
+    },
+    PostStackNeighborhood {
+        pipeline: PostStackNeighborhoodProcessingPipeline,
     },
     Subvolume {
         pipeline: SubvolumeProcessingPipeline,
@@ -478,8 +599,35 @@ impl ProcessingPipelineSpec {
     pub fn family(&self) -> ProcessingPipelineFamily {
         match self {
             Self::TraceLocal { .. } => ProcessingPipelineFamily::TraceLocal,
+            Self::PostStackNeighborhood { .. } => ProcessingPipelineFamily::PostStackNeighborhood,
             Self::Subvolume { .. } => ProcessingPipelineFamily::Subvolume,
             Self::Gather { .. } => ProcessingPipelineFamily::Gather,
+        }
+    }
+
+    pub fn set_preset_id(&mut self, preset_id: Option<String>) {
+        match self {
+            Self::TraceLocal { pipeline } => {
+                pipeline.preset_id = preset_id;
+            }
+            Self::PostStackNeighborhood { pipeline } => {
+                pipeline.preset_id = preset_id.clone();
+                if let Some(trace_local_pipeline) = &mut pipeline.trace_local_pipeline {
+                    trace_local_pipeline.preset_id = preset_id;
+                }
+            }
+            Self::Subvolume { pipeline } => {
+                pipeline.preset_id = preset_id.clone();
+                if let Some(trace_local_pipeline) = &mut pipeline.trace_local_pipeline {
+                    trace_local_pipeline.preset_id = preset_id;
+                }
+            }
+            Self::Gather { pipeline } => {
+                pipeline.preset_id = preset_id.clone();
+                if let Some(trace_local_pipeline) = &mut pipeline.trace_local_pipeline {
+                    trace_local_pipeline.preset_id = preset_id;
+                }
+            }
         }
     }
 }
@@ -518,30 +666,176 @@ pub struct ProcessingJobArtifact {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingJobStageClassificationSummary {
+    pub stage_label: String,
+    pub max_memory_cost_class: String,
+    pub max_cpu_cost_class: String,
+    pub max_io_cost_class: String,
+    pub min_parallel_efficiency_class: String,
+    pub combined_cpu_weight: f32,
+    pub combined_io_weight: f32,
+    pub uses_external_inputs: bool,
+    pub requires_full_volume: bool,
+    pub has_sample_halo: bool,
+    pub has_spatial_halo: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingJobPlanSummary {
+    pub plan_id: String,
+    pub planning_mode: String,
+    pub stage_count: usize,
+    pub stage_labels: Vec<String>,
+    #[serde(default)]
+    pub expected_partition_count: Option<usize>,
+    #[serde(default)]
+    pub max_active_partitions: Option<usize>,
+    #[serde(default)]
+    pub stage_partition_summaries: Vec<String>,
+    pub max_memory_cost_class: String,
+    pub max_cpu_cost_class: String,
+    pub max_io_cost_class: String,
+    pub min_parallel_efficiency_class: String,
+    pub combined_cpu_weight: f32,
+    pub combined_io_weight: f32,
+    #[serde(default)]
+    pub stage_classification_summaries: Vec<ProcessingJobStageClassificationSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingJobStageExecutionSummary {
+    pub stage_label: String,
+    pub completed_partitions: usize,
+    #[serde(default)]
+    pub total_partitions: Option<usize>,
+    pub retry_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingJobChunkPlanSummary {
+    pub partition_count: usize,
+    pub max_active_partitions: usize,
+    pub tiles_per_partition: usize,
+    #[ts(type = "number")]
+    pub compatibility_target_bytes: u64,
+    #[ts(type = "number")]
+    pub estimated_peak_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingJobExecutionSummary {
+    pub completed_partitions: usize,
+    #[serde(default)]
+    pub total_partitions: Option<usize>,
+    pub active_partitions: usize,
+    pub peak_active_partitions: usize,
+    pub retry_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_chunk_plan: Option<ProcessingJobChunkPlanSummary>,
+    #[serde(default)]
+    pub stages: Vec<ProcessingJobStageExecutionSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ProcessingJobStatus {
     pub job_id: String,
     pub state: ProcessingJobState,
     pub progress: ProcessingJobProgress,
     pub input_store_path: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub output_store_path: Option<String>,
     pub pipeline: ProcessingPipelineSpec,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub current_stage_label: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub artifacts: Vec<ProcessingJobArtifact>,
+    #[serde(default)]
+    pub plan_summary: Option<ProcessingJobPlanSummary>,
+    #[serde(default)]
+    pub execution_summary: Option<ProcessingJobExecutionSummary>,
     #[ts(type = "number")]
     pub created_at_unix_s: u64,
     #[ts(type = "number")]
     pub updated_at_unix_s: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub error_message: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingBatchState {
+    Queued,
+    Running,
+    Completed,
+    CompletedWithErrors,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingBatchProgress {
+    pub completed_jobs: usize,
+    pub total_jobs: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct TraceLocalProcessingPreset {
+pub struct ProcessingBatchItemStatus {
+    pub store_path: String,
+    #[serde(default)]
+    pub output_store_path: Option<String>,
+    pub job_id: String,
+    pub state: ProcessingJobState,
+    #[serde(default)]
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingExecutionMode {
+    Auto,
+    Conservative,
+    Throughput,
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingSchedulerReason {
+    InteractivePreviewPolicy,
+    ForegroundMaterializePolicy,
+    AutoLowCostBatch,
+    AutoMediumCostBatch,
+    AutoHighCostBatch,
+    AutoFullVolumeBatch,
+    ConservativeMode,
+    ThroughputMode,
+    UserRequested,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingBatchStatus {
+    pub batch_id: String,
+    pub state: ProcessingBatchState,
+    pub progress: ProcessingBatchProgress,
+    pub pipeline: ProcessingPipelineSpec,
+    pub items: Vec<ProcessingBatchItemStatus>,
+    #[serde(default)]
+    pub requested_max_active_jobs: Option<usize>,
+    pub effective_max_active_jobs: usize,
+    pub execution_mode: ProcessingExecutionMode,
+    pub scheduler_reason: ProcessingSchedulerReason,
+    #[ts(type = "number")]
+    pub created_at_unix_s: u64,
+    #[ts(type = "number")]
+    pub updated_at_unix_s: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingPreset {
     pub preset_id: String,
-    pub pipeline: TraceLocalProcessingPipeline,
+    pub pipeline: ProcessingPipelineSpec,
     #[ts(type = "number")]
     pub created_at_unix_s: u64,
     #[ts(type = "number")]
@@ -550,4 +844,49 @@ pub struct TraceLocalProcessingPreset {
 
 pub type ProcessingOperation = TraceLocalProcessingOperation;
 pub type ProcessingPipeline = TraceLocalProcessingPipeline;
-pub type ProcessingPreset = TraceLocalProcessingPreset;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn processing_job_status_serializes_nulls_and_empty_arrays() {
+        let pipeline = ProcessingPipelineSpec::TraceLocal {
+            pipeline: TraceLocalProcessingPipeline {
+                schema_version: 1,
+                revision: 0,
+                preset_id: None,
+                name: None,
+                description: None,
+                steps: Vec::new(),
+            },
+        };
+        let status = ProcessingJobStatus {
+            job_id: "job-1".to_string(),
+            state: ProcessingJobState::Queued,
+            progress: ProcessingJobProgress {
+                completed: 0,
+                total: 1,
+            },
+            input_store_path: "input".to_string(),
+            output_store_path: None,
+            pipeline,
+            current_stage_label: None,
+            artifacts: Vec::new(),
+            plan_summary: None,
+            execution_summary: None,
+            created_at_unix_s: 1,
+            updated_at_unix_s: 2,
+            error_message: None,
+        };
+
+        let value = serde_json::to_value(status).expect("job status should serialize");
+        assert_eq!(value["output_store_path"], serde_json::Value::Null);
+        assert_eq!(value["current_stage_label"], serde_json::Value::Null);
+        assert_eq!(value["artifacts"], json!([]));
+        assert_eq!(value["plan_summary"], serde_json::Value::Null);
+        assert_eq!(value["execution_summary"], serde_json::Value::Null);
+        assert_eq!(value["error_message"], serde_json::Value::Null);
+    }
+}

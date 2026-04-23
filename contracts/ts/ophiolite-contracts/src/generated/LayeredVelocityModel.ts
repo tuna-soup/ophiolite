@@ -6,4 +6,4 @@ import type { SurveyGridTransform } from "./SurveyGridTransform";
 import type { TimeDepthDomain } from "./TimeDepthDomain";
 import type { TravelTimeReference } from "./TravelTimeReference";
 
-export type LayeredVelocityModel = { id: string, name: string, derived_from: Array<string>, coordinate_reference: CoordinateReferenceDescriptor | null, grid_transform: SurveyGridTransform | null, vertical_domain: TimeDepthDomain, travel_time_reference: TravelTimeReference | null, depth_reference: DepthReferenceKind | null, intervals: Array<LayeredVelocityInterval>, notes: Array<string>, };
+export type LayeredVelocityModel = { id: string, name: string, derived_from?: Array<string>, coordinate_reference?: CoordinateReferenceDescriptor | null, grid_transform?: SurveyGridTransform | null, vertical_domain: TimeDepthDomain, travel_time_reference?: TravelTimeReference | null, depth_reference?: DepthReferenceKind | null, intervals?: Array<LayeredVelocityInterval>, notes?: Array<string>, };

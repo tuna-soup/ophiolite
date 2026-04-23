@@ -3,4 +3,4 @@ import type { LayeredVelocityModel } from "./LayeredVelocityModel";
 import type { VelocityControlProfileSet } from "./VelocityControlProfileSet";
 import type { VelocityQuantityKind } from "./VelocityQuantityKind";
 
-export type BuildSurveyTimeDepthTransformRequest = { schema_version: number, store_path: string, model: LayeredVelocityModel, control_profile_sets: Array<VelocityControlProfileSet>, output_id: string | null, output_name: string | null, preferred_velocity_kind: VelocityQuantityKind | null, output_depth_unit: string, notes: Array<string>, };
+export type BuildSurveyTimeDepthTransformRequest = { schema_version: number, store_path: string, model: LayeredVelocityModel, control_profile_sets?: Array<VelocityControlProfileSet>, output_id?: string | null, output_name?: string | null, preferred_velocity_kind?: VelocityQuantityKind | null, output_depth_unit: string, notes?: Array<string>, };

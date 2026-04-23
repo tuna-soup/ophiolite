@@ -5,4 +5,4 @@ import type { SurveyMapSpatialDescriptorDto } from "./SurveyMapSpatialDescriptor
 import type { SurveyMapTransformDiagnosticsDto } from "./SurveyMapTransformDiagnosticsDto";
 import type { SurveyMapTransformStatusDto } from "./SurveyMapTransformStatusDto";
 
-export type ResolvedSurveyMapSurveyDto = { asset_id: string, logical_asset_id: string, name: string, index_grid: SurveyIndexGridDto, coordinate_reference_binding: CoordinateReferenceBindingDto | null, native_spatial: SurveyMapSpatialDescriptorDto, display_spatial: SurveyMapSpatialDescriptorDto | null, transform_status: SurveyMapTransformStatusDto, transform_diagnostics: SurveyMapTransformDiagnosticsDto, notes: Array<string>, };
+export type ResolvedSurveyMapSurveyDto = { asset_id: string, logical_asset_id: string, name: string, index_grid: SurveyIndexGridDto, coordinate_reference_binding?: CoordinateReferenceBindingDto | null, native_spatial: SurveyMapSpatialDescriptorDto, display_spatial?: SurveyMapSpatialDescriptorDto | null, transform_status: SurveyMapTransformStatusDto, transform_diagnostics: SurveyMapTransformDiagnosticsDto, notes?: Array<string>, };

@@ -8,9 +8,13 @@ export default defineConfig({
       title: "Ophiolite",
       description:
         "Local-first subsurface infrastructure with a canonical Rust runtime and Python, CLI, and Rust surfaces.",
-      social: {
-        github: "https://github.com/scrooijmans/ophiolite",
-      },
+      social: [
+        {
+          icon: "github",
+          label: "GitHub",
+          href: "https://github.com/scrooijmans/ophiolite",
+        },
+      ],
       editLink: {
         baseUrl:
           "https://github.com/scrooijmans/ophiolite/edit/master/apps/ophiolite-docs/",

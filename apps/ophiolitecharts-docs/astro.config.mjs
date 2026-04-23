@@ -8,9 +8,13 @@ export default defineConfig({
       title: "Ophiolite Charts",
       description:
         "High-performance scientific and subsurface charts for modern web apps, with live examples, typed interactions, and commercial support.",
-      social: {
-        github: "https://github.com/scrooijmans/ophiolite"
-      },
+      social: [
+        {
+          icon: "github",
+          label: "GitHub",
+          href: "https://github.com/scrooijmans/ophiolite"
+        }
+      ],
       editLink: {
         baseUrl: "https://github.com/scrooijmans/ophiolite/edit/master/apps/ophiolitecharts-docs/"
       },

@@ -3,4 +3,4 @@ import type { SectionRequest } from "./SectionRequest";
 import type { SectionSpectrumSelection } from "./SectionSpectrumSelection";
 import type { TraceLocalProcessingPipeline } from "./TraceLocalProcessingPipeline";
 
-export type AmplitudeSpectrumRequest = { schema_version: number, store_path: string, section: SectionRequest, selection: SectionSpectrumSelection, pipeline: TraceLocalProcessingPipeline | null, };
+export type AmplitudeSpectrumRequest = { schema_version: number, store_path: string, section: SectionRequest, selection: SectionSpectrumSelection, pipeline?: TraceLocalProcessingPipeline | null, };

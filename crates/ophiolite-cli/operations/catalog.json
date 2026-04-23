@@ -190,6 +190,126 @@
       }
     },
     {
+      "id": "ophiolite.list_project_operator_catalog",
+      "summary": "List operators available for a specific project asset under the current operator lock across structured and seismic families.",
+      "owner": "ophiolite",
+      "domain": "operators",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::list_operator_catalog",
+        "rust_cli": "list-project-operator-catalog"
+      }
+    },
+    {
+      "id": "ophiolite.preview_project_trace_local_processing",
+      "summary": "Preview a trace-local seismic pipeline for a project survey asset using canonical asset-id requests.",
+      "owner": "ophiolite",
+      "domain": "operators",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::preview_trace_local_processing",
+        "rust_cli": "preview-project-trace-local-processing"
+      }
+    },
+    {
+      "id": "ophiolite.run_project_trace_local_processing",
+      "summary": "Run a trace-local seismic pipeline for a project survey asset using canonical asset-id requests.",
+      "owner": "ophiolite",
+      "domain": "operators",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::run_trace_local_processing",
+        "rust_cli": "run-project-trace-local-processing"
+      }
+    },
+    {
+      "id": "ophiolite.preview_project_subvolume_processing",
+      "summary": "Preview a subvolume derivation for a project survey asset using canonical asset-id requests.",
+      "owner": "ophiolite",
+      "domain": "operators",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::preview_subvolume_processing",
+        "rust_cli": "preview-project-subvolume-processing"
+      }
+    },
+    {
+      "id": "ophiolite.run_project_subvolume_processing",
+      "summary": "Run a subvolume derivation for a project survey asset using canonical asset-id requests.",
+      "owner": "ophiolite",
+      "domain": "operators",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::run_subvolume_processing",
+        "rust_cli": "run-project-subvolume-processing"
+      }
+    },
+    {
+      "id": "ophiolite.preview_project_post_stack_neighborhood_processing",
+      "summary": "Preview a post-stack neighborhood pipeline for a project survey asset using canonical asset-id requests.",
+      "owner": "ophiolite",
+      "domain": "operators",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::preview_post_stack_neighborhood_processing",
+        "rust_cli": "preview-project-post-stack-neighborhood-processing"
+      }
+    },
+    {
+      "id": "ophiolite.run_project_post_stack_neighborhood_processing",
+      "summary": "Run a post-stack neighborhood pipeline for a project survey asset using canonical asset-id requests.",
+      "owner": "ophiolite",
+      "domain": "operators",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::run_post_stack_neighborhood_processing",
+        "rust_cli": "run-project-post-stack-neighborhood-processing"
+      }
+    },
+    {
+      "id": "ophiolite.preview_project_gather_processing",
+      "summary": "Preview a gather-native seismic pipeline for a project survey asset using canonical asset-id requests.",
+      "owner": "ophiolite",
+      "domain": "operators",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::preview_gather_processing",
+        "rust_cli": "preview-project-gather-processing"
+      }
+    },
+    {
+      "id": "ophiolite.run_project_gather_processing",
+      "summary": "Run a gather-native seismic pipeline for a project survey asset using canonical asset-id requests.",
+      "owner": "ophiolite",
+      "domain": "operators",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::run_gather_processing",
+        "rust_cli": "run-project-gather-processing"
+      }
+    },
+    {
+      "id": "ophiolite.run_project_velocity_scan",
+      "summary": "Run a velocity scan analysis for a project survey asset using canonical asset-id requests.",
+      "owner": "ophiolite",
+      "domain": "operators",
+      "stability": "preview",
+      "surfaces": ["rust-api", "rust-cli"],
+      "bindings": {
+        "rust_function": "ophiolite::OphioliteProject::run_velocity_scan",
+        "rust_cli": "run-project-velocity-scan"
+      }
+    },
+    {
       "id": "ophiolite.preview_well_folder_import",
       "summary": "Inspect a well-folder import root and summarize discovered source families before commit.",
       "owner": "ophiolite",

@@ -2,4 +2,4 @@
 import type { RockPhysicsCategoricalSemanticDto } from "./RockPhysicsCategoricalSemanticDto";
 import type { RockPhysicsCategoryDto } from "./RockPhysicsCategoryDto";
 
-export type RockPhysicsCategoricalColorBindingDto = { label: string | null, semantic: RockPhysicsCategoricalSemanticDto, categories: Array<RockPhysicsCategoryDto> | null, };
+export type RockPhysicsCategoricalColorBindingDto = { label?: string | null, semantic: RockPhysicsCategoricalSemanticDto, categories?: Array<RockPhysicsCategoryDto> | null, };

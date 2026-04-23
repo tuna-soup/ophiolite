@@ -6,4 +6,4 @@ import type { ProcessingLineageSummary } from "./ProcessingLineageSummary";
 import type { SampleDataFidelity } from "./SampleDataFidelity";
 import type { SurveySpatialDescriptor } from "./SurveySpatialDescriptor";
 
-export type VolumeDescriptor = { id: DatasetId, store_id: string, label: string, shape: [number, number, number], chunk_shape: [number, number, number], sample_interval_ms: number, sample_data_fidelity: SampleDataFidelity, geometry: GeometryDescriptor, coordinate_reference_binding: CoordinateReferenceBinding | null, spatial: SurveySpatialDescriptor | null, processing_lineage_summary: ProcessingLineageSummary | null, };
+export type VolumeDescriptor = { id: DatasetId, store_id: string, label: string, shape: [number, number, number], chunk_shape: [number, number, number], sample_interval_ms: number, sample_data_fidelity: SampleDataFidelity, geometry: GeometryDescriptor, coordinate_reference_binding?: CoordinateReferenceBinding | null, spatial?: SurveySpatialDescriptor | null, processing_lineage_summary?: ProcessingLineageSummary | null, };

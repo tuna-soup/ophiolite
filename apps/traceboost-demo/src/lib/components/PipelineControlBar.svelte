@@ -1,12 +1,23 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
+  import type { ProcessingWorkspaceFamily } from "../processing-model.svelte";
   import type {
+    ProcessingBatchItemStatus,
+    ProcessingBatchStatus,
+    PostStackNeighborhoodProcessingPipeline,
     TraceLocalProcessingPipeline as ProcessingPipeline,
-    TraceLocalProcessingPreset as ProcessingPreset
+    ProcessingPreset as ProcessingPresetContract
   } from "@traceboost/seis-contracts";
+  type PipelineLike = ProcessingPipeline | PostStackNeighborhoodProcessingPipeline;
+  interface BatchCandidate {
+    storePath: string;
+    displayName: string;
+    isActive: boolean;
+  }
 
   let {
+    processingFamily,
     pipeline,
     previewState,
     previewLabel,
@@ -16,6 +27,12 @@
     canRun,
     previewBusy,
     runBusy,
+    batchBusy,
+    activeBatch,
+    batchCandidates,
+    selectedBatchStorePaths,
+    batchExecutionMode,
+    batchMaxActiveJobs,
     runOutputSettingsOpen,
     runOutputPathMode,
     runOutputPath,
@@ -25,25 +42,39 @@
     onPreview,
     onShowRaw,
     onRun,
+    onRunBatch,
+    onCancelBatch,
     onToggleRunOutputSettings,
     onSetRunOutputPathMode,
     onSetCustomRunOutputPath,
     onBrowseRunOutputPath,
     onResetRunOutputPath,
     onSetOverwriteExistingRunOutput,
+    onToggleBatchStorePath,
+    onSelectAllBatchCandidates,
+    onClearBatchSelection,
+    onSetBatchExecutionMode,
+    onSetBatchMaxActiveJobs,
     onLoadPreset,
     onSavePreset,
     onDeletePreset
   }: {
-    pipeline: ProcessingPipeline;
+    processingFamily: ProcessingWorkspaceFamily;
+    pipeline: PipelineLike;
     previewState: "raw" | "preview" | "stale";
     previewLabel: string | null;
-    presets: ProcessingPreset[];
+    presets: ProcessingPresetContract[];
     loadingPresets: boolean;
     canPreview: boolean;
     canRun: boolean;
     previewBusy: boolean;
     runBusy: boolean;
+    batchBusy: boolean;
+    activeBatch: ProcessingBatchStatus | null;
+    batchCandidates: BatchCandidate[];
+    selectedBatchStorePaths: string[];
+    batchExecutionMode: "auto" | "conservative" | "throughput";
+    batchMaxActiveJobs: string;
     runOutputSettingsOpen: boolean;
     runOutputPathMode: "default" | "custom";
     runOutputPath: string | null;
@@ -53,13 +84,20 @@
     onPreview: () => void | Promise<void>;
     onShowRaw: () => void;
     onRun: () => void | Promise<void>;
+    onRunBatch: () => void | Promise<void>;
+    onCancelBatch: () => void | Promise<void>;
     onToggleRunOutputSettings: () => void;
     onSetRunOutputPathMode: (mode: "default" | "custom") => void;
     onSetCustomRunOutputPath: (value: string) => void;
     onBrowseRunOutputPath: () => void | Promise<void>;
     onResetRunOutputPath: () => void;
     onSetOverwriteExistingRunOutput: (value: boolean) => void;
-    onLoadPreset: (preset: ProcessingPreset) => void;
+    onToggleBatchStorePath: (storePath: string) => void;
+    onSelectAllBatchCandidates: () => void;
+    onClearBatchSelection: () => void;
+    onSetBatchExecutionMode: (mode: "auto" | "conservative" | "throughput") => void;
+    onSetBatchMaxActiveJobs: (value: string) => void;
+    onLoadPreset: (preset: ProcessingPresetContract) => void;
     onSavePreset: () => void | Promise<void>;
     onDeletePreset: (presetId: string) => void | Promise<void>;
   } = $props();
@@ -84,6 +122,93 @@
   const saveLibraryButtonLabel = $derived(
     currentLibraryTemplateExists ? "Update Library Template" : "Save As Library Template"
   );
+  const activeBatchItems = $derived(activeBatch?.items ?? []);
+  const activeBatchFamily = $derived(
+    activeBatch ? describeBatchFamily(activeBatch) : null
+  );
+  const batchQueuedCount = $derived(countBatchItems(activeBatchItems, "queued"));
+  const batchRunningCount = $derived(countBatchItems(activeBatchItems, "running"));
+  const batchCompletedCount = $derived(countBatchItems(activeBatchItems, "completed"));
+  const batchFailedCount = $derived(countBatchItems(activeBatchItems, "failed"));
+  const batchCancelledCount = $derived(countBatchItems(activeBatchItems, "cancelled"));
+
+  function describeBatchFamily(batch: ProcessingBatchStatus): string {
+    if ("trace_local" in batch.pipeline) {
+      return "trace-local";
+    }
+    if ("subvolume" in batch.pipeline) {
+      return "subvolume";
+    }
+    if ("post_stack_neighborhood" in batch.pipeline) {
+      return "post-stack neighborhood";
+    }
+    return "gather";
+  }
+
+  function countBatchItems(
+    items: ProcessingBatchItemStatus[],
+    state: ProcessingBatchItemStatus["state"]
+  ): number {
+    return items.filter((item) => item.state === state).length;
+  }
+
+  function summarizeBatchItemPath(path: string): string {
+    const normalized = path.replace(/\\/g, "/");
+    const parts = normalized.split("/").filter((part) => part.length > 0);
+    return parts.at(-1) ?? path;
+  }
+
+  function batchExecutionModeLabel(mode: string): string {
+    switch (mode) {
+      case "conservative":
+        return "Conservative";
+      case "throughput":
+        return "Throughput";
+      case "custom":
+        return "Custom";
+      default:
+        return "Auto";
+    }
+  }
+
+  function batchSchedulerReasonLabel(reason: string): string {
+    switch (reason) {
+      case "interactive_preview_policy":
+        return "Preview-priority policy";
+      case "foreground_materialize_policy":
+        return "Foreground materialization policy";
+      case "auto_low_cost_batch":
+        return "Auto policy: low-cost workload";
+      case "auto_medium_cost_batch":
+        return "Auto policy: medium-cost workload";
+      case "auto_high_cost_batch":
+        return "Auto policy: high-cost workload";
+      case "auto_full_volume_batch":
+        return "Auto policy: full-volume workload";
+      case "conservative_mode":
+        return "Conservative policy";
+      case "throughput_mode":
+        return "Throughput policy";
+      case "user_requested":
+        return "Manual concurrency override";
+      default:
+        return reason.replaceAll("_", " ");
+    }
+  }
+
+  function presetLabel(preset: ProcessingPresetContract): string {
+    const spec = preset.pipeline;
+    if ("trace_local" in spec) {
+      return spec.trace_local.pipeline.name ?? preset.preset_id;
+    }
+    if ("subvolume" in spec) {
+      return spec.subvolume.pipeline.name ?? preset.preset_id;
+    }
+    if ("post_stack_neighborhood" in spec) {
+      return spec.post_stack_neighborhood.pipeline.name ?? preset.preset_id;
+    }
+    return spec.gather.pipeline.name ?? preset.preset_id;
+  }
 </script>
 
 <section class="control-panel">
@@ -115,7 +240,7 @@
 
   <div class="control-grid">
     <label class="field">
-      <span>Pipeline Name</span>
+      <span>{processingFamily === "trace_local" ? "Pipeline Name" : "Neighborhood Name"}</span>
       <input
         type="text"
         value={pipeline.name ?? ""}
@@ -128,7 +253,7 @@
       <select bind:value={selectedPresetId} disabled={loadingPresets || !presets.length}>
         <option value="">Apply library template...</option>
         {#each presets as preset (preset.preset_id)}
-          <option value={preset.preset_id}>{preset.pipeline.name ?? preset.preset_id}</option>
+          <option value={preset.preset_id}>{presetLabel(preset)}</option>
         {/each}
       </select>
       <button
@@ -208,6 +333,156 @@
         />
         <span>Allow overwrite if the output store already exists</span>
       </label>
+
+      {#if batchCandidates.length > 0}
+        <section class="batch-settings">
+          <div class="output-settings-header">
+            <strong>Batch Run</strong>
+            <span>{selectedBatchStorePaths.length} / {batchCandidates.length} selected</span>
+          </div>
+
+          <small>
+            Apply the current workspace pipeline across compatible workspace datasets. Batch runs use
+            managed derived output paths for the active family.
+          </small>
+
+          <div class="action-row">
+            <button class="chip" onclick={onSelectAllBatchCandidates} disabled={batchBusy}>
+              Select All
+            </button>
+            <button class="chip" onclick={onClearBatchSelection} disabled={batchBusy}>
+              Clear
+            </button>
+          </div>
+
+          <div class="batch-candidate-list">
+            {#each batchCandidates as candidate (candidate.storePath)}
+              <label class="batch-candidate">
+                <input
+                  type="checkbox"
+                  checked={selectedBatchStorePaths.includes(candidate.storePath)}
+                  onchange={() => onToggleBatchStorePath(candidate.storePath)}
+                  disabled={batchBusy}
+                />
+                <span class="batch-candidate-label">{candidate.displayName}</span>
+                {#if candidate.isActive}
+                  <span class="batch-candidate-badge">Active</span>
+                {/if}
+              </label>
+            {/each}
+          </div>
+
+          <div class="batch-policy-row">
+            <label class="field">
+              <span>Scheduler Mode</span>
+              <select
+                value={batchExecutionMode}
+                onchange={(event) =>
+                  onSetBatchExecutionMode(
+                    (event.currentTarget as HTMLSelectElement).value as
+                      | "auto"
+                      | "conservative"
+                      | "throughput"
+                  )}
+                disabled={batchBusy}
+              >
+                <option value="auto">Auto</option>
+                <option value="conservative">Conservative</option>
+                <option value="throughput">Throughput</option>
+              </select>
+            </label>
+
+            <label class="field batch-concurrency">
+              <span>Max Active Jobs</span>
+              <input
+                type="text"
+                inputmode="numeric"
+                value={batchMaxActiveJobs}
+                placeholder="Auto"
+                oninput={(event) => onSetBatchMaxActiveJobs((event.currentTarget as HTMLInputElement).value)}
+                disabled={batchBusy}
+              />
+            </label>
+          </div>
+
+          <div class="action-row">
+            <button
+              class="chip primary"
+              onclick={onRunBatch}
+              disabled={batchBusy || !selectedBatchStorePaths.length}
+            >
+              {batchBusy ? "Batch Running..." : "Run Batch"}
+            </button>
+            {#if activeBatch}
+              <button
+                class="chip"
+                onclick={onCancelBatch}
+                disabled={activeBatch.state !== "queued" && activeBatch.state !== "running"}
+              >
+                Cancel Batch
+              </button>
+            {/if}
+          </div>
+
+          {#if activeBatch}
+            <div class="batch-status-card">
+              <div class="batch-status">
+                <strong>{activeBatch.state}</strong>
+                <span>{activeBatch.progress.completed_jobs} / {activeBatch.progress.total_jobs} jobs</span>
+              </div>
+              <div class="batch-status-metadata">
+                <span>{activeBatchFamily} family</span>
+                <span>{batchExecutionModeLabel(activeBatch.execution_mode)} mode</span>
+                {#if activeBatch.execution_mode === "custom" && activeBatch.requested_max_active_jobs !== null}
+                  {#if activeBatch.requested_max_active_jobs !== activeBatch.effective_max_active_jobs}
+                    <span>
+                      requested {activeBatch.requested_max_active_jobs}, using {activeBatch.effective_max_active_jobs}
+                    </span>
+                  {:else}
+                    <span>max {activeBatch.effective_max_active_jobs} active jobs</span>
+                  {/if}
+                {:else}
+                  <span>max {activeBatch.effective_max_active_jobs} active jobs</span>
+                {/if}
+                <span>{batchSchedulerReasonLabel(activeBatch.scheduler_reason)}</span>
+                {#if batchQueuedCount > 0}
+                  <span>{batchQueuedCount} queued</span>
+                {/if}
+                {#if batchRunningCount > 0}
+                  <span>{batchRunningCount} running</span>
+                {/if}
+                {#if batchCompletedCount > 0}
+                  <span>{batchCompletedCount} completed</span>
+                {/if}
+                {#if batchFailedCount > 0}
+                  <span class="status-failed">{batchFailedCount} failed</span>
+                {/if}
+                {#if batchCancelledCount > 0}
+                  <span>{batchCancelledCount} cancelled</span>
+                {/if}
+              </div>
+              <div class="batch-item-list">
+                {#each activeBatchItems as item (item.job_id)}
+                  <div class="batch-item" data-state={item.state}>
+                    <div class="batch-item-header">
+                      <strong>{summarizeBatchItemPath(item.store_path)}</strong>
+                      <span>{item.state}</span>
+                    </div>
+                    {#if item.output_store_path}
+                      <div class="batch-item-detail">
+                        Output: {summarizeBatchItemPath(item.output_store_path)}
+                      </div>
+                    {/if}
+                    {#if item.error_message}
+                      <div class="batch-item-detail error">{item.error_message}</div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </section>
+      {/if}
     </section>
   {/if}
 </section>
@@ -343,6 +618,139 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
     gap: var(--ui-space-2);
+  }
+
+  .batch-settings {
+    border-top: 1px solid var(--app-border);
+    padding-top: var(--ui-space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--ui-space-3);
+  }
+
+  .batch-candidate-list {
+    display: grid;
+    gap: var(--ui-space-2);
+    max-height: 180px;
+    overflow: auto;
+  }
+
+  .batch-candidate {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--ui-space-2);
+    align-items: center;
+    font-size: 11px;
+    color: var(--text-primary);
+  }
+
+  .batch-candidate-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .batch-candidate-badge {
+    border: 1px solid #b0d4ee;
+    background: #e8f3fb;
+    color: #1f5577;
+    border-radius: 999px;
+    padding: 2px 6px;
+    font-size: 10px;
+  }
+
+  .batch-policy-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--ui-space-2);
+  }
+
+  .batch-concurrency input {
+    max-width: 140px;
+  }
+
+  .batch-status-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ui-space-2);
+    padding: var(--ui-space-2);
+    border: 1px solid var(--app-border);
+    border-radius: var(--ui-radius-md);
+    background: var(--surface-subtle);
+  }
+
+  .batch-status {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--ui-space-3);
+    align-items: center;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .batch-status-metadata {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ui-space-2);
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .status-failed {
+    color: #a74646;
+  }
+
+  .batch-item-list {
+    display: grid;
+    gap: var(--ui-space-2);
+    max-height: 180px;
+    overflow: auto;
+  }
+
+  .batch-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--ui-space-2);
+    border-radius: var(--ui-radius-md);
+    background: #fff;
+    border: 1px solid var(--app-border);
+    font-size: 10px;
+  }
+
+  .batch-item[data-state="failed"] {
+    border-color: #e0b7b7;
+    background: #fff6f6;
+  }
+
+  .batch-item[data-state="running"] {
+    border-color: #b0d4ee;
+    background: #f5fbff;
+  }
+
+  .batch-item-header {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--ui-space-2);
+    align-items: center;
+    color: var(--text-primary);
+  }
+
+  .batch-item-header strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .batch-item-detail {
+    color: var(--text-muted);
+    word-break: break-word;
+  }
+
+  .batch-item-detail.error {
+    color: #a74646;
   }
 
   .path-row input {

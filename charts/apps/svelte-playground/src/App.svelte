@@ -94,6 +94,8 @@
     type SeismicChartInteractionConfig,
     type SeismicChartInteractionState,
     type SeismicChartTool,
+    type SeismicSectionBrowseConfig,
+    type SeismicSectionBrowseRequest,
     type SurveyMapChartHandle,
     type SurveyMapChartAction,
     type SurveyMapChartInteractionConfig,
@@ -217,6 +219,11 @@
     }
   };
 
+  const MOCK_SECTION_BROWSE_RANGES = {
+    inline: { minIndex: 0, maxIndex: 159, baseValue: 111 },
+    xline: { minIndex: 0, maxIndex: 191, baseValue: 875 }
+  } as const;
+
   let displayMode = $state<DemoMode>(getDemoMode());
   let seismicChart = $state.raw<SeismicSectionChartHandle | null>(null);
   let gatherChart = $state.raw<SeismicGatherChartHandle | null>(null);
@@ -244,8 +251,30 @@
   let renderMode = $state<"heatmap" | "wiggle">("heatmap");
   let colormap = $state<"grayscale" | "red-white-blue">("grayscale");
   let resetToken = $state(0);
+  let sectionBrowsePending = $state(false);
   let lastViewport = $state.raw<SectionViewportChanged | null>(null);
   let viewId = $derived(section ? `${section.axis}:${section.coordinate.index}` : "empty");
+  let sectionBrowse = $derived.by((): SeismicSectionBrowseConfig | undefined => {
+    if (!section || sectionKind === "arbitrary") {
+      return undefined;
+    }
+
+    const axis = sectionKind === "xline" ? "xline" : "inline";
+    const range = MOCK_SECTION_BROWSE_RANGES[axis];
+    return {
+      enabled: true,
+      current: {
+        axis,
+        index: section.coordinate.index,
+        value: section.coordinate.value
+      },
+      canStepBackward: section.coordinate.index > range.minIndex,
+      canStepForward: section.coordinate.index < range.maxIndex,
+      canSwitchAxis: true,
+      pending: sectionBrowsePending,
+      onRequest: handleSectionBrowseRequest
+    };
+  });
   let seismicInteractions = $state.raw<SeismicChartInteractionConfig>({
     tool: "pointer"
   });
@@ -260,6 +289,7 @@
   let seismicBaseRenderer = $state<DemoSeismicBaseRenderer>("auto");
   let seismicRendererEpoch = $state(0);
   let activeSeismicBaseRenderer = $state("unknown");
+  let sectionBrowseTimer: ReturnType<typeof setTimeout> | null = null;
 
   let gather = $state.raw<GatherView | null>(createMockGatherView());
   let gatherRenderMode = $state<"heatmap" | "wiggle">("wiggle");
@@ -537,17 +567,26 @@
     }
   });
 
-  function refreshMockSection() {
-    section = toContractSectionView();
-    sectionHorizons = createMockSectionHorizons(sectionKind, sectionDomain);
-    sectionWellOverlays = createMockSectionWellOverlays(sectionKind, sectionDomain);
+  function clearPendingSectionBrowse() {
+    if (sectionBrowseTimer !== null) {
+      clearTimeout(sectionBrowseTimer);
+      sectionBrowseTimer = null;
+    }
+    sectionBrowsePending = false;
+  }
+
+  function refreshMockSection(nextKind: MockSectionKind = sectionKind) {
+    clearPendingSectionBrowse();
+    sectionKind = nextKind;
+    section = toContractSectionView(nextKind);
+    sectionHorizons = createMockSectionHorizons(nextKind, sectionDomain);
+    sectionWellOverlays = createMockSectionWellOverlays(nextKind, sectionDomain);
     refreshSectionScalarOverlays();
     resetToken += 1;
   }
 
   function toggleSectionKind() {
-    sectionKind = sectionKind === "inline" ? "arbitrary" : "inline";
-    refreshMockSection();
+    refreshMockSection(sectionKind === "arbitrary" ? "inline" : "arbitrary");
   }
 
   function toggleSectionDomain() {
@@ -556,6 +595,7 @@
   }
 
   function clearSection() {
+    clearPendingSectionBrowse();
     section = null;
     sectionHorizons = [];
     sectionWellOverlays = [];
@@ -618,6 +658,35 @@
 
   function fitSeismicToData() {
     seismicChart?.fitToData?.();
+  }
+
+  function handleSectionBrowseRequest(request: SeismicSectionBrowseRequest) {
+    if (sectionBrowsePending || sectionKind === "arbitrary") {
+      return;
+    }
+
+    const nextAxis = request.kind === "switch-axis" ? request.axis : request.current.axis;
+    const nextRange = MOCK_SECTION_BROWSE_RANGES[nextAxis];
+    const nextIndex =
+      request.kind === "step"
+        ? Math.min(Math.max(request.current.index + request.direction, nextRange.minIndex), nextRange.maxIndex)
+        : Math.min(Math.max(request.current.index, nextRange.minIndex), nextRange.maxIndex);
+
+    clearPendingSectionBrowse();
+    sectionBrowsePending = true;
+    sectionBrowseTimer = setTimeout(() => {
+      sectionBrowseTimer = null;
+      const nextKind: MockSectionKind = nextAxis === "xline" ? "xline" : "inline";
+      sectionKind = nextKind;
+      section = toContractSectionView(nextKind, {
+        index: nextIndex,
+        value: nextRange.baseValue + nextIndex
+      });
+      sectionHorizons = createMockSectionHorizons(nextKind, sectionDomain);
+      sectionWellOverlays = createMockSectionWellOverlays(nextKind, sectionDomain);
+      refreshSectionScalarOverlays();
+      sectionBrowsePending = false;
+    }, 180);
   }
 
   function setSeismicBaseRendererPreference(nextRenderer: DemoSeismicBaseRenderer): void {
@@ -1529,14 +1598,18 @@
     avoHistogramChart?.fitToData?.();
   }
 
-  function toContractSectionView(): OphioliteSectionView {
-    const source = createMockSection(sectionKind, sectionDomain);
+  function toContractSectionView(
+    kind: MockSectionKind = sectionKind,
+    coordinateOverride: OphioliteSectionView["coordinate"] | null = null
+  ): OphioliteSectionView {
+    const source = createMockSection(kind, sectionDomain);
     const displayDefaults = source.displayDefaults;
+    const coordinate = coordinateOverride ?? source.coordinate;
 
     return {
       dataset_id: "mock-svelte-playground",
       axis: source.axis,
-      coordinate: source.coordinate,
+      coordinate,
       traces: source.dimensions.traces,
       samples: source.dimensions.samples,
       horizontal_axis_f64le: encodeFloat64(source.horizontalAxis),
@@ -1787,9 +1860,9 @@
       <section class="group">
         <h2>Seismic Controls</h2>
         <button onclick={toggleSectionKind}>
-          {sectionKind === "inline" ? "Switch To Arbitrary Mock" : "Switch To Inline 111 Mock"}
+          {sectionKind === "arbitrary" ? "Switch To Inline 111 Mock" : "Switch To Arbitrary Mock"}
         </button>
-        <button onclick={refreshMockSection}>Refresh Mock Section</button>
+        <button onclick={() => refreshMockSection()}>Refresh Mock Section</button>
         <button onclick={clearSection}>Clear Section</button>
         <button onclick={fitSeismicToData} disabled={!section}>Fit To Data</button>
         <button onclick={toggleSectionDomain} disabled={!section}>
@@ -1829,6 +1902,7 @@
           render mode: {renderMode}
           colormap: {colormap}
           mock view: {sectionKind}
+          browse pending: {sectionBrowsePending ? "yes" : "no"}
           sample domain: {sectionDomain}
           velocity model: {MOCK_SECTION_VELOCITY_MODEL_LABEL}
           velocity overlay: {showVelocityOverlay ? "on" : "off"}
@@ -1839,6 +1913,7 @@
           tool: {lastSeismicInteractionState.tool}
           last event: {lastSeismicEvent}
           {#if section}
+            current slice: {section.axis} {section.coordinate.value} (index {section.coordinate.index})
             traces: {section.traces}
             samples: {section.samples}
             scalar overlays: {sectionScalarOverlays.length}
@@ -2321,6 +2396,7 @@
               chartId="svelte-playground-seismic"
               viewId={viewId}
               {section}
+              browse={sectionBrowse}
               sectionScalarOverlays={sectionScalarOverlays}
               sectionHorizons={sectionHorizons}
               sectionWellOverlays={sectionWellOverlays}

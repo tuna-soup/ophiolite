@@ -1,0 +1,133 @@
+{
+  "store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-benchmarks\\f3_dataset_regularized.tbvol",
+  "scenario": "analytic",
+  "source_shape": [
+    651,
+    951,
+    462
+  ],
+  "source_chunk_shape": [
+    82,
+    56,
+    462
+  ],
+  "adaptive_partition_target": false,
+  "pipeline": {
+    "schema_version": 1,
+    "revision": 1,
+    "preset_id": null,
+    "name": "benchmark-analytic",
+    "description": "Headless trace-local benchmark pipeline",
+    "steps": [
+      {
+        "operation": "trace_rms_normalize",
+        "checkpoint": false
+      },
+      {
+        "operation": "envelope",
+        "checkpoint": false
+      },
+      {
+        "operation": "instantaneous_phase",
+        "checkpoint": false
+      },
+      {
+        "operation": "instantaneous_frequency",
+        "checkpoint": false
+      },
+      {
+        "operation": "sweetness",
+        "checkpoint": false
+      }
+    ]
+  },
+  "runs": [
+    {
+      "label": "serial",
+      "scenario": "analytic",
+      "repeat_index": 1,
+      "elapsed_ms": 24437.7318,
+      "total_tiles": 136,
+      "completed_tiles": 136,
+      "total_partitions": 1,
+      "completed_partitions": 1,
+      "peak_active_partitions": 1,
+      "retry_count": 0,
+      "output_bytes": 1303690669,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-benchmarks\\f3-dataset-regularized-analytic-run-serial-run-01.tbvol",
+      "output_retained": false
+    },
+    {
+      "label": "serial",
+      "scenario": "analytic",
+      "repeat_index": 2,
+      "elapsed_ms": 25549.9348,
+      "total_tiles": 136,
+      "completed_tiles": 136,
+      "total_partitions": 1,
+      "completed_partitions": 1,
+      "peak_active_partitions": 1,
+      "retry_count": 0,
+      "output_bytes": 1303690669,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-benchmarks\\f3-dataset-regularized-analytic-run-serial-run-02.tbvol",
+      "output_retained": false
+    },
+    {
+      "label": "partitioned-64mib",
+      "scenario": "analytic",
+      "partition_target_bytes": 67108864,
+      "repeat_index": 1,
+      "elapsed_ms": 22828.455,
+      "total_tiles": 136,
+      "completed_tiles": 136,
+      "total_partitions": 20,
+      "completed_partitions": 20,
+      "peak_active_partitions": 20,
+      "retry_count": 0,
+      "output_bytes": 1303690669,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-benchmarks\\f3-dataset-regularized-analytic-run-partitioned-64mib-run-01.tbvol",
+      "output_retained": false
+    },
+    {
+      "label": "partitioned-64mib",
+      "scenario": "analytic",
+      "partition_target_bytes": 67108864,
+      "repeat_index": 2,
+      "elapsed_ms": 22290.1791,
+      "total_tiles": 136,
+      "completed_tiles": 136,
+      "total_partitions": 20,
+      "completed_partitions": 20,
+      "peak_active_partitions": 20,
+      "retry_count": 0,
+      "output_bytes": 1303690669,
+      "output_store_path": "C:\\Users\\crooijmanss\\AppData\\Local\\Temp\\ophiolite-trace-local-benchmarks\\f3-dataset-regularized-analytic-run-partitioned-64mib-run-02.tbvol",
+      "output_retained": false
+    }
+  ],
+  "variants": [
+    {
+      "label": "partitioned-64mib",
+      "scenario": "analytic",
+      "partition_target_bytes": 67108864,
+      "run_count": 2,
+      "avg_elapsed_ms": 22559.31705,
+      "min_elapsed_ms": 22290.1791,
+      "max_elapsed_ms": 22828.455,
+      "total_tiles": 136,
+      "avg_total_partitions": 20.0,
+      "avg_peak_active_partitions": 20.0
+    },
+    {
+      "label": "serial",
+      "scenario": "analytic",
+      "run_count": 2,
+      "avg_elapsed_ms": 24993.8333,
+      "min_elapsed_ms": 24437.7318,
+      "max_elapsed_ms": 25549.9348,
+      "total_tiles": 136,
+      "avg_total_partitions": 1.0,
+      "avg_peak_active_partitions": 1.0
+    }
+  ]
+}

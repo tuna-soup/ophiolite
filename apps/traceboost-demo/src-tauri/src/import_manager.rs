@@ -13,9 +13,18 @@ pub struct ImportProviderDescriptor {
     pub provider_id: String,
     pub label: String,
     pub description: String,
+    pub icon_id: String,
+    pub group: String,
+    pub ordering: u32,
     pub destination_kind: String,
     pub selection_mode: String,
     pub supported_extensions: Vec<String>,
+    pub supports_directory: bool,
+    pub requires_active_store: bool,
+    pub requires_project_root: bool,
+    pub requires_project_well_binding: bool,
+    pub supports_drag_drop: bool,
+    pub supports_deep_link: bool,
     pub implemented: bool,
 }
 
@@ -74,21 +83,37 @@ impl StaticImportProvider {
         provider_id: &str,
         label: &str,
         description: &str,
+        icon_id: &str,
+        group: &str,
+        ordering: u32,
         destination_kind: &str,
         selection_mode: &str,
         supported_extensions: &[&str],
+        supports_directory: bool,
+        requires_active_store: bool,
+        requires_project_root: bool,
+        requires_project_well_binding: bool,
     ) -> Self {
         Self {
             descriptor: ImportProviderDescriptor {
                 provider_id: provider_id.to_string(),
                 label: label.to_string(),
                 description: description.to_string(),
+                icon_id: icon_id.to_string(),
+                group: group.to_string(),
+                ordering,
                 destination_kind: destination_kind.to_string(),
                 selection_mode: selection_mode.to_string(),
                 supported_extensions: supported_extensions
                     .iter()
                     .map(|value| value.to_string())
                     .collect(),
+                supports_directory,
+                requires_active_store,
+                requires_project_root,
+                requires_project_well_binding,
+                supports_drag_drop: true,
+                supports_deep_link: true,
                 implemented: true,
             },
         }
@@ -175,73 +200,136 @@ impl ImportProviderRegistry {
                 "authored_model",
                 "Authored Model",
                 "Preview a well time-depth authored model JSON and commit it into the selected project well context.",
+                "time_depth_model",
+                "well_time_depth",
+                70,
                 "project_asset",
                 "single_file",
                 &["json"],
+                false,
+                false,
+                true,
+                true,
             ),
             StaticImportProvider::new(
                 "checkshot_vsp",
                 "Checkshot/VSP",
                 "Preview a checkshot or VSP observation-set JSON and commit it into the selected project well context.",
+                "checkshot",
+                "well_time_depth",
+                50,
                 "project_asset",
                 "single_file",
                 &["json"],
+                false,
+                false,
+                true,
+                true,
             ),
             StaticImportProvider::new(
                 "compiled_model",
                 "Compiled Model",
                 "Preview a compiled well time-depth model JSON and commit it into the selected project well context.",
+                "compiled_model",
+                "well_time_depth",
+                80,
                 "project_asset",
                 "single_file",
                 &["json"],
+                false,
+                false,
+                true,
+                true,
             ),
             StaticImportProvider::new(
                 "horizons",
                 "Horizons",
                 "Parse horizon XYZ files, confirm the CRS path, and commit them into the active survey store.",
+                "horizon",
+                "seismic",
+                20,
                 "runtime_store",
                 "multi_file",
                 &["xyz"],
+                false,
+                true,
+                false,
+                false,
             ),
             StaticImportProvider::new(
                 "seismic_volume",
                 "Seismic Volume",
                 "Inspect and import SEG-Y, Zarr, or MDIO seismic sources into a managed runtime store.",
+                "seismic_volume",
+                "seismic",
+                10,
                 "runtime_store",
                 "single_file",
                 &["sgy", "segy", "zarr", "mdio"],
+                false,
+                false,
+                false,
+                false,
             ),
             StaticImportProvider::new(
                 "well_sources",
                 "Well Sources",
                 "Preview selected well files, confirm the canonical draft, and commit the defensible slices into project storage.",
+                "well_sources",
+                "wells",
+                40,
                 "project_asset",
                 "multi_file",
                 &["las", "asc", "txt", "csv", "dlis"],
+                false,
+                false,
+                true,
+                false,
             ),
             StaticImportProvider::new(
                 "manual_picks",
                 "Manual Picks",
                 "Preview a manual time-depth picks JSON and commit it into the selected project well context.",
+                "manual_picks",
+                "well_time_depth",
+                60,
                 "project_asset",
                 "single_file",
                 &["json"],
+                false,
+                false,
+                true,
+                true,
             ),
             StaticImportProvider::new(
                 "vendor_project",
                 "Vendor Project",
                 "Scan an external vendor project export, plan the canonical translation, and commit the selected assets into the active project.",
+                "vendor_project",
+                "projects",
+                90,
                 "project_asset",
                 "directory",
                 &[],
+                true,
+                false,
+                true,
+                false,
             ),
             StaticImportProvider::new(
                 "velocity_functions",
                 "Velocity Functions",
                 "Import sparse interval or RMS velocity functions into the active seismic volume and compile a survey velocity model.",
+                "velocity_functions",
+                "seismic",
+                30,
                 "runtime_store",
                 "single_file",
                 &["txt", "csv"],
+                false,
+                true,
+                false,
+                false,
             ),
         ] {
             providers.insert(provider.descriptor.provider_id.clone(), Box::new(provider));
@@ -250,10 +338,17 @@ impl ImportProviderRegistry {
     }
 
     pub fn descriptors(&self) -> Vec<ImportProviderDescriptor> {
-        self.providers
+        let mut descriptors = self
+            .providers
             .values()
             .map(|provider| provider.descriptor())
-            .collect()
+            .collect::<Vec<_>>();
+        descriptors.sort_by(|left, right| {
+            left.ordering
+                .cmp(&right.ordering)
+                .then_with(|| left.label.cmp(&right.label))
+        });
+        descriptors
     }
 
     pub fn provider(&self, provider_id: &str) -> Option<&dyn ImportProvider> {

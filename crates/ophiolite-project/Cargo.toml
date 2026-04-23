@@ -3,11 +3,16 @@ name = "ophiolite-project"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+unsafe-developer-mode = []
+
 [dependencies]
 ophiolite-core = { path = "../ophiolite-core" }
 ophiolite-parser = { path = "../ophiolite-parser" }
 ophiolite-package = { path = "../ophiolite-package" }
 ophiolite-compute = { path = "../ophiolite-compute" }
+ophiolite-operators = { path = "../ophiolite-operators" }
 ophiolite-seismic = { path = "../ophiolite-seismic" }
 ophiolite-seismic-runtime = { path = "../ophiolite-seismic-runtime" }
 arrow-array = { workspace = true }

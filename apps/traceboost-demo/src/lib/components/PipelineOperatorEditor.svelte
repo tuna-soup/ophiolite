@@ -11,16 +11,24 @@
     isAmplitudeScalar,
     isBandpassFilter,
     isCropSubvolume,
+    isEnvelope,
     isHighpassFilter,
+    isInstantaneousFrequency,
+    isInstantaneousPhase,
     isLowpassFilter,
     isPhaseRotation,
+    isSweetness,
     isVolumeArithmetic,
+    summarizeProcessingExecution,
+    summarizeProcessingPlan,
+    type OperatorCatalogItem,
     type SourceSubvolumeBounds,
     type WorkspaceOperation
   } from "../processing-model.svelte";
 
   let {
     selectedOperation,
+    selectedOperatorCatalogItem,
     activeJob,
     processingError,
     primaryVolumeLabel,
@@ -47,6 +55,7 @@
     onOpenArtifact
   }: {
     selectedOperation: WorkspaceOperation | null;
+    selectedOperatorCatalogItem: OperatorCatalogItem | null;
     activeJob: ProcessingJobStatus | null;
     processingError: string | null;
     primaryVolumeLabel: string;
@@ -79,6 +88,28 @@
   function artifactKindLabel(artifact: ProcessingJobArtifact): string {
     return artifact.kind === "final_output" ? "Final output" : "Checkpoint";
   }
+
+  function documentationParagraphs(markdown: string | null | undefined): string[] {
+    return (markdown ?? "")
+      .split(/\n\s*\n/g)
+      .map((paragraph) => paragraph.trim())
+      .filter((paragraph) => paragraph.length > 0);
+  }
+
+  function parameterDoc(name: string) {
+    return selectedOperatorCatalogItem?.parameterDocs.find((parameter) => parameter.name === name) ?? null;
+  }
+
+  function parameterLabel(name: string, fallback: string): string {
+    return parameterDoc(name)?.label ?? fallback;
+  }
+
+  function parameterDescription(name: string, fallback: string | null = null): string | null {
+    return parameterDoc(name)?.description ?? fallback;
+  }
+
+  let planSummary = $derived(summarizeProcessingPlan(activeJob?.plan_summary));
+  let executionSummary = $derived(summarizeProcessingExecution(activeJob?.execution_summary));
 </script>
 
 <section class="editor-panel">
@@ -89,6 +120,73 @@
 
   {#if selectedOperation}
     <div class="selected-card">
+      {#if selectedOperatorCatalogItem}
+        <div class="operator-identity">
+          <div class="operator-identity-header">
+            <strong>{selectedOperatorCatalogItem.label}</strong>
+            <span>{selectedOperatorCatalogItem.group}</span>
+          </div>
+          <p>{selectedOperatorCatalogItem.description}</p>
+          <div class="operator-doc-copy">
+            <strong>Help</strong>
+            <p>{selectedOperatorCatalogItem.shortHelp}</p>
+            {#each documentationParagraphs(selectedOperatorCatalogItem.helpMarkdown) as paragraph (`${selectedOperatorCatalogItem.canonicalId}:${paragraph}`)}
+              {#if paragraph !== selectedOperatorCatalogItem.shortHelp}
+                <p>{paragraph}</p>
+              {/if}
+            {/each}
+            {#if selectedOperatorCatalogItem.helpUrl}
+              <a href={selectedOperatorCatalogItem.helpUrl} target="_blank" rel="noreferrer">
+                Open reference
+              </a>
+            {/if}
+          </div>
+          <div class="operator-identity-meta">
+            {#if selectedOperatorCatalogItem.aliasLabel && selectedOperatorCatalogItem.canonicalName !== selectedOperatorCatalogItem.aliasLabel}
+              <span>Canonical: {selectedOperatorCatalogItem.canonicalName}</span>
+            {/if}
+            <span>Group Id: {selectedOperatorCatalogItem.groupId}</span>
+            <span>Provider: {selectedOperatorCatalogItem.provider}</span>
+            {#if selectedOperatorCatalogItem.tags.length}
+              <span>Tags: {selectedOperatorCatalogItem.tags.join(", ")}</span>
+            {/if}
+          </div>
+          {#if selectedOperatorCatalogItem.parameterDocs.length}
+            <div class="operator-parameter-docs">
+              <strong>Parameters</strong>
+              {#each selectedOperatorCatalogItem.parameterDocs as parameter (`${selectedOperatorCatalogItem.canonicalId}:${parameter.name}`)}
+                <div class="operator-parameter-doc">
+                  <div class="operator-parameter-doc-header">
+                    <span>{parameter.label}</span>
+                    <code>{parameter.name}</code>
+                  </div>
+                  <p>{parameter.description}</p>
+                  <div class="operator-parameter-doc-meta">
+                    <span>Type: {parameter.value_kind}</span>
+                    <span>{parameter.required ? "Required" : "Optional"}</span>
+                    {#if parameter.units}
+                      <span>Units: {parameter.units}</span>
+                    {/if}
+                    {#if parameter.default_value !== null}
+                      <span>Default: {parameter.default_value}</span>
+                    {/if}
+                    {#if parameter.minimum !== null}
+                      <span>Min: {parameter.minimum}</span>
+                    {/if}
+                    {#if parameter.maximum !== null}
+                      <span>Max: {parameter.maximum}</span>
+                    {/if}
+                    {#if parameter.options.length}
+                      <span>Options: {parameter.options.join(", ")}</span>
+                    {/if}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
+
       <div class="selected-actions">
         <button class="chip" onclick={onMoveUp} disabled={!canMoveUp}>Move Up</button>
         <button class="chip" onclick={onMoveDown} disabled={!canMoveDown}>Move Down</button>
@@ -113,7 +211,7 @@
       {#if isCropSubvolume(selectedOperation)}
         <div class="field-grid">
           <label class="field">
-            <span>Inline Min</span>
+            <span>{parameterLabel("inline_min", "Inline Min")}</span>
             <input
               type="number"
               value={selectedOperation.crop_subvolume.inline_min}
@@ -122,7 +220,7 @@
             />
           </label>
           <label class="field">
-            <span>Inline Max</span>
+            <span>{parameterLabel("inline_max", "Inline Max")}</span>
             <input
               type="number"
               value={selectedOperation.crop_subvolume.inline_max}
@@ -131,7 +229,7 @@
             />
           </label>
           <label class="field">
-            <span>Xline Min</span>
+            <span>{parameterLabel("xline_min", "Xline Min")}</span>
             <input
               type="number"
               value={selectedOperation.crop_subvolume.xline_min}
@@ -140,7 +238,7 @@
             />
           </label>
           <label class="field">
-            <span>Xline Max</span>
+            <span>{parameterLabel("xline_max", "Xline Max")}</span>
             <input
               type="number"
               value={selectedOperation.crop_subvolume.xline_max}
@@ -149,7 +247,7 @@
             />
           </label>
           <label class="field">
-            <span>Z Min</span>
+            <span>{parameterLabel("z_min_ms", "Z Min")}</span>
             <input
               type="number"
               value={selectedOperation.crop_subvolume.z_min_ms}
@@ -158,7 +256,7 @@
             />
           </label>
           <label class="field">
-            <span>Z Max</span>
+            <span>{parameterLabel("z_max_ms", "Z Max")}</span>
             <input
               type="number"
               value={selectedOperation.crop_subvolume.z_max_ms}
@@ -177,13 +275,12 @@
               {sourceSubvolumeBounds.zUnits ?? "ms"}.
             </p>
           {/if}
-          <p>Crop Subvolume is a run-volume tail step. Preview shows only the processing steps above it.</p>
-          <p>It is always appended to the end of the pipeline and only one crop can be active at a time.</p>
+          <p>Crop is a terminal derivation step. Preview shows only the processing prefix above it.</p>
           <p>Bounds must stay within the source volume and define a strict subset on at least one axis.</p>
         </div>
       {:else if isAmplitudeScalar(selectedOperation)}
         <label class="field">
-          <span>Amplitude Scalar Factor</span>
+          <span>{parameterLabel("factor", "Factor")}</span>
           <input
             type="number"
             min="0"
@@ -193,11 +290,11 @@
             oninput={(event) =>
               onSetAmplitudeScalarFactor(Number((event.currentTarget as HTMLInputElement).value))}
           />
-          <small>Valid range: 0.0 to 10.0</small>
+          <small>{parameterDescription("factor", "Linear multiplier applied to every trace sample.")}</small>
         </label>
       {:else if isAgcRms(selectedOperation)}
         <label class="field">
-          <span>AGC Window</span>
+          <span>{parameterLabel("window_ms", "Window")}</span>
           <input
             type="number"
             min="1"
@@ -206,16 +303,11 @@
             value={selectedOperation.agc_rms.window_ms}
             oninput={(event) => onSetAgcWindow(Number((event.currentTarget as HTMLInputElement).value))}
           />
-          <small>Milliseconds. Backend validation enforces a positive centered RMS window.</small>
+          <small>{parameterDescription("window_ms", "Centered RMS window length used for AGC balancing.")}</small>
         </label>
-        <div class="info-block">
-          <strong>RMS AGC</strong>
-          <p>Automatic gain control using a centered moving RMS window. This is useful for balancing weak and strong events in post-stack sections.</p>
-          <p>AGC changes relative amplitudes, so treat it as conditioning rather than amplitude-preserving processing.</p>
-        </div>
       {:else if isPhaseRotation(selectedOperation)}
         <label class="field">
-          <span>Phase Rotation Angle</span>
+          <span>{parameterLabel("angle_degrees", "Angle")}</span>
           <input
             type="number"
             min="-180"
@@ -225,17 +317,12 @@
             oninput={(event) =>
               onSetPhaseRotationAngle(Number((event.currentTarget as HTMLInputElement).value))}
           />
-          <small>Degrees. 0 = unchanged, 90 = quadrature, 180 = polarity flip.</small>
+          <small>{parameterDescription("angle_degrees", "Constant phase rotation angle applied to the trace.")}</small>
         </label>
-        <div class="info-block">
-          <strong>Phase Rotation</strong>
-          <p>Constant trace phase rotation applied in the spectral domain using the analytic-trace formulation.</p>
-          <p>Phase rotation changes wavelet shape and timing character but preserves amplitude spectrum magnitude.</p>
-        </div>
       {:else if isLowpassFilter(selectedOperation)}
         <div class="field-grid">
           <label class="field">
-            <span>F3 Pass Corner</span>
+            <span>{parameterLabel("f3_hz", "F3")}</span>
             <input
               type="number"
               min="0"
@@ -246,7 +333,7 @@
             />
           </label>
           <label class="field">
-            <span>F4 Stop Corner</span>
+            <span>{parameterLabel("f4_hz", "F4")}</span>
             <input
               type="number"
               min="0"
@@ -258,14 +345,14 @@
           </label>
         </div>
         <div class="info-block">
-          <strong>Lowpass Filter</strong>
-          <p>Zero-phase frequency-domain lowpass with a cosine high-cut taper. Runtime validation enforces f3 ≤ f4 ≤ Nyquist.</p>
-          <p>Phase: {selectedOperation.lowpass_filter.phase}. Window: {selectedOperation.lowpass_filter.window}.</p>
+          <strong>Current Filter Mode</strong>
+          <p>{parameterDescription("phase", "Phase mode used by the spectral filter.")} {selectedOperation.lowpass_filter.phase}.</p>
+          <p>{parameterDescription("window", "Transition window used in the taper region.")} {selectedOperation.lowpass_filter.window}.</p>
         </div>
       {:else if isHighpassFilter(selectedOperation)}
         <div class="field-grid">
           <label class="field">
-            <span>F1 Stop Corner</span>
+            <span>{parameterLabel("f1_hz", "F1")}</span>
             <input
               type="number"
               min="0"
@@ -276,7 +363,7 @@
             />
           </label>
           <label class="field">
-            <span>F2 Pass Corner</span>
+            <span>{parameterLabel("f2_hz", "F2")}</span>
             <input
               type="number"
               min="0"
@@ -288,14 +375,14 @@
           </label>
         </div>
         <div class="info-block">
-          <strong>Highpass Filter</strong>
-          <p>Zero-phase frequency-domain highpass with a cosine low-cut taper. Runtime validation enforces f1 ≤ f2 ≤ Nyquist.</p>
-          <p>Phase: {selectedOperation.highpass_filter.phase}. Window: {selectedOperation.highpass_filter.window}.</p>
+          <strong>Current Filter Mode</strong>
+          <p>{parameterDescription("phase", "Phase mode used by the spectral filter.")} {selectedOperation.highpass_filter.phase}.</p>
+          <p>{parameterDescription("window", "Transition window used in the taper region.")} {selectedOperation.highpass_filter.window}.</p>
         </div>
       {:else if isBandpassFilter(selectedOperation)}
         <div class="field-grid">
           <label class="field">
-            <span>F1 Low Stop</span>
+            <span>{parameterLabel("f1_hz", "F1")}</span>
             <input
               type="number"
               min="0"
@@ -306,7 +393,7 @@
             />
           </label>
           <label class="field">
-            <span>F2 Low Pass</span>
+            <span>{parameterLabel("f2_hz", "F2")}</span>
             <input
               type="number"
               min="0"
@@ -317,7 +404,7 @@
             />
           </label>
           <label class="field">
-            <span>F3 High Pass</span>
+            <span>{parameterLabel("f3_hz", "F3")}</span>
             <input
               type="number"
               min="0"
@@ -328,7 +415,7 @@
             />
           </label>
           <label class="field">
-            <span>F4 High Stop</span>
+            <span>{parameterLabel("f4_hz", "F4")}</span>
             <input
               type="number"
               min="0"
@@ -340,14 +427,14 @@
           </label>
         </div>
         <div class="info-block">
-          <strong>Bandpass Filter</strong>
-          <p>Zero-phase frequency-domain bandpass with cosine tapers. Runtime validation enforces f1 ≤ f2 ≤ f3 ≤ f4 ≤ Nyquist.</p>
-          <p>Phase: {selectedOperation.bandpass_filter.phase}. Window: {selectedOperation.bandpass_filter.window}.</p>
+          <strong>Current Filter Mode</strong>
+          <p>{parameterDescription("phase", "Phase mode used by the spectral filter.")} {selectedOperation.bandpass_filter.phase}.</p>
+          <p>{parameterDescription("window", "Transition window used in the taper region.")} {selectedOperation.bandpass_filter.window}.</p>
         </div>
       {:else if isVolumeArithmetic(selectedOperation)}
         <div class="field-grid">
           <label class="field">
-            <span>Arithmetic Mode</span>
+            <span>{parameterLabel("operator", "Operator")}</span>
             <select
               value={selectedOperation.volume_arithmetic.operator}
               onchange={(event) =>
@@ -365,7 +452,7 @@
           </label>
         </div>
         <label class="field">
-          <span>Secondary Volume</span>
+          <span>{parameterLabel("secondary_input", "Secondary Input")}</span>
           <select
             value={selectedOperation.volume_arithmetic.secondary_store_path}
             disabled={!secondaryVolumeOptions.length}
@@ -377,17 +464,16 @@
               <option value={option.storePath}>{option.label}</option>
             {/each}
           </select>
-          <small>TraceBoost only lists workspace volumes whose geometry fingerprint and tile layout match the active volume.</small>
+          <small>{parameterDescription("secondary_input", "Reference to a second compatible seismic volume.")}</small>
         </label>
         <div class="info-block">
-          <strong>Volume Arithmetic</strong>
-          <p>Combines the active volume with another compatible workspace volume sample-by-sample.</p>
-          <p>Subtract is the usual difference-volume workflow. Multiply and divide treat missing secondary traces as zeros.</p>
+          <strong>Compatibility</strong>
+          <p>TraceBoost only lists workspace volumes whose geometry fingerprint and tile layout match the active volume.</p>
         </div>
       {:else}
         <div class="info-block">
-          <strong>Trace RMS Normalize</strong>
-          <p>Scales each trace so its RMS amplitude becomes 1.0, with backend safeguards for zero-amplitude traces.</p>
+          <strong>No Editable Parameters</strong>
+          <p>This operator is configured entirely by its canonical defaults in the current runtime.</p>
         </div>
       {/if}
     </div>
@@ -410,6 +496,38 @@
       <div class="job-progress">
         {activeJob.progress.completed} / {activeJob.progress.total || 0} tiles
       </div>
+      {#if planSummary}
+        <div class="job-plan">
+          <strong>Planned Execution</strong>
+          <p>{planSummary.overview}</p>
+          {#if planSummary.detail}
+            <p>{planSummary.detail}</p>
+          {/if}
+          {#if planSummary.stages.length}
+            <div class="job-plan-stages">
+              {#each planSummary.stages as stageSummary (`${activeJob.job_id}:${stageSummary}`)}
+                <span>{stageSummary}</span>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
+      {#if executionSummary}
+        <div class="job-plan">
+          <strong>Actual Execution</strong>
+          <p>{executionSummary.overview}</p>
+          {#if executionSummary.detail}
+            <p>{executionSummary.detail}</p>
+          {/if}
+          {#if executionSummary.stages.length}
+            <div class="job-plan-stages">
+              {#each executionSummary.stages as stageSummary (`${activeJob.job_id}:actual:${stageSummary}`)}
+                <span>{stageSummary}</span>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
       {#if activeJob.state === "queued" || activeJob.state === "running"}
         <button class="chip danger" onclick={onCancelJob}>Cancel Job</button>
       {/if}
@@ -470,6 +588,118 @@
     display: flex;
     gap: 5px;
     flex-wrap: wrap;
+  }
+
+  .operator-identity {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px;
+    border: 1px solid var(--app-border);
+    border-radius: 8px;
+    background: var(--surface-bg);
+  }
+
+  .operator-identity-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+
+  .operator-identity-header strong {
+    color: var(--text-primary);
+    font-size: 12px;
+  }
+
+  .operator-identity-header span {
+    color: var(--text-dim);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .operator-identity p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .operator-doc-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 4px;
+    border-top: 1px solid var(--app-border);
+  }
+
+  .operator-doc-copy strong,
+  .operator-parameter-docs strong {
+    color: var(--text-primary);
+    font-size: 11px;
+  }
+
+  .operator-doc-copy a {
+    color: #315b75;
+    font-size: 11px;
+    text-decoration: none;
+  }
+
+  .operator-identity-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: var(--text-dim);
+    font-size: 10px;
+  }
+
+  .operator-parameter-docs {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding-top: 4px;
+    border-top: 1px solid var(--app-border);
+  }
+
+  .operator-parameter-doc {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px;
+    border: 1px solid var(--app-border);
+    border-radius: 6px;
+    background: #fff;
+  }
+
+  .operator-parameter-doc-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: baseline;
+    flex-wrap: wrap;
+    color: var(--text-primary);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .operator-parameter-doc-header code {
+    color: var(--text-dim);
+    font-size: 10px;
+  }
+
+  .operator-parameter-doc p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .operator-parameter-doc-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    color: var(--text-dim);
+    font-size: 10px;
   }
 
   .field {
@@ -608,6 +838,39 @@
   .job-stage {
     font-size: 11px;
     color: #315b75;
+  }
+
+  .job-plan {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 6px;
+    border-top: 1px solid var(--app-border);
+  }
+
+  .job-plan strong {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 11px;
+  }
+
+  .job-plan p {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .job-plan-stages {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .job-plan-stages span {
+    color: var(--text-dim);
+    font-size: 10px;
+    line-height: 1.4;
   }
 
   .artifact-list {

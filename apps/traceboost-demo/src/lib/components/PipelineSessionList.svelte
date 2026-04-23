@@ -14,6 +14,7 @@
     onRemove,
     onRemoveItem,
     getLabel,
+    getSummary,
     canRemove
   }: {
     pipelines: WorkspacePipelineEntry[];
@@ -26,6 +27,7 @@
     onRemove: () => void;
     onRemoveItem: (pipelineId: string) => void;
     getLabel: (entry: WorkspacePipelineEntry, index: number) => string;
+    getSummary: (entry: WorkspacePipelineEntry) => string;
     canRemove: boolean;
   } = $props();
 
@@ -72,7 +74,7 @@
           <span class="pipeline-index">{index + 1}</span>
           <span class="pipeline-copy">
             <strong>{label}</strong>
-            <small>{entry.pipeline.steps.length} step{entry.pipeline.steps.length === 1 ? "" : "s"}</small>
+            <small>{getSummary(entry)}</small>
           </span>
         </button>
         <button

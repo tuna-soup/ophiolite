@@ -4,6 +4,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterable
 
 from .models import SurveySummary
+from .seismic import (
+    GatherPipeline,
+    GatherPreview,
+    GatherSelection,
+    PostStackNeighborhoodPipeline,
+    ProcessingPreview,
+    SectionSelection,
+    SubvolumePipeline,
+    TraceLocalPipeline,
+    VelocityScanResult,
+    VelocityScanSpec,
+)
 
 if TYPE_CHECKING:
     from .project import Project
@@ -12,6 +24,8 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Survey:
+    """Canonical project-owned seismic asset surface addressed by asset id."""
+
     project: Project
     summary_data: SurveySummary
 
@@ -120,4 +134,110 @@ class Survey:
             index=index,
             display_domain=display_domain,
             tolerance_m=tolerance_m,
+        )
+
+    def operator_catalog(self):
+        return self.project.operator_catalog(self.asset_id)
+
+    def preview_processing(
+        self,
+        selection: SectionSelection,
+        pipeline: TraceLocalPipeline,
+    ) -> ProcessingPreview:
+        return self.project.preview_trace_local_processing(
+            source_asset_id=self.asset_id,
+            selection=selection,
+            pipeline=pipeline,
+        )
+
+    def run_processing(
+        self,
+        pipeline: TraceLocalPipeline,
+        *,
+        output_collection_name: str | None = None,
+    ):
+        return self.project.run_trace_local_processing(
+            source_asset_id=self.asset_id,
+            pipeline=pipeline,
+            output_collection_name=output_collection_name,
+        )
+
+    def preview_subvolume(
+        self,
+        selection: SectionSelection,
+        pipeline: SubvolumePipeline,
+    ) -> ProcessingPreview:
+        return self.project.preview_subvolume_processing(
+            source_asset_id=self.asset_id,
+            selection=selection,
+            pipeline=pipeline,
+        )
+
+    def run_subvolume(
+        self,
+        pipeline: SubvolumePipeline,
+        *,
+        output_collection_name: str | None = None,
+    ):
+        return self.project.run_subvolume_processing(
+            source_asset_id=self.asset_id,
+            pipeline=pipeline,
+            output_collection_name=output_collection_name,
+        )
+
+    def preview_post_stack_neighborhood(
+        self,
+        selection: SectionSelection,
+        pipeline: PostStackNeighborhoodPipeline,
+    ) -> ProcessingPreview:
+        return self.project.preview_post_stack_neighborhood_processing(
+            source_asset_id=self.asset_id,
+            selection=selection,
+            pipeline=pipeline,
+        )
+
+    def run_post_stack_neighborhood(
+        self,
+        pipeline: PostStackNeighborhoodPipeline,
+        *,
+        output_collection_name: str | None = None,
+    ):
+        return self.project.run_post_stack_neighborhood_processing(
+            source_asset_id=self.asset_id,
+            pipeline=pipeline,
+            output_collection_name=output_collection_name,
+        )
+
+    def preview_gather(
+        self,
+        gather: GatherSelection,
+        pipeline: GatherPipeline,
+    ) -> GatherPreview:
+        return self.project.preview_gather_processing(
+            source_asset_id=self.asset_id,
+            gather=gather,
+            pipeline=pipeline,
+        )
+
+    def run_gather(
+        self,
+        pipeline: GatherPipeline,
+        *,
+        output_collection_name: str | None = None,
+    ):
+        return self.project.run_gather_processing(
+            source_asset_id=self.asset_id,
+            pipeline=pipeline,
+            output_collection_name=output_collection_name,
+        )
+
+    def velocity_scan(
+        self,
+        gather: GatherSelection,
+        spec: VelocityScanSpec,
+    ) -> VelocityScanResult:
+        return self.project.run_velocity_scan(
+            source_asset_id=self.asset_id,
+            gather=gather,
+            spec=spec,
         )

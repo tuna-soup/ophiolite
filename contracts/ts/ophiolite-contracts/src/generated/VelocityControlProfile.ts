@@ -2,4 +2,4 @@
 import type { ProjectedPoint2 } from "./ProjectedPoint2";
 import type { VelocityControlProfileSample } from "./VelocityControlProfileSample";
 
-export type VelocityControlProfile = { id: string, location: ProjectedPoint2, wellbore_id: string | null, samples: Array<VelocityControlProfileSample>, notes: Array<string>, };
+export type VelocityControlProfile = { id: string, location: ProjectedPoint2, wellbore_id?: string | null, samples?: Array<VelocityControlProfileSample>, notes?: Array<string>, };

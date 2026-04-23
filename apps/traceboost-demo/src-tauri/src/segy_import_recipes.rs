@@ -1,9 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use seis_contracts_operations::import_ops::{
-    SegyImportRecipe, SegyImportRecipeScope,
-};
+use seis_contracts_operations::import_ops::{SegyImportRecipe, SegyImportRecipeScope};
 
 use crate::processing::unix_timestamp_s;
 
@@ -112,7 +110,7 @@ mod tests {
     use super::*;
     use seis_contracts_operations::import_ops::{
         SegyGeometryOverride, SegyImportPlan, SegyImportPlanSource, SegyImportPolicy,
-        SegyImportProvenance, SegyImportSpatialPlan, SegyImportSparseHandling,
+        SegyImportProvenance, SegyImportSparseHandling, SegyImportSpatialPlan,
     };
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -126,7 +124,10 @@ mod tests {
         path
     }
 
-    fn sample_recipe(scope: SegyImportRecipeScope, source_fingerprint: Option<&str>) -> SegyImportRecipe {
+    fn sample_recipe(
+        scope: SegyImportRecipeScope,
+        source_fingerprint: Option<&str>,
+    ) -> SegyImportRecipe {
         SegyImportRecipe {
             recipe_id: "sample".to_string(),
             name: "Sample Recipe".to_string(),
@@ -191,8 +192,16 @@ mod tests {
             .list_recipes(Some("source-a"))
             .expect("list filtered recipes");
         assert_eq!(filtered.len(), 2);
-        assert!(filtered.iter().any(|recipe| recipe.scope == SegyImportRecipeScope::Global));
-        assert!(filtered.iter().any(|recipe| recipe.source_fingerprint.as_deref() == Some("source-a")));
+        assert!(
+            filtered
+                .iter()
+                .any(|recipe| recipe.scope == SegyImportRecipeScope::Global)
+        );
+        assert!(
+            filtered
+                .iter()
+                .any(|recipe| recipe.source_fingerprint.as_deref() == Some("source-a"))
+        );
 
         fs::remove_dir_all(dir).expect("remove temp dir");
     }

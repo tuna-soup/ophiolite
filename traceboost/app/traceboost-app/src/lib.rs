@@ -1,40 +1,46 @@
 use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet},
-    ffi::CString,
     fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::Instant,
 };
 
 #[cfg(unix)]
-use std::os::unix::ffi::OsStrExt;
+use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
-use ophiolite::resolve_dataset_summary_survey_map_source;
+use ophiolite::{
+    OperatorCatalog, SeismicLayout, SeismicTraceDataDescriptor, operator_catalog_for_trace_data,
+    resolve_dataset_summary_survey_map_source,
+};
+use ophiolite_seismic_execution::ProcessingExecutionService;
 use seis_contracts_operations::datasets::{
     DatasetSummary, OpenDatasetRequest, OpenDatasetResponse,
 };
 use seis_contracts_operations::import_ops::{
     ExportSegyRequest, ExportSegyResponse, ImportDatasetRequest, ImportDatasetResponse,
     ImportHorizonXyzRequest, ImportHorizonXyzResponse, ImportPrestackOffsetDatasetRequest,
-    ImportPrestackOffsetDatasetResponse, ImportSegyWithPlanRequest,
-    ImportSegyWithPlanResponse, LoadSectionHorizonsRequest, LoadSectionHorizonsResponse,
-    PrestackThirdAxisField, ScanSegyImportRequest, SegyGeometryCandidate,
-    SegyGeometryOverride, SegyHeaderField, SegyHeaderValueType, SegyImportCandidatePlan,
-    SegyImportFieldObservation, SegyImportIssue, SegyImportIssueSection,
-    SegyImportIssueSeverity, SegyImportPlan, SegyImportPlanSource, SegyImportPolicy,
-    SegyImportProvenance, SegyImportResolvedDataset, SegyImportResolvedSpatial,
-    SegyImportRiskSummary, SegyImportScanResponse, SegyImportSparseHandling,
-    SegyImportSpatialPlan, SegyImportValidationResponse, SegyImportWizardStage,
-    SuggestedImportAction, SurveyPreflightRequest, SurveyPreflightResponse,
-    ValidateSegyImportPlanRequest,
+    ImportPrestackOffsetDatasetResponse, ImportSegyWithPlanRequest, ImportSegyWithPlanResponse,
+    LoadSectionHorizonsRequest, LoadSectionHorizonsResponse, PrestackThirdAxisField,
+    ScanSegyImportRequest, SegyGeometryCandidate, SegyGeometryOverride, SegyHeaderField,
+    SegyHeaderValueType, SegyImportCandidatePlan, SegyImportFieldObservation, SegyImportIssue,
+    SegyImportIssueSection, SegyImportIssueSeverity, SegyImportPlan, SegyImportPlanSource,
+    SegyImportPolicy, SegyImportProvenance, SegyImportResolvedDataset, SegyImportResolvedSpatial,
+    SegyImportRiskSummary, SegyImportScanResponse, SegyImportSparseHandling, SegyImportSpatialPlan,
+    SegyImportValidationResponse, SegyImportWizardStage, SuggestedImportAction,
+    SurveyPreflightRequest, SurveyPreflightResponse, ValidateSegyImportPlanRequest,
 };
 use seis_contracts_operations::processing_ops::{
     AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, GatherProcessingPipeline, GatherRequest,
-    GatherView, PreviewGatherProcessingRequest, PreviewGatherProcessingResponse,
+    GatherView, NeighborhoodDipOutput, PostStackNeighborhoodProcessingPipeline,
+    PreviewGatherProcessingRequest, PreviewGatherProcessingResponse,
+    PreviewPostStackNeighborhoodProcessingRequest, PreviewPostStackNeighborhoodProcessingResponse,
     PreviewSubvolumeProcessingRequest, PreviewSubvolumeProcessingResponse,
     PreviewTraceLocalProcessingRequest, PreviewTraceLocalProcessingResponse,
-    RunGatherProcessingRequest, RunSubvolumeProcessingRequest, RunTraceLocalProcessingRequest,
-    SubvolumeProcessingPipeline, VelocityFunctionSource, VelocityScanRequest, VelocityScanResponse,
+    RunGatherProcessingRequest, RunPostStackNeighborhoodProcessingRequest,
+    RunSubvolumeProcessingRequest, RunTraceLocalProcessingRequest, SubvolumeProcessingPipeline,
+    VelocityFunctionSource, VelocityScanRequest, VelocityScanResponse,
 };
 use seis_contracts_operations::resolve::IPC_SCHEMA_VERSION;
 use seis_contracts_operations::resolve::{
@@ -47,27 +53,34 @@ use seis_contracts_operations::workspace::{
 };
 use seis_io::HeaderField;
 use seis_runtime::{
-    BuildSurveyTimeDepthTransformRequest, DepthReferenceKind, GatherInterpolationMode,
-    HorizonImportPreview, ImportedHorizonDescriptor, IngestOptions, LateralInterpolationMethod,
-    LayeredVelocityInterval, LayeredVelocityModel, MaterializeOptions, PreflightAction,
-    PreviewView, ProjectedPoint2, ResolvedSectionDisplayView, SeisGeometryOptions,
-    SparseSurveyPolicy, SpatialCoverageRelationship, SpatialCoverageSummary,
+    BuildSurveyTimeDepthTransformRequest, DepthReferenceKind, ExecutionPriorityClass,
+    GatherInterpolationMode, HorizonImportPreview, ImportedHorizonDescriptor, IngestOptions,
+    LateralInterpolationMethod, LayeredVelocityInterval, LayeredVelocityModel, MaterializeOptions,
+    PartitionExecutionProgress, PlanProcessingRequest, PlanningMode, PreflightAction, PreviewView,
+    ProcessingBatchItemRequest, ProcessingBatchState, ProcessingExecutionMode,
+    ProcessingJobChunkPlanSummary, ProcessingJobExecutionSummary, ProcessingJobState,
+    ProcessingPipelineSpec, ProcessingSchedulerReason, ProjectedPoint2, ResolvedSectionDisplayView,
+    SeisGeometryOptions, SparseSurveyPolicy, SpatialCoverageRelationship, SpatialCoverageSummary,
     StratigraphicBoundaryReference, SurveyTimeDepthTransform3D, TileGeometry, TimeDepthDomain,
-    TimeDepthTransformSourceKind, TraceLocalProcessingPipeline, TravelTimeReference,
-    VelocityControlProfile, VelocityControlProfileSample, VelocityControlProfileSet,
-    VelocityIntervalTrend, VelocityQuantityKind, VelocitySource3D, VerticalAxisDescriptor,
-    VerticalInterpolationMethod, VolumeImportFormat, amplitude_spectrum_from_store,
+    TimeDepthTransformSourceKind, TraceLocalProcessingOperation, TraceLocalProcessingPipeline,
+    TraceLocalProcessingStep, TravelTimeReference, VelocityControlProfile,
+    VelocityControlProfileSample, VelocityControlProfileSet, VelocityIntervalTrend,
+    VelocityQuantityKind, VelocitySource3D, VerticalAxisDescriptor, VerticalInterpolationMethod,
+    VolumeImportFormat, amplitude_spectrum_from_store, build_execution_plan,
     build_survey_time_depth_transform, build_survey_time_depth_transform_from_horizon_pairs,
     convert_horizon_vertical_domain_with_transform, depth_converted_section_view,
     describe_prestack_store, describe_store, detect_volume_import_format,
     estimate_mdio_tbvol_storage, export_store_to_segy, export_store_to_zarr,
     import_horizon_xyzs_with_vertical_domain, ingest_prestack_offset_segy, ingest_volume,
     load_horizon_grids, load_survey_time_depth_transforms, materialize_gather_processing_store,
-    materialize_processing_volume, materialize_subvolume_processing_volume, open_prestack_store,
-    open_store, preflight_segy, prestack_gather_view, preview_gather_processing_view,
-    preview_horizon_xyzs_with_vertical_domain, preview_processing_section_view,
+    materialize_post_stack_neighborhood_processing_volume, materialize_processing_volume,
+    materialize_processing_volume_with_partition_progress, materialize_subvolume_processing_volume,
+    open_prestack_store, open_store, preflight_segy, prestack_gather_view,
+    preview_gather_processing_view, preview_horizon_xyzs_with_vertical_domain,
+    preview_post_stack_neighborhood_processing_section_view, preview_processing_section_view,
     preview_subvolume_processing_section_view, recommended_default_tbvol_tile_target_mib,
-    recommended_tbvol_tile_shape, resolved_section_display_view, section_horizon_overlays,
+    recommended_tbvol_tile_shape, resolve_trace_local_materialize_options,
+    resolved_section_display_view, section_horizon_overlays,
     set_any_store_native_coordinate_reference, set_store_vertical_axis,
     store_survey_time_depth_transform, velocity_scan,
 };
@@ -109,6 +122,329 @@ pub struct PrepareSurveyDemoResponse {
     pub ensured_time_depth_transform_id: String,
     pub velocity_models: LoadVelocityModelsResponse,
     pub survey_map: ResolveSurveyMapResponse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TraceLocalBenchmarkScenario {
+    Scalar,
+    Agc,
+    Analytic,
+    Bandpass,
+}
+
+#[derive(Debug, Clone)]
+pub struct TraceLocalBenchmarkRequest {
+    pub store_path: String,
+    pub output_root: Option<String>,
+    pub scenario: TraceLocalBenchmarkScenario,
+    pub partition_target_mib: Vec<u64>,
+    pub adaptive_partition_target: bool,
+    pub include_serial: bool,
+    pub repeat_count: usize,
+    pub keep_outputs: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BenchmarkStageClassificationSummary {
+    pub stage_id: String,
+    pub stage_label: String,
+    pub stage_kind: seis_runtime::ExecutionStageKind,
+    pub partition_family: seis_runtime::PartitionFamily,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_partition_count: Option<usize>,
+    pub classification: seis_runtime::StageExecutionClassification,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AdaptivePartitionBenchmarkRecommendation {
+    pub target_bytes: u64,
+    pub bytes_per_tile: u64,
+    pub total_tiles: usize,
+    pub preferred_partition_count: usize,
+    pub recommended_partition_count: usize,
+    pub recommended_max_active_partitions: usize,
+    pub tiles_per_partition: usize,
+    pub resident_partition_bytes: u64,
+    pub global_worker_workspace_bytes: u64,
+    pub estimated_peak_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_memory_bytes: Option<u64>,
+    pub reserved_memory_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usable_memory_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TraceLocalBenchmarkRunResult {
+    pub label: String,
+    pub scenario: TraceLocalBenchmarkScenario,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partition_target_bytes: Option<u64>,
+    pub repeat_index: usize,
+    pub elapsed_ms: f64,
+    pub total_tiles: usize,
+    pub completed_tiles: usize,
+    pub total_partitions: usize,
+    pub completed_partitions: usize,
+    pub peak_active_partitions: usize,
+    pub retry_count: usize,
+    pub output_bytes: u64,
+    pub output_store_path: String,
+    pub output_retained: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TraceLocalBenchmarkVariantSummary {
+    pub label: String,
+    pub scenario: TraceLocalBenchmarkScenario,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partition_target_bytes: Option<u64>,
+    pub run_count: usize,
+    pub avg_elapsed_ms: f64,
+    pub min_elapsed_ms: f64,
+    pub max_elapsed_ms: f64,
+    pub total_tiles: usize,
+    pub avg_total_partitions: f64,
+    pub avg_peak_active_partitions: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TraceLocalBenchmarkResponse {
+    pub store_path: String,
+    pub scenario: TraceLocalBenchmarkScenario,
+    pub source_shape: [usize; 3],
+    pub source_chunk_shape: [usize; 3],
+    pub adaptive_partition_target: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adaptive_recommendation: Option<AdaptivePartitionBenchmarkRecommendation>,
+    pub pipeline: TraceLocalProcessingPipeline,
+    pub plan_summary: seis_runtime::ExecutionPlanSummary,
+    pub stage_classifications: Vec<BenchmarkStageClassificationSummary>,
+    pub runs: Vec<TraceLocalBenchmarkRunResult>,
+    pub variants: Vec<TraceLocalBenchmarkVariantSummary>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TraceLocalBatchBenchmarkRequest {
+    pub store_path: String,
+    pub output_root: Option<String>,
+    pub scenario: TraceLocalBenchmarkScenario,
+    pub job_count: usize,
+    pub max_active_jobs: Vec<usize>,
+    pub execution_mode: Option<ProcessingExecutionMode>,
+    pub partition_target_mib: u64,
+    pub adaptive_partition_target: bool,
+    pub repeat_count: usize,
+    pub keep_outputs: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TraceLocalBatchBenchmarkJobResult {
+    pub job_label: String,
+    pub job_id: String,
+    pub state: String,
+    pub queue_wait_ms: f64,
+    pub elapsed_ms: f64,
+    pub total_tiles: usize,
+    pub completed_tiles: usize,
+    pub total_partitions: usize,
+    pub completed_partitions: usize,
+    pub peak_active_partitions: usize,
+    pub retry_count: usize,
+    pub output_bytes: u64,
+    pub output_store_path: String,
+    pub output_retained: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TraceLocalBatchBenchmarkVariantResult {
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_max_active_jobs: Option<usize>,
+    pub effective_max_active_jobs: usize,
+    pub execution_mode: ProcessingExecutionMode,
+    pub scheduler_reason: ProcessingSchedulerReason,
+    pub worker_budget: usize,
+    pub global_cap: usize,
+    pub max_memory_cost_class: seis_runtime::MemoryCostClass,
+    pub max_cpu_cost_class: seis_runtime::CpuCostClass,
+    pub max_io_cost_class: seis_runtime::IoCostClass,
+    pub min_parallel_efficiency_class: seis_runtime::ParallelEfficiencyClass,
+    pub max_estimated_peak_memory_bytes: u64,
+    pub combined_cpu_weight: f32,
+    pub combined_io_weight: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_expected_partition_count: Option<usize>,
+    pub partition_target_bytes: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adaptive_recommendation: Option<AdaptivePartitionBenchmarkRecommendation>,
+    pub repeat_index: usize,
+    pub batch_elapsed_ms: f64,
+    pub completed_jobs: usize,
+    pub total_jobs: usize,
+    pub avg_queue_wait_ms: f64,
+    pub max_queue_wait_ms: f64,
+    pub avg_job_elapsed_ms: f64,
+    pub min_job_elapsed_ms: f64,
+    pub max_job_elapsed_ms: f64,
+    pub avg_total_partitions: f64,
+    pub avg_peak_active_partitions: f64,
+    pub jobs: Vec<TraceLocalBatchBenchmarkJobResult>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TraceLocalBatchBenchmarkSummary {
+    pub label: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_max_active_jobs: Option<usize>,
+    pub effective_max_active_jobs: usize,
+    pub execution_mode: ProcessingExecutionMode,
+    pub scheduler_reason: ProcessingSchedulerReason,
+    pub run_count: usize,
+    pub avg_batch_elapsed_ms: f64,
+    pub min_batch_elapsed_ms: f64,
+    pub max_batch_elapsed_ms: f64,
+    pub avg_queue_wait_ms: f64,
+    pub avg_job_elapsed_ms: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TraceLocalBatchBenchmarkResponse {
+    pub store_path: String,
+    pub scenario: TraceLocalBenchmarkScenario,
+    pub source_shape: [usize; 3],
+    pub source_chunk_shape: [usize; 3],
+    pub job_count: usize,
+    pub partition_target_bytes: u64,
+    pub adaptive_partition_target: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adaptive_recommendation: Option<AdaptivePartitionBenchmarkRecommendation>,
+    pub pipeline: TraceLocalProcessingPipeline,
+    pub plan_summary: seis_runtime::ExecutionPlanSummary,
+    pub stage_classifications: Vec<BenchmarkStageClassificationSummary>,
+    pub variants: Vec<TraceLocalBatchBenchmarkVariantResult>,
+    pub summaries: Vec<TraceLocalBatchBenchmarkSummary>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PostStackNeighborhoodBenchmarkOperator {
+    Similarity,
+    LocalVolumeStatsMean,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub struct PostStackNeighborhoodBenchmarkWindow {
+    pub gate_ms: f32,
+    pub inline_stepout: usize,
+    pub xline_stepout: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct PostStackNeighborhoodPreviewBenchmarkRequest {
+    pub store_path: String,
+    pub operator: PostStackNeighborhoodBenchmarkOperator,
+    pub gate_ms: f32,
+    pub inline_stepout: usize,
+    pub xline_stepout: usize,
+    pub section_axis: seis_runtime::SectionAxis,
+    pub section_index: usize,
+    pub include_trace_local_prefix: bool,
+    pub repeat_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PostStackNeighborhoodPreviewBenchmarkRunResult {
+    pub label: String,
+    pub operator: PostStackNeighborhoodBenchmarkOperator,
+    pub repeat_index: usize,
+    pub elapsed_ms: f64,
+    pub time_to_first_result_ms: f64,
+    pub section_axis: seis_runtime::SectionAxis,
+    pub section_index: usize,
+    pub trace_local_prefix_applied: bool,
+    pub preview_ready: bool,
+    pub traces: usize,
+    pub samples: usize,
+    pub amplitude_bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PostStackNeighborhoodPreviewBenchmarkSummary {
+    pub label: String,
+    pub run_count: usize,
+    pub avg_elapsed_ms: f64,
+    pub min_elapsed_ms: f64,
+    pub max_elapsed_ms: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PostStackNeighborhoodPreviewBenchmarkResponse {
+    pub store_path: String,
+    pub operator: PostStackNeighborhoodBenchmarkOperator,
+    pub window: PostStackNeighborhoodBenchmarkWindow,
+    pub source_shape: [usize; 3],
+    pub source_chunk_shape: [usize; 3],
+    pub section_axis: seis_runtime::SectionAxis,
+    pub section_index: usize,
+    pub include_trace_local_prefix: bool,
+    pub pipeline: PostStackNeighborhoodProcessingPipeline,
+    pub plan_summary: seis_runtime::ExecutionPlanSummary,
+    pub stage_classifications: Vec<BenchmarkStageClassificationSummary>,
+    pub runs: Vec<PostStackNeighborhoodPreviewBenchmarkRunResult>,
+    pub summaries: Vec<PostStackNeighborhoodPreviewBenchmarkSummary>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PostStackNeighborhoodProcessingBenchmarkRequest {
+    pub store_path: String,
+    pub output_root: Option<String>,
+    pub operator: PostStackNeighborhoodBenchmarkOperator,
+    pub gate_ms: f32,
+    pub inline_stepout: usize,
+    pub xline_stepout: usize,
+    pub include_trace_local_prefix: bool,
+    pub repeat_count: usize,
+    pub keep_outputs: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PostStackNeighborhoodProcessingBenchmarkRunResult {
+    pub label: String,
+    pub operator: PostStackNeighborhoodBenchmarkOperator,
+    pub repeat_index: usize,
+    pub elapsed_ms: f64,
+    pub trace_local_prefix_applied: bool,
+    pub output_bytes: u64,
+    pub output_store_path: String,
+    pub output_retained: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PostStackNeighborhoodProcessingBenchmarkSummary {
+    pub label: String,
+    pub run_count: usize,
+    pub avg_elapsed_ms: f64,
+    pub min_elapsed_ms: f64,
+    pub max_elapsed_ms: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PostStackNeighborhoodProcessingBenchmarkResponse {
+    pub store_path: String,
+    pub operator: PostStackNeighborhoodBenchmarkOperator,
+    pub window: PostStackNeighborhoodBenchmarkWindow,
+    pub source_shape: [usize; 3],
+    pub source_chunk_shape: [usize; 3],
+    pub include_trace_local_prefix: bool,
+    pub pipeline: PostStackNeighborhoodProcessingPipeline,
+    pub plan_summary: seis_runtime::ExecutionPlanSummary,
+    pub stage_classifications: Vec<BenchmarkStageClassificationSummary>,
+    pub runs: Vec<PostStackNeighborhoodProcessingBenchmarkRunResult>,
+    pub summaries: Vec<PostStackNeighborhoodProcessingBenchmarkSummary>,
 }
 
 #[derive(Debug, Clone)]
@@ -251,6 +587,13 @@ impl TraceBoostWorkflowService {
         request: OpenDatasetRequest,
     ) -> Result<OpenDatasetResponse, Box<dyn std::error::Error>> {
         open_dataset_summary(request)
+    }
+
+    pub fn dataset_operator_catalog(
+        &self,
+        store_path: String,
+    ) -> Result<OperatorCatalog, Box<dyn std::error::Error>> {
+        dataset_operator_catalog(store_path)
     }
 
     pub fn set_dataset_native_coordinate_reference(
@@ -457,6 +800,1305 @@ fn materialize_options_for_store(
     })
 }
 
+#[cfg(target_os = "windows")]
+fn available_system_memory_bytes() -> Option<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+
+    let mut status = unsafe { std::mem::zeroed::<MEMORYSTATUSEX>() };
+    status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+    let ok = unsafe { GlobalMemoryStatusEx(&mut status) };
+    if ok == 0 {
+        None
+    } else {
+        Some(status.ullAvailPhys)
+    }
+}
+
+#[cfg(unix)]
+fn available_system_memory_bytes() -> Option<u64> {
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    let available_pages = unsafe { libc::sysconf(libc::_SC_AVPHYS_PAGES) };
+    if page_size <= 0 || available_pages <= 0 {
+        None
+    } else {
+        Some((page_size as u64).saturating_mul(available_pages as u64))
+    }
+}
+
+#[cfg(not(any(target_os = "windows", unix)))]
+fn available_system_memory_bytes() -> Option<u64> {
+    None
+}
+
+fn benchmark_worker_count() -> usize {
+    std::env::var("OPHIOLITE_BENCHMARK_WORKERS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(4)
+        })
+        .max(1)
+}
+
+#[derive(Debug, Clone, Default)]
+struct BatchBenchmarkJobMetrics {
+    queue_wait_ms: Option<f64>,
+    elapsed_ms: Option<f64>,
+    total_tiles: usize,
+    completed_tiles: usize,
+    total_partitions: usize,
+    completed_partitions: usize,
+    peak_active_partitions: usize,
+    retry_count: usize,
+    output_bytes: u64,
+    error_message: Option<String>,
+}
+
+pub fn benchmark_trace_local_processing(
+    request: TraceLocalBenchmarkRequest,
+) -> Result<TraceLocalBenchmarkResponse, Box<dyn std::error::Error>> {
+    let handle = open_store(&request.store_path)?;
+    let source_shape = handle.manifest.volume.shape;
+    let source_chunk_shape = handle.manifest.tile_shape;
+    let pipeline = benchmark_pipeline(request.scenario);
+    let pipeline_spec = ProcessingPipelineSpec::TraceLocal {
+        pipeline: pipeline.clone(),
+    };
+    let representative_plan = build_execution_plan(&PlanProcessingRequest {
+        store_path: request.store_path.clone(),
+        layout: SeismicLayout::PostStack3D,
+        source_shape: Some(source_shape),
+        source_chunk_shape: Some(source_chunk_shape),
+        pipeline: pipeline_spec.clone(),
+        output_store_path: None,
+        planning_mode: PlanningMode::ForegroundMaterialize,
+        max_active_partitions: None,
+    })
+    .map_err(|error| format!("failed to build execution plan: {error}"))?;
+    let output_root = request
+        .output_root
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("ophiolite-trace-local-benchmarks"));
+    fs::create_dir_all(&output_root)?;
+
+    let adaptive_options_resolution = resolve_trace_local_materialize_options(
+        Some(&representative_plan),
+        source_chunk_shape,
+        request.adaptive_partition_target,
+        None,
+        benchmark_worker_count(),
+        available_system_memory_bytes(),
+        1,
+    );
+    let adaptive_recommendation = adaptive_options_resolution
+        .adaptive_recommendation
+        .as_ref()
+        .map(|recommendation| adaptive_partition_recommendation(recommendation.clone()));
+    let variants = benchmark_variant_targets(&request, adaptive_recommendation.as_ref());
+    let repeat_count = request.repeat_count.max(1);
+    let mut runs = Vec::new();
+
+    for partition_target_bytes in variants {
+        let label =
+            benchmark_variant_label(partition_target_bytes, request.adaptive_partition_target);
+        for repeat_index in 0..repeat_count {
+            let output_store_path = output_root.join(format!(
+                "{}-{}-run-{:02}.tbvol",
+                dataset_slug(&request.store_path),
+                benchmark_scenario_slug(request.scenario),
+                benchmark_variant_output_slug(
+                    partition_target_bytes,
+                    request.adaptive_partition_target,
+                    repeat_index,
+                ),
+            ));
+            prepare_processing_output_store(&output_store_path, true)?;
+
+            let mut completed_tiles = 0usize;
+            let mut total_tiles = 0usize;
+            let mut partition_progress = PartitionExecutionProgress {
+                completed_partitions: 0,
+                total_partitions: 0,
+                active_partitions: 0,
+                peak_active_partitions: 0,
+                retry_count: 0,
+            };
+            let materialize_options = resolve_trace_local_materialize_options(
+                Some(&representative_plan),
+                source_chunk_shape,
+                request.adaptive_partition_target && partition_target_bytes.is_some(),
+                partition_target_bytes,
+                benchmark_worker_count(),
+                available_system_memory_bytes(),
+                1,
+            )
+            .options;
+            let started = Instant::now();
+            let _derived = materialize_processing_volume_with_partition_progress(
+                &request.store_path,
+                &output_store_path,
+                &pipeline,
+                materialize_options,
+                |completed, total| {
+                    completed_tiles = completed;
+                    total_tiles = total;
+                    Ok(())
+                },
+                |progress| {
+                    partition_progress = progress;
+                    Ok(())
+                },
+            )?;
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            let output_bytes = path_size_bytes(&output_store_path)?;
+            let output_store_path_string = output_store_path.to_string_lossy().into_owned();
+            let output_retained = request.keep_outputs;
+            if !request.keep_outputs {
+                remove_store_path_if_exists(&output_store_path)?;
+            }
+
+            runs.push(TraceLocalBenchmarkRunResult {
+                label: label.clone(),
+                scenario: request.scenario,
+                partition_target_bytes,
+                repeat_index: repeat_index + 1,
+                elapsed_ms,
+                total_tiles,
+                completed_tiles,
+                total_partitions: partition_progress.total_partitions,
+                completed_partitions: partition_progress.completed_partitions,
+                peak_active_partitions: partition_progress.peak_active_partitions,
+                retry_count: partition_progress.retry_count,
+                output_bytes,
+                output_store_path: output_store_path_string,
+                output_retained,
+            });
+        }
+    }
+
+    Ok(TraceLocalBenchmarkResponse {
+        store_path: request.store_path,
+        scenario: request.scenario,
+        source_shape,
+        source_chunk_shape,
+        adaptive_partition_target: request.adaptive_partition_target,
+        adaptive_recommendation,
+        pipeline,
+        plan_summary: representative_plan.plan_summary.clone(),
+        stage_classifications: benchmark_stage_classifications(&representative_plan),
+        variants: summarize_benchmark_variants(&runs),
+        runs,
+    })
+}
+
+pub fn benchmark_trace_local_batch_processing(
+    request: TraceLocalBatchBenchmarkRequest,
+) -> Result<TraceLocalBatchBenchmarkResponse, Box<dyn std::error::Error>> {
+    let dataset = dataset_summary_for_path(&request.store_path)?;
+    let trace_descriptor = SeismicTraceDataDescriptor::from(&dataset.descriptor);
+    let source_shape = dataset.descriptor.shape;
+    let source_chunk_shape = dataset.descriptor.chunk_shape;
+    let pipeline = benchmark_pipeline(request.scenario);
+    let pipeline_spec = ProcessingPipelineSpec::TraceLocal {
+        pipeline: pipeline.clone(),
+    };
+    let output_root = request
+        .output_root
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("ophiolite-trace-local-batch-benchmarks"));
+    fs::create_dir_all(&output_root)?;
+    let service_workers = benchmark_worker_count();
+    let repeat_count = request.repeat_count.max(1);
+    let job_count = request.job_count.max(1);
+    let representative_plan = build_execution_plan(&PlanProcessingRequest {
+        store_path: request.store_path.clone(),
+        layout: trace_descriptor.layout,
+        source_shape: Some(source_shape),
+        source_chunk_shape: Some(source_chunk_shape),
+        pipeline: pipeline_spec.clone(),
+        output_store_path: None,
+        planning_mode: PlanningMode::BackgroundBatch,
+        max_active_partitions: None,
+    })
+    .map_err(|error| format!("failed to build execution plan: {error}"))?;
+    let mut response_adaptive_recommendation = None;
+    let mut response_partition_target_bytes = request.partition_target_mib.max(1) * 1024 * 1024;
+    let mut variants = Vec::new();
+
+    let requested_levels = if request.execution_mode.is_some() && request.max_active_jobs.is_empty()
+    {
+        vec![None]
+    } else if request.max_active_jobs.is_empty() {
+        vec![Some(1), Some(2), Some(4)]
+    } else {
+        request
+            .max_active_jobs
+            .iter()
+            .copied()
+            .map(|value| value.max(1))
+            .map(Some)
+            .collect::<Vec<_>>()
+    };
+
+    for requested_max_active_jobs in requested_levels {
+        for repeat_index in 0..repeat_count {
+            let service = ProcessingExecutionService::new(service_workers);
+            let batch_policy = service.resolve_batch_execution_policy(
+                requested_max_active_jobs,
+                request.execution_mode,
+                &pipeline_spec,
+                Some(&representative_plan),
+                ExecutionPriorityClass::BackgroundBatch,
+            );
+            let materialize_options_resolution = resolve_trace_local_materialize_options(
+                Some(&representative_plan),
+                source_chunk_shape,
+                request.adaptive_partition_target,
+                Some(request.partition_target_mib.max(1) * 1024 * 1024),
+                service_workers,
+                available_system_memory_bytes(),
+                batch_policy.effective_max_active_jobs,
+            );
+            let adaptive_recommendation = materialize_options_resolution
+                .adaptive_recommendation
+                .as_ref()
+                .map(|recommendation| adaptive_partition_recommendation(recommendation.clone()));
+            let partition_target_bytes = materialize_options_resolution
+                .resolved_partition_target_bytes
+                .unwrap_or(request.partition_target_mib.max(1) * 1024 * 1024);
+            if response_adaptive_recommendation.is_none() {
+                response_adaptive_recommendation = adaptive_recommendation.clone();
+                response_partition_target_bytes = partition_target_bytes;
+            }
+            let batch_gate = service.create_batch_gate(batch_policy.effective_max_active_jobs);
+            let batch_started = Instant::now();
+            let materialize_options = materialize_options_resolution.options.clone();
+            let resolved_chunk_plan_summary =
+                materialize_options_resolution.resolved_chunk_plan.clone();
+            let shared_metrics = Arc::new(Mutex::new(
+                HashMap::<String, BatchBenchmarkJobMetrics>::new(),
+            ));
+            let mut items = Vec::with_capacity(job_count);
+            let mut job_labels_by_id = HashMap::with_capacity(job_count);
+            let mut job_ids = Vec::with_capacity(job_count);
+
+            for job_index in 0..job_count {
+                let job_label = format!("job-{:02}", job_index + 1);
+                let output_store_path = output_root.join(format!(
+                    "{}-{}-batch-{}-run-{:02}-{}.tbvol",
+                    dataset_slug(&request.store_path),
+                    benchmark_scenario_slug(request.scenario),
+                    benchmark_batch_requested_slug(
+                        requested_max_active_jobs,
+                        batch_policy.execution_mode,
+                        request.adaptive_partition_target,
+                    ),
+                    repeat_index + 1,
+                    job_label,
+                ));
+                prepare_processing_output_store(&output_store_path, true)?;
+                let output_store_path_string = output_store_path.to_string_lossy().into_owned();
+                let item = ProcessingBatchItemRequest {
+                    store_path: request.store_path.clone(),
+                    output_store_path: Some(output_store_path_string.clone()),
+                };
+                let queue_started = Instant::now();
+                let metrics = Arc::clone(&shared_metrics);
+                let input_store_path = request.store_path.clone();
+                let benchmark_pipeline = pipeline.clone();
+                let output_store_path_for_task = output_store_path.clone();
+                let job_label_for_task = job_label.clone();
+                let keep_outputs = request.keep_outputs;
+                let materialize_options_for_task = materialize_options.clone();
+                let resolved_chunk_plan_summary_for_task = resolved_chunk_plan_summary.clone();
+                let record_plan = build_execution_plan(&PlanProcessingRequest {
+                    store_path: request.store_path.clone(),
+                    layout: trace_descriptor.layout,
+                    source_shape: Some(source_shape),
+                    source_chunk_shape: Some(source_chunk_shape),
+                    pipeline: pipeline_spec.clone(),
+                    output_store_path: Some(output_store_path_string.clone()),
+                    planning_mode: PlanningMode::BackgroundBatch,
+                    max_active_partitions: None,
+                })
+                .map_err(|error| format!("failed to build execution plan: {error}"))?;
+                let status = service.enqueue_job(
+                    request.store_path.clone(),
+                    Some(output_store_path_string.clone()),
+                    pipeline_spec.clone(),
+                    Some(record_plan),
+                    ExecutionPriorityClass::BackgroundBatch,
+                    Some(batch_gate.clone()),
+                    move |record| {
+                        let started = Instant::now();
+                        record.mark_running(Some("Trace-local batch benchmark".to_string()));
+                        let queue_wait_ms =
+                            started.duration_since(queue_started).as_secs_f64() * 1000.0;
+                        {
+                            let mut all_metrics =
+                                metrics.lock().expect("benchmark metrics mutex poisoned");
+                            all_metrics
+                                .entry(job_label_for_task.clone())
+                                .or_default()
+                                .queue_wait_ms = Some(queue_wait_ms);
+                        }
+                        let mut completed_tiles = 0usize;
+                        let mut total_tiles = 0usize;
+                        let mut partition_progress = PartitionExecutionProgress {
+                            completed_partitions: 0,
+                            total_partitions: 0,
+                            active_partitions: 0,
+                            peak_active_partitions: 0,
+                            retry_count: 0,
+                        };
+                        let result = materialize_processing_volume_with_partition_progress(
+                            &input_store_path,
+                            &output_store_path_for_task,
+                            &benchmark_pipeline,
+                            materialize_options_for_task,
+                            |completed, total| {
+                                completed_tiles = completed;
+                                total_tiles = total;
+                                let _ = record.mark_progress(
+                                    completed,
+                                    total,
+                                    Some("Trace-local batch benchmark"),
+                                );
+                                Ok(())
+                            },
+                            |progress| {
+                                partition_progress = progress;
+                                let _ =
+                                    record.set_execution_summary(processing_job_execution_summary(
+                                        progress,
+                                        resolved_chunk_plan_summary_for_task.clone(),
+                                    ));
+                                Ok(())
+                            },
+                        );
+                        match result {
+                            Ok(_) => {
+                                let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+                                let output_bytes = path_size_bytes(&output_store_path_for_task)
+                                    .unwrap_or_default();
+                                {
+                                    let mut all_metrics =
+                                        metrics.lock().expect("benchmark metrics mutex poisoned");
+                                    all_metrics.insert(
+                                        job_label_for_task.clone(),
+                                        BatchBenchmarkJobMetrics {
+                                            queue_wait_ms: Some(queue_wait_ms),
+                                            elapsed_ms: Some(elapsed_ms),
+                                            total_tiles,
+                                            completed_tiles,
+                                            total_partitions: partition_progress.total_partitions,
+                                            completed_partitions: partition_progress
+                                                .completed_partitions,
+                                            peak_active_partitions: partition_progress
+                                                .peak_active_partitions,
+                                            retry_count: partition_progress.retry_count,
+                                            output_bytes,
+                                            error_message: None,
+                                        },
+                                    );
+                                }
+                                if !keep_outputs {
+                                    let _ =
+                                        remove_store_path_if_exists(&output_store_path_for_task);
+                                }
+                                let _ = record.mark_completed(
+                                    output_store_path_for_task.to_string_lossy().into_owned(),
+                                );
+                            }
+                            Err(error) => {
+                                let error_message = error.to_string();
+                                {
+                                    let mut all_metrics =
+                                        metrics.lock().expect("benchmark metrics mutex poisoned");
+                                    all_metrics.insert(
+                                        job_label_for_task.clone(),
+                                        BatchBenchmarkJobMetrics {
+                                            queue_wait_ms: Some(queue_wait_ms),
+                                            elapsed_ms: Some(
+                                                started.elapsed().as_secs_f64() * 1000.0,
+                                            ),
+                                            total_tiles,
+                                            completed_tiles,
+                                            total_partitions: partition_progress.total_partitions,
+                                            completed_partitions: partition_progress
+                                                .completed_partitions,
+                                            peak_active_partitions: partition_progress
+                                                .peak_active_partitions,
+                                            retry_count: partition_progress.retry_count,
+                                            output_bytes: 0,
+                                            error_message: Some(error_message.clone()),
+                                        },
+                                    );
+                                }
+                                let _ = remove_store_path_if_exists(&output_store_path_for_task);
+                                let _ = record.mark_failed(error_message);
+                            }
+                        }
+                    },
+                );
+                items.push(item);
+                job_labels_by_id.insert(status.job_id.clone(), job_label);
+                job_ids.push(status.job_id);
+            }
+
+            let batch = service
+                .register_batch(pipeline_spec.clone(), items, job_ids.clone(), &batch_policy)
+                .map_err(|error| format!("failed to register benchmark batch: {error}"))?;
+
+            loop {
+                let status = service
+                    .batch_status(&batch.batch_id)
+                    .map_err(|error| format!("failed to poll benchmark batch: {error}"))?;
+                if matches!(
+                    status.state,
+                    ProcessingBatchState::Completed
+                        | ProcessingBatchState::CompletedWithErrors
+                        | ProcessingBatchState::Cancelled
+                ) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+
+            let batch_elapsed_ms = batch_started.elapsed().as_secs_f64() * 1000.0;
+            let final_batch = service
+                .batch_status(&batch.batch_id)
+                .map_err(|error| format!("failed to fetch final benchmark batch: {error}"))?;
+            let all_metrics = shared_metrics
+                .lock()
+                .expect("benchmark metrics mutex poisoned");
+            let mut jobs = Vec::with_capacity(final_batch.items.len());
+            for item in &final_batch.items {
+                let job_label = job_labels_by_id
+                    .get(&item.job_id)
+                    .cloned()
+                    .unwrap_or_else(|| item.job_id.clone());
+                let metrics = all_metrics.get(&job_label).cloned().unwrap_or_default();
+                jobs.push(TraceLocalBatchBenchmarkJobResult {
+                    job_label,
+                    job_id: item.job_id.clone(),
+                    state: match item.state {
+                        ProcessingJobState::Queued => "queued".to_string(),
+                        ProcessingJobState::Running => "running".to_string(),
+                        ProcessingJobState::Completed => "completed".to_string(),
+                        ProcessingJobState::Failed => "failed".to_string(),
+                        ProcessingJobState::Cancelled => "cancelled".to_string(),
+                    },
+                    queue_wait_ms: metrics.queue_wait_ms.unwrap_or(0.0),
+                    elapsed_ms: metrics.elapsed_ms.unwrap_or(0.0),
+                    total_tiles: metrics.total_tiles,
+                    completed_tiles: metrics.completed_tiles,
+                    total_partitions: metrics.total_partitions,
+                    completed_partitions: metrics.completed_partitions,
+                    peak_active_partitions: metrics.peak_active_partitions,
+                    retry_count: metrics.retry_count,
+                    output_bytes: metrics.output_bytes,
+                    output_store_path: item.output_store_path.clone().unwrap_or_default(),
+                    output_retained: request.keep_outputs,
+                    error_message: metrics.error_message.or_else(|| item.error_message.clone()),
+                });
+            }
+            jobs.sort_by(|left, right| left.job_label.cmp(&right.job_label));
+            let avg_queue_wait_ms = average_f64(jobs.iter().map(|job| job.queue_wait_ms));
+            let max_queue_wait_ms = jobs
+                .iter()
+                .map(|job| job.queue_wait_ms)
+                .fold(0.0_f64, f64::max);
+            let avg_job_elapsed_ms = average_f64(jobs.iter().map(|job| job.elapsed_ms));
+            let min_job_elapsed_ms = jobs
+                .iter()
+                .map(|job| job.elapsed_ms)
+                .fold(f64::INFINITY, f64::min);
+            let max_job_elapsed_ms = jobs
+                .iter()
+                .map(|job| job.elapsed_ms)
+                .fold(f64::NEG_INFINITY, f64::max);
+            let avg_total_partitions =
+                average_f64(jobs.iter().map(|job| job.total_partitions as f64));
+            let avg_peak_active_partitions =
+                average_f64(jobs.iter().map(|job| job.peak_active_partitions as f64));
+            variants.push(TraceLocalBatchBenchmarkVariantResult {
+                label: format!(
+                    "{}-requested-{}-effective-{}",
+                    match batch_policy.execution_mode {
+                        ProcessingExecutionMode::Auto => "auto",
+                        ProcessingExecutionMode::Conservative => "conservative",
+                        ProcessingExecutionMode::Throughput => "throughput",
+                        ProcessingExecutionMode::Custom => "custom",
+                    },
+                    requested_max_active_jobs
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "auto".to_string()),
+                    batch_policy.effective_max_active_jobs
+                ),
+                requested_max_active_jobs,
+                effective_max_active_jobs: batch_policy.effective_max_active_jobs,
+                execution_mode: batch_policy.execution_mode,
+                scheduler_reason: batch_policy.scheduler_reason,
+                worker_budget: batch_policy.worker_budget,
+                global_cap: batch_policy.global_cap,
+                max_memory_cost_class: batch_policy.max_memory_cost_class,
+                max_cpu_cost_class: representative_plan.plan_summary.max_cpu_cost_class,
+                max_io_cost_class: representative_plan.plan_summary.max_io_cost_class,
+                min_parallel_efficiency_class: representative_plan
+                    .plan_summary
+                    .min_parallel_efficiency_class,
+                max_estimated_peak_memory_bytes: batch_policy.max_estimated_peak_memory_bytes,
+                combined_cpu_weight: representative_plan.plan_summary.combined_cpu_weight,
+                combined_io_weight: representative_plan.plan_summary.combined_io_weight,
+                max_expected_partition_count: batch_policy.max_expected_partition_count,
+                partition_target_bytes,
+                adaptive_recommendation: adaptive_recommendation.clone(),
+                repeat_index: repeat_index + 1,
+                batch_elapsed_ms,
+                completed_jobs: final_batch.progress.completed_jobs,
+                total_jobs: final_batch.progress.total_jobs,
+                avg_queue_wait_ms,
+                max_queue_wait_ms,
+                avg_job_elapsed_ms,
+                min_job_elapsed_ms,
+                max_job_elapsed_ms,
+                avg_total_partitions,
+                avg_peak_active_partitions,
+                jobs,
+            });
+        }
+    }
+
+    Ok(TraceLocalBatchBenchmarkResponse {
+        store_path: request.store_path,
+        scenario: request.scenario,
+        source_shape,
+        source_chunk_shape,
+        job_count,
+        partition_target_bytes: response_partition_target_bytes,
+        adaptive_partition_target: request.adaptive_partition_target,
+        adaptive_recommendation: response_adaptive_recommendation,
+        pipeline,
+        plan_summary: representative_plan.plan_summary.clone(),
+        stage_classifications: benchmark_stage_classifications(&representative_plan),
+        summaries: summarize_batch_benchmark_variants(&variants),
+        variants,
+    })
+}
+
+pub fn benchmark_post_stack_neighborhood_preview(
+    request: PostStackNeighborhoodPreviewBenchmarkRequest,
+) -> Result<PostStackNeighborhoodPreviewBenchmarkResponse, Box<dyn std::error::Error>> {
+    let dataset = dataset_summary_for_path(&request.store_path)?;
+    let source_shape = dataset.descriptor.shape;
+    let source_chunk_shape = dataset.descriptor.chunk_shape;
+    let pipeline = post_stack_neighborhood_benchmark_pipeline(
+        request.operator,
+        request.gate_ms,
+        request.inline_stepout,
+        request.xline_stepout,
+        request.include_trace_local_prefix,
+    );
+    let plan = build_execution_plan(&PlanProcessingRequest {
+        store_path: request.store_path.clone(),
+        layout: SeismicLayout::PostStack3D,
+        source_shape: Some(source_shape),
+        source_chunk_shape: Some(source_chunk_shape),
+        pipeline: ProcessingPipelineSpec::PostStackNeighborhood {
+            pipeline: pipeline.clone(),
+        },
+        output_store_path: None,
+        planning_mode: PlanningMode::InteractivePreview,
+        max_active_partitions: None,
+    })
+    .map_err(|error| format!("failed to build execution plan: {error}"))?;
+    let repeat_count = request.repeat_count.max(1);
+    let label = post_stack_neighborhood_benchmark_label(
+        request.operator,
+        request.gate_ms,
+        request.inline_stepout,
+        request.xline_stepout,
+        request.include_trace_local_prefix,
+    );
+    let dataset_id = dataset.descriptor.id.clone();
+    let mut runs = Vec::with_capacity(repeat_count);
+
+    for repeat_index in 0..repeat_count {
+        let started = Instant::now();
+        let response = preview_post_stack_neighborhood_processing(
+            PreviewPostStackNeighborhoodProcessingRequest {
+                schema_version: IPC_SCHEMA_VERSION,
+                store_path: request.store_path.clone(),
+                section: seis_runtime::SectionRequest {
+                    dataset_id: dataset_id.clone(),
+                    axis: request.section_axis,
+                    index: request.section_index,
+                },
+                pipeline: pipeline.clone(),
+            },
+        )?;
+        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+        runs.push(PostStackNeighborhoodPreviewBenchmarkRunResult {
+            label: label.clone(),
+            operator: request.operator,
+            repeat_index: repeat_index + 1,
+            elapsed_ms,
+            time_to_first_result_ms: elapsed_ms,
+            section_axis: request.section_axis,
+            section_index: request.section_index,
+            trace_local_prefix_applied: request.include_trace_local_prefix,
+            preview_ready: response.preview.preview_ready,
+            traces: response.preview.section.traces,
+            samples: response.preview.section.samples,
+            amplitude_bytes: response.preview.section.amplitudes_f32le.len(),
+        });
+    }
+
+    Ok(PostStackNeighborhoodPreviewBenchmarkResponse {
+        store_path: request.store_path,
+        operator: request.operator,
+        window: PostStackNeighborhoodBenchmarkWindow {
+            gate_ms: request.gate_ms,
+            inline_stepout: request.inline_stepout,
+            xline_stepout: request.xline_stepout,
+        },
+        source_shape,
+        source_chunk_shape,
+        section_axis: request.section_axis,
+        section_index: request.section_index,
+        include_trace_local_prefix: request.include_trace_local_prefix,
+        pipeline,
+        plan_summary: plan.plan_summary.clone(),
+        stage_classifications: benchmark_stage_classifications(&plan),
+        summaries: summarize_post_stack_neighborhood_preview_runs(&runs),
+        runs,
+    })
+}
+
+pub fn benchmark_post_stack_neighborhood_processing(
+    request: PostStackNeighborhoodProcessingBenchmarkRequest,
+) -> Result<PostStackNeighborhoodProcessingBenchmarkResponse, Box<dyn std::error::Error>> {
+    let dataset = dataset_summary_for_path(&request.store_path)?;
+    let source_shape = dataset.descriptor.shape;
+    let source_chunk_shape = dataset.descriptor.chunk_shape;
+    let pipeline = post_stack_neighborhood_benchmark_pipeline(
+        request.operator,
+        request.gate_ms,
+        request.inline_stepout,
+        request.xline_stepout,
+        request.include_trace_local_prefix,
+    );
+    let plan = build_execution_plan(&PlanProcessingRequest {
+        store_path: request.store_path.clone(),
+        layout: SeismicLayout::PostStack3D,
+        source_shape: Some(source_shape),
+        source_chunk_shape: Some(source_chunk_shape),
+        pipeline: ProcessingPipelineSpec::PostStackNeighborhood {
+            pipeline: pipeline.clone(),
+        },
+        output_store_path: None,
+        planning_mode: PlanningMode::ForegroundMaterialize,
+        max_active_partitions: None,
+    })
+    .map_err(|error| format!("failed to build execution plan: {error}"))?;
+    let output_root = request
+        .output_root
+        .as_ref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::temp_dir().join("ophiolite-post-stack-neighborhood-benchmarks")
+        });
+    fs::create_dir_all(&output_root)?;
+    let repeat_count = request.repeat_count.max(1);
+    let label = post_stack_neighborhood_benchmark_label(
+        request.operator,
+        request.gate_ms,
+        request.inline_stepout,
+        request.xline_stepout,
+        request.include_trace_local_prefix,
+    );
+    let mut runs = Vec::with_capacity(repeat_count);
+
+    for repeat_index in 0..repeat_count {
+        let output_store_path = output_root.join(format!(
+            "{}-{}-run-{:02}.tbvol",
+            dataset_slug(&request.store_path),
+            post_stack_neighborhood_benchmark_slug(
+                request.operator,
+                request.gate_ms,
+                request.inline_stepout,
+                request.xline_stepout,
+                request.include_trace_local_prefix,
+            ),
+            repeat_index + 1
+        ));
+        prepare_processing_output_store(&output_store_path, true)?;
+        let started = Instant::now();
+        let _derived = materialize_post_stack_neighborhood_processing_volume(
+            &request.store_path,
+            &output_store_path,
+            &pipeline,
+            materialize_options_for_store(&request.store_path)?,
+        )?;
+        let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let output_bytes = path_size_bytes(&output_store_path)?;
+        let output_store_path_string = output_store_path.to_string_lossy().into_owned();
+        let output_retained = request.keep_outputs;
+        if !request.keep_outputs {
+            remove_store_path_if_exists(&output_store_path)?;
+        }
+        runs.push(PostStackNeighborhoodProcessingBenchmarkRunResult {
+            label: label.clone(),
+            operator: request.operator,
+            repeat_index: repeat_index + 1,
+            elapsed_ms,
+            trace_local_prefix_applied: request.include_trace_local_prefix,
+            output_bytes,
+            output_store_path: output_store_path_string,
+            output_retained,
+        });
+    }
+
+    Ok(PostStackNeighborhoodProcessingBenchmarkResponse {
+        store_path: request.store_path,
+        operator: request.operator,
+        window: PostStackNeighborhoodBenchmarkWindow {
+            gate_ms: request.gate_ms,
+            inline_stepout: request.inline_stepout,
+            xline_stepout: request.xline_stepout,
+        },
+        source_shape,
+        source_chunk_shape,
+        include_trace_local_prefix: request.include_trace_local_prefix,
+        pipeline,
+        plan_summary: plan.plan_summary.clone(),
+        stage_classifications: benchmark_stage_classifications(&plan),
+        summaries: summarize_post_stack_neighborhood_processing_runs(&runs),
+        runs,
+    })
+}
+
+fn adaptive_partition_recommendation(
+    recommendation: seis_runtime::AdaptivePartitionTargetRecommendation,
+) -> AdaptivePartitionBenchmarkRecommendation {
+    AdaptivePartitionBenchmarkRecommendation {
+        target_bytes: recommendation.target_bytes(),
+        bytes_per_tile: recommendation.bytes_per_tile,
+        total_tiles: recommendation.total_tiles,
+        preferred_partition_count: recommendation.preferred_partition_count,
+        recommended_partition_count: recommendation.recommended_partition_count(),
+        recommended_max_active_partitions: recommendation.recommended_max_active_partitions(),
+        tiles_per_partition: recommendation.tiles_per_partition(),
+        resident_partition_bytes: recommendation.resident_partition_bytes(),
+        global_worker_workspace_bytes: recommendation.global_worker_workspace_bytes(),
+        estimated_peak_bytes: recommendation.estimated_peak_bytes(),
+        available_memory_bytes: recommendation.available_memory_bytes,
+        reserved_memory_bytes: recommendation.reserved_memory_bytes,
+        usable_memory_bytes: recommendation.usable_memory_bytes,
+    }
+}
+
+fn processing_job_execution_summary(
+    progress: PartitionExecutionProgress,
+    resolved_chunk_plan: Option<ProcessingJobChunkPlanSummary>,
+) -> ProcessingJobExecutionSummary {
+    ProcessingJobExecutionSummary {
+        completed_partitions: progress.completed_partitions,
+        total_partitions: Some(progress.total_partitions),
+        active_partitions: progress.active_partitions,
+        peak_active_partitions: progress.peak_active_partitions,
+        retry_count: progress.retry_count,
+        resolved_chunk_plan,
+        stages: Vec::new(),
+    }
+}
+
+fn benchmark_stage_classifications(
+    plan: &seis_runtime::ExecutionPlan,
+) -> Vec<BenchmarkStageClassificationSummary> {
+    plan.stages
+        .iter()
+        .map(|stage| BenchmarkStageClassificationSummary {
+            stage_id: stage.stage_id.clone(),
+            stage_label: benchmark_stage_label(stage),
+            stage_kind: stage.stage_kind,
+            partition_family: stage.partition_spec.family,
+            expected_partition_count: stage.expected_partition_count,
+            classification: stage.classification.clone(),
+        })
+        .collect()
+}
+
+fn benchmark_stage_label(stage: &seis_runtime::ExecutionStage) -> String {
+    let action = match stage.stage_kind {
+        seis_runtime::ExecutionStageKind::Compute => "Compute",
+        seis_runtime::ExecutionStageKind::Checkpoint => "Checkpoint",
+        seis_runtime::ExecutionStageKind::ReuseArtifact => "Reuse Artifact",
+        seis_runtime::ExecutionStageKind::FinalizeOutput => "Finalize Output",
+    };
+    match stage.pipeline_segment.as_ref() {
+        Some(segment) => {
+            let family = match segment.family {
+                seis_runtime::ProcessingPipelineFamily::TraceLocal => "trace-local",
+                seis_runtime::ProcessingPipelineFamily::PostStackNeighborhood => {
+                    "post-stack neighborhood"
+                }
+                seis_runtime::ProcessingPipelineFamily::Subvolume => "subvolume",
+                seis_runtime::ProcessingPipelineFamily::Gather => "gather",
+            };
+            let steps = if segment.start_step_index == segment.end_step_index {
+                format!("step {}", segment.end_step_index + 1)
+            } else {
+                format!(
+                    "steps {}-{}",
+                    segment.start_step_index + 1,
+                    segment.end_step_index + 1
+                )
+            };
+            format!("{action}: {family} {steps}")
+        }
+        None => format!("{action}: {}", stage.output_artifact_id),
+    }
+}
+
+fn benchmark_variant_targets(
+    request: &TraceLocalBenchmarkRequest,
+    adaptive_recommendation: Option<&AdaptivePartitionBenchmarkRecommendation>,
+) -> Vec<Option<u64>> {
+    let mut variants = Vec::new();
+    if request.include_serial {
+        variants.push(None);
+    }
+    if let Some(recommendation) = adaptive_recommendation {
+        variants.push(Some(recommendation.target_bytes));
+        return variants;
+    }
+    let configured_partition_targets = if request.partition_target_mib.is_empty() {
+        vec![256]
+    } else {
+        request.partition_target_mib.clone()
+    };
+    for target_mib in configured_partition_targets {
+        let target_mib = target_mib.max(1);
+        let target_bytes = target_mib.saturating_mul(1024 * 1024);
+        if !variants.contains(&Some(target_bytes)) {
+            variants.push(Some(target_bytes));
+        }
+    }
+    if variants.is_empty() {
+        variants.push(Some(256 * 1024 * 1024));
+    }
+    variants
+}
+
+fn benchmark_variant_label(
+    partition_target_bytes: Option<u64>,
+    adaptive_partition_target: bool,
+) -> String {
+    match partition_target_bytes {
+        Some(bytes) if adaptive_partition_target => format!("adaptive-{}mib", bytes / 1024 / 1024),
+        Some(bytes) => format!("partitioned-{}mib", bytes / 1024 / 1024),
+        None => "serial".to_string(),
+    }
+}
+
+fn benchmark_variant_output_slug(
+    partition_target_bytes: Option<u64>,
+    adaptive_partition_target: bool,
+    repeat_index: usize,
+) -> String {
+    match partition_target_bytes {
+        Some(bytes) if adaptive_partition_target => format!(
+            "adaptive-{}mib-run-{:02}",
+            bytes / 1024 / 1024,
+            repeat_index + 1
+        ),
+        Some(bytes) => format!(
+            "partitioned-{}mib-run-{:02}",
+            bytes / 1024 / 1024,
+            repeat_index + 1
+        ),
+        None => format!("serial-run-{:02}", repeat_index + 1),
+    }
+}
+
+fn benchmark_batch_requested_slug(
+    requested_max_active_jobs: Option<usize>,
+    execution_mode: ProcessingExecutionMode,
+    adaptive_partition_target: bool,
+) -> String {
+    let base = requested_max_active_jobs
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| match execution_mode {
+            ProcessingExecutionMode::Auto => "auto".to_string(),
+            ProcessingExecutionMode::Conservative => "conservative".to_string(),
+            ProcessingExecutionMode::Throughput => "throughput".to_string(),
+            ProcessingExecutionMode::Custom => "custom".to_string(),
+        });
+    if adaptive_partition_target {
+        format!("adaptive-{base}")
+    } else {
+        base
+    }
+}
+
+fn benchmark_scenario_slug(scenario: TraceLocalBenchmarkScenario) -> &'static str {
+    match scenario {
+        TraceLocalBenchmarkScenario::Scalar => "scalar",
+        TraceLocalBenchmarkScenario::Agc => "agc",
+        TraceLocalBenchmarkScenario::Analytic => "analytic",
+        TraceLocalBenchmarkScenario::Bandpass => "bandpass",
+    }
+}
+
+fn benchmark_pipeline(scenario: TraceLocalBenchmarkScenario) -> TraceLocalProcessingPipeline {
+    let steps = match scenario {
+        TraceLocalBenchmarkScenario::Scalar => vec![TraceLocalProcessingStep {
+            operation: TraceLocalProcessingOperation::AmplitudeScalar { factor: 1.25 },
+            checkpoint: false,
+        }],
+        TraceLocalBenchmarkScenario::Agc => vec![
+            TraceLocalProcessingStep {
+                operation: TraceLocalProcessingOperation::TraceRmsNormalize,
+                checkpoint: false,
+            },
+            TraceLocalProcessingStep {
+                operation: TraceLocalProcessingOperation::AgcRms { window_ms: 250.0 },
+                checkpoint: false,
+            },
+        ],
+        TraceLocalBenchmarkScenario::Analytic => vec![
+            TraceLocalProcessingStep {
+                operation: TraceLocalProcessingOperation::TraceRmsNormalize,
+                checkpoint: false,
+            },
+            TraceLocalProcessingStep {
+                operation: TraceLocalProcessingOperation::Envelope,
+                checkpoint: false,
+            },
+            TraceLocalProcessingStep {
+                operation: TraceLocalProcessingOperation::InstantaneousPhase,
+                checkpoint: false,
+            },
+            TraceLocalProcessingStep {
+                operation: TraceLocalProcessingOperation::InstantaneousFrequency,
+                checkpoint: false,
+            },
+            TraceLocalProcessingStep {
+                operation: TraceLocalProcessingOperation::Sweetness,
+                checkpoint: false,
+            },
+        ],
+        TraceLocalBenchmarkScenario::Bandpass => vec![TraceLocalProcessingStep {
+            operation: TraceLocalProcessingOperation::BandpassFilter {
+                f1_hz: 8.0,
+                f2_hz: 12.0,
+                f3_hz: 48.0,
+                f4_hz: 56.0,
+                phase: seis_runtime::FrequencyPhaseMode::Zero,
+                window: seis_runtime::FrequencyWindowShape::CosineTaper,
+            },
+            checkpoint: false,
+        }],
+    };
+
+    TraceLocalProcessingPipeline {
+        schema_version: IPC_SCHEMA_VERSION,
+        revision: 1,
+        preset_id: None,
+        name: Some(format!("benchmark-{}", benchmark_scenario_slug(scenario))),
+        description: Some("Headless trace-local benchmark pipeline".to_string()),
+        steps,
+    }
+}
+
+fn post_stack_neighborhood_benchmark_pipeline(
+    operator: PostStackNeighborhoodBenchmarkOperator,
+    gate_ms: f32,
+    inline_stepout: usize,
+    xline_stepout: usize,
+    include_trace_local_prefix: bool,
+) -> PostStackNeighborhoodProcessingPipeline {
+    let window = seis_runtime::PostStackNeighborhoodWindow {
+        gate_ms,
+        inline_stepout,
+        xline_stepout,
+    };
+    let operations = match operator {
+        PostStackNeighborhoodBenchmarkOperator::Similarity => {
+            vec![seis_runtime::PostStackNeighborhoodProcessingOperation::Similarity { window }]
+        }
+        PostStackNeighborhoodBenchmarkOperator::LocalVolumeStatsMean => vec![
+            seis_runtime::PostStackNeighborhoodProcessingOperation::LocalVolumeStats {
+                window,
+                statistic: seis_runtime::LocalVolumeStatistic::Mean,
+            },
+        ],
+    };
+    PostStackNeighborhoodProcessingPipeline {
+        schema_version: 1,
+        revision: 1,
+        preset_id: None,
+        name: Some(post_stack_neighborhood_benchmark_label(
+            operator,
+            gate_ms,
+            inline_stepout,
+            xline_stepout,
+            include_trace_local_prefix,
+        )),
+        description: None,
+        trace_local_pipeline: include_trace_local_prefix.then(|| TraceLocalProcessingPipeline {
+            schema_version: 1,
+            revision: 1,
+            preset_id: None,
+            name: Some("trace-rms-prefix".to_string()),
+            description: None,
+            steps: vec![TraceLocalProcessingStep {
+                operation: TraceLocalProcessingOperation::TraceRmsNormalize,
+                checkpoint: false,
+            }],
+        }),
+        operations,
+    }
+}
+
+fn post_stack_neighborhood_benchmark_label(
+    operator: PostStackNeighborhoodBenchmarkOperator,
+    gate_ms: f32,
+    inline_stepout: usize,
+    xline_stepout: usize,
+    include_trace_local_prefix: bool,
+) -> String {
+    format!(
+        "{}-gate-{gate_ms:.0}ms-il-{inline_stepout}-xl-{xline_stepout}{}",
+        match operator {
+            PostStackNeighborhoodBenchmarkOperator::Similarity => "similarity",
+            PostStackNeighborhoodBenchmarkOperator::LocalVolumeStatsMean => "local-mean",
+        },
+        if include_trace_local_prefix {
+            "-with-prefix"
+        } else {
+            "-no-prefix"
+        }
+    )
+}
+
+fn post_stack_neighborhood_benchmark_slug(
+    operator: PostStackNeighborhoodBenchmarkOperator,
+    gate_ms: f32,
+    inline_stepout: usize,
+    xline_stepout: usize,
+    include_trace_local_prefix: bool,
+) -> String {
+    post_stack_neighborhood_benchmark_label(
+        operator,
+        gate_ms,
+        inline_stepout,
+        xline_stepout,
+        include_trace_local_prefix,
+    )
+    .replace('.', "_")
+}
+
+fn summarize_benchmark_variants(
+    runs: &[TraceLocalBenchmarkRunResult],
+) -> Vec<TraceLocalBenchmarkVariantSummary> {
+    let mut summaries = Vec::new();
+    let mut labels = runs
+        .iter()
+        .map(|run| run.label.as_str())
+        .collect::<Vec<_>>();
+    labels.sort_unstable();
+    labels.dedup();
+    for label in labels {
+        let variant_runs = runs
+            .iter()
+            .filter(|run| run.label == label)
+            .collect::<Vec<_>>();
+        if variant_runs.is_empty() {
+            continue;
+        }
+        let run_count = variant_runs.len();
+        let elapsed_values = variant_runs
+            .iter()
+            .map(|run| run.elapsed_ms)
+            .collect::<Vec<_>>();
+        let elapsed_sum = elapsed_values.iter().sum::<f64>();
+        let total_partitions_sum = variant_runs
+            .iter()
+            .map(|run| run.total_partitions as f64)
+            .sum::<f64>();
+        let peak_active_sum = variant_runs
+            .iter()
+            .map(|run| run.peak_active_partitions as f64)
+            .sum::<f64>();
+        summaries.push(TraceLocalBenchmarkVariantSummary {
+            label: label.to_string(),
+            scenario: variant_runs[0].scenario,
+            partition_target_bytes: variant_runs[0].partition_target_bytes,
+            run_count,
+            avg_elapsed_ms: elapsed_sum / run_count as f64,
+            min_elapsed_ms: elapsed_values.iter().copied().fold(f64::INFINITY, f64::min),
+            max_elapsed_ms: elapsed_values
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max),
+            total_tiles: variant_runs[0].total_tiles,
+            avg_total_partitions: total_partitions_sum / run_count as f64,
+            avg_peak_active_partitions: peak_active_sum / run_count as f64,
+        });
+    }
+    summaries.sort_by(|left, right| left.label.cmp(&right.label));
+    summaries
+}
+
+fn summarize_post_stack_neighborhood_preview_runs(
+    runs: &[PostStackNeighborhoodPreviewBenchmarkRunResult],
+) -> Vec<PostStackNeighborhoodPreviewBenchmarkSummary> {
+    let mut grouped: HashMap<String, Vec<&PostStackNeighborhoodPreviewBenchmarkRunResult>> =
+        HashMap::new();
+    for run in runs {
+        grouped.entry(run.label.clone()).or_default().push(run);
+    }
+    let mut summaries = Vec::new();
+    for (label, grouped_runs) in grouped {
+        let elapsed: Vec<f64> = grouped_runs.iter().map(|run| run.elapsed_ms).collect();
+        summaries.push(PostStackNeighborhoodPreviewBenchmarkSummary {
+            label,
+            run_count: elapsed.len(),
+            avg_elapsed_ms: average_f64(elapsed.iter().copied()),
+            min_elapsed_ms: elapsed.iter().copied().fold(f64::INFINITY, f64::min),
+            max_elapsed_ms: elapsed.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        });
+    }
+    summaries.sort_by(|left, right| left.label.cmp(&right.label));
+    summaries
+}
+
+fn summarize_batch_benchmark_variants(
+    variants: &[TraceLocalBatchBenchmarkVariantResult],
+) -> Vec<TraceLocalBatchBenchmarkSummary> {
+    let mut summaries = Vec::new();
+    let mut labels = variants
+        .iter()
+        .map(|variant| variant.label.as_str())
+        .collect::<Vec<_>>();
+    labels.sort_unstable();
+    labels.dedup();
+    for label in labels {
+        let group = variants
+            .iter()
+            .filter(|variant| variant.label == label)
+            .collect::<Vec<_>>();
+        if group.is_empty() {
+            continue;
+        }
+        summaries.push(TraceLocalBatchBenchmarkSummary {
+            label: label.to_string(),
+            requested_max_active_jobs: group[0].requested_max_active_jobs,
+            effective_max_active_jobs: group[0].effective_max_active_jobs,
+            execution_mode: group[0].execution_mode,
+            scheduler_reason: group[0].scheduler_reason,
+            run_count: group.len(),
+            avg_batch_elapsed_ms: average_f64(group.iter().map(|variant| variant.batch_elapsed_ms)),
+            min_batch_elapsed_ms: group
+                .iter()
+                .map(|variant| variant.batch_elapsed_ms)
+                .fold(f64::INFINITY, f64::min),
+            max_batch_elapsed_ms: group
+                .iter()
+                .map(|variant| variant.batch_elapsed_ms)
+                .fold(f64::NEG_INFINITY, f64::max),
+            avg_queue_wait_ms: average_f64(group.iter().map(|variant| variant.avg_queue_wait_ms)),
+            avg_job_elapsed_ms: average_f64(group.iter().map(|variant| variant.avg_job_elapsed_ms)),
+        });
+    }
+    summaries.sort_by(|left, right| left.label.cmp(&right.label));
+    summaries
+}
+
+fn summarize_post_stack_neighborhood_processing_runs(
+    runs: &[PostStackNeighborhoodProcessingBenchmarkRunResult],
+) -> Vec<PostStackNeighborhoodProcessingBenchmarkSummary> {
+    let mut grouped: HashMap<String, Vec<&PostStackNeighborhoodProcessingBenchmarkRunResult>> =
+        HashMap::new();
+    for run in runs {
+        grouped.entry(run.label.clone()).or_default().push(run);
+    }
+    let mut summaries = Vec::new();
+    for (label, grouped_runs) in grouped {
+        let elapsed: Vec<f64> = grouped_runs.iter().map(|run| run.elapsed_ms).collect();
+        summaries.push(PostStackNeighborhoodProcessingBenchmarkSummary {
+            label,
+            run_count: elapsed.len(),
+            avg_elapsed_ms: average_f64(elapsed.iter().copied()),
+            min_elapsed_ms: elapsed.iter().copied().fold(f64::INFINITY, f64::min),
+            max_elapsed_ms: elapsed.iter().copied().fold(f64::NEG_INFINITY, f64::max),
+        });
+    }
+    summaries.sort_by(|left, right| left.label.cmp(&right.label));
+    summaries
+}
+
+fn average_f64<I>(values: I) -> f64
+where
+    I: Iterator<Item = f64>,
+{
+    let mut total = 0.0;
+    let mut count = 0usize;
+    for value in values {
+        total += value;
+        count += 1;
+    }
+    if count == 0 {
+        0.0
+    } else {
+        total / count as f64
+    }
+}
+
+fn dataset_slug(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(slugify)
+        .unwrap_or_else(|| "dataset".to_string())
+}
+
+fn slugify(value: &str) -> String {
+    let mut slug = String::with_capacity(value.len());
+    let mut last_was_dash = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            last_was_dash = false;
+        } else if !last_was_dash {
+            slug.push('-');
+            last_was_dash = true;
+        }
+    }
+    slug.trim_matches('-').to_string()
+}
+
+fn remove_store_path_if_exists(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_dir() {
+        fs::remove_dir_all(path)?;
+    } else {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
 pub fn preflight_dataset(
     request: SurveyPreflightRequest,
 ) -> Result<SurveyPreflightResponse, Box<dyn std::error::Error>> {
@@ -625,12 +2267,14 @@ pub fn import_segy_with_plan(
         plan: request.plan,
     })?;
     if validation.validation_fingerprint != request.validation_fingerprint {
-        return Err(
-            "The import plan changed. Validate again before importing.".to_string().into(),
-        );
+        return Err("The import plan changed. Validate again before importing."
+            .to_string()
+            .into());
     }
     if !validation.can_import {
-        return Err("SEG-Y import plan is not ready to import.".to_string().into());
+        return Err("SEG-Y import plan is not ready to import."
+            .to_string()
+            .into());
     }
 
     let response = import_dataset(ImportDatasetRequest {
@@ -718,7 +2362,8 @@ fn normalize_segy_import_plan(mut plan: SegyImportPlan) -> SegyImportPlan {
     plan.input_path = plan.input_path.trim().to_string();
     plan.source_fingerprint = plan.source_fingerprint.trim().to_string();
     plan.policy.output_store_path = plan.policy.output_store_path.trim().to_string();
-    plan.spatial.coordinate_units = normalized_optional_string(plan.spatial.coordinate_units.take());
+    plan.spatial.coordinate_units =
+        normalized_optional_string(plan.spatial.coordinate_units.take());
     plan.spatial.coordinate_reference_id =
         normalized_optional_string(plan.spatial.coordinate_reference_id.take());
     plan.spatial.coordinate_reference_name =
@@ -775,7 +2420,7 @@ fn validate_segy_plan_issues(
                 issues.push(SegyImportIssue {
                     severity: SegyImportIssueSeverity::Blocking,
                     code: "sparse_policy_required".to_string(),
-                    message: "This mapping expands the survey into a very large dense grid. Review structure before import.".to_string(),
+                    message: "This mapping expands the survey into a dense grid. Review structure before import.".to_string(),
                     field_path: Some("policy.sparse_handling".to_string()),
                     section: SegyImportIssueSection::Structure,
                     source_path: Some(plan.input_path.clone()),
@@ -785,7 +2430,7 @@ fn validate_segy_plan_issues(
                 issues.push(SegyImportIssue {
                     severity: SegyImportIssueSeverity::Warning,
                     code: "sparse_regularization".to_string(),
-                    message: "This mapping expands the survey into a very large dense grid. Review structure before import.".to_string(),
+                    message: "This mapping expands the survey into a dense grid. Review structure before import.".to_string(),
                     field_path: Some("policy.sparse_handling".to_string()),
                     section: SegyImportIssueSection::Structure,
                     source_path: Some(plan.input_path.clone()),
@@ -894,7 +2539,8 @@ fn resolved_dataset_from_preflight(
 
 fn resolved_spatial_from_plan(plan: &SegyImportPlan) -> SegyImportResolvedSpatial {
     let mut notes = Vec::new();
-    if plan.spatial.coordinate_reference_id.is_some() || plan.spatial.coordinate_reference_name.is_some()
+    if plan.spatial.coordinate_reference_id.is_some()
+        || plan.spatial.coordinate_reference_name.is_some()
     {
         notes.push("Import will retain the supplied coordinate reference metadata for later survey map setup.".to_string());
     }
@@ -914,8 +2560,11 @@ fn risk_summary_for_preflight(
     geometry_override: &SegyGeometryOverride,
     preflight: &seis_runtime::SurveyPreflight,
 ) -> Result<SegyImportRiskSummary, Box<dyn std::error::Error>> {
-    let estimate =
-        estimate_sparse_segy_tbvol_storage(Path::new(input_path), [0, 0, 0], Some(geometry_override))?;
+    let estimate = estimate_sparse_segy_tbvol_storage(
+        Path::new(input_path),
+        [0, 0, 0],
+        Some(geometry_override),
+    )?;
     let observed_trace_count = preflight.geometry.observed_trace_count as u64;
     let expected_trace_count = preflight.geometry.expected_trace_count as u64;
     let blowup_ratio = if observed_trace_count > 0 {
@@ -1373,6 +3022,14 @@ pub fn open_dataset_summary(
         schema_version: IPC_SCHEMA_VERSION,
         dataset: dataset_summary_for_path(&store_path)?,
     })
+}
+
+pub fn dataset_operator_catalog(
+    store_path: impl AsRef<Path>,
+) -> Result<OperatorCatalog, Box<dyn std::error::Error>> {
+    let dataset = dataset_summary_for_path(store_path)?;
+    let descriptor = SeismicTraceDataDescriptor::from(&dataset.descriptor);
+    Ok(operator_catalog_for_trace_data(&descriptor))
 }
 
 pub fn set_dataset_native_coordinate_reference(
@@ -2149,6 +3806,7 @@ fn distance_squared(x: f32, y: f32, center_x: f32, center_y: f32) -> f32 {
     dx * dx + dy * dy
 }
 
+#[cfg(test)]
 fn parse_velocity_functions_file(
     input_path: &Path,
 ) -> Result<ParsedVelocityFunctions, Box<dyn std::error::Error>> {
@@ -2946,29 +4604,6 @@ fn display_name_from_stem(stem: &str) -> String {
     stem.replace('_', " ").trim().to_string()
 }
 
-fn slugify(value: &str) -> String {
-    let normalized = value
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>();
-    let slug = normalized
-        .split('-')
-        .filter(|segment| !segment.is_empty())
-        .collect::<Vec<_>>()
-        .join("-");
-    if slug.is_empty() {
-        "velocity-functions".to_string()
-    } else {
-        slug
-    }
-}
-
 pub fn load_gather(
     store_path: String,
     request: GatherRequest,
@@ -3022,6 +4657,28 @@ pub fn preview_subvolume_processing(
     })
 }
 
+pub fn preview_post_stack_neighborhood_processing(
+    request: PreviewPostStackNeighborhoodProcessingRequest,
+) -> Result<PreviewPostStackNeighborhoodProcessingResponse, Box<dyn std::error::Error>> {
+    let handle = open_store(&request.store_path)?;
+    ensure_dataset_matches(&handle, &request.section.dataset_id.0)?;
+    let section = preview_post_stack_neighborhood_processing_section_view(
+        &request.store_path,
+        request.section.axis,
+        request.section.index,
+        &request.pipeline,
+    )?;
+    Ok(PreviewPostStackNeighborhoodProcessingResponse {
+        schema_version: IPC_SCHEMA_VERSION,
+        preview: PreviewView {
+            section,
+            processing_label: preview_post_stack_neighborhood_processing_label(&request.pipeline),
+            preview_ready: true,
+        },
+        pipeline: request.pipeline,
+    })
+}
+
 pub fn preview_gather_processing(
     request: PreviewGatherProcessingRequest,
 ) -> Result<PreviewGatherProcessingResponse, Box<dyn std::error::Error>> {
@@ -3040,12 +4697,37 @@ pub fn apply_processing(
     request: RunTraceLocalProcessingRequest,
 ) -> Result<DatasetSummary, Box<dyn std::error::Error>> {
     let pipeline = request.pipeline;
+    let handle = open_store(&request.store_path)?;
+    let source_shape = handle.manifest.volume.shape;
+    let source_chunk_shape = handle.manifest.tile_shape;
     let output_store = request
         .output_store_path
         .map(PathBuf::from)
         .unwrap_or_else(|| default_output_store_path(&request.store_path, &pipeline));
     prepare_processing_output_store(&output_store, request.overwrite_existing)?;
-    let materialize_options = materialize_options_for_store(&request.store_path)?;
+    let execution_plan = build_execution_plan(&PlanProcessingRequest {
+        store_path: request.store_path.clone(),
+        layout: SeismicLayout::PostStack3D,
+        source_shape: Some(source_shape),
+        source_chunk_shape: Some(source_chunk_shape),
+        pipeline: ProcessingPipelineSpec::TraceLocal {
+            pipeline: pipeline.clone(),
+        },
+        output_store_path: Some(output_store.to_string_lossy().into_owned()),
+        planning_mode: PlanningMode::ForegroundMaterialize,
+        max_active_partitions: None,
+    })
+    .map_err(|error| format!("failed to build execution plan: {error}"))?;
+    let materialize_options = resolve_trace_local_materialize_options(
+        Some(&execution_plan),
+        source_chunk_shape,
+        false,
+        None,
+        1,
+        None,
+        1,
+    )
+    .options;
     let derived = materialize_processing_volume(
         &request.store_path,
         &output_store,
@@ -3069,6 +4751,30 @@ pub fn apply_subvolume_processing(
     prepare_processing_output_store(&output_store, request.overwrite_existing)?;
     let materialize_options = materialize_options_for_store(&request.store_path)?;
     let derived = materialize_subvolume_processing_volume(
+        &request.store_path,
+        &output_store,
+        &pipeline,
+        materialize_options,
+    )?;
+    Ok(DatasetSummary {
+        store_path: derived.root.to_string_lossy().into_owned(),
+        descriptor: handle_for_summary(&derived)?,
+    })
+}
+
+pub fn apply_post_stack_neighborhood_processing(
+    request: RunPostStackNeighborhoodProcessingRequest,
+) -> Result<DatasetSummary, Box<dyn std::error::Error>> {
+    let pipeline = request.pipeline;
+    let output_store = request
+        .output_store_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            default_post_stack_neighborhood_output_store_path(&request.store_path, &pipeline)
+        });
+    prepare_processing_output_store(&output_store, request.overwrite_existing)?;
+    let materialize_options = materialize_options_for_store(&request.store_path)?;
+    let derived = materialize_post_stack_neighborhood_processing_volume(
         &request.store_path,
         &output_store,
         &pipeline,
@@ -3178,6 +4884,21 @@ pub fn default_subvolume_output_store_path(
         .filter(|value| !value.is_empty())
         .unwrap_or("dataset");
     let suffix = subvolume_pipeline_slug(pipeline);
+    parent.join(format!("{stem}.{suffix}.tbvol"))
+}
+
+pub fn default_post_stack_neighborhood_output_store_path(
+    input_store_path: impl AsRef<Path>,
+    pipeline: &PostStackNeighborhoodProcessingPipeline,
+) -> PathBuf {
+    let input_store_path = input_store_path.as_ref();
+    let parent = input_store_path.parent().unwrap_or_else(|| Path::new("."));
+    let stem = input_store_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("dataset");
+    let suffix = post_stack_neighborhood_pipeline_slug(pipeline);
     parent.join(format!("{stem}.{suffix}.tbvol"))
 }
 
@@ -3561,6 +5282,16 @@ pub fn preview_subvolume_processing_label(pipeline: &SubvolumeProcessingPipeline
         .unwrap_or_else(|| subvolume_pipeline_slug(pipeline))
 }
 
+pub fn preview_post_stack_neighborhood_processing_label(
+    pipeline: &PostStackNeighborhoodProcessingPipeline,
+) -> String {
+    pipeline
+        .name
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| post_stack_neighborhood_pipeline_slug(pipeline))
+}
+
 fn pipeline_slug(pipeline: &TraceLocalProcessingPipeline) -> String {
     let mut parts = Vec::with_capacity(pipeline.operation_count());
     for operation in pipeline.operations() {
@@ -3577,6 +5308,14 @@ fn pipeline_slug(pipeline: &TraceLocalProcessingPipeline) -> String {
             seis_runtime::ProcessingOperation::PhaseRotation { angle_degrees } => {
                 format!("phase-rotation-{}", format_factor(*angle_degrees))
             }
+            seis_runtime::ProcessingOperation::Envelope => "envelope".to_string(),
+            seis_runtime::ProcessingOperation::InstantaneousPhase => {
+                "instantaneous-phase".to_string()
+            }
+            seis_runtime::ProcessingOperation::InstantaneousFrequency => {
+                "instantaneous-frequency".to_string()
+            }
+            seis_runtime::ProcessingOperation::Sweetness => "sweetness".to_string(),
             seis_runtime::ProcessingOperation::LowpassFilter { f3_hz, f4_hz, .. } => format!(
                 "lowpass-{}-{}",
                 format_factor(*f3_hz),
@@ -3642,6 +5381,82 @@ fn subvolume_pipeline_slug(pipeline: &SubvolumeProcessingPipeline) -> String {
         format_factor(pipeline.crop.z_max_ms)
     ));
     parts.join("__")
+}
+
+fn post_stack_neighborhood_pipeline_slug(
+    pipeline: &PostStackNeighborhoodProcessingPipeline,
+) -> String {
+    if let Some(name) = pipeline
+        .name
+        .as_ref()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        return name.replace(' ', "-").to_ascii_lowercase();
+    }
+
+    let mut parts = Vec::new();
+    if let Some(trace_local_pipeline) = pipeline.trace_local_pipeline.as_ref() {
+        parts.push(pipeline_slug(trace_local_pipeline));
+    }
+    for operation in &pipeline.operations {
+        let label = match operation {
+            seis_runtime::PostStackNeighborhoodProcessingOperation::Similarity { window } => {
+                format!(
+                    "similarity-g{}-il{}-xl{}",
+                    format_factor(window.gate_ms),
+                    window.inline_stepout,
+                    window.xline_stepout
+                )
+            }
+            seis_runtime::PostStackNeighborhoodProcessingOperation::LocalVolumeStats {
+                window,
+                statistic,
+            } => {
+                format!(
+                    "local-volume-stats-{}-g{}-il{}-xl{}",
+                    local_volume_statistic_slug(*statistic),
+                    format_factor(window.gate_ms),
+                    window.inline_stepout,
+                    window.xline_stepout
+                )
+            }
+            seis_runtime::PostStackNeighborhoodProcessingOperation::Dip { window, output } => {
+                format!(
+                    "dip-{}-g{}-il{}-xl{}",
+                    neighborhood_dip_output_slug(*output),
+                    format_factor(window.gate_ms),
+                    window.inline_stepout,
+                    window.xline_stepout
+                )
+            }
+        };
+        parts.push(label);
+    }
+    if parts.is_empty() {
+        "post-stack-neighborhood".to_string()
+    } else {
+        parts.join("__")
+    }
+}
+
+fn local_volume_statistic_slug(statistic: seis_runtime::LocalVolumeStatistic) -> &'static str {
+    match statistic {
+        seis_runtime::LocalVolumeStatistic::Mean => "mean",
+        seis_runtime::LocalVolumeStatistic::Rms => "rms",
+        seis_runtime::LocalVolumeStatistic::Variance => "variance",
+        seis_runtime::LocalVolumeStatistic::Minimum => "minimum",
+        seis_runtime::LocalVolumeStatistic::Maximum => "maximum",
+    }
+}
+
+fn neighborhood_dip_output_slug(output: NeighborhoodDipOutput) -> &'static str {
+    match output {
+        NeighborhoodDipOutput::Inline => "inline",
+        NeighborhoodDipOutput::Xline => "xline",
+        NeighborhoodDipOutput::Azimuth => "azimuth",
+        NeighborhoodDipOutput::AbsDip => "abs-dip",
+    }
 }
 
 fn gather_pipeline_slug(pipeline: &GatherProcessingPipeline) -> String {
@@ -5066,7 +6881,10 @@ mod tests {
         })
         .expect("scan segy import");
 
-        assert_eq!(response.recommended_next_stage, SegyImportWizardStage::Structure);
+        assert_eq!(
+            response.recommended_next_stage,
+            SegyImportWizardStage::Structure
+        );
         assert!(!response.candidate_plans.is_empty());
         assert!(
             response
@@ -5086,8 +6904,8 @@ mod tests {
         }
         fs::copy(fixture, &input).expect("copy segy fixture");
         relocate_small_geometry_headers(&input);
-        let fingerprint = source_fingerprint_for_input(&input.display().to_string())
-            .expect("source fingerprint");
+        let fingerprint =
+            source_fingerprint_for_input(&input.display().to_string()).expect("source fingerprint");
 
         let response = validate_segy_import_plan(ValidateSegyImportPlanRequest {
             schema_version: IPC_SCHEMA_VERSION,
@@ -5115,7 +6933,10 @@ mod tests {
         .expect("validate repaired geometry mapping");
 
         assert!(response.can_import);
-        assert_eq!(response.recommended_next_stage, SegyImportWizardStage::Import);
+        assert_eq!(
+            response.recommended_next_stage,
+            SegyImportWizardStage::Import
+        );
         assert_eq!(response.resolved_dataset.layout, "post_stack_3d");
         assert!(
             !response
@@ -5250,5 +7071,214 @@ mod tests {
                 "expected 15.0 ms, got {actual}"
             );
         }
+    }
+
+    #[test]
+    fn benchmark_pipeline_builds_expected_agc_steps() {
+        let pipeline = benchmark_pipeline(TraceLocalBenchmarkScenario::Agc);
+        assert_eq!(pipeline.steps.len(), 2);
+        assert!(matches!(
+            pipeline.steps[0].operation,
+            TraceLocalProcessingOperation::TraceRmsNormalize
+        ));
+        assert!(matches!(
+            pipeline.steps[1].operation,
+            TraceLocalProcessingOperation::AgcRms { window_ms }
+            if (window_ms - 250.0).abs() < f32::EPSILON
+        ));
+    }
+
+    #[test]
+    fn post_stack_neighborhood_benchmark_pipeline_includes_optional_prefix() {
+        let pipeline = post_stack_neighborhood_benchmark_pipeline(
+            PostStackNeighborhoodBenchmarkOperator::Similarity,
+            24.0,
+            1,
+            2,
+            true,
+        );
+        assert!(pipeline.trace_local_pipeline.is_some());
+        assert_eq!(pipeline.operations.len(), 1);
+        assert!(matches!(
+            pipeline.operations[0],
+            seis_runtime::PostStackNeighborhoodProcessingOperation::Similarity { .. }
+        ));
+    }
+
+    #[test]
+    fn benchmark_variant_targets_default_to_serial_and_partitioned() {
+        let request = TraceLocalBenchmarkRequest {
+            store_path: "demo.tbvol".to_string(),
+            output_root: None,
+            scenario: TraceLocalBenchmarkScenario::Scalar,
+            partition_target_mib: Vec::new(),
+            adaptive_partition_target: false,
+            include_serial: true,
+            repeat_count: 1,
+            keep_outputs: false,
+        };
+
+        assert_eq!(
+            benchmark_variant_targets(&request, None),
+            vec![None, Some(256 * 1024 * 1024)]
+        );
+    }
+
+    #[test]
+    fn benchmark_variant_summary_aggregates_repeated_runs() {
+        let summaries = summarize_benchmark_variants(&[
+            TraceLocalBenchmarkRunResult {
+                label: "serial".to_string(),
+                scenario: TraceLocalBenchmarkScenario::Scalar,
+                partition_target_bytes: None,
+                repeat_index: 1,
+                elapsed_ms: 12.0,
+                total_tiles: 10,
+                completed_tiles: 10,
+                total_partitions: 1,
+                completed_partitions: 1,
+                peak_active_partitions: 1,
+                retry_count: 0,
+                output_bytes: 128,
+                output_store_path: "serial-01.tbvol".to_string(),
+                output_retained: false,
+            },
+            TraceLocalBenchmarkRunResult {
+                label: "serial".to_string(),
+                scenario: TraceLocalBenchmarkScenario::Scalar,
+                partition_target_bytes: None,
+                repeat_index: 2,
+                elapsed_ms: 18.0,
+                total_tiles: 10,
+                completed_tiles: 10,
+                total_partitions: 1,
+                completed_partitions: 1,
+                peak_active_partitions: 1,
+                retry_count: 0,
+                output_bytes: 128,
+                output_store_path: "serial-02.tbvol".to_string(),
+                output_retained: false,
+            },
+        ]);
+
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].label, "serial");
+        assert!((summaries[0].avg_elapsed_ms - 15.0).abs() < 1e-6);
+        assert_eq!(summaries[0].min_elapsed_ms, 12.0);
+        assert_eq!(summaries[0].max_elapsed_ms, 18.0);
+    }
+
+    #[test]
+    fn batch_benchmark_summary_aggregates_and_sorts_variants() {
+        let summaries = summarize_batch_benchmark_variants(&[
+            TraceLocalBatchBenchmarkVariantResult {
+                label: "custom-requested-4-effective-4".to_string(),
+                requested_max_active_jobs: Some(4),
+                effective_max_active_jobs: 4,
+                execution_mode: ProcessingExecutionMode::Custom,
+                scheduler_reason: ProcessingSchedulerReason::UserRequested,
+                worker_budget: 8,
+                global_cap: 8,
+                max_memory_cost_class: seis_runtime::MemoryCostClass::Medium,
+                max_cpu_cost_class: seis_runtime::CpuCostClass::Medium,
+                max_io_cost_class: seis_runtime::IoCostClass::Low,
+                min_parallel_efficiency_class: seis_runtime::ParallelEfficiencyClass::High,
+                max_estimated_peak_memory_bytes: 192 * 1024 * 1024,
+                combined_cpu_weight: 3.0,
+                combined_io_weight: 2.0,
+                max_expected_partition_count: Some(20),
+                repeat_index: 1,
+                batch_elapsed_ms: 24.0,
+                completed_jobs: 4,
+                total_jobs: 4,
+                avg_queue_wait_ms: 0.2,
+                max_queue_wait_ms: 0.4,
+                avg_job_elapsed_ms: 18.0,
+                min_job_elapsed_ms: 16.0,
+                max_job_elapsed_ms: 20.0,
+                avg_total_partitions: 20.0,
+                avg_peak_active_partitions: 20.0,
+                jobs: Vec::new(),
+            },
+            TraceLocalBatchBenchmarkVariantResult {
+                label: "custom-requested-2-effective-2".to_string(),
+                requested_max_active_jobs: Some(2),
+                effective_max_active_jobs: 2,
+                execution_mode: ProcessingExecutionMode::Custom,
+                scheduler_reason: ProcessingSchedulerReason::UserRequested,
+                worker_budget: 8,
+                global_cap: 8,
+                max_memory_cost_class: seis_runtime::MemoryCostClass::Medium,
+                max_cpu_cost_class: seis_runtime::CpuCostClass::Medium,
+                max_io_cost_class: seis_runtime::IoCostClass::Low,
+                min_parallel_efficiency_class: seis_runtime::ParallelEfficiencyClass::High,
+                max_estimated_peak_memory_bytes: 192 * 1024 * 1024,
+                combined_cpu_weight: 3.0,
+                combined_io_weight: 2.0,
+                max_expected_partition_count: Some(20),
+                repeat_index: 1,
+                batch_elapsed_ms: 30.0,
+                completed_jobs: 4,
+                total_jobs: 4,
+                avg_queue_wait_ms: 6.0,
+                max_queue_wait_ms: 8.0,
+                avg_job_elapsed_ms: 14.0,
+                min_job_elapsed_ms: 12.0,
+                max_job_elapsed_ms: 16.0,
+                avg_total_partitions: 20.0,
+                avg_peak_active_partitions: 20.0,
+                jobs: Vec::new(),
+            },
+            TraceLocalBatchBenchmarkVariantResult {
+                label: "custom-requested-2-effective-2".to_string(),
+                requested_max_active_jobs: Some(2),
+                effective_max_active_jobs: 2,
+                execution_mode: ProcessingExecutionMode::Custom,
+                scheduler_reason: ProcessingSchedulerReason::UserRequested,
+                worker_budget: 8,
+                global_cap: 8,
+                max_memory_cost_class: seis_runtime::MemoryCostClass::Medium,
+                max_cpu_cost_class: seis_runtime::CpuCostClass::Medium,
+                max_io_cost_class: seis_runtime::IoCostClass::Low,
+                min_parallel_efficiency_class: seis_runtime::ParallelEfficiencyClass::High,
+                max_estimated_peak_memory_bytes: 192 * 1024 * 1024,
+                combined_cpu_weight: 3.0,
+                combined_io_weight: 2.0,
+                max_expected_partition_count: Some(20),
+                repeat_index: 2,
+                batch_elapsed_ms: 34.0,
+                completed_jobs: 4,
+                total_jobs: 4,
+                avg_queue_wait_ms: 4.0,
+                max_queue_wait_ms: 6.0,
+                avg_job_elapsed_ms: 15.0,
+                min_job_elapsed_ms: 13.0,
+                max_job_elapsed_ms: 17.0,
+                avg_total_partitions: 20.0,
+                avg_peak_active_partitions: 20.0,
+                jobs: Vec::new(),
+            },
+        ]);
+
+        assert_eq!(summaries.len(), 2);
+        assert_eq!(summaries[0].label, "custom-requested-2-effective-2");
+        assert_eq!(summaries[0].requested_max_active_jobs, Some(2));
+        assert_eq!(summaries[0].effective_max_active_jobs, 2);
+        assert_eq!(summaries[0].execution_mode, ProcessingExecutionMode::Custom);
+        assert_eq!(
+            summaries[0].scheduler_reason,
+            ProcessingSchedulerReason::UserRequested
+        );
+        assert_eq!(summaries[0].run_count, 2);
+        assert!((summaries[0].avg_batch_elapsed_ms - 32.0).abs() < 1e-6);
+        assert_eq!(summaries[0].min_batch_elapsed_ms, 30.0);
+        assert_eq!(summaries[0].max_batch_elapsed_ms, 34.0);
+        assert!((summaries[0].avg_queue_wait_ms - 5.0).abs() < 1e-6);
+        assert!((summaries[0].avg_job_elapsed_ms - 14.5).abs() < 1e-6);
+
+        assert_eq!(summaries[1].label, "custom-requested-4-effective-4");
+        assert_eq!(summaries[1].requested_max_active_jobs, Some(4));
+        assert_eq!(summaries[1].run_count, 1);
+        assert_eq!(summaries[1].avg_batch_elapsed_ms, 24.0);
     }
 }

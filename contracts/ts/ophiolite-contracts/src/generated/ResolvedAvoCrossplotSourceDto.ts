@@ -5,4 +5,4 @@ import type { AvoCrossplotPointDto } from "./AvoCrossplotPointDto";
 import type { AvoInterfaceDto } from "./AvoInterfaceDto";
 import type { AvoReferenceLineDto } from "./AvoReferenceLineDto";
 
-export type ResolvedAvoCrossplotSourceDto = { schema_version: number, id: string, name: string, title: string | null, subtitle: string | null, x_axis: AvoAxisDto, y_axis: AvoAxisDto, interfaces: Array<AvoInterfaceDto>, points: Array<AvoCrossplotPointDto>, reference_lines: Array<AvoReferenceLineDto> | null, background_regions: Array<AvoBackgroundRegionDto> | null, };
+export type ResolvedAvoCrossplotSourceDto = { schema_version: number, id: string, name: string, title?: string | null, subtitle?: string | null, x_axis: AvoAxisDto, y_axis: AvoAxisDto, interfaces: Array<AvoInterfaceDto>, points: Array<AvoCrossplotPointDto>, reference_lines?: Array<AvoReferenceLineDto> | null, background_regions?: Array<AvoBackgroundRegionDto> | null, };

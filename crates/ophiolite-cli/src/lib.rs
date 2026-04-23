@@ -6,14 +6,19 @@ use ophiolite_package::{StoredLasFile, write_bundle};
 use ophiolite_parser::{ReadOptions, import_las_file};
 use ophiolite_project::{
     AssetBindingInput, AssetId, OphioliteProject, ProjectComputeRunRequest,
-    ProjectSurveyMapRequestDto, ProjectTopsSourceImportResult, SectionWellOverlayRequestDto,
-    VendorProjectBridgeCommitRequest, VendorProjectBridgeRunRequest, VendorProjectCommitRequest,
-    VendorProjectImportVendor, VendorProjectPlanRequest, VendorProjectRuntimeProbeRequest,
-    VendorProjectScanRequest, WellId, WellPanelRequestDto, WellboreId,
-    bridge_commit_vendor_project_object, commit_vendor_project_import, import_tops_source,
-    plan_vendor_project_import, preview_well_folder_import, preview_well_source_import_sources,
-    probe_vendor_project_runtime, run_vendor_project_bridge, scan_vendor_project,
-    vendor_project_bridge_capabilities, vendor_project_connector_contract,
+    ProjectGatherProcessingPreviewRequest, ProjectGatherProcessingRunRequest,
+    ProjectPostStackNeighborhoodProcessingPreviewRequest,
+    ProjectPostStackNeighborhoodProcessingRunRequest, ProjectSubvolumeProcessingPreviewRequest,
+    ProjectSubvolumeProcessingRunRequest, ProjectSurveyMapRequestDto,
+    ProjectTopsSourceImportResult, ProjectTraceLocalProcessingPreviewRequest,
+    ProjectTraceLocalProcessingRunRequest, ProjectVelocityScanRequest,
+    SectionWellOverlayRequestDto, VendorProjectBridgeCommitRequest, VendorProjectBridgeRunRequest,
+    VendorProjectCommitRequest, VendorProjectImportVendor, VendorProjectPlanRequest,
+    VendorProjectRuntimeProbeRequest, VendorProjectScanRequest, WellId, WellPanelRequestDto,
+    WellboreId, bridge_commit_vendor_project_object, commit_vendor_project_import,
+    import_tops_source, plan_vendor_project_import, preview_well_folder_import,
+    preview_well_source_import_sources, probe_vendor_project_runtime, run_vendor_project_bridge,
+    scan_vendor_project, vendor_project_bridge_capabilities, vendor_project_connector_contract,
 };
 use ophiolite_seismic::{
     AvoInterceptGradientAttributeRequest, AvoReflectivityRequest, RockPhysicsAttributeRequest,
@@ -47,7 +52,17 @@ pub fn supported_cli_commands() -> &'static [&'static str] {
         "project-operator-lock",
         "install-operator-package",
         "list-project-compute-catalog",
+        "list-project-operator-catalog",
         "run-project-compute",
+        "preview-project-trace-local-processing",
+        "run-project-trace-local-processing",
+        "preview-project-subvolume-processing",
+        "run-project-subvolume-processing",
+        "preview-project-post-stack-neighborhood-processing",
+        "run-project-post-stack-neighborhood-processing",
+        "preview-project-gather-processing",
+        "run-project-gather-processing",
+        "run-project-velocity-scan",
         "run-avo-reflectivity",
         "run-rock-physics-attribute",
         "run-avo-intercept-gradient-attribute",
@@ -228,6 +243,15 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
                 )?
             );
         }
+        "list-project-operator-catalog" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &project.list_operator_catalog(&AssetId(args[3].clone()))?
+                )?
+            );
+        }
         "run-project-compute" if args.len() == 4 => {
             let mut project = OphioliteProject::open(&args[2])?;
             let request_json = read_json_argument(&args[3])?;
@@ -235,6 +259,100 @@ pub fn run(args: impl IntoIterator<Item = String>) -> Result<()> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&project.run_compute(&request)?)?
+            );
+        }
+        "preview-project-trace-local-processing" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request =
+                serde_json::from_str::<ProjectTraceLocalProcessingPreviewRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.preview_trace_local_processing(&request)?)?
+            );
+        }
+        "run-project-trace-local-processing" if args.len() == 4 => {
+            let mut project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request =
+                serde_json::from_str::<ProjectTraceLocalProcessingRunRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.run_trace_local_processing(&request)?)?
+            );
+        }
+        "preview-project-subvolume-processing" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request =
+                serde_json::from_str::<ProjectSubvolumeProcessingPreviewRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.preview_subvolume_processing(&request)?)?
+            );
+        }
+        "run-project-subvolume-processing" if args.len() == 4 => {
+            let mut project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request =
+                serde_json::from_str::<ProjectSubvolumeProcessingRunRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.run_subvolume_processing(&request)?)?
+            );
+        }
+        "preview-project-post-stack-neighborhood-processing" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request = serde_json::from_str::<
+                ProjectPostStackNeighborhoodProcessingPreviewRequest,
+            >(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &project.preview_post_stack_neighborhood_processing(&request)?
+                )?
+            );
+        }
+        "run-project-post-stack-neighborhood-processing" if args.len() == 4 => {
+            let mut project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request = serde_json::from_str::<ProjectPostStackNeighborhoodProcessingRunRequest>(
+                &request_json,
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    &project.run_post_stack_neighborhood_processing(&request)?
+                )?
+            );
+        }
+        "preview-project-gather-processing" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request =
+                serde_json::from_str::<ProjectGatherProcessingPreviewRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.preview_gather_processing(&request)?)?
+            );
+        }
+        "run-project-gather-processing" if args.len() == 4 => {
+            let mut project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request = serde_json::from_str::<ProjectGatherProcessingRunRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.run_gather_processing(&request)?)?
+            );
+        }
+        "run-project-velocity-scan" if args.len() == 4 => {
+            let project = OphioliteProject::open(&args[2])?;
+            let request_json = read_json_argument(&args[3])?;
+            let request = serde_json::from_str::<ProjectVelocityScanRequest>(&request_json)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&project.run_velocity_scan(&request)?)?
             );
         }
         "run-avo-reflectivity" if args.len() == 3 => {
@@ -513,7 +631,25 @@ fn print_usage() {
     eprintln!("  {binary} project-operator-lock <project_root>");
     eprintln!("  {binary} install-operator-package <project_root> <manifest_path>");
     eprintln!("  {binary} list-project-compute-catalog <project_root> <asset_id>");
+    eprintln!("  {binary} list-project-operator-catalog <project_root> <asset_id>");
     eprintln!("  {binary} run-project-compute <project_root> <request_json_path|->");
+    eprintln!(
+        "  {binary} preview-project-trace-local-processing <project_root> <request_json_path|->"
+    );
+    eprintln!("  {binary} run-project-trace-local-processing <project_root> <request_json_path|->");
+    eprintln!(
+        "  {binary} preview-project-subvolume-processing <project_root> <request_json_path|->"
+    );
+    eprintln!("  {binary} run-project-subvolume-processing <project_root> <request_json_path|->");
+    eprintln!(
+        "  {binary} preview-project-post-stack-neighborhood-processing <project_root> <request_json_path|->"
+    );
+    eprintln!(
+        "  {binary} run-project-post-stack-neighborhood-processing <project_root> <request_json_path|->"
+    );
+    eprintln!("  {binary} preview-project-gather-processing <project_root> <request_json_path|->");
+    eprintln!("  {binary} run-project-gather-processing <project_root> <request_json_path|->");
+    eprintln!("  {binary} run-project-velocity-scan <project_root> <request_json_path|->");
     eprintln!("  {binary} run-avo-reflectivity <request_json_path|->");
     eprintln!("  {binary} run-rock-physics-attribute <request_json_path|->");
     eprintln!("  {binary} run-avo-intercept-gradient-attribute <request_json_path|->");

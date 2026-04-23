@@ -15,9 +15,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::processing::unix_timestamp_s;
 
+const WORKSPACE_SIGNED_DOCUMENT_FORMAT: &str = "traceboost-workspace-v1";
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct DatasetRegistryDocument {
     entries: Vec<DatasetRegistryEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SignedWorkspaceDocument<T> {
+    format: String,
+    checksum: String,
+    payload: T,
 }
 
 pub struct WorkspaceState {
@@ -41,16 +50,14 @@ impl WorkspaceState {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
 
-        let (mut entries, reset_registry) = load_registry(&registry_path)?;
+        let mut entries = load_registry(&registry_path)?;
         ensure_registry_has_unique_store_ids(&entries)?;
         entries.sort_by(|left, right| right.updated_at_unix_s.cmp(&left.updated_at_unix_s));
-        let (session, reset_session) = load_session(&session_path)?;
-        if reset_registry {
-            persist_registry(&registry_path, &entries)?;
-        }
-        if reset_session {
-            persist_session(&session_path, &session)?;
-        }
+        let mut session = load_session(&session_path)?;
+        session.active_store_path = None;
+        session.project_root = None;
+        session.native_engineering_accepted_store_paths.clear();
+        persist_session(&session_path, &session)?;
 
         Ok(Self {
             registry_path,
@@ -479,45 +486,88 @@ fn ensure_registry_has_unique_store_ids(entries: &[DatasetRegistryEntry]) -> Res
     Ok(())
 }
 
-fn load_registry(path: &Path) -> Result<(Vec<DatasetRegistryEntry>, bool), String> {
+fn load_registry(path: &Path) -> Result<Vec<DatasetRegistryEntry>, String> {
     if !path.exists() {
-        return Ok((Vec::new(), false));
+        return Ok(Vec::new());
     }
     let bytes = fs::read(path).map_err(|error| error.to_string())?;
-    match serde_json::from_slice::<DatasetRegistryDocument>(&bytes) {
-        Ok(document) => Ok((document.entries, false)),
-        Err(_) => {
-            fs::remove_file(path).map_err(|error| error.to_string())?;
-            Ok((Vec::new(), true))
-        }
+    if let Ok(signed) =
+        serde_json::from_slice::<SignedWorkspaceDocument<DatasetRegistryDocument>>(&bytes)
+    {
+        verify_signed_document(path, &signed)?;
+        return Ok(signed.payload.entries);
     }
+    serde_json::from_slice::<DatasetRegistryDocument>(&bytes)
+        .map(|document| document.entries)
+        .map_err(|error| {
+            format!(
+                "Workspace registry '{}' is invalid: {error}",
+                path.display()
+            )
+        })
 }
 
-fn load_session(path: &Path) -> Result<(WorkspaceSession, bool), String> {
+fn load_session(path: &Path) -> Result<WorkspaceSession, String> {
     if !path.exists() {
-        return Ok((default_session(), false));
+        return Ok(default_session());
     }
     let bytes = fs::read(path).map_err(|error| error.to_string())?;
-    match serde_json::from_slice::<WorkspaceSession>(&bytes) {
-        Ok(session) => Ok((session, false)),
-        Err(_) => {
-            fs::remove_file(path).map_err(|error| error.to_string())?;
-            Ok((default_session(), true))
-        }
+    if let Ok(signed) = serde_json::from_slice::<SignedWorkspaceDocument<WorkspaceSession>>(&bytes)
+    {
+        verify_signed_document(path, &signed)?;
+        return Ok(signed.payload);
     }
+    serde_json::from_slice::<WorkspaceSession>(&bytes)
+        .map_err(|error| format!("Workspace session '{}' is invalid: {error}", path.display()))
 }
 
 fn persist_registry(path: &Path, entries: &[DatasetRegistryEntry]) -> Result<(), String> {
     let document = DatasetRegistryDocument {
         entries: entries.to_vec(),
     };
-    let json = serde_json::to_vec_pretty(&document).map_err(|error| error.to_string())?;
+    let json = serialize_signed_document(&document)?;
     fs::write(path, json).map_err(|error| error.to_string())
 }
 
 fn persist_session(path: &Path, session: &WorkspaceSession) -> Result<(), String> {
-    let json = serde_json::to_vec_pretty(session).map_err(|error| error.to_string())?;
+    let json = serialize_signed_document(session)?;
     fs::write(path, json).map_err(|error| error.to_string())
+}
+
+fn serialize_signed_document<T>(payload: &T) -> Result<Vec<u8>, String>
+where
+    T: Serialize + Clone,
+{
+    let payload_value = serde_json::to_value(payload).map_err(|error| error.to_string())?;
+    let payload_bytes = serde_json::to_vec(&payload_value).map_err(|error| error.to_string())?;
+    let signed = SignedWorkspaceDocument {
+        format: WORKSPACE_SIGNED_DOCUMENT_FORMAT.to_string(),
+        checksum: blake3::hash(&payload_bytes).to_hex().to_string(),
+        payload: payload.clone(),
+    };
+    serde_json::to_vec_pretty(&signed).map_err(|error| error.to_string())
+}
+
+fn verify_signed_document<T>(path: &Path, signed: &SignedWorkspaceDocument<T>) -> Result<(), String>
+where
+    T: Serialize,
+{
+    if signed.format != WORKSPACE_SIGNED_DOCUMENT_FORMAT {
+        return Err(format!(
+            "Workspace state '{}' uses unsupported format '{}'.",
+            path.display(),
+            signed.format
+        ));
+    }
+    let payload_bytes = serde_json::to_vec(&signed.payload).map_err(|error| error.to_string())?;
+    let expected = blake3::hash(&payload_bytes).to_hex().to_string();
+    if expected != signed.checksum {
+        return Err(format!(
+            "Workspace state '{}' failed integrity verification.",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 fn default_session() -> WorkspaceSession {
@@ -740,10 +790,8 @@ mod tests {
             restored.session.active_velocity_model_asset_id.as_deref(),
             Some("velocity-asset-1")
         );
-        assert_eq!(
-            restored.session.project_root.as_deref(),
-            Some("C:/data/project-root")
-        );
+        assert_eq!(restored.session.active_store_path, None);
+        assert_eq!(restored.session.project_root, None);
         assert_eq!(
             restored.session.project_survey_asset_id.as_deref(),
             Some("survey-asset-1")
@@ -762,10 +810,7 @@ mod tests {
         );
         assert_eq!(
             restored.session.native_engineering_accepted_store_paths,
-            vec![
-                "C:/data/demo.tbvol".to_string(),
-                "C:/data/demo-secondary.tbvol".to_string()
-            ]
+            Vec::<String>::new()
         );
     }
 
@@ -853,7 +898,7 @@ mod tests {
     }
 
     #[test]
-    fn initialize_resets_legacy_registry_without_geometry() {
+    fn initialize_rejects_legacy_registry_without_geometry() {
         let registry = temp_file("legacy-registry.json");
         let session = temp_file("legacy-session.json");
 
@@ -891,14 +936,11 @@ mod tests {
         )
         .expect("write legacy registry");
 
-        let restored = WorkspaceState::initialize(&registry, &session)
-            .expect("initialize workspace state")
-            .load_state()
-            .expect("load upgraded state");
-
-        assert!(restored.entries.is_empty());
-        let persisted = fs::read_to_string(&registry).expect("read reset registry");
-        assert!(persisted.contains("\"entries\": []"));
+        let error = WorkspaceState::initialize(&registry, &session)
+            .err()
+            .expect("legacy invalid registry should be rejected");
+        assert!(error.contains("Workspace registry"));
+        assert!(error.contains("missing field `store_id`"));
     }
 
     #[test]
@@ -948,5 +990,89 @@ mod tests {
 
         assert!(error.contains("duplicate store identity"));
         assert!(error.contains("store-123"));
+    }
+
+    #[test]
+    fn initialize_rejects_tampered_signed_session_state() {
+        let registry = temp_file("registry.json");
+        let session = temp_file("session.json");
+        let state =
+            WorkspaceState::initialize(&registry, &session).expect("initialize workspace state");
+
+        state
+            .save_session(SaveWorkspaceSessionRequest {
+                schema_version: IPC_SCHEMA_VERSION,
+                active_entry_id: Some("dataset-1".to_string()),
+                active_store_path: Some("C:/data/demo.tbvol".to_string()),
+                active_axis: SectionAxis::Inline,
+                active_index: 12,
+                selected_preset_id: None,
+                display_coordinate_reference_id: None,
+                active_velocity_model_asset_id: None,
+                project_root: Some("C:/data/project-root".to_string()),
+                project_survey_asset_id: None,
+                project_wellbore_id: None,
+                project_section_tolerance_m: None,
+                selected_project_well_time_depth_model_asset_id: None,
+                native_engineering_accepted_store_paths: vec!["C:/data/demo.tbvol".to_string()],
+            })
+            .expect("save signed session");
+
+        let mut tampered: serde_json::Value =
+            serde_json::from_slice(&fs::read(&session).expect("read signed session"))
+                .expect("parse signed session");
+        tampered["payload"]["active_index"] = serde_json::json!(99);
+        fs::write(
+            &session,
+            serde_json::to_vec_pretty(&tampered).expect("serialize tampered session"),
+        )
+        .expect("write tampered session");
+
+        let error = WorkspaceState::initialize(&registry, &session)
+            .err()
+            .expect("tampered session should be rejected");
+        assert!(error.contains("failed integrity verification"));
+    }
+
+    #[test]
+    fn initialize_rejects_tampered_signed_registry() {
+        let registry = temp_file("registry.json");
+        let session = temp_file("session.json");
+        let state =
+            WorkspaceState::initialize(&registry, &session).expect("initialize workspace state");
+
+        state
+            .upsert_entry(UpsertDatasetEntryRequest {
+                schema_version: IPC_SCHEMA_VERSION,
+                entry_id: Some("dataset-a".to_string()),
+                display_name: Some("Original".to_string()),
+                source_path: Some("C:/data/original.segy".to_string()),
+                preferred_store_path: Some("C:/data/original.tbvol".to_string()),
+                imported_store_path: Some("C:/data/original.tbvol".to_string()),
+                dataset: Some(sample_dataset_summary(
+                    "C:/data/original.tbvol",
+                    "store-123",
+                    "Original",
+                )),
+                session_pipelines: None,
+                active_session_pipeline_id: None,
+                make_active: false,
+            })
+            .expect("insert original entry");
+
+        let mut tampered: serde_json::Value =
+            serde_json::from_slice(&fs::read(&registry).expect("read signed registry"))
+                .expect("parse signed registry");
+        tampered["payload"]["entries"][0]["display_name"] = serde_json::json!("Tampered");
+        fs::write(
+            &registry,
+            serde_json::to_vec_pretty(&tampered).expect("serialize tampered registry"),
+        )
+        .expect("write tampered registry");
+
+        let error = WorkspaceState::initialize(&registry, &session)
+            .err()
+            .expect("tampered registry should be rejected");
+        assert!(error.contains("failed integrity verification"));
     }
 }

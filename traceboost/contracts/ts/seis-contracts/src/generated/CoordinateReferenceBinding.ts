@@ -2,4 +2,4 @@
 import type { CoordinateReferenceDescriptor } from "./CoordinateReferenceDescriptor";
 import type { CoordinateReferenceSource } from "./CoordinateReferenceSource";
 
-export type CoordinateReferenceBinding = { detected: CoordinateReferenceDescriptor | null, effective: CoordinateReferenceDescriptor | null, source: CoordinateReferenceSource, notes: Array<string>, };
+export type CoordinateReferenceBinding = { detected?: CoordinateReferenceDescriptor | null, effective?: CoordinateReferenceDescriptor | null, source: CoordinateReferenceSource, notes?: Array<string>, };

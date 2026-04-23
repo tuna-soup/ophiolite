@@ -687,7 +687,10 @@ function normalizeTemplateOverlays(
       };
     }
     if (overlay.kind === "text") {
-      const rotationDeg = "rotation_deg" in overlay ? overlay.rotation_deg : overlay.rotationDeg;
+      const rotationDeg =
+        "rotation_deg" in overlay
+          ? overlay.rotation_deg
+          : (overlay as Extract<RockPhysicsTemplateOverlay, { kind: "text" }>).rotationDeg;
       return {
         kind: "text",
         id: overlay.id,
@@ -711,9 +714,11 @@ function normalizeTemplateOverlays(
         points: overlay.points.map((point) => ({ x: point.x, y: point.y }))
       };
     }
-    const strokeColor = "stroke_color" in overlay ? overlay.stroke_color : overlay.strokeColor;
-    const fillColor = "fill_color" in overlay ? overlay.fill_color : overlay.fillColor;
-    const labelPosition = "label_position" in overlay ? overlay.label_position : overlay.labelPosition;
+    const polygonOverlay = overlay as Extract<RockPhysicsTemplateOverlay, { kind: "polygon" }>;
+    const strokeColor = "stroke_color" in overlay ? overlay.stroke_color : polygonOverlay.strokeColor;
+    const fillColor = "fill_color" in overlay ? overlay.fill_color : polygonOverlay.fillColor;
+    const labelPosition =
+      "label_position" in overlay ? overlay.label_position : polygonOverlay.labelPosition;
     return {
       kind: "polygon",
       id: overlay.id,

@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use schemars::schema_for;
-use ts_rs::TS;
+use ts_rs::{Config, ExportError, TS};
 
 macro_rules! public_contracts {
     ($callback:ident, $($args:tt)*) => {
@@ -40,6 +40,11 @@ macro_rules! public_contracts {
                 "TraceLocalProcessingOperation" => seis_contracts_core::TraceLocalProcessingOperation,
                 "TraceLocalProcessingPipeline" => seis_contracts_core::TraceLocalProcessingPipeline,
                 "TraceLocalProcessingStep" => seis_contracts_core::TraceLocalProcessingStep,
+                "PostStackNeighborhoodWindow" => seis_contracts_core::processing::PostStackNeighborhoodWindow,
+                "LocalVolumeStatistic" => seis_contracts_core::processing::LocalVolumeStatistic,
+                "NeighborhoodDipOutput" => seis_contracts_core::processing::NeighborhoodDipOutput,
+                "PostStackNeighborhoodProcessingOperation" => seis_contracts_core::processing::PostStackNeighborhoodProcessingOperation,
+                "PostStackNeighborhoodProcessingPipeline" => seis_contracts_core::processing::PostStackNeighborhoodProcessingPipeline,
                 "SubvolumeCropOperation" => seis_contracts_core::processing::SubvolumeCropOperation,
                 "SubvolumeProcessingPipeline" => seis_contracts_core::processing::SubvolumeProcessingPipeline,
                 "TraceLocalVolumeArithmeticOperator" => seis_contracts_core::TraceLocalVolumeArithmeticOperator,
@@ -51,8 +56,18 @@ macro_rules! public_contracts {
                 "ProcessingJobProgress" => seis_contracts_core::ProcessingJobProgress,
                 "ProcessingJobArtifactKind" => seis_contracts_core::ProcessingJobArtifactKind,
                 "ProcessingJobArtifact" => seis_contracts_core::ProcessingJobArtifact,
+                "ProcessingJobStageExecutionSummary" => seis_contracts_core::processing::ProcessingJobStageExecutionSummary,
+                "ProcessingJobChunkPlanSummary" => seis_contracts_core::processing::ProcessingJobChunkPlanSummary,
+                "ProcessingJobExecutionSummary" => seis_contracts_core::processing::ProcessingJobExecutionSummary,
+                "ProcessingJobPlanSummary" => seis_contracts_core::processing::ProcessingJobPlanSummary,
                 "ProcessingJobStatus" => seis_contracts_core::ProcessingJobStatus,
-                "TraceLocalProcessingPreset" => seis_contracts_core::TraceLocalProcessingPreset,
+                "ProcessingBatchState" => seis_contracts_core::processing::ProcessingBatchState,
+                "ProcessingBatchProgress" => seis_contracts_core::processing::ProcessingBatchProgress,
+                "ProcessingBatchItemStatus" => seis_contracts_core::processing::ProcessingBatchItemStatus,
+                "ProcessingBatchStatus" => seis_contracts_core::processing::ProcessingBatchStatus,
+                "ProcessingExecutionMode" => seis_contracts_core::processing::ProcessingExecutionMode,
+                "ProcessingSchedulerReason" => seis_contracts_core::processing::ProcessingSchedulerReason,
+                "ProcessingPreset" => seis_contracts_core::ProcessingPreset,
                 "InterpretationPoint" => seis_contracts_core::InterpretationPoint,
                 "SectionColorMap" => seis_contracts_core::views::SectionColorMap,
                 "SectionRenderMode" => seis_contracts_core::views::SectionRenderMode,
@@ -141,10 +156,19 @@ macro_rules! public_contracts {
                 "PreviewResponse" => seis_contracts_operations::PreviewResponse,
                 "PreviewTraceLocalProcessingRequest" => seis_contracts_operations::PreviewTraceLocalProcessingRequest,
                 "PreviewTraceLocalProcessingResponse" => seis_contracts_operations::PreviewTraceLocalProcessingResponse,
+                "PreviewPostStackNeighborhoodProcessingRequest" => seis_contracts_operations::PreviewPostStackNeighborhoodProcessingRequest,
+                "PreviewPostStackNeighborhoodProcessingResponse" => seis_contracts_operations::PreviewPostStackNeighborhoodProcessingResponse,
                 "PreviewSubvolumeProcessingRequest" => seis_contracts_operations::PreviewSubvolumeProcessingRequest,
                 "PreviewSubvolumeProcessingResponse" => seis_contracts_operations::PreviewSubvolumeProcessingResponse,
                 "RunTraceLocalProcessingRequest" => seis_contracts_operations::RunTraceLocalProcessingRequest,
                 "RunTraceLocalProcessingResponse" => seis_contracts_operations::RunTraceLocalProcessingResponse,
+                "ProcessingBatchItemRequest" => seis_contracts_operations::processing_ops::ProcessingBatchItemRequest,
+                "SubmitProcessingBatchRequest" => seis_contracts_operations::SubmitProcessingBatchRequest,
+                "SubmitProcessingBatchResponse" => seis_contracts_operations::SubmitProcessingBatchResponse,
+                "SubmitTraceLocalProcessingBatchRequest" => seis_contracts_operations::processing_ops::SubmitTraceLocalProcessingBatchRequest,
+                "SubmitTraceLocalProcessingBatchResponse" => seis_contracts_operations::processing_ops::SubmitTraceLocalProcessingBatchResponse,
+                "RunPostStackNeighborhoodProcessingRequest" => seis_contracts_operations::RunPostStackNeighborhoodProcessingRequest,
+                "RunPostStackNeighborhoodProcessingResponse" => seis_contracts_operations::RunPostStackNeighborhoodProcessingResponse,
                 "RunSubvolumeProcessingRequest" => seis_contracts_operations::RunSubvolumeProcessingRequest,
                 "RunSubvolumeProcessingResponse" => seis_contracts_operations::RunSubvolumeProcessingResponse,
                 "PreviewGatherProcessingRequest" => seis_contracts_operations::PreviewGatherProcessingRequest,
@@ -155,6 +179,10 @@ macro_rules! public_contracts {
                 "GetProcessingJobResponse" => seis_contracts_operations::GetProcessingJobResponse,
                 "CancelProcessingJobRequest" => seis_contracts_operations::CancelProcessingJobRequest,
                 "CancelProcessingJobResponse" => seis_contracts_operations::CancelProcessingJobResponse,
+                "GetProcessingBatchRequest" => seis_contracts_operations::processing_ops::GetProcessingBatchRequest,
+                "GetProcessingBatchResponse" => seis_contracts_operations::processing_ops::GetProcessingBatchResponse,
+                "CancelProcessingBatchRequest" => seis_contracts_operations::processing_ops::CancelProcessingBatchRequest,
+                "CancelProcessingBatchResponse" => seis_contracts_operations::processing_ops::CancelProcessingBatchResponse,
                 "ListPipelinePresetsResponse" => seis_contracts_operations::ListPipelinePresetsResponse,
                 "SavePipelinePresetRequest" => seis_contracts_operations::SavePipelinePresetRequest,
                 "SavePipelinePresetResponse" => seis_contracts_operations::SavePipelinePresetResponse,
@@ -276,7 +304,7 @@ macro_rules! wrapper_files {
 
 macro_rules! export_types {
     ($output_dir:expr, { $( $name:literal => $ty:ty, )* }) => {{
-        $( <$ty as TS>::export_all_to($output_dir)?; )*
+        $( export_all_to::<$ty>($output_dir)?; )*
     }};
 }
 
@@ -296,6 +324,14 @@ macro_rules! write_wrapper_files {
     ($output_dir:expr, { $( $name:literal => $ty:ty, )* }) => {{
         $( write_wrapper_file($output_dir, $name)?; )*
     }};
+}
+
+fn export_all_to<T>(output_dir: &Path) -> Result<(), ExportError>
+where
+    T: TS + 'static,
+{
+    let config = Config::default().with_out_dir(output_dir);
+    T::export_all(&config)
 }
 
 fn main() -> Result<(), Box<dyn Error>> {

@@ -28,3 +28,13 @@ tempfile = "3.15"
 [[bench]]
 name = "compute_storage"
 harness = false
+
+[[bench]]
+name = "post_stack_neighborhood_kernels"
+harness = false
+
+[[bin]]
+name = "compute_storage_bench"
+path = "src/bin/compute_storage_bench.rs"
+bench = false
+test = false

@@ -21,6 +21,8 @@ pub const DIAGNOSTICS_EVENT_NAME: &str = "diagnostics:event";
 const MAX_RECENT_EVENTS: usize = 512;
 const MAX_RETAINED_SESSION_FILES: usize = 20;
 const MAX_RETAINED_SESSION_BYTES: u64 = 100 * 1024 * 1024;
+const MAX_MESSAGE_LEN: usize = 512;
+const MAX_FIELD_VALUE_LEN: usize = 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -247,7 +249,11 @@ impl DiagnosticsState {
         self.emit_event(app, &token, stage, level, message.into(), None, fields);
     }
 
-    pub fn export_bundle(&self, app: &AppHandle) -> Result<PathBuf, String> {
+    pub fn export_bundle(
+        &self,
+        app: &AppHandle,
+        include_sensitive_paths: bool,
+    ) -> Result<PathBuf, String> {
         let bundle_path = self
             .session_log_path
             .parent()
@@ -265,7 +271,10 @@ impl DiagnosticsState {
             tauri_version: tauri::VERSION,
             session_id: self.session_id.clone(),
             session_started_at: self.session_started_at.clone(),
-            session_log_path: self.session_log_path.display().to_string(),
+            session_log_path: maybe_redact_path(
+                &self.session_log_path.display().to_string(),
+                include_sensitive_paths,
+            ),
             verbose_enabled: self.verbose_enabled(),
             platform: std::env::consts::OS.to_string(),
             arch: std::env::consts::ARCH.to_string(),
@@ -321,9 +330,9 @@ impl DiagnosticsState {
             stage: stage.to_string(),
             level: level.as_str().to_ascii_lowercase(),
             timestamp: now_rfc3339(),
-            message,
+            message: sanitize_message(&message),
             duration_ms,
-            fields,
+            fields: sanitize_fields(fields),
         };
 
         if let Ok(mut recent_events) = self.recent_events.lock() {
@@ -386,6 +395,66 @@ fn format_log_line(event: &DiagnosticsEvent) -> String {
         event.message,
         fields
     )
+}
+
+fn sanitize_message(message: &str) -> String {
+    let single_line = message.replace(['\r', '\n'], " ");
+    truncate_string(single_line.trim(), MAX_MESSAGE_LEN)
+}
+
+fn sanitize_fields(fields: Option<Map<String, Value>>) -> Option<Map<String, Value>> {
+    fields.map(|fields| {
+        fields
+            .into_iter()
+            .map(|(key, value)| {
+                let redact = key.to_ascii_lowercase().contains("path");
+                (key, sanitize_value(value, redact))
+            })
+            .collect()
+    })
+}
+
+fn sanitize_value(value: Value, redact: bool) -> Value {
+    match value {
+        Value::String(text) => {
+            let text = text.replace(['\r', '\n'], " ");
+            if redact {
+                Value::String("[redacted-path]".to_string())
+            } else {
+                Value::String(truncate_string(text.trim(), MAX_FIELD_VALUE_LEN))
+            }
+        }
+        Value::Array(values) => Value::Array(
+            values
+                .into_iter()
+                .map(|item| sanitize_value(item, redact))
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.into_iter()
+                .map(|(key, value)| {
+                    let child_redact = redact || key.to_ascii_lowercase().contains("path");
+                    (key, sanitize_value(value, child_redact))
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+fn maybe_redact_path(path: &str, include_sensitive_paths: bool) -> String {
+    if include_sensitive_paths {
+        path.to_string()
+    } else {
+        "[redacted-path]".to_string()
+    }
+}
+
+fn truncate_string(value: &str, max_len: usize) -> String {
+    if value.chars().count() <= max_len {
+        return value.to_string();
+    }
+    value.chars().take(max_len).collect()
 }
 
 fn resolve_session_log_path(log_dir: &Path, session_basename: &str) -> PathBuf {

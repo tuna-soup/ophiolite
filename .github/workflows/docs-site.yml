@@ -30,6 +30,9 @@ jobs:
       - name: Install docs dependencies
         working-directory: apps/ophiolite-docs
         run: bun install --frozen-lockfile
+      - name: Audit docs dependencies
+        working-directory: apps/ophiolite-docs
+        run: bun audit
       - name: Build docs site
         working-directory: apps/ophiolite-docs
         run: bun run build

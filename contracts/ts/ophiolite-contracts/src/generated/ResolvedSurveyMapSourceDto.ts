@@ -4,4 +4,4 @@ import type { ResolvedSurveyMapSurveyDto } from "./ResolvedSurveyMapSurveyDto";
 import type { ResolvedSurveyMapWellDto } from "./ResolvedSurveyMapWellDto";
 import type { SurveyMapScalarFieldDto } from "./SurveyMapScalarFieldDto";
 
-export type ResolvedSurveyMapSourceDto = { schema_version: number, id: string, name: string, surveys: Array<ResolvedSurveyMapSurveyDto>, wells: Array<ResolvedSurveyMapWellDto>, horizons: Array<ResolvedSurveyMapHorizonDto>, scalar_field: SurveyMapScalarFieldDto | null, scalar_field_horizon_id: string | null, };
+export type ResolvedSurveyMapSourceDto = { schema_version: number, id: string, name: string, surveys: Array<ResolvedSurveyMapSurveyDto>, wells: Array<ResolvedSurveyMapWellDto>, horizons?: Array<ResolvedSurveyMapHorizonDto>, scalar_field?: SurveyMapScalarFieldDto | null, scalar_field_horizon_id?: string | null, };

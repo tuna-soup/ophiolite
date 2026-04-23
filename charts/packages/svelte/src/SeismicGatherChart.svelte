@@ -14,17 +14,15 @@
   import { resolveSeismicStageSize, scaleSeismicStageSize } from "./seismic-stage";
   import {
     decodeGatherView,
-    gatherInteractionToContract,
-    gatherProbeToContract,
-    gatherViewportFromContract,
-    gatherViewportToContract,
     isCompatibleGatherIdentity,
     mergeGatherDisplayTransform
   } from "./contracts";
   import {
     SEISMIC_CHART_INTERACTION_CAPABILITIES,
     type SeismicChartInteractionState,
-    type SeismicGatherChartProps
+    type SeismicGatherChartProps,
+    type SeismicProbe,
+    type SeismicViewport
   } from "./types";
 
   type ScrollbarAxis = "horizontal" | "vertical";
@@ -67,8 +65,8 @@
   }: SeismicGatherChartProps = $props();
 
   let controller: SeismicViewerController | null = null;
-  let currentProbe = $state.raw<ReturnType<typeof gatherProbeToContract>["probe"]>(null);
-  let currentViewport = $state.raw<import("@ophiolite/contracts").GatherViewport | null>(null);
+  let currentProbe = $state.raw<SeismicProbe | null>(null);
+  let currentViewport = $state.raw<SeismicViewport | null>(null);
   let lastGather = $state.raw<typeof gather>(null);
   let lastResetToken: string | number | null = null;
   let lastViewportKey = "";
@@ -83,21 +81,27 @@
   let lastRequestedTool = resolveRequestedTool();
   let effectiveTool = $state(lastRequestedTool);
   let resolvedDisplayTransform = $derived(mergeGatherDisplayTransform(gather, displayTransform));
+  let decodedGatherModel = $derived(gather ? decodeGatherView(gather) : null);
   const seismicProbePanelInset = resolveProbePanelPresentation("light", "standard").frame.insetPx;
   let stageSize = $derived(
     scaleSeismicStageSize(
-      resolveSeismicStageSize("gather", gather?.traces, gather?.samples, resolvedDisplayTransform.renderMode),
+      resolveSeismicStageSize(
+        "gather",
+        decodedGatherModel?.dimensions.traces,
+        decodedGatherModel?.dimensions.samples,
+        resolvedDisplayTransform.renderMode
+      ),
       stageScale
     )
   );
-  let decodedGatherPayload = $derived(gather ? gatherToSectionPayload(decodeGatherView(gather)) : null);
+  let decodedGatherPayload = $derived(decodedGatherModel ? gatherToSectionPayload(decodedGatherModel) : null);
   let overlayViewport = $derived(
     currentViewport
       ? {
-          traceStart: currentViewport.trace_start,
-          traceEnd: currentViewport.trace_end,
-          sampleStart: currentViewport.sample_start,
-          sampleEnd: currentViewport.sample_end
+          traceStart: currentViewport.traceStart,
+          traceEnd: currentViewport.traceEnd,
+          sampleStart: currentViewport.sampleStart,
+          sampleEnd: currentViewport.sampleEnd
         }
       : null
   );
@@ -110,18 +114,18 @@
     }
     return null;
   });
-  let probeHorizontalLabel = $derived(horizontalLabel(gather?.gather_axis_kind ?? null));
+  let probeHorizontalLabel = $derived(horizontalLabel(decodedGatherModel?.gatherAxisKind ?? null));
   let scrollbarState = $derived.by(() => {
-    if (!gather || !currentViewport) {
+    if (!decodedGatherModel || !currentViewport) {
       return null;
     }
 
-    const totalTraces = Math.max(1, gather.traces);
-    const totalSamples = Math.max(1, gather.samples);
-    const traceStart = clamp(currentViewport.trace_start, 0, totalTraces - 1);
-    const traceEnd = clamp(currentViewport.trace_end, traceStart + 1, totalTraces);
-    const sampleStart = clamp(currentViewport.sample_start, 0, totalSamples - 1);
-    const sampleEnd = clamp(currentViewport.sample_end, sampleStart + 1, totalSamples);
+    const totalTraces = Math.max(1, decodedGatherModel.dimensions.traces);
+    const totalSamples = Math.max(1, decodedGatherModel.dimensions.samples);
+    const traceStart = clamp(currentViewport.traceStart, 0, totalTraces - 1);
+    const traceEnd = clamp(currentViewport.traceEnd, traceStart + 1, totalTraces);
+    const sampleStart = clamp(currentViewport.sampleStart, 0, totalSamples - 1);
+    const sampleEnd = clamp(currentViewport.sampleEnd, sampleStart + 1, totalSamples);
 
     return {
       horizontalStart: `${(traceStart / totalTraces) * 100}%`,
@@ -145,7 +149,11 @@
         return;
       }
 
-      const nextViewport = gatherViewportToContract(chartId, viewId, state.viewport);
+      const nextViewport = {
+        chartId,
+        viewId,
+        viewport: state.viewport
+      };
       const nextViewportKey = JSON.stringify(nextViewport);
       if (nextViewportKey !== lastViewportKey) {
         lastViewportKey = nextViewportKey;
@@ -153,7 +161,11 @@
         onViewportChange?.(nextViewport);
       }
 
-      const nextProbe = gatherProbeToContract(chartId, viewId, state.probe);
+      const nextProbe = {
+        chartId,
+        viewId,
+        probe: state.probe
+      };
       const nextProbeKey = JSON.stringify(nextProbe);
       if (nextProbeKey !== lastProbeKey) {
         lastProbeKey = nextProbeKey;
@@ -161,24 +173,24 @@
         onProbeChange?.(nextProbe);
       }
 
-      const nextInteraction = gatherInteractionToContract(
-        chartId,
-        viewId,
-        toLegacyPrimaryMode(state.interactions.primaryMode),
+      const nextTool = controllerModeToTool(
+        state.interactions.primaryMode,
         state.interactions.modifiers.includes("crosshair")
       );
+      const nextInteraction = {
+        chartId,
+        viewId,
+        primaryMode: toLegacyPrimaryMode(state.interactions.primaryMode),
+        crosshairEnabled: state.interactions.modifiers.includes("crosshair"),
+        tool: nextTool
+      };
       const nextInteractionKey = JSON.stringify(nextInteraction);
       if (nextInteractionKey !== lastInteractionKey) {
         lastInteractionKey = nextInteractionKey;
         onInteractionChange?.(nextInteraction);
       }
 
-      const nextInteractionState = createInteractionState(
-        controllerModeToTool(
-          state.interactions.primaryMode,
-          state.interactions.modifiers.includes("crosshair")
-        )
-      );
+      const nextInteractionState = createInteractionState(nextTool);
       const nextInteractionStateKey = JSON.stringify(nextInteractionState);
       if (nextInteractionStateKey !== lastInteractionStateKey) {
         lastInteractionStateKey = nextInteractionStateKey;
@@ -260,7 +272,7 @@
     viewport = nextViewport;
     currentViewport = nextViewport;
     if (controller) {
-      controller.setViewport(gatherViewportFromContract(nextViewport));
+      controller.setViewport(nextViewport);
     }
   }
 
@@ -302,7 +314,7 @@
 
     if (viewport) {
       currentViewport = viewport;
-      activeController.setViewport(gatherViewportFromContract(viewport));
+      activeController.setViewport(viewport);
     } else if (!gather) {
       currentViewport = null;
     }
@@ -655,11 +667,11 @@
     return [
       {
         label: probeHorizontalLabel,
-        value: `${currentProbe.trace_index} (${currentProbe.trace_coordinate.toFixed(2)})`
+        value: `${currentProbe.traceIndex} (${currentProbe.traceCoordinate.toFixed(2)})`
       },
       {
         label: "sample",
-        value: `${currentProbe.sample_index} (${currentProbe.sample_value.toFixed(1)})`
+        value: `${currentProbe.sampleIndex} (${currentProbe.sampleValue.toFixed(1)})`
       },
       {
         label: "amplitude",
@@ -675,7 +687,7 @@
     visibleSpan: number;
     start: number;
   } | null {
-    if (!gather || !currentViewport || !hostElement) {
+    if (!decodedGatherModel || !currentViewport || !hostElement) {
       return null;
     }
 
@@ -686,18 +698,18 @@
       return {
         trackStart: shellRect.left + plotRect.x,
         trackLength: plotRect.width,
-        totalSpan: Math.max(1, gather.traces),
-        visibleSpan: Math.max(1, currentViewport.trace_end - currentViewport.trace_start),
-        start: currentViewport.trace_start
+        totalSpan: Math.max(1, decodedGatherModel.dimensions.traces),
+        visibleSpan: Math.max(1, currentViewport.traceEnd - currentViewport.traceStart),
+        start: currentViewport.traceStart
       };
     }
 
     return {
       trackStart: shellRect.top + plotRect.y,
       trackLength: plotRect.height,
-      totalSpan: Math.max(1, gather.samples),
-      visibleSpan: Math.max(1, currentViewport.sample_end - currentViewport.sample_start),
-      start: currentViewport.sample_start
+      totalSpan: Math.max(1, decodedGatherModel.dimensions.samples),
+      visibleSpan: Math.max(1, currentViewport.sampleEnd - currentViewport.sampleStart),
+      start: currentViewport.sampleStart
     };
   }
 
@@ -721,20 +733,20 @@
       axis === "horizontal"
         ? {
             ...currentViewport,
-            trace_start: nextStart,
-            trace_end: nextStart + drag.visibleSpan
+            traceStart: nextStart,
+            traceEnd: nextStart + drag.visibleSpan
           }
         : {
             ...currentViewport,
-            sample_start: nextStart,
-            sample_end: nextStart + drag.visibleSpan
+            sampleStart: nextStart,
+            sampleEnd: nextStart + drag.visibleSpan
           };
 
     currentViewport = nextViewport;
-    controller.setViewport(gatherViewportFromContract(nextViewport));
+    controller.setViewport(nextViewport);
   }
 
-  function horizontalLabel(kind: import("@ophiolite/contracts").GatherAxisKind | null): string {
+  function horizontalLabel(kind: import("@ophiolite/charts-data-models").GatherAxisKind | null): string {
     switch (kind) {
       case "angle":
         return "angle";
@@ -748,7 +760,7 @@
         return "receiver";
       case "cmp":
         return "cmp";
-      case "trace_ordinal":
+      case "trace-ordinal":
         return "trace";
       default:
         return "trace";

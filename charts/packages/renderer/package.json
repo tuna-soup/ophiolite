@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./preview": "./src/preview.ts"
   },
   "dependencies": {
     "@kitware/vtk.js": "^35.7.2",

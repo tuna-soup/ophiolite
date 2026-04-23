@@ -11,25 +11,21 @@
   import type { SectionHorizonOverlay, SectionScalarOverlay, SectionWellOverlay } from "@ophiolite/charts-data-models";
   import { SeismicViewerController } from "@ophiolite/charts-domain";
   import { MockCanvasRenderer, PLOT_MARGIN, getPlotRect } from "@ophiolite/charts-renderer";
-  import type { SectionViewport } from "@ophiolite/contracts";
   import ProbePanel from "./ProbePanel.svelte";
   import SeismicAxisOverlay from "./SeismicAxisOverlay.svelte";
   import { resolveSeismicStageSize, scaleSeismicStageSize } from "./seismic-stage";
   import {
     decodeSectionView,
-    interactionToContract,
     canReuseSectionViewport,
     shouldIgnoreExternalSectionViewport,
-    mergeDisplayTransform,
-    probeToContract,
-    viewportFromContract,
-    viewportToContract
+    mergeDisplayTransform
   } from "./contracts";
   import {
     SEISMIC_CHART_INTERACTION_CAPABILITIES,
     type SeismicChartInteractionState,
+    type SeismicProbe,
     type SeismicSectionChartProps,
-    type SectionViewLike
+    type SeismicViewport
   } from "./types";
 
   type ScrollbarAxis = "horizontal" | "vertical";
@@ -98,10 +94,10 @@
   }: SeismicSectionChartProps = $props();
 
   let controller: SeismicViewerController | null = null;
-  let currentProbe = $state.raw<ReturnType<typeof probeToContract>["probe"]>(null);
-  let currentViewport = $state.raw<SectionViewport | null>(null);
-  let lastSection: SectionViewLike | null = null;
-  let lastSecondarySection: SectionViewLike | null = null;
+  let currentProbe = $state.raw<SeismicProbe | null>(null);
+  let currentViewport = $state.raw<SeismicViewport | null>(null);
+  let lastSection = $state.raw<typeof section>(null);
+  let lastSecondarySection = $state.raw<typeof secondarySection>(null);
   let lastSectionScalarOverlays: readonly SectionScalarOverlay[] = EMPTY_SECTION_SCALAR_OVERLAYS;
   let lastSectionHorizons: readonly SectionHorizonOverlay[] = EMPTY_SECTION_HORIZONS;
   let lastSectionWellOverlays: readonly SectionWellOverlay[] = EMPTY_SECTION_WELL_OVERLAYS;
@@ -120,14 +116,22 @@
   let lastRequestedTool = resolveRequestedTool();
   let effectiveTool = $state(lastRequestedTool);
   let resolvedDisplayTransform = $derived(mergeDisplayTransform(section, displayTransform));
+  let decodedSectionPayload = $derived(section ? decodeSectionView(section) : null);
+  let sectionMetrics = $derived(
+    decodedSectionPayload
+      ? {
+          traces: decodedSectionPayload.dimensions.traces,
+          samples: decodedSectionPayload.dimensions.samples
+        }
+      : null
+  );
   const seismicProbePanelInset = resolveProbePanelPresentation("light", "standard").frame.insetPx;
   let stageSize = $derived(
     scaleSeismicStageSize(
-      resolveSeismicStageSize("section", section?.traces, section?.samples, resolvedDisplayTransform.renderMode),
+      resolveSeismicStageSize("section", sectionMetrics?.traces, sectionMetrics?.samples, resolvedDisplayTransform.renderMode),
       stageScale
     )
   );
-  let decodedSectionPayload = $derived(section ? decodeSectionView(section) : null);
   let browseRequestContext = $derived.by(() => {
     if (
       !browse?.enabled ||
@@ -156,7 +160,7 @@
       : ""
   );
   let analysisRequestContext = $derived.by(() => {
-    if (!analysis?.enabled || !analysis.onRequest || !section || loading || errorMessage) {
+    if (!analysis?.enabled || !analysis.onRequest || !decodedSectionPayload || loading || errorMessage) {
       return null;
     }
 
@@ -177,9 +181,9 @@
 
     return {
       current: {
-        axis: section.axis,
-        index: section.coordinate.index,
-        value: section.coordinate.value
+        axis: decodedSectionPayload.axis,
+        index: decodedSectionPayload.coordinate.index,
+        value: decodedSectionPayload.coordinate.value
       },
       selectionMode,
       selectionModes,
@@ -193,10 +197,10 @@
   let overlayViewport = $derived(
     currentViewport
       ? {
-          traceStart: currentViewport.trace_start,
-          traceEnd: currentViewport.trace_end,
-          sampleStart: currentViewport.sample_start,
-          sampleEnd: currentViewport.sample_end
+          traceStart: currentViewport.traceStart,
+          traceEnd: currentViewport.traceEnd,
+          sampleStart: currentViewport.sampleStart,
+          sampleEnd: currentViewport.sampleEnd
         }
       : null
   );
@@ -210,16 +214,16 @@
     return null;
   });
   let scrollbarState = $derived.by(() => {
-    if (!section || !currentViewport) {
+    if (!sectionMetrics || !currentViewport) {
       return null;
     }
 
-    const totalTraces = Math.max(1, section.traces);
-    const totalSamples = Math.max(1, section.samples);
-    const traceStart = clamp(currentViewport.trace_start, 0, totalTraces - 1);
-    const traceEnd = clamp(currentViewport.trace_end, traceStart + 1, totalTraces);
-    const sampleStart = clamp(currentViewport.sample_start, 0, totalSamples - 1);
-    const sampleEnd = clamp(currentViewport.sample_end, sampleStart + 1, totalSamples);
+    const totalTraces = Math.max(1, sectionMetrics.traces);
+    const totalSamples = Math.max(1, sectionMetrics.samples);
+    const traceStart = clamp(currentViewport.traceStart, 0, totalTraces - 1);
+    const traceEnd = clamp(currentViewport.traceEnd, traceStart + 1, totalTraces);
+    const sampleStart = clamp(currentViewport.sampleStart, 0, totalSamples - 1);
+    const sampleEnd = clamp(currentViewport.sampleEnd, sampleStart + 1, totalSamples);
 
     return {
       horizontalStart: `${(traceStart / totalTraces) * 100}%`,
@@ -243,7 +247,11 @@
         return;
       }
 
-      const nextViewport = viewportToContract(chartId, viewId, state.viewport);
+      const nextViewport = {
+        chartId,
+        viewId,
+        viewport: state.viewport
+      };
       const nextViewportKey = JSON.stringify(nextViewport);
       if (nextViewportKey !== lastViewportKey) {
         lastViewportKey = nextViewportKey;
@@ -251,7 +259,11 @@
         onViewportChange?.(nextViewport);
       }
 
-      const nextProbe = probeToContract(chartId, viewId, state.probe);
+      const nextProbe = {
+        chartId,
+        viewId,
+        probe: state.probe
+      };
       const nextProbeKey = JSON.stringify(nextProbe);
       if (nextProbeKey !== lastProbeKey) {
         lastProbeKey = nextProbeKey;
@@ -259,24 +271,24 @@
         onProbeChange?.(nextProbe);
       }
 
-      const nextInteraction = interactionToContract(
-        chartId,
-        viewId,
-        toLegacyPrimaryMode(state.interactions.primaryMode),
+      const nextTool = controllerModeToTool(
+        state.interactions.primaryMode,
         state.interactions.modifiers.includes("crosshair")
       );
+      const nextInteraction = {
+        chartId,
+        viewId,
+        primaryMode: toLegacyPrimaryMode(state.interactions.primaryMode),
+        crosshairEnabled: state.interactions.modifiers.includes("crosshair"),
+        tool: nextTool
+      };
       const nextInteractionKey = JSON.stringify(nextInteraction);
       if (nextInteractionKey !== lastInteractionKey) {
         lastInteractionKey = nextInteractionKey;
         onInteractionChange?.(nextInteraction);
       }
 
-      const nextInteractionState = createInteractionState(
-        controllerModeToTool(
-          state.interactions.primaryMode,
-          state.interactions.modifiers.includes("crosshair")
-        )
-      );
+      const nextInteractionState = createInteractionState(nextTool);
       const nextInteractionStateKey = JSON.stringify(nextInteractionState);
       if (nextInteractionStateKey !== lastInteractionStateKey) {
         lastInteractionStateKey = nextInteractionStateKey;
@@ -374,7 +386,7 @@
     viewport = nextViewport;
     currentViewport = nextViewport;
     if (controller) {
-      controller.setViewport(viewportFromContract(nextViewport));
+      controller.setViewport(nextViewport);
     }
   }
 
@@ -460,7 +472,7 @@
     if (viewport && section && !shouldIgnoreExternalViewport) {
       ignoredExternalViewportKey = null;
       currentViewport = viewport;
-      activeController.setViewport(viewportFromContract(viewport));
+      activeController.setViewport(viewport);
     } else if (viewport && shouldIgnoreExternalViewport) {
       ignoredExternalViewportKey = externalViewportKey;
     } else if (!section) {
@@ -972,28 +984,28 @@
     const rows = [
       {
         label: "trace",
-        value: `${currentProbe.trace_index} (${currentProbe.trace_coordinate.toFixed(1)})`
+        value: `${currentProbe.traceIndex} (${currentProbe.traceCoordinate.toFixed(1)})`
       }
     ];
 
-    if (currentProbe.inline_coordinate !== null && currentProbe.inline_coordinate !== undefined) {
+    if (currentProbe.inlineCoordinate !== null && currentProbe.inlineCoordinate !== undefined) {
       rows.push({
         label: "IL",
-        value: currentProbe.inline_coordinate.toFixed(1)
+        value: currentProbe.inlineCoordinate.toFixed(1)
       });
     }
 
-    if (currentProbe.xline_coordinate !== null && currentProbe.xline_coordinate !== undefined) {
+    if (currentProbe.xlineCoordinate !== null && currentProbe.xlineCoordinate !== undefined) {
       rows.push({
         label: "XL",
-        value: currentProbe.xline_coordinate.toFixed(1)
+        value: currentProbe.xlineCoordinate.toFixed(1)
       });
     }
 
     rows.push(
       {
         label: "sample",
-        value: `${currentProbe.sample_index} (${currentProbe.sample_value.toFixed(1)})`
+        value: `${currentProbe.sampleIndex} (${currentProbe.sampleValue.toFixed(1)})`
       },
       {
         label: "amplitude",
@@ -1011,7 +1023,7 @@
     visibleSpan: number;
     start: number;
   } | null {
-    if (!section || !currentViewport || !shellElement) {
+    if (!sectionMetrics || !currentViewport || !shellElement) {
       return null;
     }
 
@@ -1022,18 +1034,18 @@
       return {
         trackStart: shellRect.left + plotRect.x,
         trackLength: plotRect.width,
-        totalSpan: Math.max(1, section.traces),
-        visibleSpan: Math.max(1, currentViewport.trace_end - currentViewport.trace_start),
-        start: currentViewport.trace_start
+        totalSpan: Math.max(1, sectionMetrics.traces),
+        visibleSpan: Math.max(1, currentViewport.traceEnd - currentViewport.traceStart),
+        start: currentViewport.traceStart
       };
     }
 
     return {
       trackStart: shellRect.top + plotRect.y,
       trackLength: plotRect.height,
-      totalSpan: Math.max(1, section.samples),
-      visibleSpan: Math.max(1, currentViewport.sample_end - currentViewport.sample_start),
-      start: currentViewport.sample_start
+      totalSpan: Math.max(1, sectionMetrics.samples),
+      visibleSpan: Math.max(1, currentViewport.sampleEnd - currentViewport.sampleStart),
+      start: currentViewport.sampleStart
     };
   }
 
@@ -1058,17 +1070,17 @@
       axis === "horizontal"
         ? {
             ...currentViewport,
-            trace_start: nextStart,
-            trace_end: nextStart + drag.visibleSpan
+            traceStart: nextStart,
+            traceEnd: nextStart + drag.visibleSpan
           }
         : {
             ...currentViewport,
-            sample_start: nextStart,
-            sample_end: nextStart + drag.visibleSpan
+            sampleStart: nextStart,
+            sampleEnd: nextStart + drag.visibleSpan
           };
 
     currentViewport = nextViewport;
-    controller.setViewport(viewportFromContract(nextViewport));
+    controller.setViewport(nextViewport);
   }
 </script>
 

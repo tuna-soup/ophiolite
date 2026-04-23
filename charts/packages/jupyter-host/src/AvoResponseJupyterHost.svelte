@@ -4,7 +4,7 @@
   import {
     AvoResponseChart,
     type AvoResponseChartHandle
-  } from "@ophiolite/charts";
+  } from "@ophiolite/charts/preview";
   import {
     adaptOphioliteAvoResponseToChart,
     validateOphioliteAvoResponseSource,

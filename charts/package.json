@@ -9,18 +9,22 @@
   ],
   "scripts": {
     "dev": "bun --filter @ophiolite/charts-demo dev",
+    "dev:docs": "bun --filter @ophiolite/charts-docs dev",
     "dev:svelte": "bun run ./scripts/dev-svelte.ts",
     "svelte:dev": "bun run dev:svelte",
     "playground:svelte": "bun run dev:svelte",
     "playground:svelte:build": "bun --filter @ophiolite/charts-playground build",
+    "docs:build": "bun --filter @ophiolite/charts-docs build",
     "dev:benchmark": "bun --filter @ophiolite/charts-benchmark dev",
-    "build": "bun --filter @ophiolite/charts-demo build && bun --filter @ophiolite/charts-playground build && bun --filter @ophiolite/charts-benchmark build",
-    "typecheck": "bun --filter '*' typecheck"
+    "build": "bun --filter @ophiolite/charts-demo build && bun --filter @ophiolite/charts-playground build && bun --filter @ophiolite/charts-docs build && bun --filter @ophiolite/charts-benchmark build",
+    "typecheck": "bun --filter '*' typecheck",
+    "test:visual": "playwright test"
   },
   "devDependencies": {
-    "@types/node": "^24.7.2",
     "@ophiolite/contracts": "file:../contracts/ts/ophiolite-contracts",
+    "@playwright/test": "^1.59.1",
     "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "@types/node": "^24.7.2",
     "svelte": "^5.39.6",
     "svelte-check": "^4.3.1",
     "typescript": "^5.9.3",

@@ -1,22 +1,5 @@
 import type { Snippet } from "svelte";
 import type {
-  GatherAxisKind,
-  GatherInteractionChanged,
-  GatherProbeChanged,
-  GatherView,
-  GatherViewport,
-  GatherViewportChanged,
-  SectionColorMap,
-  SectionInteractionChanged,
-  SectionPolarity,
-  SectionPrimaryMode,
-  SectionProbeChanged,
-  SectionRenderMode,
-  SectionView,
-  SectionViewport,
-  SectionViewportChanged
-} from "@ophiolite/contracts";
-import type {
   AvoCartesianViewport,
   CartesianAxisContextTrigger,
   CartesianAxisId,
@@ -27,12 +10,18 @@ import type {
   AvoHistogramProbe,
   AvoResponseModel,
   AvoResponseProbe,
+  CursorProbe,
   ChartInteractionActionId,
   ChartInteractionToolId,
+  GatherPayload,
+  SectionViewport as InternalSeismicViewport,
   InteractionEvent,
+  OphioliteEncodedGatherView,
+  OphioliteEncodedSectionView,
   RockPhysicsCrossplotModel,
   RockPhysicsCrossplotProbe,
   RockPhysicsCrossplotViewport,
+  SectionPayload,
   SectionHorizonOverlay,
   SectionWellOverlay,
   SectionScalarOverlay,
@@ -48,6 +37,7 @@ import type {
   SurveyMapModel,
   SurveyMapProbe,
   SurveyMapViewport,
+  TrackAxis,
   WellCorrelationPanelModel,
   WellCorrelationProbe,
   WellCorrelationViewport,
@@ -68,8 +58,6 @@ export type SeismicSectionAnalysisKind = "amplitude-spectrum" | "amplitude-distr
 export type SeismicSectionAnalysisSelectionKind = "whole-section" | "viewport" | "rectangle";
 export type SeismicSectionAnalysisSelectionMode = "whole-section" | "viewport";
 export type SpectrumAmplitudeScale = "db" | "linear";
-export type EncodedSectionBytes = number[] | Uint8Array;
-export type EncodedGatherBytes = number[] | Uint8Array;
 
 export interface SpectrumCurve {
   frequenciesHz: number[];
@@ -113,37 +101,163 @@ export interface AmplitudeDistributionResult {
   rms: number;
 }
 
-export interface SectionViewLike extends Omit<
-  SectionView,
-  "horizontal_axis_f64le" | "inline_axis_f64le" | "xline_axis_f64le" | "sample_axis_f32le" | "amplitudes_f32le"
-> {
-  horizontal_axis_f64le: EncodedSectionBytes;
-  inline_axis_f64le: EncodedSectionBytes | null;
-  xline_axis_f64le: EncodedSectionBytes | null;
-  sample_axis_f32le: EncodedSectionBytes;
-  amplitudes_f32le: EncodedSectionBytes;
-  logical_dimensions?: {
-    traces: number;
-    samples: number;
-  };
-  window?: {
-    trace_start: number;
-    trace_end: number;
-    sample_start: number;
-    sample_end: number;
-    lod?: number;
+export type SeismicSectionData = SectionPayload;
+export type SeismicGatherData = GatherPayload;
+export interface SurveyMapSimpleArea {
+  id?: string;
+  name: string;
+  points: Array<{ x: number; y: number }>;
+  stroke?: string;
+  fill?: string;
+}
+
+export interface SurveyMapSimpleWell {
+  id?: string;
+  wellboreId?: string;
+  name: string;
+  position: { x: number; y: number };
+  trajectory?: Array<{ x: number; y: number }>;
+  color?: string;
+}
+
+export interface SurveyMapSimpleScalarField {
+  id?: string;
+  name: string;
+  columns: number;
+  rows: number;
+  values: ArrayLike<number>;
+  origin: { x: number; y: number };
+  step: { x: number; y: number };
+  unit?: string;
+  minValue?: number;
+  maxValue?: number;
+}
+
+export interface SurveyMapSimpleData {
+  id?: string;
+  name: string;
+  xLabel?: string;
+  yLabel?: string;
+  coordinateUnit?: string;
+  background?: string;
+  areas?: SurveyMapSimpleArea[];
+  wells?: SurveyMapSimpleWell[];
+  scalarField?: SurveyMapSimpleScalarField | null;
+}
+
+export interface RockPhysicsSimpleGroup {
+  id?: string;
+  name: string;
+  color?: string;
+  symbol?: import("@ophiolite/charts-data-models").RockPhysicsPointSymbol;
+  wellId?: string;
+  wellboreId?: string;
+}
+
+export interface RockPhysicsSimplePoint {
+  x: number;
+  y: number;
+  group?: string;
+  groupId?: string;
+  color?: string;
+  depthM?: number;
+  wellId?: string;
+  wellboreId?: string;
+}
+
+export interface RockPhysicsCrossplotSimpleAxis {
+  label?: string;
+  unit?: string;
+  min?: number;
+  max?: number;
+  direction?: import("@ophiolite/charts-data-models").RockPhysicsAxisDirection;
+}
+
+export interface RockPhysicsCrossplotSimpleData {
+  id?: string;
+  name?: string;
+  title?: string;
+  subtitle?: string;
+  templateId: import("@ophiolite/charts-data-models").RockPhysicsTemplateId;
+  groupLabel?: string;
+  points: RockPhysicsSimplePoint[];
+  groups?: RockPhysicsSimpleGroup[];
+  xAxis?: RockPhysicsCrossplotSimpleAxis;
+  yAxis?: RockPhysicsCrossplotSimpleAxis;
+}
+
+export interface WellCorrelationPanelSimpleCurve {
+  id?: string;
+  name: string;
+  values: ArrayLike<number>;
+  depths: ArrayLike<number>;
+  unit?: string;
+  color?: string;
+  lineWidth?: number;
+  width?: number;
+  axis?: Partial<TrackAxis>;
+  fill?: {
+    direction?: "left" | "right";
+    baseline?: number;
+    color: string;
+    gradientStops?: Array<{
+      offset: number;
+      color: string;
+    }>;
   };
 }
 
-export interface GatherViewLike extends Omit<
-  GatherView,
-  "horizontal_axis_f64le" | "sample_axis_f32le" | "amplitudes_f32le" | "gather_axis_kind"
-> {
-  gather_axis_kind: GatherAxisKind | "trace_ordinal";
-  horizontal_axis_f64le: EncodedGatherBytes;
-  sample_axis_f32le: EncodedGatherBytes;
-  amplitudes_f32le: EncodedGatherBytes;
+export interface WellCorrelationPanelSimpleTop {
+  id?: string;
+  name: string;
+  depth: number;
+  color?: string;
+  source?: "picked" | "imported";
 }
+
+export interface WellCorrelationPanelSimpleWell {
+  id?: string;
+  name: string;
+  depthDatum?: import("@ophiolite/charts-data-models").DepthDatum;
+  headerNote?: string;
+  panelDepthMapping?: Array<{
+    nativeDepth: number;
+    panelDepth: number;
+  }>;
+  curves?: WellCorrelationPanelSimpleCurve[];
+  tops?: WellCorrelationPanelSimpleTop[];
+}
+
+export interface WellCorrelationPanelSimpleData {
+  id?: string;
+  name: string;
+  depthDomain?: import("@ophiolite/charts-data-models").DepthDomain;
+  background?: string;
+  wells: WellCorrelationPanelSimpleWell[];
+}
+
+export type SurveyMapAdvancedData = SurveyMapModel;
+export type SurveyMapData = SurveyMapSimpleData | SurveyMapAdvancedData;
+export type RockPhysicsCrossplotAdvancedData = RockPhysicsCrossplotModel;
+export type RockPhysicsCrossplotData = RockPhysicsCrossplotSimpleData | RockPhysicsCrossplotAdvancedData;
+export type WellCorrelationPanelAdvancedData = WellCorrelationPanelModel | WellPanelModel;
+export type WellCorrelationPanelData = WellCorrelationPanelSimpleData | WellCorrelationPanelAdvancedData;
+export type SeismicViewport = InternalSeismicViewport;
+export type SeismicProbe = CursorProbe;
+export type OphioliteSectionView = OphioliteEncodedSectionView;
+export type OphioliteGatherView = OphioliteEncodedGatherView;
+
+/**
+ * @deprecated Use `OphioliteSectionView` from `@ophiolite/charts/types` or the
+ * neutral `SeismicSectionData` public model instead.
+ */
+export type SectionViewLike = OphioliteSectionView;
+
+/**
+ * @deprecated Use `OphioliteGatherView` from `@ophiolite/charts/types` or the
+ * neutral `SeismicGatherData` public model instead.
+ */
+export type GatherViewLike = OphioliteGatherView;
 
 export interface SeismicChartDisplayTransform {
   gain: number;
@@ -177,6 +291,38 @@ export interface SeismicChartInteractionEventPayload {
   event: InteractionEvent;
 }
 
+export interface SeismicChartInteractionChangePayload {
+  chartId: string;
+  viewId: string;
+  primaryMode: SeismicChartPrimaryMode;
+  crosshairEnabled: boolean;
+  tool: SeismicChartTool;
+}
+
+export interface SeismicSectionViewportChangePayload {
+  chartId: string;
+  viewId: string;
+  viewport: SeismicViewport | null;
+}
+
+export interface SeismicSectionProbeChangePayload {
+  chartId: string;
+  viewId: string;
+  probe: SeismicProbe | null;
+}
+
+export interface SeismicGatherViewportChangePayload {
+  chartId: string;
+  viewId: string;
+  viewport: SeismicViewport | null;
+}
+
+export interface SeismicGatherProbeChangePayload {
+  chartId: string;
+  viewId: string;
+  probe: SeismicProbe | null;
+}
+
 export interface SeismicSectionBrowseCurrent {
   axis: SeismicBrowseAxis;
   index: number;
@@ -188,14 +334,14 @@ export type SeismicSectionBrowseRequest =
       kind: "step";
       direction: -1 | 1;
       current: SeismicSectionBrowseCurrent;
-      viewport: SectionViewport | null;
+      viewport: SeismicViewport | null;
       preserveViewport: boolean;
     }
   | {
       kind: "switch-axis";
       axis: SeismicBrowseAxis;
       current: SeismicSectionBrowseCurrent;
-      viewport: SectionViewport | null;
+      viewport: SeismicViewport | null;
       preserveViewport: boolean;
     };
 
@@ -223,12 +369,12 @@ export interface SeismicSectionWholeSectionAnalysisSelection {
 
 export interface SeismicSectionViewportAnalysisSelection {
   kind: "viewport";
-  viewport: SectionViewport;
+  viewport: SeismicViewport;
 }
 
 export interface SeismicSectionRectangleAnalysisSelection {
   kind: "rectangle";
-  viewport: SectionViewport | null;
+  viewport: SeismicViewport | null;
   rectangle: SeismicSectionAnalysisRectangle;
 }
 
@@ -241,7 +387,7 @@ export interface SeismicSectionAnalysisRequest {
   kind: SeismicSectionAnalysisKind;
   selection: SeismicSectionAnalysisSelection;
   current: SeismicSectionBrowseCurrent;
-  viewport: SectionViewport | null;
+  viewport: SeismicViewport | null;
 }
 
 export interface SeismicSectionAnalysisConfig {
@@ -269,12 +415,12 @@ export interface SeismicChartOverlayProps {
 export interface SeismicSectionChartProps extends SeismicChartOverlayProps {
   chartId: string;
   viewId: string;
-  section: SectionViewLike | null;
-  secondarySection?: SectionViewLike | null;
+  section: SeismicSectionData | OphioliteSectionView | null;
+  secondarySection?: SeismicSectionData | OphioliteSectionView | null;
   sectionScalarOverlays?: readonly SectionScalarOverlay[];
   sectionHorizons?: readonly SectionHorizonOverlay[];
   sectionWellOverlays?: readonly SectionWellOverlay[];
-  viewport?: SectionViewport | null;
+  viewport?: SeismicViewport | null;
   displayTransform?: Partial<SeismicChartDisplayTransform>;
   interactions?: SeismicChartInteractionConfig;
   browse?: SeismicSectionBrowseConfig;
@@ -296,9 +442,9 @@ export interface SeismicSectionChartProps extends SeismicChartOverlayProps {
   onSplitPositionChange?: SeismicSectionSplitPositionChangeHandler;
 }
 
-export type SeismicSectionProbeChangeHandler = (payload: SectionProbeChanged) => void;
-export type SeismicSectionViewportChangeHandler = (payload: SectionViewportChanged) => void;
-export type SeismicSectionInteractionChangeHandler = (payload: SectionInteractionChanged) => void;
+export type SeismicSectionProbeChangeHandler = (payload: SeismicSectionProbeChangePayload) => void;
+export type SeismicSectionViewportChangeHandler = (payload: SeismicSectionViewportChangePayload) => void;
+export type SeismicSectionInteractionChangeHandler = (payload: SeismicChartInteractionChangePayload) => void;
 export type SeismicSectionInteractionStateChangeHandler = (payload: SeismicChartInteractionState) => void;
 export type SeismicSectionInteractionEventHandler = (payload: SeismicChartInteractionEventPayload) => void;
 export type SeismicSectionBrowseRequestHandler = (request: SeismicSectionBrowseRequest) => void;
@@ -311,8 +457,8 @@ export type SeismicSectionSplitPositionChangeHandler = (splitPosition: number) =
 export interface SeismicGatherChartProps extends SeismicChartOverlayProps {
   chartId: string;
   viewId: string;
-  gather: GatherViewLike | null;
-  viewport?: GatherViewport | null;
+  gather: SeismicGatherData | OphioliteGatherView | null;
+  viewport?: SeismicViewport | null;
   displayTransform?: Partial<SeismicChartDisplayTransform>;
   interactions?: SeismicChartInteractionConfig;
   crosshairEnabled?: boolean;
@@ -328,9 +474,9 @@ export interface SeismicGatherChartProps extends SeismicChartOverlayProps {
   onInteractionEvent?: SeismicGatherInteractionEventHandler;
 }
 
-export type SeismicGatherProbeChangeHandler = (payload: GatherProbeChanged) => void;
-export type SeismicGatherViewportChangeHandler = (payload: GatherViewportChanged) => void;
-export type SeismicGatherInteractionChangeHandler = (payload: GatherInteractionChanged) => void;
+export type SeismicGatherProbeChangeHandler = (payload: SeismicGatherProbeChangePayload) => void;
+export type SeismicGatherViewportChangeHandler = (payload: SeismicGatherViewportChangePayload) => void;
+export type SeismicGatherInteractionChangeHandler = (payload: SeismicChartInteractionChangePayload) => void;
 export type SeismicGatherInteractionStateChangeHandler = (payload: SeismicChartInteractionState) => void;
 export type SeismicGatherInteractionEventHandler = (payload: SeismicChartInteractionEventPayload) => void;
 
@@ -419,7 +565,7 @@ export interface WellCorrelationChartOverlayProps {
 
 export interface WellCorrelationPanelChartProps extends WellCorrelationChartOverlayProps {
   chartId: string;
-  panel: WellCorrelationPanelModel | WellPanelModel | null;
+  panel: WellCorrelationPanelData | null;
   viewport?: WellCorrelationViewport | null;
   interactions?: WellCorrelationChartInteractionConfig;
   loading?: boolean;
@@ -498,7 +644,7 @@ export interface SurveyMapChartOverlayProps {
 
 export interface SurveyMapChartProps extends SurveyMapChartOverlayProps {
   chartId: string;
-  map: SurveyMapModel | null;
+  map: SurveyMapData | null;
   viewport?: SurveyMapViewport | null;
   interactions?: SurveyMapChartInteractionConfig;
   loading?: boolean;
@@ -569,7 +715,7 @@ export interface RockPhysicsCrossplotChartOverlayProps {
 
 export interface RockPhysicsCrossplotChartProps extends RockPhysicsCrossplotChartOverlayProps {
   chartId: string;
-  model: RockPhysicsCrossplotModel | null;
+  model: RockPhysicsCrossplotData | null;
   viewport?: RockPhysicsCrossplotViewport | null;
   axisOverrides?: CartesianAxisOverrides;
   interactions?: RockPhysicsCrossplotChartInteractionConfig;

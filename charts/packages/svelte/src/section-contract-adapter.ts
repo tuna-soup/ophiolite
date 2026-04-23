@@ -9,13 +9,20 @@ import type {
   SectionViewportChanged
 } from "@ophiolite/contracts";
 import {
-  adaptOphioliteSectionViewToPayload,
   resolveLogicalSectionDimensions,
   type CursorProbe,
   type SectionPayload,
   type SectionViewport as InternalViewport
 } from "@ophiolite/charts-data-models";
-import type { SeismicChartDisplayTransform, SeismicChartPrimaryMode, SectionViewLike } from "./types";
+import {
+  adaptSeismicSectionInputToPayload
+} from "./seismic-public-model";
+import type {
+  OphioliteSectionView,
+  SeismicChartDisplayTransform,
+  SeismicChartPrimaryMode,
+  SeismicSectionData
+} from "./types";
 import {
   fromContractColorMap,
   fromContractPolarity,
@@ -23,16 +30,16 @@ import {
   toContractPrimaryMode
 } from "./seismic-contract-adapter-shared";
 
-const sectionPayloadCache = new WeakMap<SectionViewLike, SectionPayload>();
+const sectionPayloadCache = new WeakMap<object, SectionPayload>();
 
-export function decodeSectionView(contract: SectionViewLike): SectionPayload {
-  const cached = sectionPayloadCache.get(contract);
+export function decodeSectionView(section: SeismicSectionData | OphioliteSectionView): SectionPayload {
+  const cached = sectionPayloadCache.get(section);
   if (cached) {
     return cached;
   }
 
-  const payload: SectionPayload = adaptOphioliteSectionViewToPayload(contract);
-  sectionPayloadCache.set(contract, payload);
+  const payload = adaptSeismicSectionInputToPayload(section);
+  sectionPayloadCache.set(section, payload);
   return payload;
 }
 
@@ -98,7 +105,10 @@ export function interactionToContract(
   };
 }
 
-export function canReuseSectionViewport(previous: SectionViewLike | null, next: SectionViewLike | null): boolean {
+export function canReuseSectionViewport(
+  previous: SeismicSectionData | OphioliteSectionView | null,
+  next: SeismicSectionData | OphioliteSectionView | null
+): boolean {
   if (!previous || !next) {
     return false;
   }
@@ -108,8 +118,8 @@ export function canReuseSectionViewport(previous: SectionViewLike | null, next: 
 }
 
 export function shouldIgnoreExternalSectionViewport(
-  previous: SectionViewLike | null,
-  next: SectionViewLike | null,
+  previous: SeismicSectionData | OphioliteSectionView | null,
+  next: SeismicSectionData | OphioliteSectionView | null,
   viewportKey: string | null,
   ignoredViewportKey: string | null
 ): boolean {
@@ -123,16 +133,20 @@ export function shouldIgnoreExternalSectionViewport(
 }
 
 export function mergeDisplayTransform(
-  contract: SectionViewLike | null,
+  section: SeismicSectionData | OphioliteSectionView | null,
   override: Partial<SeismicChartDisplayTransform> | undefined
 ): SeismicChartDisplayTransform {
-  const defaults = contract?.display_defaults;
+  const defaults = section ? decodeSectionView(section).displayDefaults : undefined;
   return {
     gain: override?.gain ?? defaults?.gain ?? 1,
-    clipMin: override?.clipMin ?? defaults?.clip_min ?? undefined,
-    clipMax: override?.clipMax ?? defaults?.clip_max ?? undefined,
-    renderMode: override?.renderMode ?? fromContractRenderMode((defaults?.render_mode ?? "heatmap") as SectionRenderMode),
-    colormap: override?.colormap ?? fromContractColorMap((defaults?.colormap ?? "grayscale") as SectionColorMap),
+    clipMin: override?.clipMin ?? defaults?.clipMin ?? undefined,
+    clipMax: override?.clipMax ?? defaults?.clipMax ?? undefined,
+    renderMode: override?.renderMode ?? fromContractRenderMode((defaults?.renderMode ?? "heatmap") as SectionRenderMode),
+    colormap:
+      override?.colormap ??
+      (defaults?.colormap === "red-white-blue"
+        ? "red-white-blue"
+        : fromContractColorMap((defaults?.colormap ?? "grayscale") as SectionColorMap)),
     polarity: override?.polarity ?? fromContractPolarity((defaults?.polarity ?? "normal") as SectionPolarity)
   };
 }

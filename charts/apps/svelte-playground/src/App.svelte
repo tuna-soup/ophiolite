@@ -60,28 +60,15 @@
   } from "@ophiolite/charts-data-models";
   import { PLOT_MARGIN } from "@ophiolite/charts-renderer";
   import {
-    AVO_CHART_INTERACTION_CAPABILITIES,
-    AvoChiProjectionHistogramChart,
-    AvoInterceptGradientCrossplotChart,
-    AvoResponseChart,
     ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES,
     SEISMIC_CHART_INTERACTION_CAPABILITIES,
     SURVEY_MAP_CHART_INTERACTION_CAPABILITIES,
-    VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES,
     WELL_CORRELATION_CHART_INTERACTION_CAPABILITIES,
     RockPhysicsCrossplotChart,
     SeismicGatherChart,
     SeismicSectionChart,
     SurveyMapChart,
-    VolumeInterpretationChart,
     WellCorrelationPanelChart,
-    type AvoChartAction,
-    type AvoChiProjectionHistogramChartHandle,
-    type AvoChartInteractionConfig,
-    type AvoChartInteractionState,
-    type AvoInterceptGradientCrossplotChartHandle,
-    type AvoResponseChartHandle,
-    type AvoChartTool,
     type CartesianAxisContextRequestPayload,
     type RockPhysicsCrossplotChartHandle,
     type RockPhysicsCrossplotChartAction,
@@ -93,6 +80,9 @@
     type SeismicChartAction,
     type SeismicChartInteractionConfig,
     type SeismicChartInteractionState,
+    type SeismicGatherViewportChangePayload,
+    type SeismicProbe,
+    type SeismicSectionViewportChangePayload,
     type SeismicChartTool,
     type SeismicSectionBrowseConfig,
     type SeismicSectionBrowseRequest,
@@ -101,13 +91,6 @@
     type SurveyMapChartInteractionConfig,
     type SurveyMapChartInteractionState,
     type SurveyMapChartTool,
-    type VolumeInterpretationChartAction,
-    type VolumeInterpretationChartHandle,
-    type VolumeInterpretationDebugPickPayload,
-    type VolumeInterpretationChartInteractionConfig,
-    type VolumeInterpretationChartInteractionState,
-    type VolumeInterpretationChartRenderer,
-    type VolumeInterpretationChartTool,
     type WellCorrelationPanelChartHandle,
     type WellCorrelationChartAction,
     type WellCorrelationDebugSnapshot,
@@ -116,19 +99,38 @@
     type WellCorrelationChartTool
   } from "@ophiolite/charts";
   import {
+    AVO_CHART_INTERACTION_CAPABILITIES,
+    AvoChiProjectionHistogramChart,
+    AvoInterceptGradientCrossplotChart,
+    AvoResponseChart,
+    VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES,
+    VolumeInterpretationChart,
+    type AvoChartAction,
+    type AvoChiProjectionHistogramChartHandle,
+    type AvoChartInteractionConfig,
+    type AvoChartInteractionState,
+    type AvoInterceptGradientCrossplotChartHandle,
+    type AvoResponseChartHandle,
+    type AvoChartTool,
+    type VolumeInterpretationChartAction,
+    type VolumeInterpretationChartHandle,
+    type VolumeInterpretationDebugPickPayload,
+    type VolumeInterpretationChartInteractionConfig,
+    type VolumeInterpretationChartInteractionState,
+    type VolumeInterpretationChartRenderer,
+    type VolumeInterpretationChartTool
+  } from "@ophiolite/charts/preview";
+  import {
     ChartInteractionToolbar,
     type ToolbarIconName,
     type ChartToolbarActionItem,
     type ChartToolbarToolItem
   } from "@ophiolite/charts-toolbar";
   import type {
-    GatherProbeChanged,
     GatherView,
-    GatherViewportChanged,
     SectionColorMap,
     SectionRenderMode,
-    SectionView as OphioliteSectionView,
-    SectionViewportChanged
+    SectionView as OphioliteSectionView
   } from "@ophiolite/contracts";
   import { demoCssVars } from "./demo-presentation";
 
@@ -252,7 +254,7 @@
   let colormap = $state<"grayscale" | "red-white-blue">("grayscale");
   let resetToken = $state(0);
   let sectionBrowsePending = $state(false);
-  let lastViewport = $state.raw<SectionViewportChanged | null>(null);
+  let lastViewport = $state.raw<SeismicSectionViewportChangePayload | null>(null);
   let viewId = $derived(section ? `${section.axis}:${section.coordinate.index}` : "empty");
   let sectionBrowse = $derived.by((): SeismicSectionBrowseConfig | undefined => {
     if (!section || sectionKind === "arbitrary") {
@@ -295,7 +297,7 @@
   let gatherRenderMode = $state<"heatmap" | "wiggle">("wiggle");
   let gatherColormap = $state<"grayscale" | "red-white-blue">("red-white-blue");
   let gatherResetToken = $state(0);
-  let lastGatherViewport = $state.raw<GatherViewportChanged | null>(null);
+  let lastGatherViewport = $state.raw<SeismicGatherViewportChangePayload | null>(null);
   let gatherViewId = $derived(gather ? `${gather.gather_axis_kind}:${gather.label}` : "empty");
   let gatherInteractions = $state.raw<SeismicChartInteractionConfig>({
     tool: "pointer"
@@ -308,7 +310,7 @@
     tool: "pointer"
   });
   let lastGatherEvent = $state("none");
-  let lastGatherProbe = $state.raw<GatherProbeChanged["probe"]>(null);
+  let lastGatherProbe = $state.raw<SeismicProbe | null>(null);
   let activeGatherBaseRenderer = $state("unknown");
 
   let surveyMap = $state.raw<SurveyMapModel | null>(createMockSurveyMap());
@@ -1926,9 +1928,9 @@
       <section class="group">
         <h2>Seismic Viewport</h2>
         <div class="readout">
-          {#if lastViewport}
-            traces {lastViewport.viewport.trace_start}..{lastViewport.viewport.trace_end}
-            samples {lastViewport.viewport.sample_start}..{lastViewport.viewport.sample_end}
+          {#if lastViewport?.viewport}
+            traces {lastViewport.viewport.traceStart}..{lastViewport.viewport.traceEnd}
+            samples {lastViewport.viewport.sampleStart}..{lastViewport.viewport.sampleEnd}
           {:else}
             Viewport callbacks will appear after the chart initializes.
           {/if}
@@ -1989,9 +1991,9 @@
         <div class="readout">
           Probe readout is rendered inside the chart.
 
-          {#if lastGatherViewport}
-            traces {lastGatherViewport.viewport.trace_start}..{lastGatherViewport.viewport.trace_end}
-            samples {lastGatherViewport.viewport.sample_start}..{lastGatherViewport.viewport.sample_end}
+          {#if lastGatherViewport?.viewport}
+            traces {lastGatherViewport.viewport.traceStart}..{lastGatherViewport.viewport.traceEnd}
+            samples {lastGatherViewport.viewport.sampleStart}..{lastGatherViewport.viewport.sampleEnd}
           {/if}
         </div>
       </section>

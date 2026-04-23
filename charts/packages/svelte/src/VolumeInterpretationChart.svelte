@@ -1,11 +1,11 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
-  import { VolumeInterpretationController } from "@ophiolite/charts-domain";
+  import { VolumeInterpretationController } from "@ophiolite/charts-domain/preview";
   import {
     VolumeInterpretationPlaceholderRenderer,
     VolumeInterpretationVtkRenderer
-  } from "@ophiolite/charts-renderer";
+  } from "@ophiolite/charts-renderer/preview";
   import { resolveVolumeInterpretationStageSize, scaleVolumeInterpretationStageSize } from "./volume-interpretation-stage";
   import {
     VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES,

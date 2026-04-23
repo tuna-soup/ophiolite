@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   canReuseSectionViewport,
+  decodeSectionView,
   shouldIgnoreExternalSectionViewport
 } from "../src/section-contract-adapter";
-import type { SectionViewLike } from "../src/types";
+import { adaptOphioliteSectionViewToSeismicSectionData } from "../src/seismic-public-model";
+import type { OphioliteSectionView, SeismicSectionData } from "../src/types";
 
 function encodeFloat64(values: number[]): Uint8Array {
   return new Uint8Array(new Float64Array(values).buffer.slice(0));
@@ -14,7 +16,7 @@ function encodeFloat32(values: number[]): Uint8Array {
   return new Uint8Array(new Float32Array(values).buffer.slice(0));
 }
 
-function makeSection(traces: number, samples: number, axis: "inline" | "xline" = "inline"): SectionViewLike {
+function makeSection(traces: number, samples: number, axis: "inline" | "xline" = "inline"): OphioliteSectionView {
   return {
     dataset_id: "dataset-a",
     axis,
@@ -34,6 +36,27 @@ function makeSection(traces: number, samples: number, axis: "inline" | "xline" =
     units: null,
     metadata: null,
     display_defaults: null
+  };
+}
+
+function makePublicSection(): SeismicSectionData {
+  return {
+    axis: "inline",
+    coordinate: {
+      index: 0,
+      value: 100
+    },
+    horizontalAxis: Float64Array.from([0, 1, 2]),
+    sampleAxis: Float32Array.from([0, 4, 8, 12]),
+    amplitudes: Float32Array.from([
+      1, 2, 3, 4,
+      5, 6, 7, 8,
+      9, 10, 11, 12
+    ]),
+    dimensions: {
+      traces: 3,
+      samples: 4
+    }
   };
 }
 
@@ -63,4 +86,18 @@ test("shouldIgnoreExternalSectionViewport rejects stale viewport keys after inco
     shouldIgnoreExternalSectionViewport(previous, previous, viewportKey, null),
     false
   );
+});
+
+test("decodeSectionView accepts neutral public seismic data", () => {
+  const section = makePublicSection();
+  assert.equal(decodeSectionView(section), section);
+});
+
+test("ophiolite section adapter emits the neutral public seismic model", () => {
+  const adapted = adaptOphioliteSectionViewToSeismicSectionData(makeSection(3, 4));
+
+  assert.deepEqual(adapted.dimensions, { traces: 3, samples: 4 });
+  assert.equal(adapted.horizontalAxis.length, 3);
+  assert.equal(adapted.sampleAxis.length, 4);
+  assert.equal(adapted.amplitudes.length, 12);
 });

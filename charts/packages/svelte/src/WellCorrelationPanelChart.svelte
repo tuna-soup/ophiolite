@@ -12,6 +12,7 @@
   import type { WellCorrelationProbe, WellCorrelationViewport } from "@ophiolite/charts-data-models";
   import ProbePanel from "./ProbePanel.svelte";
   import WellCorrelationAxisOverlay from "./WellCorrelationAxisOverlay.svelte";
+  import { adaptWellCorrelationPanelInputToModel } from "./well-correlation-public-model";
   import {
     WELL_CORRELATION_CHART_INTERACTION_CAPABILITIES,
     type WellCorrelationDebugSnapshot,
@@ -70,7 +71,7 @@
   let currentPanel = $state.raw<NormalizedWellPanelModel | null>(null);
   let currentProbe = $state.raw<WellCorrelationProbe | null>(null);
   let currentViewport = $state.raw<WellCorrelationViewport | null>(null);
-  let lastPanel: WellCorrelationPanelChartProps["panel"] = null;
+  let lastPanel = $state.raw<import("@ophiolite/charts-data-models").WellCorrelationPanelModel | import("@ophiolite/charts-data-models").WellPanelModel | null>(null);
   let lastResetToken: string | number | null = null;
   let lastViewportKey = "";
   let lastProbeKey = "";
@@ -102,6 +103,7 @@
   };
   let callbacksEnabled = false;
   const probeInsetPx = resolveProbePanelPresentation("light", "standard").frame.insetPx;
+  let normalizedPanel = $derived(adaptWellCorrelationPanelInputToModel(panel));
 
   let safeScale = $derived(Number.isFinite(stageScale) && stageScale > 0 ? stageScale : 1);
   let stageHeightPx = $derived(Math.max(1, Math.round(DEFAULT_STAGE_HEIGHT * safeScale)));
@@ -408,19 +410,20 @@
 
   function syncController(activeController: WellCorrelationController): void {
     const controllerState = activeController.getState();
-    const panelChanged = panel !== lastPanel;
-    const shouldReset = resetToken !== lastResetToken || panelChanged || (panel !== null && controllerState.panel === null);
+    const panelChanged = normalizedPanel !== lastPanel;
+    const shouldReset =
+      resetToken !== lastResetToken || panelChanged || (normalizedPanel !== null && controllerState.panel === null);
     lastResetToken = resetToken;
 
     if (shouldReset) {
       untrack(() => {
-        activeController.setPanel(panel);
+        activeController.setPanel(normalizedPanel);
       });
-      lastPanel = panel;
+      lastPanel = normalizedPanel;
     }
 
     const nextViewport = viewport;
-    if (panel && nextViewport) {
+    if (normalizedPanel && nextViewport) {
       untrack(() => {
         activeController.setViewport(nextViewport);
       });
@@ -795,7 +798,7 @@
       <div class="ophiolite-charts-overlay">{emptyMessage}</div>
     {:else if errorMessage}
       <div class="ophiolite-charts-overlay ophiolite-charts-overlay-error">{errorMessage}</div>
-    {:else if !panel}
+    {:else if !normalizedPanel}
       <div class="ophiolite-charts-overlay">{emptyMessage}</div>
     {/if}
 

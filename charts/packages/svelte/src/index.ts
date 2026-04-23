@@ -1,17 +1,7 @@
-export { default as AvoChiProjectionHistogramChart } from "./AvoChiProjectionHistogramChart.svelte";
-export { default as AvoInterceptGradientCrossplotChart } from "./AvoInterceptGradientCrossplotChart.svelte";
-export { default as AvoResponseChart } from "./AvoResponseChart.svelte";
-export { default as AmplitudeDistributionChart } from "./AmplitudeDistributionChart.svelte";
-export { default as AmplitudeDistributionInspector } from "./AmplitudeDistributionInspector.svelte";
 export { default as SeismicGatherChart } from "./SeismicGatherChart.svelte";
 export { default as SeismicSectionChart } from "./SeismicSectionChart.svelte";
 export { default as RockPhysicsCrossplotChart } from "./RockPhysicsCrossplotChart.svelte";
-export { default as SpectrumInspector } from "./SpectrumInspector.svelte";
-export { default as VolumeInterpretationChart } from "./VolumeInterpretationChart.svelte";
-export { default as SpectrumChart } from "./SpectrumChart.svelte";
 export { default as SurveyMapChart } from "./SurveyMapChart.svelte";
-export { default as WaveletChart } from "./WaveletChart.svelte";
-export { default as WellTieChart } from "./WellTieChart.svelte";
 export { default as WellCorrelationPanelChart } from "./WellCorrelationPanelChart.svelte";
 export {
   CHART_DEFINITIONS,
@@ -35,10 +25,8 @@ export type {
   ChartRendererKernelId
 } from "@ophiolite/charts-data-models";
 export {
-  AVO_CHART_INTERACTION_CAPABILITIES,
   ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES,
   SEISMIC_CHART_INTERACTION_CAPABILITIES,
   SURVEY_MAP_CHART_INTERACTION_CAPABILITIES,
-  VOLUME_INTERPRETATION_CHART_INTERACTION_CAPABILITIES,
   WELL_CORRELATION_CHART_INTERACTION_CAPABILITIES
 } from "./types";

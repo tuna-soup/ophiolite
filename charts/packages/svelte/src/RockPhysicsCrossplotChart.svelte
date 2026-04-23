@@ -18,6 +18,7 @@
     RockPhysicsCrossplotViewport
   } from "@ophiolite/charts-data-models";
   import ProbePanel from "./ProbePanel.svelte";
+  import { adaptRockPhysicsCrossplotInputToModel } from "./rock-physics-public-model";
   import { resolveRockPhysicsStageSize, scaleRockPhysicsStageSize } from "./rock-physics-stage";
   import {
     ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES,
@@ -58,7 +59,7 @@
   let currentProbe = $state.raw<RockPhysicsCrossplotProbe | null>(null);
   let currentViewport = $state.raw<RockPhysicsCrossplotViewport | null>(null);
   let currentAxisOverrides = $state.raw<CartesianAxisOverrides>({});
-  let lastModel: RockPhysicsCrossplotChartProps["model"] = null;
+  let lastModel = $state.raw<import("@ophiolite/charts-data-models").RockPhysicsCrossplotModel | null>(null);
   let lastResetToken: string | number | null = null;
   let lastViewportKey = "";
   let lastProbeKey = "";
@@ -71,6 +72,7 @@
   let lastPanPoint = $state.raw<PanDragPoint | null>(null);
   let rendererErrorMessage = $state<string | null>(null);
   let hostElement = $state.raw<HTMLDivElement | null>(null);
+  let normalizedModel = $derived(adaptRockPhysicsCrossplotInputToModel(model));
   let requestedTool = $derived(resolveRequestedTool());
   let stageSize = $derived(
     scaleRockPhysicsStageSize(resolveRockPhysicsStageSize(), stageScale)
@@ -243,13 +245,13 @@
   }
 
   function syncController(activeController: RockPhysicsCrossplotController): void {
-    const modelChanged = model !== lastModel;
+    const modelChanged = normalizedModel !== lastModel;
     const shouldReset = resetToken !== lastResetToken || modelChanged;
     lastResetToken = resetToken;
 
     if (shouldReset) {
-      activeController.setModel(model);
-      lastModel = model;
+      activeController.setModel(normalizedModel);
+      lastModel = normalizedModel;
     }
 
     const requestedAxisOverrides = cloneCartesianAxisOverrides(axisOverrides);
@@ -267,10 +269,10 @@
       activeController.setAxisOverrides(requestedAxisOverrides);
     }
 
-    if (model && viewport) {
+    if (normalizedModel && viewport) {
       currentViewport = viewport;
       activeController.setViewport(viewport);
-    } else if (!model) {
+    } else if (!normalizedModel) {
       currentViewport = null;
     }
 
@@ -534,7 +536,7 @@
   }
 
   function currentYAxisDirection(): "normal" | "reversed" {
-    return model?.yAxis.direction ?? "normal";
+    return normalizedModel?.yAxis.direction ?? "normal";
   }
 
   function rockPhysicsProbeRows(): Array<{ label: string; value: string }> {
@@ -608,7 +610,7 @@
         <div class="ophiolite-charts-overlay">{emptyMessage}</div>
       {:else if errorMessage || rendererErrorMessage}
         <div class="ophiolite-charts-overlay ophiolite-charts-overlay-error">{errorMessage ?? rendererErrorMessage}</div>
-      {:else if !model}
+      {:else if !normalizedModel}
         <div class="ophiolite-charts-overlay">{emptyMessage}</div>
       {/if}
       {#if stageTopLeft}
@@ -646,7 +648,7 @@
           </div>
         </div>
       {/if}
-      {#if currentProbe && !loading && !errorMessage && model}
+      {#if currentProbe && !loading && !errorMessage && normalizedModel}
         <ProbePanel
           theme="light"
           size="standard"

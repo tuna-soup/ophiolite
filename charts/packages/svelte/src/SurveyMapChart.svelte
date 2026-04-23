@@ -11,6 +11,7 @@
   import { SurveyMapController } from "@ophiolite/charts-domain";
   import { SurveyMapCanvasRenderer } from "@ophiolite/charts-renderer";
   import ProbePanel from "./ProbePanel.svelte";
+  import { adaptSurveyMapInputToModel } from "./survey-map-public-model";
   import { resolveSurveyMapStageSize, scaleSurveyMapStageSize } from "./survey-map-stage";
   import {
     SURVEY_MAP_CHART_INTERACTION_CAPABILITIES,
@@ -48,7 +49,7 @@
   let controller: SurveyMapController | null = null;
   let currentProbe = $state.raw<import("@ophiolite/charts-data-models").SurveyMapProbe | null>(null);
   let currentViewport = $state.raw<import("@ophiolite/charts-data-models").SurveyMapViewport | null>(null);
-  let lastMap = $state.raw<SurveyMapChartProps["map"]>(null);
+  let lastMap = $state.raw<import("@ophiolite/charts-data-models").SurveyMapModel | null>(null);
   let lastResetToken: string | number | null = null;
   let lastViewportKey = "";
   let lastProbeKey = "";
@@ -61,9 +62,10 @@
   let hostElement = $state.raw<HTMLDivElement | null>(null);
   let lastRequestedTool = resolveRequestedTool();
   let effectiveTool = $state(lastRequestedTool);
+  let normalizedMap = $derived(adaptSurveyMapInputToModel(map));
   const surveyMapProbePanelInset = resolveProbePanelPresentation("light", "compact").frame.insetPx;
   let stageSize = $derived(
-    scaleSurveyMapStageSize(resolveSurveyMapStageSize(map), stageScale)
+    scaleSurveyMapStageSize(resolveSurveyMapStageSize(normalizedMap), stageScale)
   );
   let surveyMapProbePanelPosition = $derived.by(() => {
     if (!currentViewport) {
@@ -216,19 +218,19 @@
       effectiveTool = requestedTool;
     }
 
-    const mapChanged = map !== lastMap;
+    const mapChanged = normalizedMap !== lastMap;
     const shouldReset = resetToken !== lastResetToken || mapChanged;
     lastResetToken = resetToken;
 
     if (shouldReset) {
-      activeController.setMap(map);
-      lastMap = map;
+      activeController.setMap(normalizedMap);
+      lastMap = normalizedMap;
     }
 
-    if (map && viewport) {
+    if (normalizedMap && viewport) {
       currentViewport = viewport;
       activeController.setViewport(viewport);
-    } else if (!map) {
+    } else if (!normalizedMap) {
       currentViewport = null;
     }
 
@@ -438,7 +440,7 @@
   }
 </script>
 
-<div class="ophiolite-charts-survey-map-shell" style:background={map?.background ?? "#f4f2ee"}>
+<div class="ophiolite-charts-survey-map-shell" style:background={normalizedMap?.background ?? "#f4f2ee"}>
   <div class="ophiolite-charts-survey-map-lane">
     <div
       class="ophiolite-charts-survey-map-stage"
@@ -464,7 +466,7 @@
         <div class="ophiolite-charts-overlay">{emptyMessage}</div>
       {:else if errorMessage}
         <div class="ophiolite-charts-overlay ophiolite-charts-overlay-error">{errorMessage}</div>
-      {:else if !map}
+      {:else if !normalizedMap}
         <div class="ophiolite-charts-overlay">{emptyMessage}</div>
       {/if}
       {#if stageTopLeft}
@@ -502,7 +504,7 @@
           </div>
         </div>
       {/if}
-      {#if currentProbe && !loading && !errorMessage && map && surveyMapProbePanelPosition}
+      {#if currentProbe && !loading && !errorMessage && normalizedMap && surveyMapProbePanelPosition}
         <ProbePanel
           theme="light"
           size="compact"

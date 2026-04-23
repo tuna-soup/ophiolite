@@ -1,11 +1,18 @@
 import type { GatherInteractionChanged, GatherProbeChanged, GatherViewport, GatherViewportChanged } from "@ophiolite/contracts";
 import {
-  adaptOphioliteGatherViewToPayload,
   type CursorProbe,
   type GatherPayload,
   type SectionViewport as InternalViewport
 } from "@ophiolite/charts-data-models";
-import type { SeismicChartDisplayTransform, SeismicChartPrimaryMode, GatherViewLike } from "./types";
+import {
+  adaptSeismicGatherInputToPayload
+} from "./seismic-public-model";
+import type {
+  OphioliteGatherView,
+  SeismicChartDisplayTransform,
+  SeismicChartPrimaryMode,
+  SeismicGatherData
+} from "./types";
 import {
   fromContractColorMap,
   fromContractPolarity,
@@ -13,16 +20,16 @@ import {
   toContractPrimaryMode
 } from "./seismic-contract-adapter-shared";
 
-const gatherPayloadCache = new WeakMap<GatherViewLike, GatherPayload>();
+const gatherPayloadCache = new WeakMap<object, GatherPayload>();
 
-export function decodeGatherView(contract: GatherViewLike): GatherPayload {
-  const cached = gatherPayloadCache.get(contract);
+export function decodeGatherView(gather: SeismicGatherData | OphioliteGatherView): GatherPayload {
+  const cached = gatherPayloadCache.get(gather);
   if (cached) {
     return cached;
   }
 
-  const payload: GatherPayload = adaptOphioliteGatherViewToPayload(contract);
-  gatherPayloadCache.set(contract, payload);
+  const payload = adaptSeismicGatherInputToPayload(gather);
+  gatherPayloadCache.set(gather, payload);
   return payload;
 }
 
@@ -86,28 +93,37 @@ export function gatherInteractionToContract(
   };
 }
 
-export function isCompatibleGatherIdentity(previous: GatherViewLike | null, next: GatherViewLike | null): boolean {
+export function isCompatibleGatherIdentity(
+  previous: SeismicGatherData | OphioliteGatherView | null,
+  next: SeismicGatherData | OphioliteGatherView | null
+): boolean {
   if (!previous || !next) {
     return false;
   }
+  const previousPayload = decodeGatherView(previous);
+  const nextPayload = decodeGatherView(next);
   return (
-    previous.gather_axis_kind === next.gather_axis_kind &&
-    previous.traces === next.traces &&
-    previous.samples === next.samples
+    previousPayload.gatherAxisKind === nextPayload.gatherAxisKind &&
+    previousPayload.dimensions.traces === nextPayload.dimensions.traces &&
+    previousPayload.dimensions.samples === nextPayload.dimensions.samples
   );
 }
 
 export function mergeGatherDisplayTransform(
-  contract: GatherViewLike | null,
+  gather: SeismicGatherData | OphioliteGatherView | null,
   override: Partial<SeismicChartDisplayTransform> | undefined
 ): SeismicChartDisplayTransform {
-  const defaults = contract?.display_defaults;
+  const defaults = gather ? decodeGatherView(gather).displayDefaults : undefined;
   return {
     gain: override?.gain ?? defaults?.gain ?? 1,
-    clipMin: override?.clipMin ?? defaults?.clip_min ?? undefined,
-    clipMax: override?.clipMax ?? defaults?.clip_max ?? undefined,
-    renderMode: override?.renderMode ?? fromContractRenderMode(defaults?.render_mode ?? "heatmap"),
-    colormap: override?.colormap ?? fromContractColorMap(defaults?.colormap ?? "grayscale"),
+    clipMin: override?.clipMin ?? defaults?.clipMin ?? undefined,
+    clipMax: override?.clipMax ?? defaults?.clipMax ?? undefined,
+    renderMode: override?.renderMode ?? fromContractRenderMode(defaults?.renderMode ?? "heatmap"),
+    colormap:
+      override?.colormap ??
+      (defaults?.colormap === "red-white-blue"
+        ? "red-white-blue"
+        : fromContractColorMap(defaults?.colormap ?? "grayscale")),
     polarity: override?.polarity ?? fromContractPolarity(defaults?.polarity ?? "normal")
   };
 }

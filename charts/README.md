@@ -30,6 +30,7 @@ Current chart families:
 
 - `@ophiolite/charts-demo`
 - `@ophiolite/charts-playground`
+- `@ophiolite/charts-docs`
 - `@ophiolite/charts-benchmark`
 
 ### First-Party Consumer
@@ -66,8 +67,34 @@ bun run dev:benchmark
 
 ## Embedding
 
-`@ophiolite/charts` exports the main Svelte wrapper surface, including `SeismicSectionChart`, `SeismicGatherChart`, `SurveyMapChart`, `WellCorrelationPanelChart`, `RockPhysicsCrossplotChart`, `AvoResponseChart`, `AvoInterceptGradientCrossplotChart`, and `AvoChiProjectionHistogramChart`.
+`@ophiolite/charts` exports the stable launch chart surface:
 
-Use `@ophiolite/charts/contracts` when you want the wrapper-layer adapters that translate canonical Ophiolite DTOs into chart payloads without pulling app-specific transport code into the SDK.
+- `SeismicSectionChart`
+- `SeismicGatherChart`
+- `SurveyMapChart`
+- `WellCorrelationPanelChart`
+- `RockPhysicsCrossplotChart`
+
+The public direction is:
+
+- use neutral chart-family data models from `@ophiolite/charts`
+- use `@ophiolite/charts/adapters/ophiolite` only when adapting Ophiolite DTOs into those neutral models
+
+Preview-only families stay off the root path:
+
+- `@ophiolite/charts/preview` for AVO and volume-interpretation wrappers
+- `@ophiolite/charts/extras` for adjacent inspectors and analysis widgets
+
+For the seismic launch surfaces, the public wrapper props now accept neutral public models such as `SeismicSectionData` and `SeismicGatherData`, while `@ophiolite/charts/adapters/ophiolite` exposes adapter functions such as:
+
+- `adaptOphioliteSectionViewToSeismicSectionData`
+- `adaptOphioliteGatherViewToSeismicGatherData`
+- `adaptOphioliteSurveyMapToChart`
+- `adaptOphioliteRockPhysicsCrossplotToChart`
+- `adaptOphioliteWellPanelToChart`
+
+See [docs/seismic-section-simple-example.md](./docs/seismic-section-simple-example.md) for a minimal public-style seismic section example.
+
+The public docs app is `apps/public-docs`. The Svelte playground remains an internal lab and integration surface rather than the default public learning path.
 
 The public surface also re-exports `CHART_FAMILIES`, `CHART_DEFINITIONS`, and lookup helpers from `@ophiolite/charts-data-models`. That registry records the canonical source boundary, renderer kernel, allowed asset families, and validation entry points for each chart family so embedders can keep the same constraints the SDK enforces internally.

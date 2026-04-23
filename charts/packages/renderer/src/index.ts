@@ -9,5 +9,3 @@ export * from "./survey-map/SurveyMapCanvasRenderer";
 export * from "./well-correlation/adapter";
 export * from "./well-correlation/WellCorrelationCanvasRenderer";
 export * from "./point-cloud/spike/PointCloudSpikeRenderer";
-export * from "./volume-interpretation/VolumeInterpretationPlaceholderRenderer";
-export * from "./volume-interpretation/VolumeInterpretationVtkRenderer";

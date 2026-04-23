@@ -4,7 +4,7 @@
   import {
     AvoInterceptGradientCrossplotChart,
     type AvoInterceptGradientCrossplotChartHandle
-  } from "@ophiolite/charts";
+  } from "@ophiolite/charts/preview";
   import {
     adaptOphioliteAvoCrossplotToChart,
     validateOphioliteAvoCrossplotSource,

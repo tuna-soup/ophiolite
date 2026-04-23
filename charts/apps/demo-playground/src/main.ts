@@ -13,15 +13,15 @@ import {
 import {
   RockPhysicsCrossplotController,
   SeismicViewerController,
-  VolumeInterpretationController,
   WellCorrelationController
 } from "@ophiolite/charts-domain";
+import { VolumeInterpretationController } from "@ophiolite/charts-domain/preview";
 import {
   MockCanvasRenderer,
   PointCloudSpikeRenderer,
-  VolumeInterpretationVtkRenderer,
   WellCorrelationCanvasRenderer
 } from "@ophiolite/charts-renderer";
+import { VolumeInterpretationVtkRenderer } from "@ophiolite/charts-renderer/preview";
 import "./styles.css";
 
 const app = document.querySelector<HTMLDivElement>("#app");

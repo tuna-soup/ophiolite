@@ -8,7 +8,7 @@
   import PipelineOperatorEditor from "./PipelineOperatorEditor.svelte";
   import PipelineSequenceList from "./PipelineSequenceList.svelte";
   import PipelineSessionList from "./PipelineSessionList.svelte";
-  import { SpectrumInspector } from "@ophiolite/charts";
+  import { SpectrumInspector } from "@ophiolite/charts/extras";
   import type { SpectrumResponseLike } from "@ophiolite/charts";
   import { adaptAmplitudeSpectrum } from "../spectrum-adapter";
   import { getProcessingModelContext } from "../processing-model.svelte";
@@ -171,6 +171,9 @@
               selectedOperation={processingModel.selectedOperation}
               selectedOperatorCatalogItem={processingModel.selectedOperatorCatalogItem}
               activeJob={processingModel.activeJob}
+              activeDebugPlan={processingModel.activeDebugPlan}
+              activeRuntimeState={processingModel.activeRuntimeState}
+              activeRuntimeEvents={processingModel.activeRuntimeEvents}
               processingError={processingModel.error}
               primaryVolumeLabel={processingModel.activePrimaryVolumeLabel}
               sourceSubvolumeBounds={processingModel.sourceSubvolumeBounds}
@@ -199,6 +202,9 @@
             <NeighborhoodOperatorEditor
               selectedOperation={processingModel.selectedNeighborhoodOperation}
               activeJob={processingModel.activeJob}
+              activeDebugPlan={processingModel.activeDebugPlan}
+              activeRuntimeState={processingModel.activeRuntimeState}
+              activeRuntimeEvents={processingModel.activeRuntimeEvents}
               processingError={processingModel.error}
               onSetWindow={processingModel.setSelectedNeighborhoodWindow}
               onSetStatistic={processingModel.setSelectedNeighborhoodStatistic}
@@ -232,6 +238,9 @@
             selectedOperation={processingModel.selectedOperation}
             selectedOperatorCatalogItem={processingModel.selectedOperatorCatalogItem}
             activeJob={processingModel.activeJob}
+            activeDebugPlan={processingModel.activeDebugPlan}
+            activeRuntimeState={processingModel.activeRuntimeState}
+            activeRuntimeEvents={processingModel.activeRuntimeEvents}
             processingError={processingModel.error}
             primaryVolumeLabel={processingModel.activePrimaryVolumeLabel}
             sourceSubvolumeBounds={processingModel.sourceSubvolumeBounds}

@@ -12,7 +12,16 @@ use ophiolite_seismic::{
 use serde::{Deserialize, Serialize};
 
 use crate::error::SeismicStoreError;
-use crate::gather_processing::{GatherPlane, apply_gather_processing_pipeline};
+use crate::gather_processing::{
+    GatherPlane, apply_gather_processing_pipeline, apply_trace_local_pipeline_to_gather,
+};
+use crate::identity::{
+    CURRENT_RUNTIME_SEMANTICS_VERSION, CURRENT_STORE_WRITER_SEMANTICS_VERSION,
+    canonical_artifact_identity, combine_canonical_identity_status,
+    operator_set_identity_for_pipeline, pipeline_external_identity_status,
+    pipeline_semantic_identity, planner_profile_identity_for_pipeline,
+    source_semantic_identity_with_status_from_store_path,
+};
 use crate::metadata::{
     DatasetKind, ProcessingLineage, VolumeMetadata, generate_store_id, normalize_source_identity,
     normalize_volume_axes, validate_vertical_axis,
@@ -349,17 +358,27 @@ fn processing_lineage_summary(
     lineage: Option<&ProcessingLineage>,
 ) -> Option<ProcessingLineageSummary> {
     let lineage = lineage?;
-    let (pipeline_name, pipeline_revision) = match &lineage.pipeline {
-        ProcessingPipelineSpec::TraceLocal { pipeline } => {
-            (pipeline.name.clone(), pipeline.revision)
-        }
-        ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
-            (pipeline.name.clone(), pipeline.revision)
-        }
-        ProcessingPipelineSpec::Subvolume { pipeline } => {
-            (pipeline.name.clone(), pipeline.revision)
-        }
-        ProcessingPipelineSpec::Gather { pipeline } => (pipeline.name.clone(), pipeline.revision),
+    let (pipeline_name, pipeline_schema_version, pipeline_revision) = match &lineage.pipeline {
+        ProcessingPipelineSpec::TraceLocal { pipeline } => (
+            pipeline.name.clone(),
+            pipeline.schema_version,
+            pipeline.revision,
+        ),
+        ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => (
+            pipeline.name.clone(),
+            pipeline.schema_version,
+            pipeline.revision,
+        ),
+        ProcessingPipelineSpec::Subvolume { pipeline } => (
+            pipeline.name.clone(),
+            pipeline.schema_version,
+            pipeline.revision,
+        ),
+        ProcessingPipelineSpec::Gather { pipeline } => (
+            pipeline.name.clone(),
+            pipeline.schema_version,
+            pipeline.revision,
+        ),
     };
     Some(ProcessingLineageSummary {
         parent_store_path: lineage.parent_store.to_string_lossy().into_owned(),
@@ -367,7 +386,13 @@ fn processing_lineage_summary(
         artifact_role: lineage.artifact_role,
         pipeline_family: lineage.pipeline.family(),
         pipeline_name: pipeline_name.filter(|value| !value.trim().is_empty()),
+        pipeline_schema_version,
         pipeline_revision,
+        pipeline_content_digest: lineage
+            .pipeline_identity
+            .as_ref()
+            .map(|identity| identity.content_digest.clone())
+            .unwrap_or_default(),
     })
 }
 
@@ -477,7 +502,7 @@ pub fn materialize_gather_processing_store_with_progress<F>(
     input_root: impl AsRef<Path>,
     output_root: impl AsRef<Path>,
     pipeline: &ophiolite_seismic::GatherProcessingPipeline,
-    mut on_progress: F,
+    on_progress: F,
 ) -> Result<PrestackStoreHandle, SeismicStoreError>
 where
     F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
@@ -488,8 +513,83 @@ where
         input.manifest.layout,
     )?;
 
+    materialize_gather_processing_store_from_open_handle_with_progress(
+        &input,
+        output_root,
+        &ProcessingPipelineSpec::Gather {
+            pipeline: pipeline.clone(),
+        },
+        |gather| apply_gather_processing_pipeline(gather, pipeline),
+        on_progress,
+    )
+}
+
+pub(crate) fn materialize_trace_local_gather_processing_store_with_progress<F>(
+    input_root: impl AsRef<Path>,
+    output_root: impl AsRef<Path>,
+    pipeline: &ophiolite_seismic::TraceLocalProcessingPipeline,
+    on_progress: F,
+) -> Result<PrestackStoreHandle, SeismicStoreError>
+where
+    F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+{
+    let input = open_prestack_store(input_root)?;
+    crate::compute::validate_processing_pipeline_for_layout(pipeline, input.manifest.layout)?;
+
+    materialize_gather_processing_store_from_open_handle_with_progress(
+        &input,
+        output_root,
+        &ProcessingPipelineSpec::TraceLocal {
+            pipeline: pipeline.clone(),
+        },
+        |gather| apply_trace_local_pipeline_to_gather(gather, pipeline),
+        on_progress,
+    )
+}
+
+pub(crate) fn materialize_gather_processing_store_without_prefix_with_progress<F>(
+    input_root: impl AsRef<Path>,
+    output_root: impl AsRef<Path>,
+    pipeline: &ophiolite_seismic::GatherProcessingPipeline,
+    on_progress: F,
+) -> Result<PrestackStoreHandle, SeismicStoreError>
+where
+    F: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+{
+    let input = open_prestack_store(input_root)?;
+    let without_prefix = ophiolite_seismic::GatherProcessingPipeline {
+        trace_local_pipeline: None,
+        ..pipeline.clone()
+    };
+    crate::gather_processing::validate_gather_processing_pipeline_for_layout(
+        &without_prefix,
+        input.manifest.layout,
+    )?;
+
+    materialize_gather_processing_store_from_open_handle_with_progress(
+        &input,
+        output_root,
+        &ProcessingPipelineSpec::Gather {
+            pipeline: without_prefix.clone(),
+        },
+        |gather| apply_gather_processing_pipeline(gather, &without_prefix),
+        on_progress,
+    )
+}
+
+fn materialize_gather_processing_store_from_open_handle_with_progress<FApply, FProgress>(
+    input: &PrestackStoreHandle,
+    output_root: impl AsRef<Path>,
+    lineage_pipeline: &ProcessingPipelineSpec,
+    mut apply: FApply,
+    mut on_progress: FProgress,
+) -> Result<PrestackStoreHandle, SeismicStoreError>
+where
+    FApply: FnMut(&mut GatherPlane) -> Result<(), SeismicStoreError>,
+    FProgress: FnMut(usize, usize) -> Result<(), SeismicStoreError>,
+{
     let reader = TbgathReader::open(&input.root)?;
-    let derived_manifest = derived_manifest(&input, pipeline);
+    let derived_manifest = derived_manifest(input, lineage_pipeline);
     let writer = TbgathWriter::create(&output_root, derived_manifest)?;
     let total = input.manifest.total_gathers();
     let mut completed = 0usize;
@@ -497,7 +597,7 @@ where
     for iline_index in 0..input.manifest.volume.shape[0] {
         for xline_index in 0..input.manifest.volume.shape[1] {
             let mut gather = gather_plane_from_reader(&input, &reader, iline_index, xline_index)?;
-            apply_gather_processing_pipeline(&mut gather, pipeline)?;
+            apply(&mut gather)?;
             writer.write_gather(iline_index, xline_index, &gather.amplitudes)?;
             completed += 1;
             on_progress(completed, total)?;
@@ -510,8 +610,44 @@ where
 
 fn derived_manifest(
     input: &PrestackStoreHandle,
-    pipeline: &ophiolite_seismic::GatherProcessingPipeline,
+    pipeline: &ProcessingPipelineSpec,
 ) -> TbgathManifest {
+    let pipeline_identity = pipeline_semantic_identity(pipeline)
+        .expect("pipeline identity should be derivable for prestack manifest");
+    let operator_set_identity = operator_set_identity_for_pipeline(pipeline)
+        .expect("operator-set identity should be derivable for prestack manifest");
+    let planner_profile_identity = planner_profile_identity_for_pipeline(pipeline)
+        .expect("planner-profile identity should be derivable for prestack manifest");
+    let loaded_source_identity = source_semantic_identity_with_status_from_store_path(
+        &input.root.display().to_string(),
+        input.manifest.layout,
+    )
+    .expect("source identity should be derivable for prestack manifest");
+    let source_status = combine_canonical_identity_status(
+        loaded_source_identity.status,
+        pipeline_external_identity_status(pipeline),
+    );
+    let source_identity = loaded_source_identity.identity;
+    let logical_domain = crate::LogicalDomain::Volume {
+        volume: crate::VolumeDomain {
+            shape: input.manifest.volume.shape,
+        },
+    };
+    let canonical_artifact = canonical_artifact_identity(
+        &source_identity,
+        source_status,
+        &pipeline_identity,
+        &operator_set_identity,
+        &planner_profile_identity,
+        input.manifest.layout,
+        input.manifest.volume.shape,
+        input.manifest.volume.shape,
+        ProcessingArtifactRole::FinalOutput,
+        crate::ArtifactBoundaryReason::FinalOutput,
+        crate::MaterializationClass::PublishedOutput,
+        logical_domain.clone(),
+    )
+    .expect("canonical artifact identity should be derivable for prestack manifest");
     TbgathManifest::new(
         VolumeMetadata {
             kind: DatasetKind::Derived,
@@ -528,17 +664,37 @@ fn derived_manifest(
             spatial: input.manifest.volume.spatial.clone(),
             created_by: "ophiolite-seismic-runtime-0.1.0".to_string(),
             processing_lineage: Some(ProcessingLineage {
+                schema_version: 2,
                 parent_store: input.root.clone(),
                 parent_store_id: input.manifest.volume.store_id.clone(),
                 artifact_role: ProcessingArtifactRole::FinalOutput,
-                pipeline: ProcessingPipelineSpec::Gather {
-                    pipeline: pipeline.clone(),
-                },
+                pipeline: pipeline.clone(),
+                pipeline_identity: Some(pipeline_identity.clone()),
+                operator_set_identity: Some(operator_set_identity),
+                planner_profile_identity: Some(planner_profile_identity),
+                source_identity: Some(source_identity),
+                runtime_semantics_version: CURRENT_RUNTIME_SEMANTICS_VERSION.to_string(),
+                store_writer_semantics_version: CURRENT_STORE_WRITER_SEMANTICS_VERSION.to_string(),
                 runtime_version: "ophiolite-seismic-runtime-0.1.0".to_string(),
                 created_at_unix_s: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
+                artifact_key: canonical_artifact
+                    .as_ref()
+                    .map(|identity| identity.artifact_key.clone()),
+                input_artifact_keys: Vec::new(),
+                produced_by_stage_id: None,
+                boundary_reason: Some(crate::ArtifactBoundaryReason::FinalOutput),
+                logical_domain: canonical_artifact
+                    .as_ref()
+                    .map(|identity| identity.logical_domain.clone()),
+                chunk_grid_spec: canonical_artifact
+                    .as_ref()
+                    .map(|identity| identity.chunk_grid_spec.clone()),
+                geometry_fingerprints: canonical_artifact
+                    .as_ref()
+                    .map(|identity| identity.geometry_fingerprints.clone()),
             }),
         },
         input.manifest.layout,

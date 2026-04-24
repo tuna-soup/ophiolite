@@ -10,8 +10,9 @@ use seis_runtime::{
     NeighborhoodDipOutput, PostStackNeighborhoodProcessingOperation,
     PostStackNeighborhoodProcessingPipeline, PostStackNeighborhoodWindow,
     ProcessingBatchItemRequest, ProcessingBatchStatus, ProcessingExecutionMode,
-    ProcessingJobArtifact, ProcessingJobStatus, ProcessingPipelineSpec, ProcessingPreset,
-    TraceLocalProcessingOperation, TraceLocalProcessingPipeline, TraceLocalProcessingStep,
+    ProcessingJobArtifact, ProcessingJobRuntimeState, ProcessingJobStatus, ProcessingPipelineSpec,
+    ProcessingPreset, ProcessingRuntimeEvent, TraceLocalProcessingOperation,
+    TraceLocalProcessingPipeline, TraceLocalProcessingStep,
 };
 use serde::{Deserialize, Serialize};
 
@@ -87,6 +88,25 @@ impl ProcessingState {
 
     pub fn job_status(&self, job_id: &str) -> Result<ProcessingJobStatus, String> {
         self.execution.job_status(job_id)
+    }
+
+    pub fn job_debug_plan(
+        &self,
+        job_id: &str,
+    ) -> Result<Option<seis_runtime::InspectableProcessingPlan>, String> {
+        self.execution.job_debug_plan(job_id)
+    }
+
+    pub fn job_runtime_state(&self, job_id: &str) -> Result<ProcessingJobRuntimeState, String> {
+        self.execution.job_runtime_state(job_id)
+    }
+
+    pub fn job_runtime_events(
+        &self,
+        job_id: &str,
+        after_seq: Option<u64>,
+    ) -> Result<Vec<ProcessingRuntimeEvent>, String> {
+        self.execution.job_runtime_events(job_id, after_seq)
     }
 
     pub fn cancel_job(&self, job_id: &str) -> Result<ProcessingJobStatus, String> {

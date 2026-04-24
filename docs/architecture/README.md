@@ -37,6 +37,7 @@ Current properties:
 - `PackageCommandService` is the app-boundary transport layer above the shared backend state
 - `CurveTable` is the app-facing in-memory table abstraction
 - DTOs are the intended frontend/backend transfer boundary
+- seismic processing now also has canonical semantic/version envelopes, canonical artifact identity, canonical lineage/package compatibility checks, and a shared inspectable runtime/debug contract
 - package storage uses `metadata.json + curves.parquet` for log assets and `metadata.json + data.parquet + asset_manifest.json` for typed non-log assets
 - packages remain single-asset storage units; the project catalog organizes them into well-domain relationships
 - `metadata.json` now groups package identity, document metadata, storage descriptors, raw preserved sections, and diagnostics explicitly
@@ -51,9 +52,12 @@ Current properties:
 - the shared seismic execution planner and bounded local job-service direction are defined in `ADR-0031-shared-seismic-execution-planner-and-bounded-local-job-service.md`
 - the processing authority, thin-client migration, and contract-distribution consolidation direction are defined in `ADR-0032-processing-authority-and-thin-client-migration.md`
 - the public SDK core versus adapter/application boundary is defined in `ADR-0033-public-sdk-core-and-adapter-boundaries.md`
+- canonical processing identity, debug, and compatibility semantics are defined in `ADR-0034-canonical-processing-identity-debug-and-compatibility-surface.md`
 - the current-to-target authority breakdown for processing concerns is tracked in `processing-authority-matrix.md`
+- the active implementation plan for canonical processing integration hardening is tracked in `processing-canonical-integration-plan-2026-04.md`
 - the current public-core candidate, blocked, and internal package split is tracked in `public-sdk-package-matrix.md`
 - the current public-core versioning and support expectations are tracked in `public-sdk-support-policy.md`
+- the explicit readable/reusable/rewritable/reject policy for processing lineage and caches is tracked in `processing-lineage-cache-compatibility-policy.md`
 - the narrow public-core facade crate is `crates/ophiolite-sdk`, while the root `ophiolite` crate remains an internal compatibility facade
 
 ## Layered Architecture
@@ -340,6 +344,10 @@ Only after those are stable should the project tighten runtime/package behavior 
 - `ADR-0029-unified-import-manager-and-provider-registry.md`
 - `ADR-0030-unified-operator-catalog-and-seismic-first-class-registry.md`
 - `ADR-0031-shared-seismic-execution-planner-and-bounded-local-job-service.md`
+- `ADR-0032-processing-authority-and-thin-client-migration.md`
+- `ADR-0033-public-sdk-core-and-adapter-boundaries.md`
+- `ADR-0034-canonical-processing-identity-debug-and-compatibility-surface.md`
+- `processing-canonical-integration-plan-2026-04.md`
 
 ## Related Docs
 

@@ -1,5 +1,9 @@
 use std::path::PathBuf;
 
+use ophiolite_seismic::contracts::{
+    OperatorSetIdentity, PipelineSemanticIdentity, PlannerProfileIdentity, SourceSemanticIdentity,
+    default_processing_lineage_schema_version,
+};
 use ophiolite_seismic::{
     CoordinateReferenceBinding, ProcessingArtifactRole, ProcessingPipelineSpec,
     SampleDataConversionKind, SampleDataFidelity, SampleValuePreservation, SurveySpatialDescriptor,
@@ -8,6 +12,10 @@ use ophiolite_seismic::{
 use ophiolite_seismic_io::SampleFormat;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use crate::execution::{
+    ArtifactBoundaryReason, ArtifactKey, ChunkGridSpec, GeometryFingerprints, LogicalDomain,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HeaderFieldSpec {
@@ -150,12 +158,42 @@ impl Default for StorageLayout {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessingLineage {
+    #[serde(default = "default_processing_lineage_schema_version")]
+    pub schema_version: u32,
     pub parent_store: PathBuf,
+    #[serde(default)]
     pub parent_store_id: String,
+    #[serde(default = "default_processing_artifact_role")]
     pub artifact_role: ProcessingArtifactRole,
     pub pipeline: ProcessingPipelineSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline_identity: Option<PipelineSemanticIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_set_identity: Option<OperatorSetIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planner_profile_identity: Option<PlannerProfileIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_identity: Option<SourceSemanticIdentity>,
+    #[serde(default)]
+    pub runtime_semantics_version: String,
+    #[serde(default)]
+    pub store_writer_semantics_version: String,
     pub runtime_version: String,
     pub created_at_unix_s: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_key: Option<ArtifactKey>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_artifact_keys: Vec<ArtifactKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub produced_by_stage_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_reason: Option<ArtifactBoundaryReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logical_domain: Option<LogicalDomain>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_grid_spec: Option<ChunkGridSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_fingerprints: Option<GeometryFingerprints>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,6 +264,10 @@ impl From<&StoreManifest> for VolumeMetadata {
 
 pub fn generate_store_id() -> String {
     Uuid::new_v4().to_string()
+}
+
+fn default_processing_artifact_role() -> ProcessingArtifactRole {
+    ProcessingArtifactRole::FinalOutput
 }
 
 pub fn segy_sample_data_fidelity(sample_format_code: u16) -> SampleDataFidelity {

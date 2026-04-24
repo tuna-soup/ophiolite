@@ -61,6 +61,81 @@ macro_rules! public_contracts {
                 "ProcessingJobExecutionSummary" => seis_contracts_core::processing::ProcessingJobExecutionSummary,
                 "ProcessingJobPlanSummary" => seis_contracts_core::processing::ProcessingJobPlanSummary,
                 "ProcessingJobStatus" => seis_contracts_core::ProcessingJobStatus,
+                "ProcessingJobQueueClass" => seis_contracts_core::ProcessingJobQueueClass,
+                "ProcessingJobRuntimeSnapshot" => seis_contracts_core::ProcessingJobRuntimeSnapshot,
+                "ProcessingJobRuntimeState" => seis_contracts_core::ProcessingJobRuntimeState,
+                "ProcessingRuntimePolicyDivergence" => seis_contracts_core::processing::ProcessingRuntimePolicyDivergence,
+                "ProcessingRuntimePolicyDivergenceField" => seis_contracts_core::processing::ProcessingRuntimePolicyDivergenceField,
+                "ProcessingJobWaitReason" => seis_contracts_core::ProcessingJobWaitReason,
+                "ProcessingRuntimeEvent" => seis_contracts_core::ProcessingRuntimeEvent,
+                "ProcessingRuntimeEventDetails" => seis_contracts_core::ProcessingRuntimeEventDetails,
+                "ProcessingRuntimeEventKind" => seis_contracts_core::ProcessingRuntimeEventKind,
+                "ProcessingRuntimeState" => seis_contracts_core::ProcessingRuntimeState,
+                "ProcessingStageRuntimeSnapshot" => seis_contracts_core::ProcessingStageRuntimeSnapshot,
+                "SectionAssemblyArtifactKind" => seis_contracts_core::SectionAssemblyArtifactKind,
+                "SectionAssemblyDebugRecord" => seis_contracts_core::SectionAssemblyDebugRecord,
+                "SectionAssemblyDebugSourceTile" => seis_contracts_core::SectionAssemblyDebugSourceTile,
+                "InspectableArtifactDerivation" => seis_contracts_core::InspectableArtifactDerivation,
+                "InspectableArtifactKey" => seis_contracts_core::InspectableArtifactKey,
+                "InspectableArtifactLifetimeClass" => seis_contracts_core::InspectableArtifactLifetimeClass,
+                "InspectableBoundaryReason" => seis_contracts_core::InspectableBoundaryReason,
+                "InspectableCacheMode" => seis_contracts_core::InspectableCacheMode,
+                "InspectableChunkGridSpec" => seis_contracts_core::InspectableChunkGridSpec,
+                "InspectableChunkShapePolicy" => seis_contracts_core::InspectableChunkShapePolicy,
+                "InspectableCostClass" => seis_contracts_core::InspectableCostClass,
+                "InspectableCostEstimate" => seis_contracts_core::InspectableCostEstimate,
+                "InspectableDecisionFactor" => seis_contracts_core::InspectableDecisionFactor,
+                "InspectableExclusiveScope" => seis_contracts_core::InspectableExclusiveScope,
+                "InspectableExecutionArtifactRole" => seis_contracts_core::InspectableExecutionArtifactRole,
+                "InspectableExecutionPipelineSegment" => seis_contracts_core::InspectableExecutionPipelineSegment,
+                "InspectableExecutionPlan" => seis_contracts_core::InspectableExecutionPlan,
+                "InspectableExecutionPlanSummary" => seis_contracts_core::InspectableExecutionPlanSummary,
+                "InspectableExecutionPriorityClass" => seis_contracts_core::InspectableExecutionPriorityClass,
+                "InspectableExecutionQueueClass" => seis_contracts_core::InspectableExecutionQueueClass,
+                "InspectableExecutionStage" => seis_contracts_core::InspectableExecutionStage,
+                "InspectableExecutionStageKind" => seis_contracts_core::InspectableExecutionStageKind,
+                "InspectableGeometryFingerprints" => seis_contracts_core::InspectableGeometryFingerprints,
+                "InspectableHaloSpec" => seis_contracts_core::InspectableHaloSpec,
+                "InspectableLogicalDomain" => seis_contracts_core::InspectableLogicalDomain,
+                "InspectableMaterializationClass" => seis_contracts_core::InspectableMaterializationClass,
+                "InspectableParallelEfficiencyClass" => seis_contracts_core::InspectableParallelEfficiencyClass,
+                "InspectablePartitionDomain" => seis_contracts_core::InspectablePartitionDomain,
+                "InspectablePartitionFamily" => seis_contracts_core::InspectablePartitionFamily,
+                "InspectablePartitionOrdering" => seis_contracts_core::InspectablePartitionOrdering,
+                "InspectablePartitionPlan" => seis_contracts_core::InspectablePartitionPlan,
+                "InspectablePlanDecision" => seis_contracts_core::InspectablePlanDecision,
+                "InspectablePlanDecisionKind" => seis_contracts_core::InspectablePlanDecisionKind,
+                "InspectablePlanDecisionSubjectKind" => seis_contracts_core::InspectablePlanDecisionSubjectKind,
+                "InspectablePlannerDiagnostics" => seis_contracts_core::InspectablePlannerDiagnostics,
+                "InspectablePlannerPassId" => seis_contracts_core::InspectablePlannerPassId,
+                "InspectablePlannerPassSnapshot" => seis_contracts_core::InspectablePlannerPassSnapshot,
+                "InspectablePlannedArtifact" => seis_contracts_core::InspectablePlannedArtifact,
+                "InspectablePlanningMode" => seis_contracts_core::InspectablePlanningMode,
+                "InspectablePlanSource" => seis_contracts_core::InspectablePlanSource,
+                "InspectableProcessingPlan" => seis_contracts_core::InspectableProcessingPlan,
+                "InspectableProgressGranularity" => seis_contracts_core::InspectableProgressGranularity,
+                "InspectableProgressUnits" => seis_contracts_core::InspectableProgressUnits,
+                "InspectableRetryGranularity" => seis_contracts_core::InspectableRetryGranularity,
+                "InspectableRetryPolicy" => seis_contracts_core::InspectableRetryPolicy,
+                "InspectableReuseClass" => seis_contracts_core::InspectableReuseClass,
+                "InspectableReuseDecision" => seis_contracts_core::InspectableReuseDecision,
+                "InspectableReuseDecisionEvidence" => seis_contracts_core::InspectableReuseDecisionEvidence,
+                "InspectableReuseDecisionOutcome" => seis_contracts_core::InspectableReuseDecisionOutcome,
+                "InspectableSchedulerHints" => seis_contracts_core::InspectableSchedulerHints,
+                "InspectableSectionDomain" => seis_contracts_core::InspectableSectionDomain,
+                "InspectableSectionWindowDomain" => seis_contracts_core::InspectableSectionWindowDomain,
+                "InspectableSemanticPlan" => seis_contracts_core::InspectableSemanticPlan,
+                "InspectableSemanticRootNode" => seis_contracts_core::InspectableSemanticRootNode,
+                "InspectableSpillabilityClass" => seis_contracts_core::InspectableSpillabilityClass,
+                "InspectableStageClassification" => seis_contracts_core::InspectableStageClassification,
+                "InspectableStageMemoryProfile" => seis_contracts_core::InspectableStageMemoryProfile,
+                "InspectableStagePlanningDecision" => seis_contracts_core::InspectableStagePlanningDecision,
+                "InspectableStageResourceEnvelope" => seis_contracts_core::InspectableStageResourceEnvelope,
+                "InspectableTileDomain" => seis_contracts_core::InspectableTileDomain,
+                "InspectableTraceLocalSegment" => seis_contracts_core::InspectableTraceLocalSegment,
+                "InspectableTraceLocalSemanticPlan" => seis_contracts_core::InspectableTraceLocalSemanticPlan,
+                "InspectableValidationReport" => seis_contracts_core::InspectableValidationReport,
+                "InspectableVolumeDomain" => seis_contracts_core::InspectableVolumeDomain,
                 "ProcessingBatchState" => seis_contracts_core::processing::ProcessingBatchState,
                 "ProcessingBatchProgress" => seis_contracts_core::processing::ProcessingBatchProgress,
                 "ProcessingBatchItemStatus" => seis_contracts_core::processing::ProcessingBatchItemStatus,
@@ -175,8 +250,14 @@ macro_rules! public_contracts {
                 "PreviewGatherProcessingResponse" => seis_contracts_operations::PreviewGatherProcessingResponse,
                 "RunGatherProcessingRequest" => seis_contracts_operations::RunGatherProcessingRequest,
                 "RunGatherProcessingResponse" => seis_contracts_operations::RunGatherProcessingResponse,
+                "GetProcessingDebugPlanRequest" => seis_contracts_operations::GetProcessingDebugPlanRequest,
+                "GetProcessingDebugPlanResponse" => seis_contracts_operations::GetProcessingDebugPlanResponse,
                 "GetProcessingJobRequest" => seis_contracts_operations::GetProcessingJobRequest,
                 "GetProcessingJobResponse" => seis_contracts_operations::GetProcessingJobResponse,
+                "GetProcessingRuntimeStateRequest" => seis_contracts_operations::GetProcessingRuntimeStateRequest,
+                "GetProcessingRuntimeStateResponse" => seis_contracts_operations::GetProcessingRuntimeStateResponse,
+                "ListProcessingRuntimeEventsRequest" => seis_contracts_operations::ListProcessingRuntimeEventsRequest,
+                "ListProcessingRuntimeEventsResponse" => seis_contracts_operations::ListProcessingRuntimeEventsResponse,
                 "CancelProcessingJobRequest" => seis_contracts_operations::CancelProcessingJobRequest,
                 "CancelProcessingJobResponse" => seis_contracts_operations::CancelProcessingJobResponse,
                 "GetProcessingBatchRequest" => seis_contracts_operations::processing_ops::GetProcessingBatchRequest,
@@ -357,6 +438,7 @@ where
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let check_mode = std::env::args().skip(1).any(|arg| arg == "--check");
     let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
@@ -368,17 +450,44 @@ fn main() -> Result<(), Box<dyn Error>> {
         .join("contracts")
         .join("ts")
         .join("seis-contracts");
-    let generated_dir = package_root.join("src").join("generated");
-    let schema_dir = package_root.join("schemas");
+    if check_mode {
+        let temp_root = std::env::temp_dir().join(format!(
+            "traceboost-contracts-export-check-{}",
+            std::process::id()
+        ));
+        if temp_root.exists() {
+            fs::remove_dir_all(&temp_root)?;
+        }
+        let generated_dir = temp_root.join("src").join("generated");
+        let schema_dir = temp_root.join("schemas");
+        export_contracts(&generated_dir, &schema_dir)?;
+        ensure_generated_outputs_match(
+            &package_root.join("src").join("generated"),
+            &generated_dir,
+            "generated TypeScript contracts",
+        )?;
+        ensure_generated_outputs_match(
+            &package_root.join("schemas"),
+            &schema_dir,
+            "generated schema bundle",
+        )?;
+        fs::remove_dir_all(&temp_root)?;
+    } else {
+        let generated_dir = package_root.join("src").join("generated");
+        let schema_dir = package_root.join("schemas");
+        export_contracts(&generated_dir, &schema_dir)?;
+    }
 
-    fs::create_dir_all(&generated_dir)?;
-    fs::create_dir_all(&schema_dir)?;
+    Ok(())
+}
 
-    clear_generated_ts(&generated_dir)?;
-    export_ts_types(&generated_dir)?;
-    write_generated_index(&generated_dir)?;
-    write_schema_bundle(&schema_dir)?;
-
+fn export_contracts(generated_dir: &Path, schema_dir: &Path) -> Result<(), Box<dyn Error>> {
+    fs::create_dir_all(generated_dir)?;
+    fs::create_dir_all(schema_dir)?;
+    clear_generated_ts(generated_dir)?;
+    export_ts_types(generated_dir)?;
+    write_generated_index(generated_dir)?;
+    write_schema_bundle(schema_dir)?;
     Ok(())
 }
 
@@ -445,5 +554,48 @@ fn write_schema_bundle(schema_dir: &Path) -> Result<(), Box<dyn Error>> {
         serde_json::to_string_pretty(&schema)?,
     )?;
 
+    Ok(())
+}
+
+fn ensure_generated_outputs_match(
+    expected_dir: &Path,
+    actual_dir: &Path,
+    label: &str,
+) -> Result<(), Box<dyn Error>> {
+    let expected = directory_snapshot(expected_dir)?;
+    let actual = directory_snapshot(actual_dir)?;
+    if expected != actual {
+        return Err(
+            format!("{label} are stale; run `cargo run -p traceboost-contracts-export`").into(),
+        );
+    }
+    Ok(())
+}
+
+fn directory_snapshot(root: &Path) -> Result<BTreeMap<String, Vec<u8>>, Box<dyn Error>> {
+    let mut snapshot = BTreeMap::new();
+    collect_directory_snapshot(root, root, &mut snapshot)?;
+    Ok(snapshot)
+}
+
+fn collect_directory_snapshot(
+    root: &Path,
+    current: &Path,
+    snapshot: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<(), Box<dyn Error>> {
+    let mut entries = fs::read_dir(current)?.collect::<Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_string());
+    for entry in entries {
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            collect_directory_snapshot(root, &path, snapshot)?;
+            continue;
+        }
+        let relative = path
+            .strip_prefix(root)?
+            .to_string_lossy()
+            .replace('\\', "/");
+        snapshot.insert(relative, fs::read(path)?);
+    }
     Ok(())
 }

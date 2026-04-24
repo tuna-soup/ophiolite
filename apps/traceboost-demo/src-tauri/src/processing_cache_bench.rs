@@ -6,7 +6,8 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use seis_runtime::{
     InterpMethod, MaterializeOptions, ProcessingOperation, TraceLocalProcessingStep,
-    UpscaleOptions, materialize_processing_volume, upscale_store,
+    UpscaleOptions, materialize_processing_volume, trace_local_pipeline_prefix,
+    trace_local_pipeline_segment, upscale_store,
 };
 
 const BENCH_ITERATIONS: usize = 3;
@@ -355,7 +356,7 @@ fn run_balanced_hidden_prefix(
     let prefix_index = pipeline.operation_count().checked_sub(2).ok_or_else(|| {
         "Balanced hidden-prefix benchmark requires at least two pipeline operations.".to_string()
     })?;
-    let prefix_pipeline = pipeline_prefix(pipeline, prefix_index);
+    let prefix_pipeline = trace_local_pipeline_prefix(pipeline, prefix_index);
     let prefix_hash = trace_local_pipeline_hash(&prefix_pipeline)?;
     let prefix_len = prefix_index + 1;
 
@@ -364,6 +365,9 @@ fn run_balanced_hidden_prefix(
         &source_fingerprint,
         &prefix_hash,
         prefix_len,
+        PROCESSING_CACHE_RUNTIME_VERSION,
+        PROCESSING_CACHE_STORE_WRITER_VERSION,
+        TBVOL_STORE_FORMAT_VERSION,
     )? {
         hit.path
     } else {
@@ -375,7 +379,7 @@ fn run_balanced_hidden_prefix(
         );
         prepare_processing_output_store(input_store, &store, true)?;
         run_full_pipeline(input_store, &store, &prefix_pipeline)?;
-        processing_cache.register_hidden_prefix(
+        let _ = processing_cache.register_hidden_prefix(
             TRACE_LOCAL_CACHE_FAMILY,
             &store,
             &source_fingerprint,
@@ -391,7 +395,7 @@ fn run_balanced_hidden_prefix(
     run_full_pipeline(
         &prefix_store,
         output_store,
-        &pipeline_segment(pipeline, prefix_len, pipeline.operation_count() - 1),
+        &trace_local_pipeline_segment(pipeline, prefix_len, pipeline.operation_count() - 1),
     )?;
     Ok(())
 }
@@ -420,7 +424,7 @@ fn run_visible_checkpoint_pipeline(
     reuse_prefix: bool,
 ) -> Result<(), String> {
     let source_fingerprint = trace_local_source_fingerprint(input_store)?;
-    let prefix_pipeline = pipeline_prefix(pipeline, checkpoint_index);
+    let prefix_pipeline = trace_local_pipeline_prefix(pipeline, checkpoint_index);
     let prefix_hash = trace_local_pipeline_hash(&prefix_pipeline)?;
     let prefix_len = checkpoint_index + 1;
 
@@ -430,6 +434,9 @@ fn run_visible_checkpoint_pipeline(
             &source_fingerprint,
             &prefix_hash,
             prefix_len,
+            PROCESSING_CACHE_RUNTIME_VERSION,
+            PROCESSING_CACHE_STORE_WRITER_VERSION,
+            TBVOL_STORE_FORMAT_VERSION,
         )? {
             hit.path
         } else {
@@ -439,7 +446,7 @@ fn run_visible_checkpoint_pipeline(
         let store = output_store.replace(".tbvol", ".checkpoint.tbvol");
         prepare_processing_output_store(input_store, &store, true)?;
         run_full_pipeline(input_store, &store, &prefix_pipeline)?;
-        processing_cache.register_visible_checkpoint(
+        let _ = processing_cache.register_visible_checkpoint(
             TRACE_LOCAL_CACHE_FAMILY,
             &store,
             &source_fingerprint,
@@ -455,7 +462,7 @@ fn run_visible_checkpoint_pipeline(
     run_full_pipeline(
         &checkpoint_store,
         output_store,
-        &pipeline_segment(pipeline, prefix_len, pipeline.operation_count() - 1),
+        &trace_local_pipeline_segment(pipeline, prefix_len, pipeline.operation_count() - 1),
     )?;
     Ok(())
 }
@@ -538,22 +545,23 @@ fn benchmark_dataset(dataset: &BenchmarkDataset, workspace: &Path) -> Vec<Benchm
         run_full_pipeline(&input_store, &output.display().to_string(), &five_b)
     });
 
-    let five_balanced_first = benchmark_case("five-step balanced first run", |iteration| {
-        let iteration_root =
-            workspace.join(format!("{dataset_slug}-five-balanced-first-{iteration}"));
-        fs::create_dir_all(&iteration_root).map_err(|error| error.to_string())?;
-        let cache = ProcessingCacheState::initialize(
-            &iteration_root.join("cache"),
-            &iteration_root.join("cache").join("volumes"),
-            &iteration_root.join("cache").join("index.sqlite"),
-            &iteration_root.join("settings.json"),
-        )?;
-        let output = iteration_root.join("result.tbvol");
-        run_balanced_hidden_prefix(&cache, &input_store, &output.display().to_string(), &five_a)
-    });
+    let five_hidden_prefix_contrast_first =
+        benchmark_case("five-step hidden-prefix contrast first run", |iteration| {
+            let iteration_root =
+                workspace.join(format!("{dataset_slug}-five-balanced-first-{iteration}"));
+            fs::create_dir_all(&iteration_root).map_err(|error| error.to_string())?;
+            let cache = ProcessingCacheState::initialize(
+                &iteration_root.join("cache"),
+                &iteration_root.join("cache").join("volumes"),
+                &iteration_root.join("cache").join("index.sqlite"),
+                &iteration_root.join("settings.json"),
+            )?;
+            let output = iteration_root.join("result.tbvol");
+            run_balanced_hidden_prefix(&cache, &input_store, &output.display().to_string(), &five_a)
+        });
 
-    let five_balanced_late_edit = benchmark_case_with_setup(
-        "five-step balanced late edit rerun",
+    let five_hidden_prefix_contrast_late_edit = benchmark_case_with_setup(
+        "five-step hidden-prefix contrast late edit rerun",
         |iteration| {
             let iteration_root =
                 workspace.join(format!("{dataset_slug}-five-balanced-late-{iteration}"));
@@ -624,8 +632,8 @@ fn benchmark_dataset(dataset: &BenchmarkDataset, workspace: &Path) -> Vec<Benchm
         run_full_pipeline(&input_store, &output.display().to_string(), &eight_b)
     });
 
-    let eight_balanced_late_edit = benchmark_case_with_setup(
-        "eight-step balanced late edit rerun",
+    let eight_hidden_prefix_contrast_late_edit = benchmark_case_with_setup(
+        "eight-step hidden-prefix contrast late edit rerun",
         |iteration| {
             let iteration_root =
                 workspace.join(format!("{dataset_slug}-eight-balanced-late-{iteration}"));
@@ -661,8 +669,8 @@ fn benchmark_dataset(dataset: &BenchmarkDataset, workspace: &Path) -> Vec<Benchm
         run_full_pipeline(&input_store, &output.display().to_string(), &ten_middle)
     });
 
-    let ten_balanced_middle_edit = benchmark_case_with_setup(
-        "ten-step balanced middle-edit rerun",
+    let ten_hidden_prefix_contrast_middle_edit = benchmark_case_with_setup(
+        "ten-step hidden-prefix contrast middle-edit rerun",
         |iteration| {
             let iteration_root =
                 workspace.join(format!("{dataset_slug}-ten-balanced-middle-{iteration}"));
@@ -707,7 +715,7 @@ fn benchmark_dataset(dataset: &BenchmarkDataset, workspace: &Path) -> Vec<Benchm
             run_full_pipeline(&input_store, &output.display().to_string(), &five_a)?;
             let source_fingerprint = trace_local_source_fingerprint(&input_store)?;
             let pipeline_hash = trace_local_pipeline_hash(&five_a)?;
-            cache.register_visible_output(
+            let _ = cache.register_visible_output(
                 TRACE_LOCAL_CACHE_FAMILY,
                 &output.display().to_string(),
                 &source_fingerprint,
@@ -725,6 +733,9 @@ fn benchmark_dataset(dataset: &BenchmarkDataset, workspace: &Path) -> Vec<Benchm
                     TRACE_LOCAL_CACHE_FAMILY,
                     &source_fingerprint,
                     &pipeline_hash,
+                    PROCESSING_CACHE_RUNTIME_VERSION,
+                    PROCESSING_CACHE_STORE_WRITER_VERSION,
+                    TBVOL_STORE_FORMAT_VERSION,
                 )?
                 .ok_or_else(|| "expected exact lookup hit".to_string())?;
             Ok(())
@@ -733,13 +744,13 @@ fn benchmark_dataset(dataset: &BenchmarkDataset, workspace: &Path) -> Vec<Benchm
 
     vec![
         five_baseline,
-        five_balanced_first,
-        five_balanced_late_edit,
+        five_hidden_prefix_contrast_first,
+        five_hidden_prefix_contrast_late_edit,
         five_checkpoint_late_edit,
         eight_baseline,
-        eight_balanced_late_edit,
+        eight_hidden_prefix_contrast_late_edit,
         ten_baseline,
-        ten_balanced_middle_edit,
+        ten_hidden_prefix_contrast_middle_edit,
         exact_lookup,
     ]
 }

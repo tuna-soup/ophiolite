@@ -3,13 +3,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use ts_rs::TS;
 
+use super::InspectableProcessingPlan;
 use super::default_pipeline_schema_version;
 use super::domain::{DatasetId, SampleDataFidelity, SectionAxis, VolumeDescriptor};
 use super::models::{TimeDepthDomain, WellTieObservationSet1D};
 use super::processing::{
     GatherProcessingPipeline, PostStackNeighborhoodProcessingPipeline, ProcessingBatchStatus,
-    ProcessingExecutionMode, ProcessingJobStatus, ProcessingPipelineSpec, ProcessingPreset,
-    SubvolumeProcessingPipeline, TraceLocalProcessingPipeline,
+    ProcessingExecutionMode, ProcessingJobRuntimeState, ProcessingJobStatus,
+    ProcessingPipelineSpec, ProcessingPreset, ProcessingRuntimeEvent, SubvolumeProcessingPipeline,
+    TraceLocalProcessingPipeline,
 };
 use super::views::{
     GatherPreviewView, ImportedHorizonDescriptor, PreviewView, SectionHorizonOverlayView,
@@ -1053,6 +1055,46 @@ pub struct GetProcessingJobRequest {
 pub struct GetProcessingJobResponse {
     pub schema_version: u32,
     pub job: ProcessingJobStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GetProcessingDebugPlanRequest {
+    pub schema_version: u32,
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GetProcessingDebugPlanResponse {
+    pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<InspectableProcessingPlan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GetProcessingRuntimeStateRequest {
+    pub schema_version: u32,
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GetProcessingRuntimeStateResponse {
+    pub schema_version: u32,
+    pub runtime: ProcessingJobRuntimeState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ListProcessingRuntimeEventsRequest {
+    pub schema_version: u32,
+    pub job_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after_seq: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ListProcessingRuntimeEventsResponse {
+    pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<ProcessingRuntimeEvent>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]

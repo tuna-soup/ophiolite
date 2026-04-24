@@ -2,10 +2,24 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::identity::{
+    operator_set_identity_for_pipeline, pipeline_semantic_identity,
+    planner_profile_identity_for_pipeline,
+};
+use ophiolite_seismic::contracts::{
+    OperatorSetIdentity, PipelineSemanticIdentity, PlannerProfileIdentity, ReuseArtifactKind,
+    ReuseBoundaryKind, ReuseMissReason, ReuseRequirement, ReuseResolution, SourceSemanticIdentity,
+    default_execution_plan_schema_version,
+};
 use ophiolite_seismic::{
     GatherProcessingOperation, PostStackNeighborhoodProcessingOperation,
-    ProcessingLayoutCompatibility, ProcessingPipelineFamily, ProcessingPipelineSpec, SeismicLayout,
-    SubvolumeCropOperation, TraceLocalProcessingOperation,
+    ProcessingLayoutCompatibility, ProcessingOperatorDependencyProfile, ProcessingPipelineFamily,
+    ProcessingPipelineSpec, ProcessingPlannerCostClass, ProcessingPlannerHints,
+    ProcessingPlannerParallelEfficiencyClass, ProcessingPlannerPartitioningHint,
+    ProcessingSampleDependency, ProcessingSpatialDependency, SectionAxis, SeismicLayout,
+    SubvolumeCropOperation, TraceLocalProcessingOperation, gather_operator_planner_hints,
+    post_stack_neighborhood_operator_planner_hints, subvolume_operator_planner_hints,
+    trace_local_operator_planner_hints,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -98,6 +112,7 @@ pub struct OperatorExecutionTraits {
     pub checkpoint_safe: bool,
     pub deterministic: bool,
     pub preview_prefix_reuse_safe: bool,
+    pub reuse_class: ReuseClass,
     pub memory_cost_class: MemoryCostClass,
     pub cpu_cost_class: CpuCostClass,
     pub io_cost_class: IoCostClass,
@@ -105,196 +120,176 @@ pub struct OperatorExecutionTraits {
 }
 
 impl OperatorExecutionTraits {
-    pub fn from_trace_local_operation(operation: &TraceLocalProcessingOperation) -> Self {
-        match operation {
-            TraceLocalProcessingOperation::AmplitudeScalar { .. } => Self {
-                operator_id: operation.operator_id().to_string(),
-                scope: ExecutionOperatorScope::TraceLocal,
-                layout_support: operation.compatibility(),
-                preferred_partitioning: PreferredPartitioning::TileGroup,
-                sample_halo: SampleHaloRequirement::None,
-                spatial_dependency: ExecutionSpatialDependency::SingleTrace,
-                halo_inline: 0,
-                halo_xline: 0,
-                requires_full_volume: false,
-                checkpoint_safe: true,
-                deterministic: true,
-                preview_prefix_reuse_safe: true,
-                memory_cost_class: MemoryCostClass::Low,
-                cpu_cost_class: CpuCostClass::Low,
-                io_cost_class: IoCostClass::Low,
-                parallel_efficiency_class: ParallelEfficiencyClass::High,
+    fn from_contract_semantics(
+        operator_id: &str,
+        scope: ExecutionOperatorScope,
+        layout_support: ProcessingLayoutCompatibility,
+        dependency_profile: ProcessingOperatorDependencyProfile,
+        hints: ProcessingPlannerHints,
+    ) -> Self {
+        Self {
+            operator_id: operator_id.to_string(),
+            scope,
+            layout_support,
+            preferred_partitioning: preferred_partitioning_from_hint(hints.preferred_partitioning),
+            sample_halo: match dependency_profile.sample_dependency {
+                ProcessingSampleDependency::Pointwise => SampleHaloRequirement::None,
+                ProcessingSampleDependency::BoundedWindow { window_ms_hint } => {
+                    SampleHaloRequirement::BoundedWindowMs { window_ms_hint }
+                }
+                ProcessingSampleDependency::WholeTrace => SampleHaloRequirement::WholeTrace,
             },
-            TraceLocalProcessingOperation::TraceRmsNormalize
-            | TraceLocalProcessingOperation::PhaseRotation { .. } => Self {
-                operator_id: operation.operator_id().to_string(),
-                scope: ExecutionOperatorScope::TraceLocal,
-                layout_support: operation.compatibility(),
-                preferred_partitioning: PreferredPartitioning::TileGroup,
-                sample_halo: SampleHaloRequirement::WholeTrace,
-                spatial_dependency: ExecutionSpatialDependency::SingleTrace,
-                halo_inline: 0,
-                halo_xline: 0,
-                requires_full_volume: false,
-                checkpoint_safe: true,
-                deterministic: true,
-                preview_prefix_reuse_safe: true,
-                memory_cost_class: MemoryCostClass::Medium,
-                cpu_cost_class: CpuCostClass::Medium,
-                io_cost_class: IoCostClass::Low,
-                parallel_efficiency_class: ParallelEfficiencyClass::High,
+            spatial_dependency: match dependency_profile.spatial_dependency {
+                ProcessingSpatialDependency::SingleTrace => ExecutionSpatialDependency::SingleTrace,
+                ProcessingSpatialDependency::SectionNeighborhood => {
+                    ExecutionSpatialDependency::SectionNeighborhood
+                }
+                ProcessingSpatialDependency::GatherNeighborhood => {
+                    ExecutionSpatialDependency::GatherNeighborhood
+                }
+                ProcessingSpatialDependency::ExternalVolumePointwise => {
+                    ExecutionSpatialDependency::ExternalVolumePointwise
+                }
+                ProcessingSpatialDependency::Global => ExecutionSpatialDependency::Global,
             },
-            TraceLocalProcessingOperation::AgcRms { window_ms } => Self {
-                operator_id: operation.operator_id().to_string(),
-                scope: ExecutionOperatorScope::TraceLocal,
-                layout_support: operation.compatibility(),
-                preferred_partitioning: PreferredPartitioning::TileGroup,
-                sample_halo: SampleHaloRequirement::BoundedWindowMs {
-                    window_ms_hint: *window_ms,
-                },
-                spatial_dependency: ExecutionSpatialDependency::SingleTrace,
-                halo_inline: 0,
-                halo_xline: 0,
-                requires_full_volume: false,
-                checkpoint_safe: true,
-                deterministic: true,
-                preview_prefix_reuse_safe: true,
-                memory_cost_class: MemoryCostClass::Medium,
-                cpu_cost_class: CpuCostClass::Medium,
-                io_cost_class: IoCostClass::Low,
-                parallel_efficiency_class: ParallelEfficiencyClass::High,
-            },
-            TraceLocalProcessingOperation::Envelope
-            | TraceLocalProcessingOperation::InstantaneousPhase
-            | TraceLocalProcessingOperation::InstantaneousFrequency
-            | TraceLocalProcessingOperation::Sweetness
-            | TraceLocalProcessingOperation::LowpassFilter { .. }
-            | TraceLocalProcessingOperation::HighpassFilter { .. }
-            | TraceLocalProcessingOperation::BandpassFilter { .. } => Self {
-                operator_id: operation.operator_id().to_string(),
-                scope: ExecutionOperatorScope::TraceLocal,
-                layout_support: operation.compatibility(),
-                preferred_partitioning: PreferredPartitioning::TileGroup,
-                sample_halo: SampleHaloRequirement::WholeTrace,
-                spatial_dependency: ExecutionSpatialDependency::SingleTrace,
-                halo_inline: 0,
-                halo_xline: 0,
-                requires_full_volume: false,
-                checkpoint_safe: true,
-                deterministic: true,
-                preview_prefix_reuse_safe: true,
-                memory_cost_class: MemoryCostClass::Medium,
-                cpu_cost_class: CpuCostClass::High,
-                io_cost_class: IoCostClass::Low,
-                parallel_efficiency_class: ParallelEfficiencyClass::Medium,
-            },
-            TraceLocalProcessingOperation::VolumeArithmetic { .. } => Self {
-                operator_id: operation.operator_id().to_string(),
-                scope: ExecutionOperatorScope::TraceLocal,
-                layout_support: operation.compatibility(),
-                preferred_partitioning: PreferredPartitioning::TileGroup,
-                sample_halo: SampleHaloRequirement::None,
-                spatial_dependency: ExecutionSpatialDependency::ExternalVolumePointwise,
-                halo_inline: 0,
-                halo_xline: 0,
-                requires_full_volume: false,
-                checkpoint_safe: true,
-                deterministic: true,
-                preview_prefix_reuse_safe: true,
-                memory_cost_class: MemoryCostClass::Medium,
-                cpu_cost_class: CpuCostClass::Medium,
-                io_cost_class: IoCostClass::Medium,
-                parallel_efficiency_class: ParallelEfficiencyClass::High,
-            },
+            halo_inline: dependency_profile.inline_radius,
+            halo_xline: dependency_profile.crossline_radius,
+            requires_full_volume: hints.requires_full_volume,
+            checkpoint_safe: hints.checkpoint_safe,
+            deterministic: dependency_profile.deterministic,
+            preview_prefix_reuse_safe: reuse_class_from_contract_semantics(
+                &dependency_profile,
+                &hints,
+            )
+            .allows_preview_prefix_reuse(),
+            reuse_class: reuse_class_from_contract_semantics(&dependency_profile, &hints),
+            memory_cost_class: memory_cost_class_from_hint(hints.memory_cost_class),
+            cpu_cost_class: cpu_cost_class_from_hint(hints.cpu_cost_class),
+            io_cost_class: io_cost_class_from_hint(hints.io_cost_class),
+            parallel_efficiency_class: parallel_efficiency_from_hint(
+                hints.parallel_efficiency_class,
+            ),
         }
+    }
+
+    pub fn from_trace_local_operation(operation: &TraceLocalProcessingOperation) -> Self {
+        Self::from_contract_semantics(
+            operation.operator_id(),
+            ExecutionOperatorScope::TraceLocal,
+            operation.compatibility(),
+            operation.dependency_profile(),
+            trace_local_operator_planner_hints(operation),
+        )
     }
 
     pub fn from_post_stack_neighborhood_operation(
         operation: &PostStackNeighborhoodProcessingOperation,
     ) -> Self {
-        match operation {
-            PostStackNeighborhoodProcessingOperation::Similarity { window }
-            | PostStackNeighborhoodProcessingOperation::LocalVolumeStats { window, .. }
-            | PostStackNeighborhoodProcessingOperation::Dip { window, .. } => Self {
-                operator_id: operation.operator_id().to_string(),
-                scope: ExecutionOperatorScope::PostStackNeighborhood,
-                layout_support: operation.compatibility(),
-                preferred_partitioning: PreferredPartitioning::TileGroup,
-                sample_halo: SampleHaloRequirement::BoundedWindowMs {
-                    window_ms_hint: window.gate_ms,
-                },
-                spatial_dependency: ExecutionSpatialDependency::SectionNeighborhood,
-                halo_inline: window.inline_stepout,
-                halo_xline: window.xline_stepout,
-                requires_full_volume: false,
-                checkpoint_safe: true,
-                deterministic: true,
-                preview_prefix_reuse_safe: true,
-                memory_cost_class: MemoryCostClass::High,
-                cpu_cost_class: CpuCostClass::High,
-                io_cost_class: IoCostClass::High,
-                parallel_efficiency_class: ParallelEfficiencyClass::Low,
-            },
-        }
+        Self::from_contract_semantics(
+            operation.operator_id(),
+            ExecutionOperatorScope::PostStackNeighborhood,
+            operation.compatibility(),
+            operation.dependency_profile(),
+            post_stack_neighborhood_operator_planner_hints(operation),
+        )
     }
 
     pub fn from_gather_operation(operation: &GatherProcessingOperation) -> Self {
-        let (memory_cost_class, cpu_cost_class, io_cost_class, parallel_efficiency_class) =
-            match operation {
-                GatherProcessingOperation::OffsetMute { .. } => (
-                    MemoryCostClass::Low,
-                    CpuCostClass::Low,
-                    IoCostClass::Low,
-                    ParallelEfficiencyClass::Medium,
-                ),
-                GatherProcessingOperation::NmoCorrection { .. }
-                | GatherProcessingOperation::StretchMute { .. } => (
-                    MemoryCostClass::High,
-                    CpuCostClass::High,
-                    IoCostClass::Medium,
-                    ParallelEfficiencyClass::Low,
-                ),
-            };
-
-        Self {
-            operator_id: operation.operator_id().to_string(),
-            scope: ExecutionOperatorScope::GatherMatrix,
-            layout_support: operation.compatibility(),
-            preferred_partitioning: PreferredPartitioning::GatherGroup,
-            sample_halo: SampleHaloRequirement::WholeTrace,
-            spatial_dependency: ExecutionSpatialDependency::GatherNeighborhood,
-            halo_inline: 0,
-            halo_xline: 0,
-            requires_full_volume: false,
-            checkpoint_safe: true,
-            deterministic: true,
-            preview_prefix_reuse_safe: false,
-            memory_cost_class,
-            cpu_cost_class,
-            io_cost_class,
-            parallel_efficiency_class,
-        }
+        Self::from_contract_semantics(
+            operation.operator_id(),
+            ExecutionOperatorScope::GatherMatrix,
+            operation.compatibility(),
+            operation.dependency_profile(),
+            gather_operator_planner_hints(operation),
+        )
     }
 
-    pub fn from_subvolume_crop(_crop: &SubvolumeCropOperation) -> Self {
-        Self {
-            operator_id: "subvolume_crop".to_string(),
-            scope: ExecutionOperatorScope::Subvolume,
-            layout_support: ProcessingLayoutCompatibility::PostStackOnly,
-            preferred_partitioning: PreferredPartitioning::TileGroup,
-            sample_halo: SampleHaloRequirement::None,
-            spatial_dependency: ExecutionSpatialDependency::SingleTrace,
-            halo_inline: 0,
-            halo_xline: 0,
-            requires_full_volume: false,
-            checkpoint_safe: true,
-            deterministic: true,
-            preview_prefix_reuse_safe: false,
-            memory_cost_class: MemoryCostClass::Low,
-            cpu_cost_class: CpuCostClass::Low,
-            io_cost_class: IoCostClass::Medium,
-            parallel_efficiency_class: ParallelEfficiencyClass::High,
+    pub fn from_subvolume_crop(crop: &SubvolumeCropOperation) -> Self {
+        Self::from_contract_semantics(
+            crop.operator_id(),
+            ExecutionOperatorScope::Subvolume,
+            crop.compatibility(),
+            crop.dependency_profile(),
+            subvolume_operator_planner_hints(crop),
+        )
+    }
+}
+
+fn reuse_class_from_contract_semantics(
+    dependency_profile: &ProcessingOperatorDependencyProfile,
+    hints: &ProcessingPlannerHints,
+) -> ReuseClass {
+    if hints.requires_full_volume {
+        return ReuseClass::FullVolumeBarrier;
+    }
+    match dependency_profile.spatial_dependency {
+        ProcessingSpatialDependency::ExternalVolumePointwise => {
+            return ReuseClass::RequiresExternalInputs;
         }
+        ProcessingSpatialDependency::Global => return ReuseClass::GeometryBarrier,
+        ProcessingSpatialDependency::SingleTrace
+        | ProcessingSpatialDependency::SectionNeighborhood
+        | ProcessingSpatialDependency::GatherNeighborhood => {}
+    }
+    if !dependency_profile.same_section_ephemeral_reuse_safe {
+        return ReuseClass::GeometryBarrier;
+    }
+    match (
+        dependency_profile.sample_dependency,
+        dependency_profile.spatial_dependency,
+    ) {
+        (ProcessingSampleDependency::Pointwise, ProcessingSpatialDependency::SingleTrace) => {
+            ReuseClass::InPlaceSameWindow
+        }
+        (_, ProcessingSpatialDependency::SingleTrace) => ReuseClass::ReusableSameSection,
+        (_, ProcessingSpatialDependency::SectionNeighborhood)
+        | (_, ProcessingSpatialDependency::GatherNeighborhood) => ReuseClass::ReusableSameGeometry,
+        _ => ReuseClass::GeometryBarrier,
+    }
+}
+
+fn preferred_partitioning_from_hint(
+    hint: ProcessingPlannerPartitioningHint,
+) -> PreferredPartitioning {
+    match hint {
+        ProcessingPlannerPartitioningHint::TileGroup => PreferredPartitioning::TileGroup,
+        ProcessingPlannerPartitioningHint::Section => PreferredPartitioning::Section,
+        ProcessingPlannerPartitioningHint::GatherGroup => PreferredPartitioning::GatherGroup,
+        ProcessingPlannerPartitioningHint::FullVolume => PreferredPartitioning::FullVolume,
+    }
+}
+
+fn memory_cost_class_from_hint(hint: ProcessingPlannerCostClass) -> MemoryCostClass {
+    match hint {
+        ProcessingPlannerCostClass::Low => MemoryCostClass::Low,
+        ProcessingPlannerCostClass::Medium => MemoryCostClass::Medium,
+        ProcessingPlannerCostClass::High => MemoryCostClass::High,
+    }
+}
+
+fn cpu_cost_class_from_hint(hint: ProcessingPlannerCostClass) -> CpuCostClass {
+    match hint {
+        ProcessingPlannerCostClass::Low => CpuCostClass::Low,
+        ProcessingPlannerCostClass::Medium => CpuCostClass::Medium,
+        ProcessingPlannerCostClass::High => CpuCostClass::High,
+    }
+}
+
+fn io_cost_class_from_hint(hint: ProcessingPlannerCostClass) -> IoCostClass {
+    match hint {
+        ProcessingPlannerCostClass::Low => IoCostClass::Low,
+        ProcessingPlannerCostClass::Medium => IoCostClass::Medium,
+        ProcessingPlannerCostClass::High => IoCostClass::High,
+    }
+}
+
+fn parallel_efficiency_from_hint(
+    hint: ProcessingPlannerParallelEfficiencyClass,
+) -> ParallelEfficiencyClass {
+    match hint {
+        ProcessingPlannerParallelEfficiencyClass::High => ParallelEfficiencyClass::High,
+        ProcessingPlannerParallelEfficiencyClass::Medium => ParallelEfficiencyClass::Medium,
+        ProcessingPlannerParallelEfficiencyClass::Low => ParallelEfficiencyClass::Low,
     }
 }
 
@@ -412,6 +407,311 @@ pub enum Chunkability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(rename_all = "snake_case")]
+pub enum DomainSpace {
+    Survey,
+    SectionAxis,
+    StorageGrid,
+    ExecutionPartition,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct VolumeDomain {
+    pub shape: [usize; 3],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SectionDomain {
+    pub axis: SectionAxis,
+    pub section_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SectionWindowDomain {
+    pub axis: SectionAxis,
+    pub section_index: usize,
+    pub trace_range: [usize; 2],
+    pub sample_range: [usize; 2],
+    pub lod: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct TileDomain {
+    pub tile_index: [usize; 2],
+    pub tile_origin: [usize; 3],
+    pub tile_shape: [usize; 3],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PartitionDomain {
+    pub partition_index: usize,
+    pub partition_count: usize,
+    pub tile_range: [usize; 2],
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+#[ts(rename_all = "snake_case")]
+pub enum LogicalDomain {
+    Volume { volume: VolumeDomain },
+    Section { section: SectionDomain },
+    SectionWindow { section_window: SectionWindowDomain },
+    Tile { tile: TileDomain },
+    Partition { partition: PartitionDomain },
+}
+
+impl LogicalDomain {
+    pub fn domain_space(&self) -> DomainSpace {
+        match self {
+            Self::Volume { .. } => DomainSpace::Survey,
+            Self::Section { .. } | Self::SectionWindow { .. } => DomainSpace::SectionAxis,
+            Self::Tile { .. } => DomainSpace::StorageGrid,
+            Self::Partition { .. } => DomainSpace::ExecutionPartition,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+#[ts(rename_all = "snake_case")]
+pub enum ChunkGridSpec {
+    Regular {
+        origin: [usize; 3],
+        chunk_shape: [usize; 3],
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct GeometryFingerprints {
+    pub survey_geometry_fingerprint: String,
+    pub storage_grid_fingerprint: String,
+    pub section_projection_fingerprint: String,
+    pub artifact_lineage_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ReuseClass {
+    InPlaceSameWindow,
+    ReusableSameSection,
+    ReusableSameGeometry,
+    RequiresExternalInputs,
+    GeometryBarrier,
+    FullVolumeBarrier,
+}
+
+impl ReuseClass {
+    pub fn allows_preview_prefix_reuse(self) -> bool {
+        matches!(
+            self,
+            Self::InPlaceSameWindow | Self::ReusableSameSection | Self::ReusableSameGeometry
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum MaterializationClass {
+    EphemeralWindow,
+    EphemeralPartition,
+    Checkpoint,
+    PublishedOutput,
+    ReusedArtifact,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ArtifactBoundaryReason {
+    SourceInput,
+    AuthoredCheckpoint,
+    FinalOutput,
+    GeometryDomainChange,
+    ExternalInputFanIn,
+    FullVolumeBarrier,
+    TraceLocalPrefix,
+    FamilyOperationBlock,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ArtifactLifetimeClass {
+    Source,
+    Ephemeral,
+    Checkpoint,
+    Published,
+    CachedReuse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum PlanningPassId {
+    ValidateAuthoredPipeline,
+    NormalizePipeline,
+    DeriveSemanticSegments,
+    DeriveExecutionHints,
+    PlanPartitions,
+    PlanArtifactsAndReuse,
+    AssembleExecutionPlan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum PlanDecisionSubjectKind {
+    PlannerPass,
+    Stage,
+    Artifact,
+    Scheduler,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum PlanDecisionKind {
+    Lowering,
+    Scheduling,
+    Reuse,
+    ArtifactDerivation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct DecisionFactor {
+    pub code: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct StagePlanningDecision {
+    pub selected_partition_family: PartitionFamily,
+    pub selected_ordering: PartitionOrdering,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_target_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_expected_partition_count: Option<usize>,
+    pub selected_queue_class: ExecutionQueueClass,
+    pub selected_spillability: ExecutionSpillabilityClass,
+    pub selected_exclusive_scope: ExecutionExclusiveScope,
+    pub selected_preferred_partition_waves: usize,
+    pub selected_reservation_bytes: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub factors: Vec<DecisionFactor>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ReuseDecisionOutcome {
+    Reused,
+    Miss,
+    Unresolved,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ReuseDecisionEvidence {
+    pub label: String,
+    pub matched: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_store_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miss_reason: Option<ReuseMissReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ReuseDecision {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage_id: Option<String>,
+    pub artifact_id: String,
+    pub cache_mode: CacheMode,
+    pub artifact_kind: ReuseArtifactKind,
+    pub boundary_kind: ReuseBoundaryKind,
+    pub candidate_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_candidate_reuse_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_candidate_artifact_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_candidate_store_path: Option<String>,
+    pub outcome: ReuseDecisionOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miss_reason: Option<ReuseMissReason>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evidence: Vec<ReuseDecisionEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ArtifactDerivation {
+    pub artifact_id: String,
+    pub artifact_key: ArtifactKey,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_artifact_ids: Vec<String>,
+    pub logical_domain: LogicalDomain,
+    pub chunk_grid_spec: ChunkGridSpec,
+    pub geometry_fingerprints: GeometryFingerprints,
+    pub materialization_class: MaterializationClass,
+    pub boundary_reason: ArtifactBoundaryReason,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PlanDecision {
+    pub decision_id: String,
+    pub subject_kind: PlanDecisionSubjectKind,
+    pub subject_id: String,
+    pub decision_kind: PlanDecisionKind,
+    pub reason_code: String,
+    pub human_summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage_planning: Option<StagePlanningDecision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_decision: Option<ReuseDecision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_derivation: Option<ArtifactDerivation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ArtifactKey {
+    pub lineage_digest: String,
+    pub geometry_fingerprints: GeometryFingerprints,
+    pub logical_domain: LogicalDomain,
+    pub chunk_grid_spec: ChunkGridSpec,
+    pub materialization_class: MaterializationClass,
+    pub cache_key: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PartitionKey {
+    pub artifact_key: ArtifactKey,
+    pub partition_domain: PartitionDomain,
+    pub generation: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ArtifactLiveSetEntry {
+    pub artifact_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_key: Option<ArtifactKey>,
+    #[ts(type = "number")]
+    pub estimated_resident_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ArtifactLiveSet {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resident_artifacts: Vec<ArtifactLiveSetEntry>,
+    #[ts(type = "number")]
+    pub estimated_resident_bytes: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum CacheMode {
     PreferReuse,
     RequireReuse,
@@ -425,6 +725,51 @@ pub enum ExecutionPriorityClass {
     InteractivePreview,
     ForegroundMaterialize,
     BackgroundBatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ExecutionQueueClass {
+    Control,
+    InteractivePartition,
+    ForegroundPartition,
+    BackgroundPartition,
+    ExclusiveFullVolume,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ExecutionSpillabilityClass {
+    Unspillable,
+    Spillable,
+    Exclusive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ExecutionRetryGranularity {
+    Job,
+    Stage,
+    Partition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ExecutionProgressGranularity {
+    Stage,
+    Partition,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ExecutionExclusiveScope {
+    None,
+    FullVolume,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -441,7 +786,11 @@ pub struct ExecutionSourceDescriptor {
 pub struct PipelineDescriptor {
     pub family: ProcessingPipelineFamily,
     pub name: Option<String>,
+    pub schema_version: u32,
     pub revision: u32,
+    pub content_digest: String,
+    pub operator_set_version: String,
+    pub planner_profile_version: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -452,6 +801,28 @@ pub struct ArtifactDescriptor {
     pub store_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_key: Option<ArtifactKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logical_domain: Option<LogicalDomain>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_grid_spec: Option<ChunkGridSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_fingerprints: Option<GeometryFingerprints>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub materialization_class: Option<MaterializationClass>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_reason: Option<ArtifactBoundaryReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifetime_class: Option<ArtifactLifetimeClass>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_requirement: Option<ReuseRequirement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_resolution: Option<ReuseResolution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_decision_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_derivation_decision_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -534,6 +905,26 @@ pub struct StageMemoryProfile {
     pub reserve_hint_bytes: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct StageResourceEnvelope {
+    pub preferred_queue_class: ExecutionQueueClass,
+    pub spillability: ExecutionSpillabilityClass,
+    pub exclusive_scope: ExecutionExclusiveScope,
+    pub retry_granularity: ExecutionRetryGranularity,
+    pub progress_granularity: ExecutionProgressGranularity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_partition_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_partition_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_partition_count: Option<usize>,
+    pub preferred_partition_waves: usize,
+    #[ts(type = "number")]
+    pub resident_bytes_per_partition: u64,
+    #[ts(type = "number")]
+    pub workspace_bytes_per_worker: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ExecutionStage {
     pub stage_id: String,
@@ -555,6 +946,25 @@ pub struct ExecutionStage {
     pub estimated_cost: CostEstimate,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage_memory_profile: Option<StageMemoryProfile>,
+    pub resource_envelope: StageResourceEnvelope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boundary_reason: Option<ArtifactBoundaryReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub materialization_class: Option<MaterializationClass>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_class: Option<ReuseClass>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_artifact_key: Option<ArtifactKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_set: Option<ArtifactLiveSet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_requirement: Option<ReuseRequirement>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_resolution: Option<ReuseResolution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planning_decision_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reuse_decision_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -570,6 +980,11 @@ pub struct ExecutionPlanSummary {
     pub combined_io_weight: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_expected_partition_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number")]
+    pub max_live_set_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_live_artifact_count: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -590,17 +1005,42 @@ pub struct ValidationReport {
     pub blockers: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PlannerPassSnapshot {
+    pub pass_id: PlanningPassId,
+    pub pass_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decision_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PlannerDiagnostics {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pass_snapshots: Vec<PlannerPassSnapshot>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ExecutionPlan {
+    #[serde(default = "default_execution_plan_schema_version")]
+    pub schema_version: u32,
     pub plan_id: String,
     pub planning_mode: PlanningMode,
     pub source: ExecutionSourceDescriptor,
+    pub source_identity: SourceSemanticIdentity,
     pub pipeline: PipelineDescriptor,
+    pub pipeline_identity: PipelineSemanticIdentity,
+    pub operator_set_identity: OperatorSetIdentity,
+    pub planner_profile_identity: PlannerProfileIdentity,
     pub stages: Vec<ExecutionStage>,
     pub plan_summary: ExecutionPlanSummary,
     pub artifacts: Vec<ArtifactDescriptor>,
     pub scheduler_hints: SchedulerHints,
     pub validation: ValidationReport,
+    pub planner_diagnostics: PlannerDiagnostics,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub plan_decisions: Vec<PlanDecision>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -638,26 +1078,81 @@ pub struct TraceLocalChunkPlanRecommendation {
 
 impl PipelineDescriptor {
     pub fn from_pipeline_spec(pipeline: &ProcessingPipelineSpec) -> Self {
+        let pipeline_identity = pipeline_semantic_identity(pipeline).ok();
+        let operator_set_identity = operator_set_identity_for_pipeline(pipeline).ok();
+        let planner_profile_identity = planner_profile_identity_for_pipeline(pipeline).ok();
         match pipeline {
             ProcessingPipelineSpec::TraceLocal { pipeline } => Self {
                 family: ProcessingPipelineFamily::TraceLocal,
                 name: pipeline.name.clone(),
+                schema_version: pipeline.schema_version,
                 revision: pipeline.revision,
+                content_digest: pipeline_identity
+                    .as_ref()
+                    .map(|identity| identity.content_digest.clone())
+                    .unwrap_or_default(),
+                operator_set_version: operator_set_identity
+                    .as_ref()
+                    .map(|identity| identity.version.clone())
+                    .unwrap_or_default(),
+                planner_profile_version: planner_profile_identity
+                    .as_ref()
+                    .map(|identity| identity.version.clone())
+                    .unwrap_or_default(),
             },
             ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => Self {
                 family: ProcessingPipelineFamily::PostStackNeighborhood,
                 name: pipeline.name.clone(),
+                schema_version: pipeline.schema_version,
                 revision: pipeline.revision,
+                content_digest: pipeline_identity
+                    .as_ref()
+                    .map(|identity| identity.content_digest.clone())
+                    .unwrap_or_default(),
+                operator_set_version: operator_set_identity
+                    .as_ref()
+                    .map(|identity| identity.version.clone())
+                    .unwrap_or_default(),
+                planner_profile_version: planner_profile_identity
+                    .as_ref()
+                    .map(|identity| identity.version.clone())
+                    .unwrap_or_default(),
             },
             ProcessingPipelineSpec::Subvolume { pipeline } => Self {
                 family: ProcessingPipelineFamily::Subvolume,
                 name: pipeline.name.clone(),
+                schema_version: pipeline.schema_version,
                 revision: pipeline.revision,
+                content_digest: pipeline_identity
+                    .as_ref()
+                    .map(|identity| identity.content_digest.clone())
+                    .unwrap_or_default(),
+                operator_set_version: operator_set_identity
+                    .as_ref()
+                    .map(|identity| identity.version.clone())
+                    .unwrap_or_default(),
+                planner_profile_version: planner_profile_identity
+                    .as_ref()
+                    .map(|identity| identity.version.clone())
+                    .unwrap_or_default(),
             },
             ProcessingPipelineSpec::Gather { pipeline } => Self {
                 family: ProcessingPipelineFamily::Gather,
                 name: pipeline.name.clone(),
+                schema_version: pipeline.schema_version,
                 revision: pipeline.revision,
+                content_digest: pipeline_identity
+                    .as_ref()
+                    .map(|identity| identity.content_digest.clone())
+                    .unwrap_or_default(),
+                operator_set_version: operator_set_identity
+                    .as_ref()
+                    .map(|identity| identity.version.clone())
+                    .unwrap_or_default(),
+                planner_profile_version: planner_profile_identity
+                    .as_ref()
+                    .map(|identity| identity.version.clone())
+                    .unwrap_or_default(),
             },
         }
     }

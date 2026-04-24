@@ -9,8 +9,10 @@ import type {
   DescribeVelocityVolumeResponse,
   DatasetRegistryEntry,
   DatasetRegistryStatus,
+  GetProcessingDebugPlanResponse,
   GetProcessingJobResponse,
   GetProcessingBatchResponse,
+  GetProcessingRuntimeStateResponse,
   IngestVelocityVolumeRequest,
   IngestVelocityVolumeResponse,
   ImportDatasetResponse,
@@ -20,6 +22,7 @@ import type {
   LoadVelocityModelsResponse,
   LoadWorkspaceStateResponse,
   ListPipelinePresetsResponse,
+  ListProcessingRuntimeEventsResponse,
   ListSegyImportRecipesResponse,
   OpenDatasetResponse,
   PostStackNeighborhoodProcessingPipeline,
@@ -74,6 +77,7 @@ import type {
   WorkspaceSession
 } from "@traceboost/seis-contracts";
 import { IPC_SCHEMA_VERSION as SCHEMA_VERSION } from "@traceboost/seis-contracts";
+export { SCHEMA_VERSION };
 import type {
   CheckshotVspObservationSet1D,
   CoordinateReferenceDescriptor,
@@ -3143,22 +3147,68 @@ export async function defaultPostStackNeighborhoodProcessingStorePath(
 export async function getProcessingJob(jobId: string): Promise<GetProcessingJobResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<GetProcessingJobResponse>("get_processing_job_command", {
-      request: { schema_version: 1, job_id: jobId }
+      request: { schema_version: SCHEMA_VERSION, job_id: jobId }
     });
   }
 
-  return postJson<GetProcessingJobResponse>("/api/processing/job", { schema_version: 1, job_id: jobId });
+  return postJson<GetProcessingJobResponse>("/api/processing/job", {
+    schema_version: SCHEMA_VERSION,
+    job_id: jobId
+  });
+}
+
+export async function getProcessingDebugPlan(
+  jobId: string
+): Promise<GetProcessingDebugPlanResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<GetProcessingDebugPlanResponse>("get_processing_debug_plan_command", {
+      request: { schema_version: SCHEMA_VERSION, job_id: jobId }
+    });
+  }
+
+  throw new Error("Processing debug plan is only available in the desktop runtime.");
+}
+
+export async function getProcessingRuntimeState(
+  jobId: string
+): Promise<GetProcessingRuntimeStateResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<GetProcessingRuntimeStateResponse>(
+        "get_processing_runtime_state_command",
+        {
+        request: { schema_version: SCHEMA_VERSION, job_id: jobId }
+        }
+      );
+  }
+
+  throw new Error("Processing runtime state is only available in the desktop runtime.");
+}
+
+export async function listProcessingRuntimeEvents(
+  jobId: string,
+  afterSeq: number | null = null
+): Promise<ListProcessingRuntimeEventsResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<ListProcessingRuntimeEventsResponse>(
+        "list_processing_runtime_events_command",
+        {
+        request: { schema_version: SCHEMA_VERSION, job_id: jobId, after_seq: afterSeq }
+        }
+      );
+  }
+
+  throw new Error("Processing runtime events are only available in the desktop runtime.");
 }
 
 export async function cancelProcessingJob(jobId: string): Promise<CancelProcessingJobResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<CancelProcessingJobResponse>("cancel_processing_job_command", {
-      request: { schema_version: 1, job_id: jobId }
+      request: { schema_version: SCHEMA_VERSION, job_id: jobId }
     });
   }
 
   return postJson<CancelProcessingJobResponse>("/api/processing/cancel", {
-    schema_version: 1,
+    schema_version: SCHEMA_VERSION,
     job_id: jobId
   });
 }
@@ -3166,7 +3216,7 @@ export async function cancelProcessingJob(jobId: string): Promise<CancelProcessi
 export async function getProcessingBatch(batchId: string): Promise<GetProcessingBatchResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<GetProcessingBatchResponse>("get_processing_batch_command", {
-      request: { schema_version: 1, batch_id: batchId }
+      request: { schema_version: SCHEMA_VERSION, batch_id: batchId }
     });
   }
 
@@ -3178,7 +3228,7 @@ export async function cancelProcessingBatch(
 ): Promise<CancelProcessingBatchResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<CancelProcessingBatchResponse>("cancel_processing_batch_command", {
-      request: { schema_version: 1, batch_id: batchId }
+      request: { schema_version: SCHEMA_VERSION, batch_id: batchId }
     });
   }
 
@@ -3199,12 +3249,12 @@ export async function savePipelinePreset(
 ): Promise<SavePipelinePresetResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<SavePipelinePresetResponse>("save_pipeline_preset_command", {
-      request: { schema_version: 1, preset }
+      request: { schema_version: SCHEMA_VERSION, preset }
     });
   }
 
   return postJson<SavePipelinePresetResponse>("/api/processing/presets/save", {
-    schema_version: 1,
+    schema_version: SCHEMA_VERSION,
     preset
   });
 }
@@ -3212,21 +3262,21 @@ export async function savePipelinePreset(
 export async function deletePipelinePreset(presetId: string): Promise<boolean> {
   if (isTauriEnvironment()) {
     const response = await invokeTauri<{ schema_version: number; deleted: boolean }>(
-      "delete_pipeline_preset_command",
-      {
-        request: { schema_version: 1, preset_id: presetId }
-      }
-    );
+        "delete_pipeline_preset_command",
+        {
+        request: { schema_version: SCHEMA_VERSION, preset_id: presetId }
+        }
+      );
     return response.deleted;
   }
 
   const response = await postJson<{ schema_version: number; deleted: boolean }>(
-    "/api/processing/presets/delete",
-    {
-      schema_version: 1,
-      preset_id: presetId
-    }
-  );
+      "/api/processing/presets/delete",
+      {
+      schema_version: SCHEMA_VERSION,
+        preset_id: presetId
+      }
+    );
   return response.deleted;
 }
 

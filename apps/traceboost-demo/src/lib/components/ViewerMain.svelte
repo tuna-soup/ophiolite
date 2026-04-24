@@ -3,11 +3,8 @@
 <script lang="ts">
   import type { ChartToolbarActionItem, ChartToolbarToolItem } from "@ophiolite/charts-toolbar";
   import { ChartInteractionToolbar } from "@ophiolite/charts-toolbar";
-  import {
-    AmplitudeDistributionInspector,
-    SeismicSectionChart,
-    SpectrumInspector
-  } from "@ophiolite/charts";
+  import { SeismicSectionChart } from "@ophiolite/charts";
+  import { AmplitudeDistributionInspector, SpectrumInspector } from "@ophiolite/charts/extras";
   import type {
     SeismicSectionAnalysisConfig,
     SeismicSectionAnalysisRequest,
@@ -737,8 +734,8 @@
         <div>
           <dt>Viewport</dt>
           <dd>
-            T {formatIndexRange(compareViewport.trace_start, compareViewport.trace_end)} ·
-            S {formatIndexRange(compareViewport.sample_start, compareViewport.sample_end)}
+            T {formatIndexRange(compareViewport.traceStart, compareViewport.traceEnd)} ·
+            S {formatIndexRange(compareViewport.sampleStart, compareViewport.sampleEnd)}
           </dd>
         </div>
         <div>
@@ -922,6 +919,9 @@
             <NeighborhoodOperatorEditor
               selectedOperation={processingModel.selectedNeighborhoodOperation}
               activeJob={processingModel.activeJob}
+              activeDebugPlan={processingModel.activeDebugPlan}
+              activeRuntimeState={processingModel.activeRuntimeState}
+              activeRuntimeEvents={processingModel.activeRuntimeEvents}
               processingError={processingModel.error}
               onSetWindow={processingModel.setSelectedNeighborhoodWindow}
               onSetStatistic={processingModel.setSelectedNeighborhoodStatistic}
@@ -952,9 +952,12 @@
 
             <PipelineOperatorEditor
               selectedOperation={processingModel.selectedOperation}
-              selectedOperatorCatalogItem={processingModel.selectedOperatorCatalogItem}
-              activeJob={processingModel.activeJob}
-              processingError={processingModel.error}
+            selectedOperatorCatalogItem={processingModel.selectedOperatorCatalogItem}
+            activeJob={processingModel.activeJob}
+            activeDebugPlan={processingModel.activeDebugPlan}
+            activeRuntimeState={processingModel.activeRuntimeState}
+            activeRuntimeEvents={processingModel.activeRuntimeEvents}
+            processingError={processingModel.error}
               primaryVolumeLabel={processingModel.activePrimaryVolumeLabel}
               sourceSubvolumeBounds={processingModel.sourceSubvolumeBounds}
               secondaryVolumeOptions={processingModel.volumeArithmeticSecondaryOptions}

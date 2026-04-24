@@ -351,6 +351,10 @@ export default defineConfig({
     preserveSymlinks: true,
     dedupe: ["svelte"],
     alias: {
+      "@ophiolite/charts/extras": path.resolve(
+        __dirname,
+        "../../charts/packages/svelte/src/extras.ts"
+      ),
       "@ophiolite/charts": path.resolve(
         __dirname,
         "../../charts/packages/svelte/src/index.ts"

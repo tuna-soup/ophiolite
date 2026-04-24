@@ -2,22 +2,27 @@
 
 <script lang="ts">
   import type {
+    InspectableProcessingPlan,
     LocalVolumeStatistic,
     NeighborhoodDipOutput,
+    ProcessingJobRuntimeState,
     ProcessingJobStatus
   } from "@traceboost/seis-contracts";
+  import type { ProcessingRuntimeEvent } from "@traceboost/seis-contracts";
   import type { NeighborhoodOperation } from "../processing-model.svelte";
   import {
     isNeighborhoodDip,
     isNeighborhoodLocalVolumeStats,
-    isNeighborhoodSimilarity,
-    summarizeProcessingExecution,
-    summarizeProcessingPlan
+    isNeighborhoodSimilarity
   } from "../processing-model.svelte";
+  import ProcessingDebugPanel from "./ProcessingDebugPanel.svelte";
 
   let {
     selectedOperation,
     activeJob,
+    activeDebugPlan = null,
+    activeRuntimeState = null,
+    activeRuntimeEvents = [],
     processingError,
     onSetWindow,
     onSetStatistic,
@@ -28,6 +33,9 @@
   }: {
     selectedOperation: NeighborhoodOperation | null;
     activeJob: ProcessingJobStatus | null;
+    activeDebugPlan?: InspectableProcessingPlan | null;
+    activeRuntimeState?: ProcessingJobRuntimeState | null;
+    activeRuntimeEvents?: ProcessingRuntimeEvent[];
     processingError: string | null;
     onSetWindow: (field: "gate_ms" | "inline_stepout" | "xline_stepout", value: number) => void;
     onSetStatistic: (statistic: LocalVolumeStatistic) => void;
@@ -37,8 +45,6 @@
     onOpenArtifact: (storePath: string) => void | Promise<void>;
   } = $props();
 
-  let planSummary = $derived(summarizeProcessingPlan(activeJob?.plan_summary));
-  let executionSummary = $derived(summarizeProcessingExecution(activeJob?.execution_summary));
 </script>
 
 <section class="editor-panel">
@@ -200,48 +206,14 @@
       {#if activeJob.progress}
         <p>{activeJob.progress.completed} / {activeJob.progress.total} units</p>
       {/if}
-      {#if planSummary}
-        <div class="job-plan">
-          <strong>Planned Execution</strong>
-          <p>{planSummary.overview}</p>
-          {#if planSummary.detail}
-            <p>{planSummary.detail}</p>
-          {/if}
-          {#if planSummary.stages.length}
-            <div class="job-plan-stages">
-              {#each planSummary.stages as stageSummary (`${activeJob.job_id}:${stageSummary}`)}
-                <span>{stageSummary}</span>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/if}
-      {#if executionSummary}
-        <div class="job-plan">
-          <strong>Actual Execution</strong>
-          <p>{executionSummary.overview}</p>
-          {#if executionSummary.detail}
-            <p>{executionSummary.detail}</p>
-          {/if}
-          {#if executionSummary.stages.length}
-            <div class="job-plan-stages">
-              {#each executionSummary.stages as stageSummary (`${activeJob.job_id}:actual:${stageSummary}`)}
-                <span>{stageSummary}</span>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/if}
-      <div class="job-actions">
-        <button class="chip" onclick={onCancelJob} disabled={activeJob.state !== "queued" && activeJob.state !== "running"}>
-          Cancel Job
-        </button>
-        {#each activeJob.artifacts as artifact (artifact.store_path)}
-          <button class="chip" onclick={() => onOpenArtifact(artifact.store_path)}>
-            Open {artifact.kind === "final_output" ? "Output" : "Artifact"}
-          </button>
-        {/each}
-      </div>
+      <ProcessingDebugPanel
+        {activeJob}
+        debugPlan={activeDebugPlan}
+        runtimeState={activeRuntimeState}
+        runtimeEvents={activeRuntimeEvents}
+        {onCancelJob}
+        {onOpenArtifact}
+      />
     </div>
   {/if}
 </section>
@@ -332,57 +304,12 @@
     font-size: 11px;
   }
 
-  .job-header,
-  .job-actions {
+  .job-header {
     display: flex;
     gap: var(--ui-space-2);
     align-items: center;
     flex-wrap: wrap;
     justify-content: space-between;
-  }
-
-  .job-plan {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-top: var(--ui-space-2);
-    padding-top: var(--ui-space-2);
-    border-top: 1px solid var(--app-border);
-  }
-
-  .job-plan strong {
-    color: var(--text-primary);
-    font-size: 11px;
-  }
-
-  .job-plan p {
-    margin: 0;
-    font-size: 11px;
-    color: var(--text-muted);
-    line-height: 1.45;
-  }
-
-  .job-plan-stages {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .job-plan-stages span {
-    color: var(--text-dim);
-    font-size: 10px;
-    line-height: 1.4;
-  }
-
-  .chip {
-    border: 1px solid var(--app-border-strong);
-    background: #fff;
-    color: var(--text-primary);
-    border-radius: var(--ui-radius-md);
-    min-height: var(--ui-button-height);
-    padding: 0 var(--ui-button-padding-x);
-    font-size: 11px;
-    cursor: pointer;
   }
 
   @media (max-width: 900px) {

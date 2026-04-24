@@ -1,7 +1,7 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
-  import { WellTieChart } from "@ophiolite/charts";
+  import { WellTieChart } from "@ophiolite/charts/extras";
   import { createMockWellTieChartModel } from "@ophiolite/charts-data-models";
   import type { WellTieChartModel } from "@ophiolite/charts-data-models";
   import type { WellTieAnalysis1D, WellTieObservationSet1D } from "@ophiolite/contracts";

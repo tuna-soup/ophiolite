@@ -1,3 +1,7 @@
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use ts_rs::TS;
+
 use ophiolite_operators::{
     GatherProcessingDetail, OPERATOR_CATALOG_SCHEMA_VERSION, OperatorAvailability, OperatorCatalog,
     OperatorCatalogEntry, OperatorContractRef, OperatorDetail, OperatorDocumentation,
@@ -14,10 +18,162 @@ use super::operations::{GatherRequest, GatherSelector};
 use super::processing::{
     FrequencyPhaseMode, FrequencyWindowShape, GatherInterpolationMode, GatherProcessingOperation,
     LocalVolumeStatistic, PostStackNeighborhoodProcessingOperation, ProcessingLayoutCompatibility,
-    TraceLocalProcessingOperation, TraceLocalVolumeArithmeticOperator,
+    SubvolumeCropOperation, TraceLocalProcessingOperation, TraceLocalVolumeArithmeticOperator,
 };
 
 const SEISMIC_OPERATOR_CONTRACT_SCHEMA_ID: &str = "ophiolite.seismic.operations.v1";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingPlannerPartitioningHint {
+    TileGroup,
+    Section,
+    GatherGroup,
+    FullVolume,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingPlannerCostClass {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingPlannerParallelEfficiencyClass {
+    High,
+    Medium,
+    Low,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingPlannerHints {
+    pub preferred_partitioning: ProcessingPlannerPartitioningHint,
+    pub requires_full_volume: bool,
+    pub checkpoint_safe: bool,
+    pub memory_cost_class: ProcessingPlannerCostClass,
+    pub cpu_cost_class: ProcessingPlannerCostClass,
+    pub io_cost_class: ProcessingPlannerCostClass,
+    pub parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass,
+}
+
+pub fn trace_local_operator_planner_hints(
+    operation: &TraceLocalProcessingOperation,
+) -> ProcessingPlannerHints {
+    match operation {
+        TraceLocalProcessingOperation::AmplitudeScalar { .. } => ProcessingPlannerHints {
+            preferred_partitioning: ProcessingPlannerPartitioningHint::TileGroup,
+            requires_full_volume: false,
+            checkpoint_safe: true,
+            memory_cost_class: ProcessingPlannerCostClass::Low,
+            cpu_cost_class: ProcessingPlannerCostClass::Low,
+            io_cost_class: ProcessingPlannerCostClass::Low,
+            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::High,
+        },
+        TraceLocalProcessingOperation::TraceRmsNormalize
+        | TraceLocalProcessingOperation::PhaseRotation { .. } => ProcessingPlannerHints {
+            preferred_partitioning: ProcessingPlannerPartitioningHint::TileGroup,
+            requires_full_volume: false,
+            checkpoint_safe: true,
+            memory_cost_class: ProcessingPlannerCostClass::Medium,
+            cpu_cost_class: ProcessingPlannerCostClass::Medium,
+            io_cost_class: ProcessingPlannerCostClass::Low,
+            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::High,
+        },
+        TraceLocalProcessingOperation::AgcRms { .. } => ProcessingPlannerHints {
+            preferred_partitioning: ProcessingPlannerPartitioningHint::TileGroup,
+            requires_full_volume: false,
+            checkpoint_safe: true,
+            memory_cost_class: ProcessingPlannerCostClass::Medium,
+            cpu_cost_class: ProcessingPlannerCostClass::Medium,
+            io_cost_class: ProcessingPlannerCostClass::Low,
+            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::High,
+        },
+        TraceLocalProcessingOperation::Envelope
+        | TraceLocalProcessingOperation::InstantaneousPhase
+        | TraceLocalProcessingOperation::InstantaneousFrequency
+        | TraceLocalProcessingOperation::Sweetness
+        | TraceLocalProcessingOperation::LowpassFilter { .. }
+        | TraceLocalProcessingOperation::HighpassFilter { .. }
+        | TraceLocalProcessingOperation::BandpassFilter { .. } => ProcessingPlannerHints {
+            preferred_partitioning: ProcessingPlannerPartitioningHint::TileGroup,
+            requires_full_volume: false,
+            checkpoint_safe: true,
+            memory_cost_class: ProcessingPlannerCostClass::Medium,
+            cpu_cost_class: ProcessingPlannerCostClass::High,
+            io_cost_class: ProcessingPlannerCostClass::Low,
+            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::Medium,
+        },
+        TraceLocalProcessingOperation::VolumeArithmetic { .. } => ProcessingPlannerHints {
+            preferred_partitioning: ProcessingPlannerPartitioningHint::TileGroup,
+            requires_full_volume: false,
+            checkpoint_safe: true,
+            memory_cost_class: ProcessingPlannerCostClass::Medium,
+            cpu_cost_class: ProcessingPlannerCostClass::Medium,
+            io_cost_class: ProcessingPlannerCostClass::Medium,
+            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::High,
+        },
+    }
+}
+
+pub fn post_stack_neighborhood_operator_planner_hints(
+    _operation: &PostStackNeighborhoodProcessingOperation,
+) -> ProcessingPlannerHints {
+    ProcessingPlannerHints {
+        preferred_partitioning: ProcessingPlannerPartitioningHint::TileGroup,
+        requires_full_volume: false,
+        checkpoint_safe: true,
+        memory_cost_class: ProcessingPlannerCostClass::High,
+        cpu_cost_class: ProcessingPlannerCostClass::High,
+        io_cost_class: ProcessingPlannerCostClass::High,
+        parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::Low,
+    }
+}
+
+pub fn gather_operator_planner_hints(
+    operation: &GatherProcessingOperation,
+) -> ProcessingPlannerHints {
+    match operation {
+        GatherProcessingOperation::OffsetMute { .. } => ProcessingPlannerHints {
+            preferred_partitioning: ProcessingPlannerPartitioningHint::GatherGroup,
+            requires_full_volume: false,
+            checkpoint_safe: true,
+            memory_cost_class: ProcessingPlannerCostClass::Low,
+            cpu_cost_class: ProcessingPlannerCostClass::Low,
+            io_cost_class: ProcessingPlannerCostClass::Low,
+            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::Medium,
+        },
+        GatherProcessingOperation::NmoCorrection { .. }
+        | GatherProcessingOperation::StretchMute { .. } => ProcessingPlannerHints {
+            preferred_partitioning: ProcessingPlannerPartitioningHint::GatherGroup,
+            requires_full_volume: false,
+            checkpoint_safe: true,
+            memory_cost_class: ProcessingPlannerCostClass::Medium,
+            cpu_cost_class: ProcessingPlannerCostClass::High,
+            io_cost_class: ProcessingPlannerCostClass::Medium,
+            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::Medium,
+        },
+    }
+}
+
+pub fn subvolume_operator_planner_hints(
+    _operation: &SubvolumeCropOperation,
+) -> ProcessingPlannerHints {
+    ProcessingPlannerHints {
+        preferred_partitioning: ProcessingPlannerPartitioningHint::FullVolume,
+        requires_full_volume: true,
+        checkpoint_safe: true,
+        memory_cost_class: ProcessingPlannerCostClass::Low,
+        cpu_cost_class: ProcessingPlannerCostClass::Low,
+        io_cost_class: ProcessingPlannerCostClass::Medium,
+        parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::High,
+    }
+}
 
 pub fn operator_catalog_for_trace_data(descriptor: &SeismicTraceDataDescriptor) -> OperatorCatalog {
     let mut operators = Vec::new();
@@ -972,5 +1128,48 @@ mod tests {
             OperatorAvailability::Available
         ));
         assert!(matches!(nmo.availability, OperatorAvailability::Available));
+    }
+
+    #[test]
+    fn planner_hints_distinguish_pointwise_and_external_trace_local_ops() {
+        let amplitude =
+            trace_local_operator_planner_hints(&TraceLocalProcessingOperation::AmplitudeScalar {
+                factor: 1.0,
+            });
+        let arithmetic =
+            trace_local_operator_planner_hints(&TraceLocalProcessingOperation::VolumeArithmetic {
+                operator: TraceLocalVolumeArithmeticOperator::Add,
+                secondary_store_path: "secondary.tbvol".to_string(),
+            });
+
+        assert_eq!(
+            amplitude.preferred_partitioning,
+            ProcessingPlannerPartitioningHint::TileGroup
+        );
+        assert_eq!(amplitude.io_cost_class, ProcessingPlannerCostClass::Low);
+        assert_eq!(arithmetic.io_cost_class, ProcessingPlannerCostClass::Medium);
+        assert_eq!(
+            arithmetic.parallel_efficiency_class,
+            ProcessingPlannerParallelEfficiencyClass::High
+        );
+    }
+
+    #[test]
+    fn planner_hints_keep_subvolume_as_full_volume_terminal_work() {
+        let hints = subvolume_operator_planner_hints(&SubvolumeCropOperation {
+            inline_min: 1000,
+            inline_max: 1004,
+            xline_min: 2000,
+            xline_max: 2004,
+            z_min_ms: 0.0,
+            z_max_ms: 400.0,
+        });
+
+        assert_eq!(
+            hints.preferred_partitioning,
+            ProcessingPlannerPartitioningHint::FullVolume
+        );
+        assert!(hints.requires_full_volume);
+        assert_eq!(hints.io_cost_class, ProcessingPlannerCostClass::Medium);
     }
 }

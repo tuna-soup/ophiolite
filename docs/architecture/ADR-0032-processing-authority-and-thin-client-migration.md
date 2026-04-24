@@ -79,12 +79,14 @@ The TypeScript contract strategy is:
 
 - `contracts/ts/ophiolite-contracts` becomes the canonical TS contract distribution target
 - TraceBoost-oriented TS contract packages remain as compatibility re-export or compatibility distribution paths for a bounded migration window
+- generated schema/version constants should be consumed by product code rather than duplicated by app-local request builders
 
 The processing authoring strategy is:
 
 - canonical processing authoring rules move out of `traceboost-demo` frontend state modules
 - phase one introduces an app-local Rust backend authoring boundary rather than a new shared crate
 - extraction into a shared crate happens only if a second real consumer appears
+- canonical processing debug, lineage, reuse, and runtime-state semantics also move behind shared/backend-owned contracts rather than product-local debug panels inventing their own meaning
 
 The compatibility strategy is:
 
@@ -136,6 +138,7 @@ That would make the architecture look shared while still behaving app-local.
 - generic workspace persistence remains the storage sink, but stops being the semantic owner of processing authoring rules
 - TS contract distribution gets one canonical root target
 - the migration is phased and compatibility-heavy rather than a one-shot rewrite
+- TraceBoost debug UX becomes a renderer over canonical generated plan/runtime/lineage contracts rather than an app-owned semantic layer
 
 ### Explicit non-goals
 
@@ -176,6 +179,12 @@ The intended migration order is:
 8. migrate CLI/Python and other consumers onto the same authority model
 9. remove compatibility paths
 
+Additional hardening that now belongs to this migration includes:
+
+10. move processing debug fetch/state/event APIs onto canonical generated contracts
+11. replace app-local schema/version literals with generated contract versions
+12. remove duplicate subvolume/debug/reuse interpretation paths once canonical consumers are fully switched
+
 ## Success Criteria
 
 This decision is working when:
@@ -185,7 +194,12 @@ This decision is working when:
 - the planner and execution service remain the only owners of execution meaning
 - root TS contract distribution is canonical and product packages no longer act as competing sources of truth
 - SDK, CLI, Python, and desktop consume the same authority layers
+- product debug UIs consume shared inspectable/runtime contracts directly and do not reinterpret runtime/cache/package meaning locally
 - deletion of compatibility paths becomes a routine cleanup step instead of a redesign
+
+See also:
+
+- `ADR-0034-canonical-processing-identity-debug-and-compatibility-surface.md`
 
 ## Follow-on Documents
 

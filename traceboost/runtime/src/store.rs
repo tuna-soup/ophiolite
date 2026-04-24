@@ -31,7 +31,10 @@ fn maybe_normalize_legacy_processing_manifest(
         return Ok(());
     }
 
-    let legacy_pipeline = pipeline_value.clone();
+    let mut legacy_pipeline = pipeline_value.clone();
+    if let Some(pipeline_object) = legacy_pipeline.as_object_mut() {
+        pipeline_object.insert("schema_version".to_string(), json!(2));
+    }
     let normalized = if object.contains_key("trace_local_pipeline") {
         json!({
             "gather": {

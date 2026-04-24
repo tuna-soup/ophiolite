@@ -39,6 +39,9 @@ Local inspection of Rust data-processing systems such as DataFusion, Ballista, P
 - first-class `submit_job` and `submit_batch` semantics for SDK/API clients
 - hidden reusable checkpoints and artifact-level cache reuse by default
 - future-ready artifact and partition abstractions that can later support remote executors
+- stage resource envelopes that carry queue class, spillability, exclusive scope, reservation hints, partition bounds, preferred waves, and progress/retry granularity
+- runtime-visible job/stage snapshots that distinguish queued, waiting, admitted, and running states rather than only reporting coarse FIFO progress
+- structured runtime-policy divergence reporting when realized runtime behavior must differ from planner intent
 
 Phase 1 is intentionally local-first, not distributed-first.
 
@@ -83,6 +86,8 @@ This gives users a credible answer to "run the same pipeline over many cubes" wh
 - job scheduling becomes a real shared concern above the runtime kernels
 - artifact reuse decisions move toward planner/service ownership rather than app-local ad hoc decisions
 - derived outputs may choose chunking/layout policies better suited to downstream use instead of always inheriting source tiling
+- admission becomes a real scheduler concern across worker budget, memory budget, batch gates, and exclusive scopes rather than a pre-dispatch FIFO shortcut
+- runtime state becomes an inspectable product/API surface instead of an internal scheduler detail
 
 ### Explicit non-goals for this phase
 
@@ -105,6 +110,12 @@ The intended migration order is:
 7. add cache hardening and chunk-shape policy
 8. add halo-aware planning for neighborhood-style operators
 9. only then evaluate remote/distributed executors
+
+Later hardening that now belongs to this decision includes:
+
+10. explicit queue/admission/runtime snapshots
+11. explicit runtime policy divergence reporting
+12. contract-level exposure of stage resource envelopes and scheduler intent
 
 ## Initial Shape
 
@@ -131,6 +142,8 @@ The initial public execution surface should support:
 - `get_batch`
 - `cancel_job`
 - `cancel_batch`
+- `get_runtime_state`
+- `list_runtime_events`
 
 ## Success Criteria
 
@@ -141,9 +154,13 @@ This decision is working when:
 - `traceboost-demo` no longer depends on unmanaged per-request execution threads for this workflow
 - Python callers no longer need to build their own outer job loop to manage many-cube runs
 - planner output is inspectable enough to explain cache reuse, checkpoint insertion, and execution shape
+- runtime output is inspectable enough to explain queue class, admission delay, memory reservation, cancellation before start, and planner/runtime divergence
 - later partitioned execution work can land without redesigning the public orchestration boundary
+
+See also:
+
+- `ADR-0034-canonical-processing-identity-debug-and-compatibility-surface.md`
 
 ## Follow-on Documents
 
 - `seismic-execution-service-implementation-sketch.md`
-

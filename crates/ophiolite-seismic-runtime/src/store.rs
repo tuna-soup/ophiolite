@@ -12,6 +12,8 @@ use ophiolite_seismic::{
 use serde::Serialize;
 
 use crate::error::SeismicStoreError;
+use crate::execution::GeometryFingerprints;
+use crate::identity::{CURRENT_RUNTIME_SEMANTICS_VERSION, CURRENT_STORE_WRITER_SEMANTICS_VERSION};
 use crate::metadata::{DatasetKind, default_sample_axis_unit_for_domain, validate_vertical_axis};
 use crate::storage::section_assembler;
 use crate::storage::tbvol::{TbvolManifest, TbvolReader, TbvolWriter, load_tbvol_manifest};
@@ -204,7 +206,7 @@ impl StoreHandle {
     fn geometry_descriptor(&self) -> GeometryDescriptor {
         GeometryDescriptor {
             compare_family: GEOMETRY_COMPARE_FAMILY.to_string(),
-            fingerprint: geometry_fingerprint(&self.manifest),
+            fingerprint: self.geometry_fingerprints().survey_geometry_fingerprint,
             summary: GeometrySummary {
                 inline_axis: summarize_i32_axis(&self.manifest.volume.axes.ilines),
                 xline_axis: summarize_i32_axis(&self.manifest.volume.axes.xlines),
@@ -219,25 +221,37 @@ impl StoreHandle {
             },
         }
     }
+
+    pub fn geometry_fingerprints(&self) -> GeometryFingerprints {
+        geometry_fingerprints(&self.manifest)
+    }
 }
 
 fn processing_lineage_summary(
     lineage: Option<&crate::metadata::ProcessingLineage>,
 ) -> Option<ProcessingLineageSummary> {
     let lineage = lineage?;
-    let (pipeline_name, pipeline_revision) = match &lineage.pipeline {
-        ophiolite_seismic::ProcessingPipelineSpec::TraceLocal { pipeline } => {
-            (pipeline.name.clone(), pipeline.revision)
-        }
-        ophiolite_seismic::ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
-            (pipeline.name.clone(), pipeline.revision)
-        }
-        ophiolite_seismic::ProcessingPipelineSpec::Subvolume { pipeline } => {
-            (pipeline.name.clone(), pipeline.revision)
-        }
-        ophiolite_seismic::ProcessingPipelineSpec::Gather { pipeline } => {
-            (pipeline.name.clone(), pipeline.revision)
-        }
+    let (pipeline_name, pipeline_schema_version, pipeline_revision) = match &lineage.pipeline {
+        ophiolite_seismic::ProcessingPipelineSpec::TraceLocal { pipeline } => (
+            pipeline.name.clone(),
+            pipeline.schema_version,
+            pipeline.revision,
+        ),
+        ophiolite_seismic::ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => (
+            pipeline.name.clone(),
+            pipeline.schema_version,
+            pipeline.revision,
+        ),
+        ophiolite_seismic::ProcessingPipelineSpec::Subvolume { pipeline } => (
+            pipeline.name.clone(),
+            pipeline.schema_version,
+            pipeline.revision,
+        ),
+        ophiolite_seismic::ProcessingPipelineSpec::Gather { pipeline } => (
+            pipeline.name.clone(),
+            pipeline.schema_version,
+            pipeline.revision,
+        ),
     };
     Some(ProcessingLineageSummary {
         parent_store_path: lineage.parent_store.to_string_lossy().into_owned(),
@@ -245,7 +259,13 @@ fn processing_lineage_summary(
         artifact_role: lineage.artifact_role,
         pipeline_family: lineage.pipeline.family(),
         pipeline_name: pipeline_name.filter(|value| !value.trim().is_empty()),
+        pipeline_schema_version,
         pipeline_revision,
+        pipeline_content_digest: lineage
+            .pipeline_identity
+            .as_ref()
+            .map(|identity| identity.content_digest.clone())
+            .unwrap_or_default(),
     })
 }
 
@@ -580,7 +600,28 @@ fn geometry_provenance_summary(manifest: &TbvolManifest) -> GeometryProvenanceSu
     }
 }
 
-fn geometry_fingerprint(manifest: &TbvolManifest) -> String {
+fn geometry_fingerprints(manifest: &TbvolManifest) -> GeometryFingerprints {
+    if let Some(lineage) = manifest.volume.processing_lineage.as_ref() {
+        if lineage.runtime_semantics_version == CURRENT_RUNTIME_SEMANTICS_VERSION
+            && lineage.store_writer_semantics_version == CURRENT_STORE_WRITER_SEMANTICS_VERSION
+        {
+            if let Some(artifact_key) = lineage.artifact_key.as_ref() {
+                return artifact_key.geometry_fingerprints.clone();
+            }
+            if let Some(geometry_fingerprints) = lineage.geometry_fingerprints.as_ref() {
+                return geometry_fingerprints.clone();
+            }
+        }
+    }
+    GeometryFingerprints {
+        survey_geometry_fingerprint: survey_geometry_fingerprint(manifest),
+        storage_grid_fingerprint: storage_grid_fingerprint(manifest),
+        section_projection_fingerprint: section_projection_fingerprint(manifest),
+        artifact_lineage_fingerprint: artifact_lineage_fingerprint(manifest),
+    }
+}
+
+fn survey_geometry_fingerprint(manifest: &TbvolManifest) -> String {
     let mut hash = fnv1a64_begin();
     hash = fnv1a64_update(hash, b"inline");
     hash = fnv1a64_update_f64_slice(hash, &manifest.volume.axes.ilines);
@@ -589,6 +630,48 @@ fn geometry_fingerprint(manifest: &TbvolManifest) -> String {
     hash = fnv1a64_update(hash, b"sample");
     hash = fnv1a64_update_f32_slice(hash, &manifest.volume.axes.sample_axis_ms);
     format!("{GEOMETRY_FINGERPRINT_VERSION}:{hash:016x}")
+}
+
+fn storage_grid_fingerprint(manifest: &TbvolManifest) -> String {
+    let mut hash = fnv1a64_begin();
+    hash = fnv1a64_update(hash, b"tile-shape");
+    for value in manifest.tile_shape {
+        hash = fnv1a64_update_u64(hash, value as u64);
+    }
+    format!("storage:{hash:016x}")
+}
+
+fn section_projection_fingerprint(manifest: &TbvolManifest) -> String {
+    let mut hash = fnv1a64_begin();
+    hash = fnv1a64_update(hash, b"section-projection");
+    hash = fnv1a64_update_u64(hash, manifest.volume.shape[0] as u64);
+    hash = fnv1a64_update_u64(hash, manifest.volume.shape[1] as u64);
+    hash = fnv1a64_update_u64(hash, manifest.volume.shape[2] as u64);
+    format!("section:{hash:016x}")
+}
+
+fn artifact_lineage_fingerprint(manifest: &TbvolManifest) -> String {
+    let mut hash = fnv1a64_begin();
+    hash = fnv1a64_update(hash, manifest.volume.store_id.as_bytes());
+    if let Some(lineage) = manifest.volume.processing_lineage.as_ref() {
+        if let Some(source_identity) = lineage.source_identity.as_ref() {
+            hash = fnv1a64_update(hash, source_identity.store_id.as_bytes());
+            hash = fnv1a64_update(
+                hash,
+                source_identity.store_format.store_format_version.as_bytes(),
+            );
+        }
+        if let Some(pipeline_identity) = lineage.pipeline_identity.as_ref() {
+            hash = fnv1a64_update(hash, pipeline_identity.content_digest.as_bytes());
+        }
+        if let Some(boundary_reason) = lineage.boundary_reason {
+            hash = fnv1a64_update(hash, format!("{boundary_reason:?}").as_bytes());
+        }
+        if let Some(artifact_key) = lineage.artifact_key.as_ref() {
+            hash = fnv1a64_update(hash, artifact_key.cache_key.as_bytes());
+        }
+    }
+    format!("lineage:{hash:016x}")
 }
 
 fn fnv1a64_begin() -> u64 {

@@ -22,6 +22,8 @@
     "traceboost:doctor": "bun run --cwd ./apps/traceboost-demo doctor",
     "traceboost:dev": "bun run --cwd ./apps/traceboost-demo dev",
     "traceboost:typecheck": "bun run --cwd ./apps/traceboost-demo typecheck",
-    "traceboost:build": "bun run --cwd ./apps/traceboost-demo build"
+    "traceboost:build": "bun run --cwd ./apps/traceboost-demo build",
+    "traceboost:contracts:generate": "cargo run -p traceboost-contracts-export",
+    "traceboost:contracts:check": "cargo run -p traceboost-contracts-export -- --check"
   }
 }

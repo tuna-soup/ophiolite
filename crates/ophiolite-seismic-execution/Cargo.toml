@@ -9,3 +9,6 @@ publish = true
 ophiolite-seismic = { path = "../ophiolite-seismic" }
 ophiolite-seismic-runtime = { path = "../ophiolite-seismic-runtime" }
 serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -2,9 +2,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::SeismicLayout;
+use crate::{SectionAxis, SeismicLayout};
 
-use super::{default_pipeline_revision, default_pipeline_schema_version};
+use super::{
+    InspectableProcessingPlan, default_pipeline_revision, default_pipeline_schema_version,
+    default_semantic_identity_schema_version,
+};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
@@ -138,7 +141,7 @@ impl ProcessingOperatorScope {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub enum ProcessingSampleDependency {
     Pointwise,
     BoundedWindow { window_ms_hint: f32 },
@@ -155,7 +158,7 @@ impl ProcessingSampleDependency {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub enum ProcessingSpatialDependency {
     SingleTrace,
     SectionNeighborhood,
@@ -176,7 +179,7 @@ impl ProcessingSpatialDependency {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ProcessingOperatorDependencyProfile {
     pub deterministic: bool,
     pub sample_dependency: ProcessingSampleDependency,
@@ -391,6 +394,27 @@ pub struct SubvolumeCropOperation {
     pub z_max_ms: f32,
 }
 
+impl SubvolumeCropOperation {
+    pub fn operator_id(&self) -> &'static str {
+        "subvolume_crop"
+    }
+
+    pub fn compatibility(&self) -> ProcessingLayoutCompatibility {
+        ProcessingLayoutCompatibility::PostStackOnly
+    }
+
+    pub fn dependency_profile(&self) -> ProcessingOperatorDependencyProfile {
+        ProcessingOperatorDependencyProfile {
+            deterministic: true,
+            sample_dependency: ProcessingSampleDependency::Pointwise,
+            spatial_dependency: ProcessingSpatialDependency::SingleTrace,
+            inline_radius: 0,
+            crossline_radius: 0,
+            same_section_ephemeral_reuse_safe: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct SubvolumeProcessingPipeline {
     #[serde(default = "default_pipeline_schema_version")]
@@ -548,6 +572,29 @@ impl GatherProcessingOperation {
     pub fn compatibility(&self) -> ProcessingLayoutCompatibility {
         ProcessingLayoutCompatibility::PreStackOffsetOnly
     }
+
+    pub fn dependency_profile(&self) -> ProcessingOperatorDependencyProfile {
+        match self {
+            Self::OffsetMute { .. } => ProcessingOperatorDependencyProfile {
+                deterministic: true,
+                sample_dependency: ProcessingSampleDependency::Pointwise,
+                spatial_dependency: ProcessingSpatialDependency::GatherNeighborhood,
+                inline_radius: 0,
+                crossline_radius: 0,
+                same_section_ephemeral_reuse_safe: false,
+            },
+            Self::NmoCorrection { .. } | Self::StretchMute { .. } => {
+                ProcessingOperatorDependencyProfile {
+                    deterministic: true,
+                    sample_dependency: ProcessingSampleDependency::WholeTrace,
+                    spatial_dependency: ProcessingSpatialDependency::GatherNeighborhood,
+                    inline_radius: 0,
+                    crossline_radius: 0,
+                    same_section_ephemeral_reuse_safe: false,
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -575,6 +622,163 @@ pub enum ProcessingPipelineFamily {
     PostStackNeighborhood,
     Subvolume,
     Gather,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PipelineSemanticIdentity {
+    #[serde(default = "default_semantic_identity_schema_version")]
+    pub schema_version: u32,
+    pub family: ProcessingPipelineFamily,
+    pub pipeline_schema_version: u32,
+    pub revision: u32,
+    pub content_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct OperatorSetIdentity {
+    #[serde(default = "default_semantic_identity_schema_version")]
+    pub schema_version: u32,
+    pub family: ProcessingPipelineFamily,
+    pub version: String,
+    pub effective_operator_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PlannerProfileIdentity {
+    #[serde(default = "default_semantic_identity_schema_version")]
+    pub schema_version: u32,
+    pub family: ProcessingPipelineFamily,
+    pub version: String,
+    pub effective_structural_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct StoreFormatIdentity {
+    #[serde(default = "default_semantic_identity_schema_version")]
+    pub schema_version: u32,
+    pub store_kind: String,
+    pub store_format_version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SourceSemanticIdentity {
+    #[serde(default = "default_semantic_identity_schema_version")]
+    pub schema_version: u32,
+    pub store_id: String,
+    pub store_format: StoreFormatIdentity,
+    pub layout: SeismicLayout,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<[usize; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_shape: Option<[usize; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endianness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_artifact_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ReuseBoundaryKind {
+    ExactOutput,
+    AuthoredCheckpoint,
+    TraceLocalPrefix,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ReuseArtifactKind {
+    ExactVisibleFinal,
+    VisibleCheckpoint,
+    PreviewPrefix,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ReuseMissReason {
+    UnresolvedAtPlanningTime,
+    FreshComputeRequired,
+    NoReusableArtifactResolved,
+    UnsupportedBoundary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SourceArtifactIdentity {
+    #[serde(default = "reuse_identity_schema_version")]
+    pub schema_version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_format_version: Option<String>,
+    pub layout: SeismicLayout,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<[usize; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_shape: Option<[usize; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endianness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_artifact_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct PipelineArtifactIdentity {
+    #[serde(default = "reuse_identity_schema_version")]
+    pub schema_version: u32,
+    pub pipeline_family: ProcessingPipelineFamily,
+    pub pipeline_schema_version: u32,
+    pub pipeline_revision: u32,
+    pub pipeline_content_digest: String,
+    pub operator_set_version: String,
+    pub effective_operator_digest: String,
+    pub planner_profile_version: String,
+    pub effective_structural_digest: String,
+    pub artifact_kind: ReuseArtifactKind,
+    pub boundary_kind: ReuseBoundaryKind,
+    pub start_step_index: usize,
+    pub end_step_index: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub operator_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ReuseRequirement {
+    pub reuse_key: String,
+    pub artifact_kind: ReuseArtifactKind,
+    pub boundary_kind: ReuseBoundaryKind,
+    pub source: SourceArtifactIdentity,
+    pub artifact: PipelineArtifactIdentity,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ReuseResolution {
+    pub reuse_key: String,
+    pub artifact_kind: ReuseArtifactKind,
+    pub boundary_kind: ReuseBoundaryKind,
+    pub reused: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub miss_reason: Option<ReuseMissReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact_store_path: Option<String>,
+}
+
+fn reuse_identity_schema_version() -> u32 {
+    current_reuse_identity_schema_version()
+}
+
+pub fn current_reuse_identity_schema_version() -> u32 {
+    2
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -736,6 +940,232 @@ pub struct ProcessingJobExecutionSummary {
     pub stages: Vec<ProcessingJobStageExecutionSummary>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingJobQueueClass {
+    Control,
+    InteractivePartition,
+    ForegroundPartition,
+    BackgroundPartition,
+    ExclusiveFullVolume,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingJobWaitReason {
+    Queued,
+    AwaitingWorker,
+    AwaitingMemory,
+    AwaitingBatchGate,
+    AwaitingExclusiveScope,
+    Running,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingRuntimeState {
+    Queued,
+    Waiting,
+    Admitted,
+    Running,
+    Blocked,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingRuntimeEventKind {
+    JobQueued,
+    JobStarted,
+    JobCancelRequested,
+    JobCancelled,
+    StageQueued,
+    StageWaiting,
+    StageAdmitted,
+    StageRunning,
+    StageBlocked,
+    StageProgress,
+    StageRetryScheduled,
+    StageCompleted,
+    StageFailed,
+    ArtifactEmitted,
+    ReuseLookupStarted,
+    ReuseLookupResolved,
+    SectionWindowRead,
+    SectionAssembledRead,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum SectionAssemblyArtifactKind {
+    SectionWindow,
+    AssembledSection,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SectionAssemblyDebugSourceTile {
+    pub tile_i: usize,
+    pub tile_x: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct SectionAssemblyDebugRecord {
+    pub artifact_kind: SectionAssemblyArtifactKind,
+    pub axis: SectionAxis,
+    pub section_index: usize,
+    pub trace_range: [usize; 2],
+    pub sample_range: [usize; 2],
+    pub lod: u8,
+    pub output_shape: [usize; 2],
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_tiles: Vec<SectionAssemblyDebugSourceTile>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingRuntimePolicyDivergenceField {
+    QueueClass,
+    ExclusiveScope,
+    ReservedMemoryBytes,
+    EffectiveMaxActivePartitions,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingRuntimePolicyDivergence {
+    pub field: ProcessingRuntimePolicyDivergenceField,
+    pub planned_value: String,
+    pub actual_value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingStageRuntimeSnapshot {
+    pub stage_id: String,
+    pub stage_label: String,
+    pub state: ProcessingRuntimeState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_reason: Option<ProcessingJobWaitReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue_class: Option<ProcessingJobQueueClass>,
+    pub admitted: bool,
+    pub exclusive_scope_active: bool,
+    #[ts(type = "number")]
+    pub reserved_memory_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effective_max_active_partitions: Option<usize>,
+    pub attempt: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number | null")]
+    pub started_at_unix_s: Option<u64>,
+    #[ts(type = "number")]
+    pub updated_at_unix_s: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_partitions: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_partitions: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policy_divergences: Vec<ProcessingRuntimePolicyDivergence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+#[ts(rename_all = "snake_case", tag = "kind")]
+pub enum ProcessingRuntimeEventDetails {
+    None,
+    QueueState {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        queue_class: Option<ProcessingJobQueueClass>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        wait_reason: Option<ProcessingJobWaitReason>,
+        #[ts(type = "number")]
+        reserved_memory_bytes: u64,
+        admitted: bool,
+        exclusive_scope_active: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effective_max_active_partitions: Option<usize>,
+    },
+    Progress {
+        completed: usize,
+        total: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_count: Option<usize>,
+    },
+    RetryScheduled {
+        attempt: u32,
+    },
+    ArtifactEmitted {
+        artifact_id: String,
+        artifact_label: String,
+        artifact_kind: ProcessingJobArtifactKind,
+        artifact_store_path: String,
+    },
+    ReuseLookup {
+        reuse_key: String,
+        boundary_kind: ReuseBoundaryKind,
+        artifact_kind: ReuseArtifactKind,
+        reused: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        miss_reason: Option<ReuseMissReason>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        artifact_store_path: Option<String>,
+    },
+    SectionRead {
+        record: SectionAssemblyDebugRecord,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingRuntimeEvent {
+    #[ts(type = "number")]
+    pub seq: u64,
+    pub job_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage_label: Option<String>,
+    pub event_kind: ProcessingRuntimeEventKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<ProcessingRuntimeState>,
+    #[ts(type = "number")]
+    pub timestamp_unix_s: u64,
+    pub details: ProcessingRuntimeEventDetails,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingJobRuntimeState {
+    pub job_id: String,
+    pub state: ProcessingRuntimeState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<ProcessingJobRuntimeSnapshot>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stage_snapshots: Vec<ProcessingStageRuntimeSnapshot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(type = "number | null")]
+    pub latest_event_seq: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ProcessingJobRuntimeSnapshot {
+    pub queue_class: ProcessingJobQueueClass,
+    pub wait_reason: ProcessingJobWaitReason,
+    #[ts(type = "number")]
+    pub reserved_memory_bytes: u64,
+    #[ts(type = "number")]
+    pub memory_budget_bytes: u64,
+    pub effective_max_active_partitions: usize,
+    pub admitted: bool,
+    pub exclusive_scope_active: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policy_divergences: Vec<ProcessingRuntimePolicyDivergence>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ProcessingJobStatus {
     pub job_id: String,
@@ -750,9 +1180,13 @@ pub struct ProcessingJobStatus {
     #[serde(default)]
     pub artifacts: Vec<ProcessingJobArtifact>,
     #[serde(default)]
+    pub inspectable_plan: Option<InspectableProcessingPlan>,
+    #[serde(default)]
     pub plan_summary: Option<ProcessingJobPlanSummary>,
     #[serde(default)]
     pub execution_summary: Option<ProcessingJobExecutionSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_snapshot: Option<ProcessingJobRuntimeSnapshot>,
     #[ts(type = "number")]
     pub created_at_unix_s: u64,
     #[ts(type = "number")]
@@ -874,8 +1308,10 @@ mod tests {
             pipeline,
             current_stage_label: None,
             artifacts: Vec::new(),
+            inspectable_plan: None,
             plan_summary: None,
             execution_summary: None,
+            runtime_snapshot: None,
             created_at_unix_s: 1,
             updated_at_unix_s: 2,
             error_message: None,
@@ -885,6 +1321,7 @@ mod tests {
         assert_eq!(value["output_store_path"], serde_json::Value::Null);
         assert_eq!(value["current_stage_label"], serde_json::Value::Null);
         assert_eq!(value["artifacts"], json!([]));
+        assert_eq!(value["inspectable_plan"], serde_json::Value::Null);
         assert_eq!(value["plan_summary"], serde_json::Value::Null);
         assert_eq!(value["execution_summary"], serde_json::Value::Null);
         assert_eq!(value["error_message"], serde_json::Value::Null);

@@ -1,23 +1,46 @@
 use std::collections::BTreeSet;
+use std::fmt::Write;
 use std::mem::size_of;
 
 use uuid::Uuid;
 
+use ophiolite_seismic::contracts::{
+    OperatorSetIdentity, PipelineArtifactIdentity, PipelineSemanticIdentity,
+    PlannerProfileIdentity, ReuseArtifactKind, ReuseBoundaryKind, ReuseMissReason,
+    ReuseRequirement, ReuseResolution, SourceSemanticIdentity,
+    current_reuse_identity_schema_version,
+};
 use ophiolite_seismic::{
-    ProcessingPipelineFamily, ProcessingPipelineSpec, SeismicLayout, TraceLocalProcessingOperation,
-    TraceLocalProcessingPipeline,
+    GatherProcessingPipeline, PostStackNeighborhoodProcessingPipeline, ProcessingArtifactRole,
+    ProcessingPipelineFamily, ProcessingPipelineSpec, SeismicLayout, SubvolumeProcessingPipeline,
+    TraceLocalProcessingOperation, TraceLocalProcessingPipeline,
 };
 
+use crate::ProcessingCacheFingerprint;
 use crate::execution::{
-    ArtifactDescriptor, CacheMode, ChunkPlanningMode, ChunkShapePolicy, Chunkability, CostEstimate,
-    CpuCostClass, ExecutionArtifactRole, ExecutionMemoryBudget, ExecutionPipelineSegment,
-    ExecutionPlan, ExecutionPlanSummary, ExecutionPriorityClass, ExecutionSourceDescriptor,
-    ExecutionStage, ExecutionStageKind, HaloSpec, IoCostClass, MemoryCostClass,
-    OperatorExecutionTraits, ParallelEfficiencyClass, PartitionFamily, PartitionOrdering,
-    PartitionSpec, PipelineDescriptor, PlanningMode, PreferredPartitioning, ProgressUnits,
-    RetryPolicy, SampleHaloRequirement, SchedulerHints, StageExecutionClassification,
-    StageMemoryProfile, TraceLocalChunkPlanRecommendation, ValidationReport,
+    ArtifactBoundaryReason, ArtifactDerivation, ArtifactDescriptor, ArtifactKey,
+    ArtifactLifetimeClass, ArtifactLiveSet, ArtifactLiveSetEntry, CacheMode, ChunkGridSpec,
+    ChunkPlanningMode, ChunkShapePolicy, Chunkability, CostEstimate, CpuCostClass, DecisionFactor,
+    ExecutionArtifactRole, ExecutionExclusiveScope, ExecutionMemoryBudget,
+    ExecutionPipelineSegment, ExecutionPlan, ExecutionPlanSummary, ExecutionPriorityClass,
+    ExecutionProgressGranularity, ExecutionQueueClass, ExecutionRetryGranularity,
+    ExecutionSourceDescriptor, ExecutionSpillabilityClass, ExecutionStage, ExecutionStageKind,
+    GeometryFingerprints, HaloSpec, IoCostClass, LogicalDomain, MaterializationClass,
+    MemoryCostClass, OperatorExecutionTraits, ParallelEfficiencyClass, PartitionFamily,
+    PartitionOrdering, PartitionSpec, PipelineDescriptor, PlanDecision, PlanDecisionKind,
+    PlanDecisionSubjectKind, PlannerDiagnostics, PlannerPassSnapshot, PlanningMode, PlanningPassId,
+    PreferredPartitioning, ProgressUnits, RetryPolicy, ReuseDecision, ReuseDecisionEvidence,
+    ReuseDecisionOutcome, SampleHaloRequirement, SchedulerHints, SectionDomain,
+    StageExecutionClassification, StageMemoryProfile, StagePlanningDecision, StageResourceEnvelope,
+    TraceLocalChunkPlanRecommendation, ValidationReport, VolumeDomain,
     operator_execution_traits_for_pipeline_spec,
+};
+use crate::identity::{
+    CanonicalIdentityStatus, canonical_artifact_identity, combine_canonical_identity_status,
+    operator_set_identity_for_pipeline, pipeline_external_identity_status,
+    pipeline_semantic_identity, planner_profile_identity_for_pipeline,
+    source_artifact_identity_from_source_identity, source_identity_digest,
+    source_semantic_identity_or_degraded,
 };
 use crate::trace_local_chunk_planning::{
     compile_trace_local_chunk_plan, recommendation_from_chunk_plan,
@@ -35,100 +58,1568 @@ pub struct PlanProcessingRequest {
     pub max_active_partitions: Option<usize>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct PlannerPassContext<'a> {
+    request: &'a PlanProcessingRequest,
+    source_artifact_id: String,
+    source_identity: Option<SourceSemanticIdentity>,
+    canonical_identity_status: CanonicalIdentityStatus,
+    pipeline_descriptor: Option<PipelineDescriptor>,
+    pipeline_identity: Option<PipelineSemanticIdentity>,
+    operator_set_identity: Option<OperatorSetIdentity>,
+    planner_profile_identity: Option<PlannerProfileIdentity>,
+    operator_traits: Vec<OperatorExecutionTraits>,
+    validation: Option<ValidationReport>,
+    normalized_pipeline: Option<NormalizedPipeline>,
+    semantic_segments: Vec<SemanticPipelineSegment>,
+    partition_outlook: Vec<SemanticSegmentPartitionOutlook>,
+    stages: Vec<ExecutionStage>,
+    artifacts: Vec<ArtifactDescriptor>,
+    expected_partition_count: Option<usize>,
+    plan_summary: Option<ExecutionPlanSummary>,
+    planner_pass_snapshots: Vec<PlannerPassSnapshot>,
+    plan_decisions: Vec<PlanDecision>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum NormalizedPipeline {
+    TraceLocal {
+        pipeline: TraceLocalProcessingPipeline,
+    },
+    PostStackNeighborhood {
+        pipeline: PostStackNeighborhoodProcessingPipeline,
+    },
+    Subvolume {
+        pipeline: SubvolumeProcessingPipeline,
+    },
+    Gather {
+        pipeline: GatherProcessingPipeline,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SemanticPipelineSegment {
+    family: ProcessingPipelineFamily,
+    start_step_index: usize,
+    end_step_index: usize,
+    role: &'static str,
+    boundary_reason: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SemanticSegmentPartitionOutlook {
+    segment: SemanticPipelineSegment,
+    partition_family: PartitionFamily,
+    target_bytes: Option<u64>,
+    expected_partition_count: Option<usize>,
+}
+
+impl<'a> PlannerPassContext<'a> {
+    fn new(request: &'a PlanProcessingRequest) -> Self {
+        Self {
+            request,
+            source_artifact_id: "source".to_string(),
+            source_identity: None,
+            canonical_identity_status: CanonicalIdentityStatus::Canonical,
+            pipeline_descriptor: None,
+            pipeline_identity: None,
+            operator_set_identity: None,
+            planner_profile_identity: None,
+            operator_traits: Vec::new(),
+            validation: None,
+            normalized_pipeline: None,
+            semantic_segments: Vec::new(),
+            partition_outlook: Vec::new(),
+            stages: Vec::new(),
+            artifacts: Vec::new(),
+            expected_partition_count: None,
+            plan_summary: None,
+            planner_pass_snapshots: Vec::new(),
+            plan_decisions: Vec::new(),
+        }
+    }
+
+    fn push_decision(&mut self, decision: PlanDecision) -> String {
+        let decision_id = decision.decision_id.clone();
+        self.plan_decisions.push(decision);
+        decision_id
+    }
+
+    fn record_snapshot(
+        &mut self,
+        pass_id: PlanningPassId,
+        pass_name: &str,
+        snapshot_text: String,
+        decision_ids: Vec<String>,
+    ) {
+        self.planner_pass_snapshots.push(PlannerPassSnapshot {
+            pass_id,
+            pass_name: pass_name.to_string(),
+            snapshot_text: Some(snapshot_text),
+            decision_ids,
+        });
+    }
+}
+
 pub fn build_execution_plan(request: &PlanProcessingRequest) -> Result<ExecutionPlan, String> {
-    let pipeline_descriptor = PipelineDescriptor::from_pipeline_spec(&request.pipeline);
-    let operator_traits = operator_execution_traits_for_pipeline_spec(&request.pipeline);
-    let validation = validation_report_for_layout(request.layout, &operator_traits);
+    let mut context = PlannerPassContext::new(request);
+    validate_authored_pipeline_pass(&mut context)?;
+    normalize_pipeline_pass(&mut context);
+    derive_semantic_segments_pass(&mut context);
+    derive_execution_hints_pass(&mut context);
+    plan_partitions_pass(&mut context);
+    plan_artifacts_and_reuse_pass(&mut context);
+    assemble_execution_plan_pass(context)
+}
+
+fn validate_authored_pipeline_pass(context: &mut PlannerPassContext<'_>) -> Result<(), String> {
+    let pipeline_identity = pipeline_semantic_identity(&context.request.pipeline)?;
+    let operator_set_identity = operator_set_identity_for_pipeline(&context.request.pipeline)?;
+    let planner_profile_identity =
+        planner_profile_identity_for_pipeline(&context.request.pipeline)?;
+    let loaded_source_identity = planner_source_identity(context.request);
+    let source_identity = loaded_source_identity.identity;
+    let canonical_identity_status = combine_canonical_identity_status(
+        loaded_source_identity.status,
+        pipeline_external_identity_status(&context.request.pipeline),
+    );
+    let mut pipeline_descriptor = PipelineDescriptor::from_pipeline_spec(&context.request.pipeline);
+    pipeline_descriptor.content_digest = pipeline_identity.content_digest.clone();
+    pipeline_descriptor.operator_set_version = operator_set_identity.version.clone();
+    pipeline_descriptor.planner_profile_version = planner_profile_identity.version.clone();
+    let operator_traits = operator_execution_traits_for_pipeline_spec(&context.request.pipeline);
+    let validation = validation_report_for_layout(context.request.layout, &operator_traits);
+    let mut snapshot = String::new();
+    let _ = write!(
+        snapshot,
+        "family={} operators={} valid={} warnings={} blockers={} pipeline_digest={}",
+        pipeline_family_name(pipeline_descriptor.family),
+        operator_traits.len(),
+        validation.plan_valid,
+        validation.warnings.len(),
+        validation.blockers.len(),
+        pipeline_identity.content_digest
+    );
+    if !validation.blockers.is_empty() {
+        let _ = write!(
+            snapshot,
+            " blocker_text={}",
+            validation.blockers.join(" | ")
+        );
+    }
+    context.source_identity = Some(source_identity);
+    context.canonical_identity_status = canonical_identity_status;
+    context.pipeline_descriptor = Some(pipeline_descriptor);
+    context.pipeline_identity = Some(pipeline_identity);
+    context.operator_set_identity = Some(operator_set_identity);
+    context.planner_profile_identity = Some(planner_profile_identity);
+    context.operator_traits = operator_traits;
+    context.validation = Some(validation.clone());
+    let decision_id = context.push_decision(PlanDecision {
+        decision_id: "pass-validate-authored-pipeline".to_string(),
+        subject_kind: PlanDecisionSubjectKind::PlannerPass,
+        subject_id: "validate_authored_pipeline".to_string(),
+        decision_kind: PlanDecisionKind::Lowering,
+        reason_code: if validation.plan_valid {
+            "validation_ok".to_string()
+        } else {
+            "validation_failed".to_string()
+        },
+        human_summary: snapshot.clone(),
+        stage_planning: None,
+        reuse_decision: None,
+        artifact_derivation: None,
+    });
+    context.record_snapshot(
+        PlanningPassId::ValidateAuthoredPipeline,
+        "validate_authored_pipeline",
+        snapshot,
+        vec![decision_id],
+    );
     if !validation.plan_valid {
         return Err(validation.blockers.join("; "));
     }
+    Ok(())
+}
 
-    let source_artifact_id = "source".to_string();
-    let mut artifacts = vec![ArtifactDescriptor {
-        artifact_id: source_artifact_id.clone(),
+fn planner_source_identity(
+    request: &PlanProcessingRequest,
+) -> crate::identity::LoadedSourceSemanticIdentity {
+    source_semantic_identity_or_degraded(
+        &request.store_path,
+        request.layout,
+        request.source_shape,
+        request.source_chunk_shape,
+    )
+}
+
+fn normalize_pipeline_pass(context: &mut PlannerPassContext<'_>) {
+    let (normalized_pipeline, snapshot) = match &context.request.pipeline {
+        ProcessingPipelineSpec::TraceLocal { pipeline } => (
+            NormalizedPipeline::TraceLocal {
+                pipeline: pipeline.clone(),
+            },
+            format!(
+                "family=trace_local steps={} checkpoints={}",
+                pipeline.steps.len(),
+                pipeline.checkpoint_indexes().len()
+            ),
+        ),
+        ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => (
+            NormalizedPipeline::PostStackNeighborhood {
+                pipeline: pipeline.clone(),
+            },
+            format!(
+                "family=post_stack_neighborhood trace_local_prefix_steps={} family_operations={}",
+                pipeline
+                    .trace_local_pipeline
+                    .as_ref()
+                    .map(|pipeline| pipeline.steps.len())
+                    .unwrap_or(0),
+                pipeline.operations.len()
+            ),
+        ),
+        ProcessingPipelineSpec::Subvolume { pipeline } => (
+            NormalizedPipeline::Subvolume {
+                pipeline: pipeline.clone(),
+            },
+            format!(
+                "family=subvolume trace_local_prefix_steps={} crop_operator=subvolume_crop",
+                pipeline
+                    .trace_local_pipeline
+                    .as_ref()
+                    .map(|pipeline| pipeline.steps.len())
+                    .unwrap_or(0)
+            ),
+        ),
+        ProcessingPipelineSpec::Gather { pipeline } => (
+            NormalizedPipeline::Gather {
+                pipeline: pipeline.clone(),
+            },
+            format!(
+                "family=gather trace_local_prefix_steps={} family_operations={}",
+                pipeline
+                    .trace_local_pipeline
+                    .as_ref()
+                    .map(|pipeline| pipeline.steps.len())
+                    .unwrap_or(0),
+                pipeline.operations.len()
+            ),
+        ),
+    };
+    context.normalized_pipeline = Some(normalized_pipeline);
+    let decision_id = context.push_decision(PlanDecision {
+        decision_id: "pass-normalize-pipeline".to_string(),
+        subject_kind: PlanDecisionSubjectKind::PlannerPass,
+        subject_id: "normalize_pipeline".to_string(),
+        decision_kind: PlanDecisionKind::Lowering,
+        reason_code: "normalized_pipeline".to_string(),
+        human_summary: snapshot.clone(),
+        stage_planning: None,
+        reuse_decision: None,
+        artifact_derivation: None,
+    });
+    context.record_snapshot(
+        PlanningPassId::NormalizePipeline,
+        "normalize_pipeline",
+        snapshot,
+        vec![decision_id],
+    );
+}
+
+fn derive_semantic_segments_pass(context: &mut PlannerPassContext<'_>) {
+    let segments = semantic_segments_for_pipeline(
+        context
+            .normalized_pipeline
+            .as_ref()
+            .expect("normalize pass should run first"),
+    );
+    let mut snapshot = String::new();
+    let _ = writeln!(snapshot, "segments={}", segments.len());
+    for segment in &segments {
+        let _ = writeln!(
+            snapshot,
+            "{} {}..{} role={} boundary={}",
+            pipeline_family_name(segment.family),
+            segment.start_step_index,
+            segment.end_step_index,
+            segment.role,
+            segment.boundary_reason
+        );
+    }
+    context.semantic_segments = segments;
+    let snapshot = snapshot.trim_end().to_string();
+    let decision_id = context.push_decision(PlanDecision {
+        decision_id: "pass-derive-semantic-segments".to_string(),
+        subject_kind: PlanDecisionSubjectKind::PlannerPass,
+        subject_id: "derive_semantic_segments".to_string(),
+        decision_kind: PlanDecisionKind::Lowering,
+        reason_code: "derived_semantic_segments".to_string(),
+        human_summary: snapshot.clone(),
+        stage_planning: None,
+        reuse_decision: None,
+        artifact_derivation: None,
+    });
+    context.record_snapshot(
+        PlanningPassId::DeriveSemanticSegments,
+        "derive_semantic_segments",
+        snapshot,
+        vec![decision_id],
+    );
+}
+
+fn derive_execution_hints_pass(context: &mut PlannerPassContext<'_>) {
+    let classification = stage_execution_classification_for_traits(&context.operator_traits);
+    let partition_family = partition_spec_for_traits(&context.operator_traits).family;
+    let snapshot = format!(
+        "partition_family={} max_memory={} max_cpu={} max_io={} min_parallel={} uses_external_inputs={} requires_full_volume={}",
+        partition_family_name(partition_family),
+        memory_cost_class_name(classification.max_memory_cost_class),
+        cpu_cost_class_name(classification.max_cpu_cost_class),
+        io_cost_class_name(classification.max_io_cost_class),
+        parallel_efficiency_name(classification.min_parallel_efficiency_class),
+        classification.uses_external_inputs,
+        classification.requires_full_volume
+    );
+    let decision_id = context.push_decision(PlanDecision {
+        decision_id: "pass-derive-execution-hints".to_string(),
+        subject_kind: PlanDecisionSubjectKind::PlannerPass,
+        subject_id: "derive_execution_hints".to_string(),
+        decision_kind: PlanDecisionKind::Scheduling,
+        reason_code: "derived_execution_hints".to_string(),
+        human_summary: snapshot.clone(),
+        stage_planning: None,
+        reuse_decision: None,
+        artifact_derivation: None,
+    });
+    context.record_snapshot(
+        PlanningPassId::DeriveExecutionHints,
+        "derive_execution_hints",
+        snapshot,
+        vec![decision_id],
+    );
+}
+
+fn plan_partitions_pass(context: &mut PlannerPassContext<'_>) {
+    let outlook = semantic_segment_partition_outlook(
+        &context.semantic_segments,
+        &context.operator_traits,
+        context.request.source_shape,
+        context.request.source_chunk_shape,
+    );
+    let mut snapshot = String::new();
+    let _ = writeln!(snapshot, "segments={}", outlook.len());
+    for item in &outlook {
+        let _ = writeln!(
+            snapshot,
+            "{} {}..{} partition={} target_bytes={} expected_partitions={}",
+            pipeline_family_name(item.segment.family),
+            item.segment.start_step_index,
+            item.segment.end_step_index,
+            partition_family_name(item.partition_family),
+            item.target_bytes
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            item.expected_partition_count
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        );
+    }
+    context.partition_outlook = outlook;
+    let snapshot = snapshot.trim_end().to_string();
+    let decision_id = context.push_decision(PlanDecision {
+        decision_id: "pass-plan-partitions".to_string(),
+        subject_kind: PlanDecisionSubjectKind::PlannerPass,
+        subject_id: "plan_partitions".to_string(),
+        decision_kind: PlanDecisionKind::Scheduling,
+        reason_code: "planned_partitions".to_string(),
+        human_summary: snapshot.clone(),
+        stage_planning: None,
+        reuse_decision: None,
+        artifact_derivation: None,
+    });
+    context.record_snapshot(
+        PlanningPassId::PlanPartitions,
+        "plan_partitions",
+        snapshot,
+        vec![decision_id],
+    );
+}
+
+fn plan_artifacts_and_reuse_pass(context: &mut PlannerPassContext<'_>) {
+    let source_identity = context
+        .source_identity
+        .as_ref()
+        .expect("validate pass should populate source identity");
+    let source_geometry = geometry_fingerprints_for_request(context.request, source_identity);
+    let source_domain = source_logical_domain(context.request);
+    let source_grid = chunk_grid_spec_for_request(context.request);
+    let source_key = if matches!(
+        context.canonical_identity_status,
+        CanonicalIdentityStatus::Canonical
+    ) {
+        Some(artifact_key_from_parts(
+            source_lineage_digest(source_identity),
+            source_geometry.clone(),
+            source_domain.clone(),
+            source_grid.clone(),
+            MaterializationClass::ReusedArtifact,
+        ))
+    } else {
+        None
+    };
+    context.artifacts = vec![ArtifactDescriptor {
+        artifact_id: context.source_artifact_id.clone(),
         role: ExecutionArtifactRole::Input,
-        store_path: Some(request.store_path.clone()),
-        cache_key: None,
+        store_path: Some(context.request.store_path.clone()),
+        cache_key: source_key
+            .as_ref()
+            .map(|artifact_key| artifact_key.cache_key.clone()),
+        artifact_key: source_key,
+        logical_domain: Some(source_domain),
+        chunk_grid_spec: Some(source_grid),
+        geometry_fingerprints: Some(source_geometry),
+        materialization_class: Some(MaterializationClass::ReusedArtifact),
+        boundary_reason: Some(ArtifactBoundaryReason::SourceInput),
+        lifetime_class: Some(ArtifactLifetimeClass::Source),
+        reuse_requirement: None,
+        reuse_resolution: None,
+        reuse_decision_id: None,
+        artifact_derivation_decision_id: None,
     }];
 
-    let (stages, mut derived_artifacts) = match &request.pipeline {
+    let pipeline_descriptor = context
+        .pipeline_descriptor
+        .as_ref()
+        .expect("validate pass should populate pipeline descriptor");
+    let (mut stages, mut derived_artifacts) = match &context.request.pipeline {
         ProcessingPipelineSpec::TraceLocal { pipeline } => build_trace_local_stages(
             pipeline,
-            &source_artifact_id,
-            request.output_store_path.as_deref(),
-            &operator_traits,
-            request.source_shape,
-            request.source_chunk_shape,
+            &context.source_artifact_id,
+            context.request.output_store_path.as_deref(),
+            &context.operator_traits,
+            context.request.source_shape,
+            context.request.source_chunk_shape,
+            context.request.planning_mode,
         ),
-        ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
-            let label = pipeline
+        ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => build_prefixed_family_plan(
+            pipeline_descriptor,
+            pipeline.trace_local_pipeline.as_ref(),
+            &context.source_artifact_id,
+            context.request.output_store_path.as_deref(),
+            &context.operator_traits,
+            pipeline
                 .name
                 .clone()
-                .unwrap_or_else(|| "post_stack_neighborhood".to_string());
-            build_single_stage_plan(
-                &pipeline_descriptor,
-                &source_artifact_id,
-                request.output_store_path.as_deref(),
-                &operator_traits,
-                label,
-                request.source_shape,
-                request.source_chunk_shape,
-            )
-        }
-        ProcessingPipelineSpec::Subvolume { pipeline } => {
-            let label = pipeline
+                .unwrap_or_else(|| "post_stack_neighborhood".to_string()),
+            context.request.source_shape,
+            context.request.source_chunk_shape,
+            context.request.planning_mode,
+        ),
+        ProcessingPipelineSpec::Subvolume { pipeline } => build_subvolume_plan(
+            pipeline_descriptor,
+            pipeline,
+            &context.source_artifact_id,
+            context.request.output_store_path.as_deref(),
+            &context.operator_traits,
+            pipeline
                 .name
                 .clone()
-                .unwrap_or_else(|| "subvolume".to_string());
-            build_single_stage_plan(
-                &pipeline_descriptor,
-                &source_artifact_id,
-                request.output_store_path.as_deref(),
-                &operator_traits,
-                label,
-                request.source_shape,
-                request.source_chunk_shape,
-            )
-        }
-        ProcessingPipelineSpec::Gather { pipeline } => {
-            let label = pipeline
+                .unwrap_or_else(|| "subvolume".to_string()),
+            context.request.source_shape,
+            context.request.source_chunk_shape,
+            context.request.planning_mode,
+        ),
+        ProcessingPipelineSpec::Gather { pipeline } => build_prefixed_family_plan(
+            pipeline_descriptor,
+            pipeline.trace_local_pipeline.as_ref(),
+            &context.source_artifact_id,
+            context.request.output_store_path.as_deref(),
+            &context.operator_traits,
+            pipeline
                 .name
                 .clone()
-                .unwrap_or_else(|| "gather".to_string());
-            build_single_stage_plan(
-                &pipeline_descriptor,
-                &source_artifact_id,
-                request.output_store_path.as_deref(),
-                &operator_traits,
-                label,
-                request.source_shape,
-                request.source_chunk_shape,
-            )
-        }
+                .unwrap_or_else(|| "gather".to_string()),
+            context.request.source_shape,
+            context.request.source_chunk_shape,
+            context.request.planning_mode,
+        ),
     };
-    artifacts.append(&mut derived_artifacts);
-    let expected_partition_count = expected_partition_count_for_stages(&stages);
+    populate_reuse_candidates(
+        context.request,
+        source_identity,
+        context.canonical_identity_status,
+        &mut stages,
+        &mut derived_artifacts,
+        &mut context.plan_decisions,
+    );
+    annotate_materialization_and_identity(
+        context.request,
+        source_identity,
+        context.canonical_identity_status,
+        pipeline_descriptor,
+        &context.operator_traits,
+        &mut stages,
+        &mut derived_artifacts,
+        &mut context.plan_decisions,
+    );
+    annotate_live_sets(&mut stages, &derived_artifacts);
+    context.expected_partition_count = expected_partition_count_for_stages(&stages);
+    context.plan_summary = Some(execution_plan_summary_for_stages(&stages));
+    context.artifacts.append(&mut derived_artifacts);
+    context.stages.append(&mut stages);
+    let reuse_candidate_count = context
+        .artifacts
+        .iter()
+        .filter(|artifact| artifact.reuse_requirement.is_some())
+        .count();
+    let snapshot = format!(
+        "stages={} artifacts={} reuse_candidates={} expected_partitions={}",
+        context.stages.len(),
+        context.artifacts.len(),
+        reuse_candidate_count,
+        context
+            .expected_partition_count
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    );
+    let decision_id = context.push_decision(PlanDecision {
+        decision_id: "pass-plan-artifacts-and-reuse".to_string(),
+        subject_kind: PlanDecisionSubjectKind::PlannerPass,
+        subject_id: "plan_artifacts_and_reuse".to_string(),
+        decision_kind: PlanDecisionKind::Reuse,
+        reason_code: "planned_artifacts_and_reuse".to_string(),
+        human_summary: snapshot.clone(),
+        stage_planning: None,
+        reuse_decision: None,
+        artifact_derivation: None,
+    });
+    context.record_snapshot(
+        PlanningPassId::PlanArtifactsAndReuse,
+        "plan_artifacts_and_reuse",
+        snapshot,
+        vec![decision_id],
+    );
+}
+
+fn populate_reuse_candidates(
+    request: &PlanProcessingRequest,
+    source_identity: &SourceSemanticIdentity,
+    canonical_identity_status: CanonicalIdentityStatus,
+    stages: &mut [ExecutionStage],
+    artifacts: &mut [ArtifactDescriptor],
+    plan_decisions: &mut Vec<PlanDecision>,
+) {
+    if !matches!(
+        canonical_identity_status,
+        CanonicalIdentityStatus::Canonical
+    ) {
+        return;
+    }
+    let pipeline_descriptor = PipelineDescriptor::from_pipeline_spec(&request.pipeline);
+    for artifact in artifacts.iter_mut() {
+        let Some(stage) = stages
+            .iter_mut()
+            .find(|stage| stage.output_artifact_id == artifact.artifact_id)
+        else {
+            continue;
+        };
+        let Some(requirement) = build_reuse_requirement(
+            request,
+            source_identity,
+            &pipeline_descriptor,
+            artifact.role,
+            stage,
+        ) else {
+            continue;
+        };
+        let resolution = planning_time_reuse_resolution(&requirement);
+        artifact.cache_key = Some(requirement.reuse_key.clone());
+        artifact.reuse_requirement = Some(requirement.clone());
+        artifact.reuse_resolution = Some(resolution.clone());
+        let reuse_decision_id = format!("reuse-{}", artifact.artifact_id);
+        let outcome = if resolution.reused {
+            ReuseDecisionOutcome::Reused
+        } else if matches!(
+            resolution.miss_reason,
+            Some(ReuseMissReason::UnresolvedAtPlanningTime)
+        ) {
+            ReuseDecisionOutcome::Unresolved
+        } else {
+            ReuseDecisionOutcome::Miss
+        };
+        plan_decisions.push(PlanDecision {
+            decision_id: reuse_decision_id.clone(),
+            subject_kind: PlanDecisionSubjectKind::Artifact,
+            subject_id: artifact.artifact_id.clone(),
+            decision_kind: PlanDecisionKind::Reuse,
+            reason_code: format!(
+                "{:?}",
+                resolution
+                    .miss_reason
+                    .unwrap_or(ReuseMissReason::NoReusableArtifactResolved)
+            )
+            .to_ascii_lowercase(),
+            human_summary: format!(
+                "reuse {} for {:?} {:?}",
+                if resolution.reused {
+                    "selected"
+                } else {
+                    "miss"
+                },
+                requirement.artifact_kind,
+                requirement.boundary_kind
+            ),
+            stage_planning: None,
+            reuse_decision: Some(ReuseDecision {
+                stage_id: Some(stage.stage_id.clone()),
+                artifact_id: artifact.artifact_id.clone(),
+                cache_mode: stage.cache_mode,
+                artifact_kind: requirement.artifact_kind,
+                boundary_kind: requirement.boundary_kind,
+                candidate_count: usize::from(resolution.reused),
+                selected_candidate_reuse_key: if resolution.reused {
+                    Some(requirement.reuse_key.clone())
+                } else {
+                    None
+                },
+                selected_candidate_artifact_key: None,
+                selected_candidate_store_path: resolution.artifact_store_path.clone(),
+                outcome,
+                miss_reason: resolution.miss_reason,
+                evidence: vec![ReuseDecisionEvidence {
+                    label: if resolution.reused {
+                        "planning lookup resolved reusable artifact".to_string()
+                    } else {
+                        "planning lookup kept runtime or fresh-compute fallback".to_string()
+                    },
+                    matched: resolution.reused,
+                    artifact_key: None,
+                    artifact_store_path: resolution.artifact_store_path.clone(),
+                    miss_reason: resolution.miss_reason,
+                }],
+            }),
+            artifact_derivation: None,
+        });
+        stage.reuse_requirement = Some(requirement);
+        stage.reuse_resolution = Some(resolution);
+        stage.reuse_decision_id = Some(reuse_decision_id.clone());
+        artifact.reuse_decision_id = Some(reuse_decision_id);
+    }
+}
+
+fn build_reuse_requirement(
+    request: &PlanProcessingRequest,
+    source_identity: &SourceSemanticIdentity,
+    _pipeline_descriptor: &PipelineDescriptor,
+    artifact_role: ExecutionArtifactRole,
+    stage: &ExecutionStage,
+) -> Option<ReuseRequirement> {
+    let Some(stage_segment) = stage.pipeline_segment.as_ref() else {
+        return None;
+    };
+    let stage_pipeline = reuse_identity_pipeline_spec_for_stage(request, stage_segment.family);
+    let pipeline_identity = pipeline_semantic_identity(&stage_pipeline).ok()?;
+    let operator_set_identity = operator_set_identity_for_pipeline(&stage_pipeline).ok()?;
+    let planner_profile_identity = planner_profile_identity_for_pipeline(&stage_pipeline).ok()?;
+    let stage_operator_ids = operator_execution_traits_for_pipeline_spec(&stage_pipeline)
+        .into_iter()
+        .map(|traits| traits.operator_id)
+        .collect::<Vec<_>>();
+    let is_trace_local_prefix_boundary = is_trace_local_prefix_boundary(request, stage_segment);
+    let (artifact_kind, boundary_kind, end_step_index) = match artifact_role {
+        ExecutionArtifactRole::FinalOutput => (
+            ReuseArtifactKind::ExactVisibleFinal,
+            ReuseBoundaryKind::ExactOutput,
+            stage_operator_ids.len().saturating_sub(1),
+        ),
+        ExecutionArtifactRole::Checkpoint => (
+            ReuseArtifactKind::VisibleCheckpoint,
+            if is_trace_local_prefix_boundary {
+                ReuseBoundaryKind::TraceLocalPrefix
+            } else {
+                ReuseBoundaryKind::AuthoredCheckpoint
+            },
+            stage_segment.end_step_index,
+        ),
+        ExecutionArtifactRole::Input | ExecutionArtifactRole::CachedReuse => return None,
+    };
+    let operator_ids = if stage_operator_ids.is_empty() {
+        Vec::new()
+    } else {
+        let bounded_end: usize = end_step_index.min(stage_operator_ids.len() - 1);
+        stage_operator_ids[..=bounded_end].to_vec()
+    };
+    let artifact = PipelineArtifactIdentity {
+        schema_version: current_reuse_identity_schema_version(),
+        pipeline_family: pipeline_identity.family,
+        pipeline_schema_version: pipeline_identity.pipeline_schema_version,
+        pipeline_revision: pipeline_identity.revision,
+        pipeline_content_digest: pipeline_identity.content_digest.clone(),
+        operator_set_version: operator_set_identity.version.clone(),
+        effective_operator_digest: operator_set_identity.effective_operator_digest.clone(),
+        planner_profile_version: planner_profile_identity.version.clone(),
+        effective_structural_digest: planner_profile_identity.effective_structural_digest.clone(),
+        artifact_kind,
+        boundary_kind,
+        start_step_index: 0,
+        end_step_index,
+        operator_ids,
+    };
+    let source = source_artifact_identity_from_source_identity(source_identity);
+    let mut requirement = ReuseRequirement {
+        reuse_key: String::new(),
+        artifact_kind,
+        boundary_kind,
+        source,
+        artifact,
+    };
+    requirement.reuse_key = reuse_requirement_key(&requirement);
+    Some(requirement)
+}
+
+fn planning_time_reuse_resolution(requirement: &ReuseRequirement) -> ReuseResolution {
+    ReuseResolution {
+        reuse_key: requirement.reuse_key.clone(),
+        artifact_kind: requirement.artifact_kind,
+        boundary_kind: requirement.boundary_kind,
+        reused: false,
+        miss_reason: Some(ReuseMissReason::UnresolvedAtPlanningTime),
+        artifact_store_path: None,
+    }
+}
+
+fn reuse_requirement_key(requirement: &ReuseRequirement) -> String {
+    let payload =
+        serde_json::to_vec(requirement).expect("reuse requirement should serialize to JSON");
+    blake3::hash(&payload).to_hex().to_string()
+}
+
+fn reuse_identity_pipeline_spec_for_stage(
+    request: &PlanProcessingRequest,
+    stage_family: ProcessingPipelineFamily,
+) -> ProcessingPipelineSpec {
+    if matches!(stage_family, ProcessingPipelineFamily::TraceLocal) {
+        match &request.pipeline {
+            ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
+                if let Some(prefix) = pipeline.trace_local_pipeline.as_ref() {
+                    return ProcessingPipelineSpec::TraceLocal {
+                        pipeline: prefix.clone(),
+                    };
+                }
+            }
+            ProcessingPipelineSpec::Subvolume { pipeline } => {
+                if let Some(prefix) = pipeline.trace_local_pipeline.as_ref() {
+                    return ProcessingPipelineSpec::TraceLocal {
+                        pipeline: prefix.clone(),
+                    };
+                }
+            }
+            ProcessingPipelineSpec::Gather { pipeline } => {
+                if let Some(prefix) = pipeline.trace_local_pipeline.as_ref() {
+                    return ProcessingPipelineSpec::TraceLocal {
+                        pipeline: prefix.clone(),
+                    };
+                }
+            }
+            ProcessingPipelineSpec::TraceLocal { .. } => {}
+        }
+    }
+    request.pipeline.clone()
+}
+
+fn canonical_identity_pipeline_spec_for_stage(
+    request: &PlanProcessingRequest,
+    stage: &ExecutionStage,
+) -> ProcessingPipelineSpec {
+    let Some(segment) = stage.pipeline_segment.as_ref() else {
+        return request.pipeline.clone();
+    };
+    if matches!(stage.stage_kind, ExecutionStageKind::Checkpoint)
+        && matches!(segment.family, ProcessingPipelineFamily::TraceLocal)
+    {
+        return trace_local_prefix_pipeline_spec(request, segment.end_step_index);
+    }
+    reuse_identity_pipeline_spec_for_stage(request, segment.family)
+}
+
+fn trace_local_prefix_pipeline_spec(
+    request: &PlanProcessingRequest,
+    end_step_index: usize,
+) -> ProcessingPipelineSpec {
+    let pipeline = match &request.pipeline {
+        ProcessingPipelineSpec::TraceLocal { pipeline } => Some(pipeline),
+        ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
+            pipeline.trace_local_pipeline.as_ref()
+        }
+        ProcessingPipelineSpec::Subvolume { pipeline } => pipeline.trace_local_pipeline.as_ref(),
+        ProcessingPipelineSpec::Gather { pipeline } => pipeline.trace_local_pipeline.as_ref(),
+    };
+    match pipeline {
+        Some(pipeline) => ProcessingPipelineSpec::TraceLocal {
+            pipeline: TraceLocalProcessingPipeline {
+                steps: pipeline.steps
+                    [..=end_step_index.min(pipeline.steps.len().saturating_sub(1))]
+                    .to_vec(),
+                ..pipeline.clone()
+            },
+        },
+        None => request.pipeline.clone(),
+    }
+}
+
+fn is_trace_local_prefix_boundary(
+    request: &PlanProcessingRequest,
+    stage_segment: &ExecutionPipelineSegment,
+) -> bool {
+    if !matches!(stage_segment.family, ProcessingPipelineFamily::TraceLocal) {
+        return false;
+    }
+    trace_local_prefix_end_step_index(&request.pipeline)
+        .map(|end_step_index| end_step_index == stage_segment.end_step_index)
+        .unwrap_or(false)
+}
+
+fn trace_local_prefix_end_step_index(pipeline: &ProcessingPipelineSpec) -> Option<usize> {
+    match pipeline {
+        ProcessingPipelineSpec::TraceLocal { .. } => None,
+        ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => pipeline
+            .trace_local_pipeline
+            .as_ref()
+            .and_then(|prefix| prefix.operation_count().checked_sub(1)),
+        ProcessingPipelineSpec::Subvolume { pipeline } => pipeline
+            .trace_local_pipeline
+            .as_ref()
+            .and_then(|prefix| prefix.operation_count().checked_sub(1)),
+        ProcessingPipelineSpec::Gather { pipeline } => pipeline
+            .trace_local_pipeline
+            .as_ref()
+            .and_then(|prefix| prefix.operation_count().checked_sub(1)),
+    }
+}
+
+fn annotate_materialization_and_identity(
+    request: &PlanProcessingRequest,
+    source_identity: &SourceSemanticIdentity,
+    canonical_identity_status: CanonicalIdentityStatus,
+    pipeline_descriptor: &PipelineDescriptor,
+    operator_traits: &[OperatorExecutionTraits],
+    stages: &mut [ExecutionStage],
+    artifacts: &mut [ArtifactDescriptor],
+    plan_decisions: &mut Vec<PlanDecision>,
+) {
+    for stage in stages.iter_mut() {
+        let boundary_reason = boundary_reason_for_stage(stage, request, pipeline_descriptor.family);
+        let materialization_class = materialization_class_for_stage(stage);
+        let logical_domain = logical_domain_for_stage(stage, request);
+        let artifact_key = canonical_artifact_key_for_stage(
+            request,
+            source_identity,
+            canonical_identity_status,
+            pipeline_descriptor,
+            stage,
+            boundary_reason,
+            materialization_class,
+        );
+        stage.boundary_reason = Some(boundary_reason);
+        stage.materialization_class = Some(materialization_class);
+        stage.reuse_class = stage
+            .pipeline_segment
+            .as_ref()
+            .and_then(|segment| operator_traits.get(segment.end_step_index))
+            .map(|traits| traits.reuse_class);
+        stage.output_artifact_key = artifact_key
+            .as_ref()
+            .map(|identity| identity.artifact_key.clone());
+        stage.resource_envelope = stage_resource_envelope_for_stage(
+            request.planning_mode,
+            stage.stage_kind,
+            &stage.classification,
+            stage.stage_memory_profile.as_ref(),
+            stage.expected_partition_count,
+            &stage.estimated_cost,
+        );
+        let planning_decision_id = format!("stage-plan-{}", stage.stage_id);
+        let reservation_bytes = stage
+            .stage_memory_profile
+            .as_ref()
+            .map(|profile| profile.reserve_hint_bytes)
+            .unwrap_or(stage.estimated_cost.estimated_peak_memory_bytes);
+        plan_decisions.push(PlanDecision {
+            decision_id: planning_decision_id.clone(),
+            subject_kind: PlanDecisionSubjectKind::Stage,
+            subject_id: stage.stage_id.clone(),
+            decision_kind: PlanDecisionKind::Scheduling,
+            reason_code: partition_family_name(stage.partition_spec.family).to_string(),
+            human_summary: format!(
+                "stage {} uses {:?} partitions in {:?}",
+                stage.stage_id,
+                stage.partition_spec.family,
+                stage.resource_envelope.preferred_queue_class
+            ),
+            stage_planning: Some(StagePlanningDecision {
+                selected_partition_family: stage.partition_spec.family,
+                selected_ordering: stage.partition_spec.ordering,
+                selected_target_bytes: stage.partition_spec.target_bytes,
+                selected_expected_partition_count: stage.expected_partition_count,
+                selected_queue_class: stage.resource_envelope.preferred_queue_class,
+                selected_spillability: stage.resource_envelope.spillability,
+                selected_exclusive_scope: stage.resource_envelope.exclusive_scope,
+                selected_preferred_partition_waves: stage
+                    .resource_envelope
+                    .preferred_partition_waves,
+                selected_reservation_bytes: reservation_bytes,
+                factors: vec![
+                    DecisionFactor {
+                        code: "planning_mode".to_string(),
+                        summary: "planner mode".to_string(),
+                        value: Some(format!("{:?}", request.planning_mode).to_ascii_lowercase()),
+                    },
+                    DecisionFactor {
+                        code: "partition_family".to_string(),
+                        summary: "selected partition family".to_string(),
+                        value: Some(partition_family_name(stage.partition_spec.family).to_string()),
+                    },
+                    DecisionFactor {
+                        code: "requires_full_volume".to_string(),
+                        summary: "full-volume constraint".to_string(),
+                        value: Some(stage.classification.requires_full_volume.to_string()),
+                    },
+                    DecisionFactor {
+                        code: "uses_external_inputs".to_string(),
+                        summary: "external-input fan-in".to_string(),
+                        value: Some(stage.classification.uses_external_inputs.to_string()),
+                    },
+                    DecisionFactor {
+                        code: "expected_partitions".to_string(),
+                        summary: "expected partition count".to_string(),
+                        value: stage
+                            .expected_partition_count
+                            .map(|value| value.to_string()),
+                    },
+                    DecisionFactor {
+                        code: "peak_memory_bytes".to_string(),
+                        summary: "estimated peak memory".to_string(),
+                        value: Some(stage.estimated_cost.estimated_peak_memory_bytes.to_string()),
+                    },
+                ],
+            }),
+            reuse_decision: None,
+            artifact_derivation: None,
+        });
+        stage.planning_decision_id = Some(planning_decision_id);
+        if let Some(artifact) = artifacts
+            .iter_mut()
+            .find(|artifact| artifact.artifact_id == stage.output_artifact_id)
+        {
+            let derivation_decision_id = format!("artifact-derive-{}", artifact.artifact_id);
+            artifact.cache_key = artifact_key
+                .as_ref()
+                .map(|identity| identity.artifact_key.cache_key.clone());
+            artifact.artifact_key = artifact_key
+                .as_ref()
+                .map(|identity| identity.artifact_key.clone());
+            artifact.logical_domain = artifact_key
+                .as_ref()
+                .map(|identity| identity.logical_domain.clone())
+                .or_else(|| Some(logical_domain.clone()));
+            artifact.chunk_grid_spec = artifact_key
+                .as_ref()
+                .map(|identity| identity.chunk_grid_spec.clone())
+                .or_else(|| Some(chunk_grid_spec_for_request(request)));
+            artifact.geometry_fingerprints = artifact_key
+                .as_ref()
+                .map(|identity| identity.geometry_fingerprints.clone())
+                .or_else(|| Some(geometry_fingerprints_for_request(request, source_identity)));
+            artifact.materialization_class = Some(materialization_class);
+            artifact.boundary_reason = Some(boundary_reason);
+            artifact.lifetime_class = Some(lifetime_class_for_role(artifact.role));
+            artifact.artifact_derivation_decision_id = Some(derivation_decision_id.clone());
+            plan_decisions.push(PlanDecision {
+                decision_id: derivation_decision_id,
+                subject_kind: PlanDecisionSubjectKind::Artifact,
+                subject_id: artifact.artifact_id.clone(),
+                decision_kind: PlanDecisionKind::ArtifactDerivation,
+                reason_code: format!("{boundary_reason:?}").to_ascii_lowercase(),
+                human_summary: format!(
+                    "artifact {} derives {:?} output from {} inputs{}",
+                    artifact.artifact_id,
+                    materialization_class,
+                    stage.input_artifact_ids.len(),
+                    if artifact.artifact_key.is_none() {
+                        " (canonical artifact identity disabled)"
+                    } else {
+                        ""
+                    }
+                ),
+                stage_planning: None,
+                reuse_decision: None,
+                artifact_derivation: artifact.artifact_key.clone().map(|artifact_key| {
+                    ArtifactDerivation {
+                        artifact_id: artifact.artifact_id.clone(),
+                        artifact_key,
+                        input_artifact_ids: stage.input_artifact_ids.clone(),
+                        logical_domain: artifact
+                            .logical_domain
+                            .clone()
+                            .expect("logical domain should exist before derivation decision"),
+                        chunk_grid_spec: artifact
+                            .chunk_grid_spec
+                            .clone()
+                            .expect("chunk grid should exist before derivation decision"),
+                        geometry_fingerprints: artifact
+                            .geometry_fingerprints
+                            .clone()
+                            .expect("geometry should exist before derivation decision"),
+                        materialization_class,
+                        boundary_reason,
+                    }
+                }),
+            });
+        }
+    }
+}
+
+fn annotate_live_sets(stages: &mut [ExecutionStage], artifacts: &[ArtifactDescriptor]) {
+    let mut published_artifacts = Vec::<String>::new();
+    for stage in stages.iter_mut() {
+        let mut resident_artifacts = Vec::new();
+        for artifact_id in stage
+            .input_artifact_ids
+            .iter()
+            .cloned()
+            .chain(std::iter::once(stage.output_artifact_id.clone()))
+        {
+            let Some(artifact) = artifacts
+                .iter()
+                .find(|candidate| candidate.artifact_id == artifact_id)
+            else {
+                continue;
+            };
+            let estimated_resident_bytes = stage
+                .stage_memory_profile
+                .as_ref()
+                .map(estimated_live_set_bytes_for_profile)
+                .unwrap_or(0);
+            resident_artifacts.push(ArtifactLiveSetEntry {
+                artifact_id: artifact.artifact_id.clone(),
+                artifact_key: artifact.artifact_key.clone(),
+                estimated_resident_bytes,
+            });
+        }
+        for artifact_id in &published_artifacts {
+            if resident_artifacts
+                .iter()
+                .any(|artifact| &artifact.artifact_id == artifact_id)
+            {
+                continue;
+            }
+            resident_artifacts.push(ArtifactLiveSetEntry {
+                artifact_id: artifact_id.clone(),
+                artifact_key: artifacts
+                    .iter()
+                    .find(|artifact| &artifact.artifact_id == artifact_id)
+                    .and_then(|artifact| artifact.artifact_key.clone()),
+                estimated_resident_bytes: 0,
+            });
+        }
+        let estimated_resident_bytes = resident_artifacts
+            .iter()
+            .map(|artifact| artifact.estimated_resident_bytes)
+            .sum();
+        stage.live_set = Some(ArtifactLiveSet {
+            resident_artifacts,
+            estimated_resident_bytes,
+        });
+        published_artifacts.push(stage.output_artifact_id.clone());
+    }
+}
+
+fn source_logical_domain(request: &PlanProcessingRequest) -> LogicalDomain {
+    LogicalDomain::Volume {
+        volume: VolumeDomain {
+            shape: request.source_shape.unwrap_or([0, 0, 0]),
+        },
+    }
+}
+
+fn logical_domain_for_stage(
+    stage: &ExecutionStage,
+    request: &PlanProcessingRequest,
+) -> LogicalDomain {
+    if matches!(
+        stage.stage_kind,
+        ExecutionStageKind::Checkpoint
+            | ExecutionStageKind::FinalizeOutput
+            | ExecutionStageKind::ReuseArtifact
+    ) {
+        return LogicalDomain::Volume {
+            volume: VolumeDomain {
+                shape: request.source_shape.unwrap_or([0, 0, 0]),
+            },
+        };
+    }
+    match stage.partition_spec.family {
+        PartitionFamily::Section => LogicalDomain::Section {
+            section: SectionDomain {
+                axis: ophiolite_seismic::SectionAxis::Inline,
+                section_index: 0,
+            },
+        },
+        _ => LogicalDomain::Volume {
+            volume: VolumeDomain {
+                shape: request.source_shape.unwrap_or([0, 0, 0]),
+            },
+        },
+    }
+}
+
+fn chunk_grid_spec_for_request(request: &PlanProcessingRequest) -> ChunkGridSpec {
+    ChunkGridSpec::Regular {
+        origin: [0, 0, 0],
+        chunk_shape: request.source_chunk_shape.unwrap_or([0, 0, 0]),
+    }
+}
+
+fn geometry_fingerprints_for_request(
+    request: &PlanProcessingRequest,
+    source_identity: &SourceSemanticIdentity,
+) -> GeometryFingerprints {
+    let source_digest =
+        source_identity_digest(source_identity).expect("source identity should serialize");
+    let survey_geometry_fingerprint = ProcessingCacheFingerprint::fingerprint_json(&(
+        &source_digest,
+        request.layout,
+        request.source_shape.unwrap_or([0, 0, 0]),
+    ))
+    .expect("planner geometry seed should serialize");
+    let storage_grid_fingerprint = ProcessingCacheFingerprint::fingerprint_json(&(
+        &source_digest,
+        request.layout,
+        request.source_shape.unwrap_or([0, 0, 0]),
+        request.source_chunk_shape.unwrap_or([0, 0, 0]),
+    ))
+    .expect("planner storage geometry seed should serialize");
+    let section_projection_fingerprint = ProcessingCacheFingerprint::fingerprint_json(&(
+        request.layout,
+        request.source_shape,
+        request.source_shape.unwrap_or([0, 0, 0]),
+    ))
+    .expect("planner section projection seed should serialize");
+    let artifact_lineage_fingerprint = ProcessingCacheFingerprint::fingerprint_json(&source_digest)
+        .expect("planner lineage geometry seed should serialize");
+    GeometryFingerprints {
+        survey_geometry_fingerprint,
+        storage_grid_fingerprint,
+        section_projection_fingerprint,
+        artifact_lineage_fingerprint,
+    }
+}
+
+fn canonical_artifact_key_for_stage(
+    request: &PlanProcessingRequest,
+    source_identity: &SourceSemanticIdentity,
+    canonical_identity_status: CanonicalIdentityStatus,
+    _pipeline_descriptor: &PipelineDescriptor,
+    stage: &ExecutionStage,
+    boundary_reason: ArtifactBoundaryReason,
+    materialization_class: MaterializationClass,
+) -> Option<crate::identity::CanonicalArtifactIdentity> {
+    let pipeline = canonical_identity_pipeline_spec_for_stage(request, stage);
+    let pipeline_identity = pipeline_semantic_identity(&pipeline).ok()?;
+    let operator_set_identity = operator_set_identity_for_pipeline(&pipeline).ok()?;
+    let planner_profile_identity = planner_profile_identity_for_pipeline(&pipeline).ok()?;
+    let artifact_role = match stage.stage_kind {
+        ExecutionStageKind::Checkpoint => ProcessingArtifactRole::Checkpoint,
+        ExecutionStageKind::FinalizeOutput => ProcessingArtifactRole::FinalOutput,
+        ExecutionStageKind::ReuseArtifact | ExecutionStageKind::Compute => return None,
+    };
+    canonical_artifact_identity(
+        source_identity,
+        canonical_identity_status,
+        &pipeline_identity,
+        &operator_set_identity,
+        &planner_profile_identity,
+        request.layout,
+        request.source_shape.unwrap_or([0, 0, 0]),
+        request.source_chunk_shape.unwrap_or([0, 0, 0]),
+        artifact_role,
+        boundary_reason,
+        materialization_class,
+        logical_domain_for_stage(stage, request),
+    )
+    .ok()
+    .flatten()
+}
+
+fn source_lineage_digest(source_identity: &SourceSemanticIdentity) -> String {
+    source_identity_digest(source_identity).expect("source lineage should serialize")
+}
+
+fn artifact_key_from_parts(
+    lineage_digest: String,
+    geometry_fingerprints: GeometryFingerprints,
+    logical_domain: LogicalDomain,
+    chunk_grid_spec: ChunkGridSpec,
+    materialization_class: MaterializationClass,
+) -> ArtifactKey {
+    let cache_key = ProcessingCacheFingerprint::fingerprint_json(&(
+        &lineage_digest,
+        &geometry_fingerprints,
+        &logical_domain,
+        &chunk_grid_spec,
+        materialization_class,
+    ))
+    .expect("artifact key should serialize");
+    ArtifactKey {
+        lineage_digest,
+        geometry_fingerprints,
+        logical_domain,
+        chunk_grid_spec,
+        materialization_class,
+        cache_key,
+    }
+}
+
+fn boundary_reason_for_stage(
+    stage: &ExecutionStage,
+    request: &PlanProcessingRequest,
+    family: ProcessingPipelineFamily,
+) -> ArtifactBoundaryReason {
+    match stage.stage_kind {
+        ExecutionStageKind::Checkpoint => {
+            if stage
+                .pipeline_segment
+                .as_ref()
+                .is_some_and(|segment| is_trace_local_prefix_boundary(request, segment))
+            {
+                ArtifactBoundaryReason::TraceLocalPrefix
+            } else {
+                ArtifactBoundaryReason::AuthoredCheckpoint
+            }
+        }
+        ExecutionStageKind::FinalizeOutput => match family {
+            ProcessingPipelineFamily::Subvolume => ArtifactBoundaryReason::GeometryDomainChange,
+            ProcessingPipelineFamily::TraceLocal
+            | ProcessingPipelineFamily::PostStackNeighborhood
+            | ProcessingPipelineFamily::Gather => ArtifactBoundaryReason::FinalOutput,
+        },
+        ExecutionStageKind::ReuseArtifact => ArtifactBoundaryReason::ExternalInputFanIn,
+        ExecutionStageKind::Compute => {
+            if stage.classification.requires_full_volume {
+                ArtifactBoundaryReason::FullVolumeBarrier
+            } else if stage.classification.uses_external_inputs {
+                ArtifactBoundaryReason::ExternalInputFanIn
+            } else {
+                ArtifactBoundaryReason::FamilyOperationBlock
+            }
+        }
+    }
+}
+
+fn materialization_class_for_stage(stage: &ExecutionStage) -> MaterializationClass {
+    match stage.stage_kind {
+        ExecutionStageKind::Checkpoint => MaterializationClass::Checkpoint,
+        ExecutionStageKind::FinalizeOutput => MaterializationClass::PublishedOutput,
+        ExecutionStageKind::ReuseArtifact => MaterializationClass::ReusedArtifact,
+        ExecutionStageKind::Compute => match stage.partition_spec.family {
+            PartitionFamily::Section => MaterializationClass::EphemeralWindow,
+            _ => MaterializationClass::EphemeralPartition,
+        },
+    }
+}
+
+fn lifetime_class_for_role(role: ExecutionArtifactRole) -> ArtifactLifetimeClass {
+    match role {
+        ExecutionArtifactRole::Input => ArtifactLifetimeClass::Source,
+        ExecutionArtifactRole::Checkpoint => ArtifactLifetimeClass::Checkpoint,
+        ExecutionArtifactRole::FinalOutput => ArtifactLifetimeClass::Published,
+        ExecutionArtifactRole::CachedReuse => ArtifactLifetimeClass::CachedReuse,
+    }
+}
+
+fn estimated_live_set_bytes_for_profile(profile: &StageMemoryProfile) -> u64 {
+    profile
+        .primary_tile_bytes
+        .saturating_add(
+            profile
+                .secondary_tile_bytes_per_input
+                .saturating_mul(profile.secondary_input_count as u64),
+        )
+        .saturating_add(profile.output_tile_bytes)
+        .saturating_add(profile.shared_stage_bytes)
+}
+
+fn assemble_execution_plan_pass(context: PlannerPassContext<'_>) -> Result<ExecutionPlan, String> {
+    let plan_summary = context
+        .plan_summary
+        .clone()
+        .expect("artifact planning should populate plan summary");
+    let pipeline = context
+        .pipeline_descriptor
+        .clone()
+        .expect("validate pass should populate pipeline descriptor");
+    let source_identity = context
+        .source_identity
+        .clone()
+        .expect("validate pass should populate source identity");
+    let pipeline_identity = context
+        .pipeline_identity
+        .clone()
+        .expect("validate pass should populate pipeline identity");
+    let operator_set_identity = context
+        .operator_set_identity
+        .clone()
+        .expect("validate pass should populate operator set identity");
+    let planner_profile_identity = context
+        .planner_profile_identity
+        .clone()
+        .expect("validate pass should populate planner profile identity");
+    let validation = context
+        .validation
+        .clone()
+        .expect("validate pass should populate validation report");
+    let mut planner_pass_snapshots = context.planner_pass_snapshots;
+    let mut plan_decisions = context.plan_decisions;
+    let assemble_decision_id = "pass-assemble-execution-plan".to_string();
+    plan_decisions.push(PlanDecision {
+        decision_id: assemble_decision_id.clone(),
+        subject_kind: PlanDecisionSubjectKind::PlannerPass,
+        subject_id: "assemble_execution_plan".to_string(),
+        decision_kind: PlanDecisionKind::Lowering,
+        reason_code: "assembled_execution_plan".to_string(),
+        human_summary: format!(
+            "compute_stages={} max_peak_memory_bytes={} combined_cpu_weight={} combined_io_weight={}",
+            plan_summary.compute_stage_count,
+            plan_summary.max_estimated_peak_memory_bytes,
+            plan_summary.combined_cpu_weight,
+            plan_summary.combined_io_weight
+        ),
+        stage_planning: None,
+        reuse_decision: None,
+        artifact_derivation: None,
+    });
+    planner_pass_snapshots.push(PlannerPassSnapshot {
+        pass_id: PlanningPassId::AssembleExecutionPlan,
+        pass_name: "assemble_execution_plan".to_string(),
+        snapshot_text: Some(format!(
+            "compute_stages={} max_peak_memory_bytes={} combined_cpu_weight={} combined_io_weight={}",
+            plan_summary.compute_stage_count,
+            plan_summary.max_estimated_peak_memory_bytes,
+            plan_summary.combined_cpu_weight,
+            plan_summary.combined_io_weight
+        )),
+        decision_ids: vec![assemble_decision_id],
+    });
 
     Ok(ExecutionPlan {
+        schema_version: 1,
         plan_id: format!("plan-{}", Uuid::new_v4()),
-        planning_mode: request.planning_mode,
+        planning_mode: context.request.planning_mode,
         source: ExecutionSourceDescriptor {
-            store_path: request.store_path.clone(),
-            layout: request.layout,
-            shape: request.source_shape,
-            chunk_shape: request.source_chunk_shape,
+            store_path: context.request.store_path.clone(),
+            layout: context.request.layout,
+            shape: context.request.source_shape,
+            chunk_shape: context.request.source_chunk_shape,
         },
-        pipeline: pipeline_descriptor,
-        plan_summary: execution_plan_summary_for_stages(&stages),
-        stages,
-        artifacts,
+        source_identity,
+        pipeline,
+        pipeline_identity,
+        operator_set_identity,
+        planner_profile_identity,
+        stages: context.stages,
+        plan_summary,
+        artifacts: context.artifacts,
         scheduler_hints: SchedulerHints {
-            priority_class: priority_for_mode(request.planning_mode),
-            max_active_partitions: request.max_active_partitions,
-            expected_partition_count,
+            priority_class: priority_for_mode(context.request.planning_mode),
+            max_active_partitions: context.request.max_active_partitions,
+            expected_partition_count: context.expected_partition_count,
         },
         validation,
+        planner_diagnostics: PlannerDiagnostics {
+            pass_snapshots: planner_pass_snapshots,
+        },
+        plan_decisions,
     })
+}
+
+fn semantic_segments_for_pipeline(pipeline: &NormalizedPipeline) -> Vec<SemanticPipelineSegment> {
+    match pipeline {
+        NormalizedPipeline::TraceLocal { pipeline } => trace_local_semantic_segments(pipeline),
+        NormalizedPipeline::PostStackNeighborhood { pipeline } => {
+            let mut segments = prefixed_family_segments(
+                pipeline.trace_local_pipeline.as_ref(),
+                pipeline.operations.len(),
+                ProcessingPipelineFamily::PostStackNeighborhood,
+                "family_operations",
+                "family_operation_block",
+            );
+            if segments.is_empty() {
+                segments.push(SemanticPipelineSegment {
+                    family: ProcessingPipelineFamily::PostStackNeighborhood,
+                    start_step_index: 0,
+                    end_step_index: 0,
+                    role: "family_operations",
+                    boundary_reason: "family_operation_block",
+                });
+            }
+            segments
+        }
+        NormalizedPipeline::Subvolume { pipeline } => prefixed_family_segments(
+            pipeline.trace_local_pipeline.as_ref(),
+            1,
+            ProcessingPipelineFamily::Subvolume,
+            "crop",
+            "geometry_boundary",
+        ),
+        NormalizedPipeline::Gather { pipeline } => prefixed_family_segments(
+            pipeline.trace_local_pipeline.as_ref(),
+            pipeline.operations.len(),
+            ProcessingPipelineFamily::Gather,
+            "family_operations",
+            "family_operation_block",
+        ),
+    }
+}
+
+fn trace_local_semantic_segments(
+    pipeline: &TraceLocalProcessingPipeline,
+) -> Vec<SemanticPipelineSegment> {
+    let mut segments = Vec::new();
+    let mut segment_start = 0usize;
+    for (index, step) in pipeline.steps.iter().enumerate() {
+        let is_final_step = index + 1 == pipeline.steps.len();
+        if !step.checkpoint && !is_final_step {
+            continue;
+        }
+        segments.push(SemanticPipelineSegment {
+            family: ProcessingPipelineFamily::TraceLocal,
+            start_step_index: segment_start,
+            end_step_index: index,
+            role: "trace_local_segment",
+            boundary_reason: if is_final_step {
+                "final_output"
+            } else {
+                "authored_checkpoint"
+            },
+        });
+        segment_start = index + 1;
+    }
+    segments
+}
+
+fn prefixed_family_segments(
+    trace_local_pipeline: Option<&TraceLocalProcessingPipeline>,
+    family_operation_count: usize,
+    family: ProcessingPipelineFamily,
+    family_role: &'static str,
+    family_boundary_reason: &'static str,
+) -> Vec<SemanticPipelineSegment> {
+    let mut segments = Vec::new();
+    let prefix_len = trace_local_pipeline
+        .map(|pipeline| pipeline.operation_count())
+        .unwrap_or(0);
+    if let Some(prefix) = trace_local_pipeline {
+        segments.extend(
+            trace_local_semantic_segments(prefix)
+                .into_iter()
+                .map(|segment| SemanticPipelineSegment {
+                    boundary_reason: "trace_local_prefix",
+                    ..segment
+                }),
+        );
+    }
+    if family_operation_count > 0 {
+        segments.push(SemanticPipelineSegment {
+            family,
+            start_step_index: prefix_len,
+            end_step_index: prefix_len + family_operation_count - 1,
+            role: family_role,
+            boundary_reason: family_boundary_reason,
+        });
+    }
+    segments
+}
+
+fn semantic_segment_partition_outlook(
+    segments: &[SemanticPipelineSegment],
+    operator_traits: &[OperatorExecutionTraits],
+    source_shape: Option<[usize; 3]>,
+    source_chunk_shape: Option<[usize; 3]>,
+) -> Vec<SemanticSegmentPartitionOutlook> {
+    segments
+        .iter()
+        .filter_map(|segment| {
+            let end_index = segment
+                .end_step_index
+                .min(operator_traits.len().saturating_sub(1));
+            if segment.start_step_index > end_index || operator_traits.is_empty() {
+                return None;
+            }
+            let segment_traits = &operator_traits[segment.start_step_index..=end_index];
+            let partition_spec = partition_spec_for_traits(segment_traits);
+            Some(SemanticSegmentPartitionOutlook {
+                segment: segment.clone(),
+                partition_family: partition_spec.family,
+                target_bytes: partition_spec.target_bytes,
+                expected_partition_count: estimate_partition_count(
+                    &partition_spec,
+                    source_shape,
+                    source_chunk_shape,
+                ),
+            })
+        })
+        .collect()
+}
+
+fn pipeline_family_name(family: ProcessingPipelineFamily) -> &'static str {
+    match family {
+        ProcessingPipelineFamily::TraceLocal => "trace_local",
+        ProcessingPipelineFamily::PostStackNeighborhood => "post_stack_neighborhood",
+        ProcessingPipelineFamily::Subvolume => "subvolume",
+        ProcessingPipelineFamily::Gather => "gather",
+    }
+}
+
+fn partition_family_name(family: PartitionFamily) -> &'static str {
+    match family {
+        PartitionFamily::TileGroup => "tile_group",
+        PartitionFamily::Section => "section",
+        PartitionFamily::GatherGroup => "gather_group",
+        PartitionFamily::FullVolume => "full_volume",
+    }
+}
+
+fn memory_cost_class_name(cost: MemoryCostClass) -> &'static str {
+    match cost {
+        MemoryCostClass::Low => "low",
+        MemoryCostClass::Medium => "medium",
+        MemoryCostClass::High => "high",
+    }
+}
+
+fn cpu_cost_class_name(cost: CpuCostClass) -> &'static str {
+    match cost {
+        CpuCostClass::Low => "low",
+        CpuCostClass::Medium => "medium",
+        CpuCostClass::High => "high",
+    }
+}
+
+fn io_cost_class_name(cost: IoCostClass) -> &'static str {
+    match cost {
+        IoCostClass::Low => "low",
+        IoCostClass::Medium => "medium",
+        IoCostClass::High => "high",
+    }
+}
+
+fn parallel_efficiency_name(efficiency: ParallelEfficiencyClass) -> &'static str {
+    match efficiency {
+        ParallelEfficiencyClass::High => "high",
+        ParallelEfficiencyClass::Medium => "medium",
+        ParallelEfficiencyClass::Low => "low",
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -415,6 +1906,7 @@ fn build_trace_local_stages(
     operator_traits: &[OperatorExecutionTraits],
     source_shape: Option<[usize; 3]>,
     source_chunk_shape: Option<[usize; 3]>,
+    planning_mode: PlanningMode,
 ) -> (Vec<ExecutionStage>, Vec<ArtifactDescriptor>) {
     let mut stages = Vec::new();
     let mut artifacts = Vec::new();
@@ -462,10 +1954,37 @@ fn build_trace_local_stages(
             role,
             store_path,
             cache_key: None,
+            artifact_key: None,
+            logical_domain: None,
+            chunk_grid_spec: None,
+            geometry_fingerprints: None,
+            materialization_class: None,
+            boundary_reason: None,
+            lifetime_class: None,
+            reuse_requirement: None,
+            reuse_resolution: None,
+            reuse_decision_id: None,
+            artifact_derivation_decision_id: None,
         });
 
-        let partition_spec = partition_spec_for_traits(stage_traits);
+        let mut partition_spec = partition_spec_for_traits(stage_traits);
         let classification = stage_execution_classification_for_traits(stage_traits);
+        let expected_partition_count =
+            estimate_partition_count(&partition_spec, source_shape, source_chunk_shape);
+        partition_spec.requires_barrier = matches!(
+            stage_kind,
+            ExecutionStageKind::Checkpoint | ExecutionStageKind::FinalizeOutput
+        );
+        let progress_total = expected_partition_count.unwrap_or(1) as u64;
+        let estimated_cost = cost_estimate_for_traits(stage_traits);
+        let resource_envelope = stage_resource_envelope_for_stage(
+            planning_mode,
+            stage_kind,
+            &classification,
+            stage_memory_profile.as_ref(),
+            expected_partition_count,
+            &estimated_cost,
+        );
         stages.push(ExecutionStage {
             stage_id: format!("stage-{stage_index:02}"),
             stage_kind,
@@ -476,21 +1995,29 @@ fn build_trace_local_stages(
                 start_step_index: segment_start,
                 end_step_index: index,
             }),
-            expected_partition_count: estimate_partition_count(
-                &partition_spec,
-                source_shape,
-                source_chunk_shape,
-            ),
+            expected_partition_count,
             partition_spec,
             halo_spec: halo_spec_for_traits(stage_traits),
             chunk_shape_policy: ChunkShapePolicy::InheritSource,
             cache_mode,
             retry_policy: RetryPolicy { max_attempts: 1 },
-            progress_units: ProgressUnits { total: 1 },
+            progress_units: ProgressUnits {
+                total: progress_total,
+            },
             classification: classification.clone(),
             memory_cost_class: classification.max_memory_cost_class,
-            estimated_cost: cost_estimate_for_traits(stage_traits),
+            estimated_cost,
             stage_memory_profile,
+            resource_envelope,
+            boundary_reason: None,
+            materialization_class: None,
+            reuse_class: None,
+            output_artifact_key: None,
+            live_set: None,
+            reuse_requirement: None,
+            reuse_resolution: None,
+            planning_decision_id: None,
+            reuse_decision_id: None,
         });
 
         current_input_artifact_id = output_artifact_id;
@@ -508,10 +2035,26 @@ fn build_single_stage_plan(
     artifact_label: String,
     source_shape: Option<[usize; 3]>,
     source_chunk_shape: Option<[usize; 3]>,
+    planning_mode: PlanningMode,
 ) -> (Vec<ExecutionStage>, Vec<ArtifactDescriptor>) {
     let output_artifact_id = "final-output".to_string();
-    let partition_spec = partition_spec_for_traits(operator_traits);
+    let mut partition_spec = partition_spec_for_traits(operator_traits);
     let classification = stage_execution_classification_for_traits(operator_traits);
+    let expected_partition_count =
+        estimate_partition_count(&partition_spec, source_shape, source_chunk_shape);
+    partition_spec.requires_barrier = matches!(
+        pipeline_descriptor.family,
+        ProcessingPipelineFamily::Subvolume
+    );
+    let estimated_cost = cost_estimate_for_traits(operator_traits);
+    let resource_envelope = stage_resource_envelope_for_stage(
+        planning_mode,
+        ExecutionStageKind::FinalizeOutput,
+        &classification,
+        None,
+        expected_partition_count,
+        &estimated_cost,
+    );
     let stage = ExecutionStage {
         stage_id: "stage-01".to_string(),
         stage_kind: ExecutionStageKind::FinalizeOutput,
@@ -522,21 +2065,29 @@ fn build_single_stage_plan(
             start_step_index: 0,
             end_step_index: operator_traits.len().saturating_sub(1),
         }),
-        expected_partition_count: estimate_partition_count(
-            &partition_spec,
-            source_shape,
-            source_chunk_shape,
-        ),
+        expected_partition_count,
         partition_spec,
         halo_spec: halo_spec_for_traits(operator_traits),
         chunk_shape_policy: ChunkShapePolicy::InheritSource,
         cache_mode: CacheMode::PreferReuse,
         retry_policy: RetryPolicy { max_attempts: 1 },
-        progress_units: ProgressUnits { total: 1 },
+        progress_units: ProgressUnits {
+            total: expected_partition_count.unwrap_or(1) as u64,
+        },
         classification: classification.clone(),
         memory_cost_class: classification.max_memory_cost_class,
-        estimated_cost: cost_estimate_for_traits(operator_traits),
+        estimated_cost,
         stage_memory_profile: None,
+        resource_envelope,
+        boundary_reason: None,
+        materialization_class: None,
+        reuse_class: None,
+        output_artifact_key: None,
+        live_set: None,
+        reuse_requirement: None,
+        reuse_resolution: None,
+        planning_decision_id: None,
+        reuse_decision_id: None,
     };
     let artifact = ArtifactDescriptor {
         artifact_id: output_artifact_id,
@@ -545,8 +2096,179 @@ fn build_single_stage_plan(
             .map(str::to_string)
             .or(Some(artifact_label)),
         cache_key: None,
+        artifact_key: None,
+        logical_domain: None,
+        chunk_grid_spec: None,
+        geometry_fingerprints: None,
+        materialization_class: None,
+        boundary_reason: None,
+        lifetime_class: None,
+        reuse_requirement: None,
+        reuse_resolution: None,
+        reuse_decision_id: None,
+        artifact_derivation_decision_id: None,
     };
     (vec![stage], vec![artifact])
+}
+
+fn build_subvolume_plan(
+    pipeline_descriptor: &PipelineDescriptor,
+    pipeline: &SubvolumeProcessingPipeline,
+    source_artifact_id: &str,
+    output_store_path: Option<&str>,
+    operator_traits: &[OperatorExecutionTraits],
+    artifact_label: String,
+    source_shape: Option<[usize; 3]>,
+    source_chunk_shape: Option<[usize; 3]>,
+    planning_mode: PlanningMode,
+) -> (Vec<ExecutionStage>, Vec<ArtifactDescriptor>) {
+    build_prefixed_family_plan(
+        pipeline_descriptor,
+        pipeline.trace_local_pipeline.as_ref(),
+        source_artifact_id,
+        output_store_path,
+        operator_traits,
+        artifact_label,
+        source_shape,
+        source_chunk_shape,
+        planning_mode,
+    )
+}
+
+fn build_prefixed_family_plan(
+    pipeline_descriptor: &PipelineDescriptor,
+    trace_local_pipeline: Option<&TraceLocalProcessingPipeline>,
+    source_artifact_id: &str,
+    output_store_path: Option<&str>,
+    operator_traits: &[OperatorExecutionTraits],
+    artifact_label: String,
+    source_shape: Option<[usize; 3]>,
+    source_chunk_shape: Option<[usize; 3]>,
+    planning_mode: PlanningMode,
+) -> (Vec<ExecutionStage>, Vec<ArtifactDescriptor>) {
+    let Some(trace_local_pipeline) = trace_local_pipeline else {
+        return build_single_stage_plan(
+            pipeline_descriptor,
+            source_artifact_id,
+            output_store_path,
+            operator_traits,
+            artifact_label,
+            source_shape,
+            source_chunk_shape,
+            planning_mode,
+        );
+    };
+    let prefix_len = trace_local_pipeline.operation_count();
+    if prefix_len == 0 || prefix_len >= operator_traits.len() {
+        return build_single_stage_plan(
+            pipeline_descriptor,
+            source_artifact_id,
+            output_store_path,
+            operator_traits,
+            artifact_label,
+            source_shape,
+            source_chunk_shape,
+            planning_mode,
+        );
+    }
+
+    let (mut stages, mut artifacts) = build_trace_local_stages(
+        trace_local_pipeline,
+        source_artifact_id,
+        None,
+        &operator_traits[..prefix_len],
+        source_shape,
+        source_chunk_shape,
+        planning_mode,
+    );
+    let prefix_checkpoint_id = format!("checkpoint-{:02}", stages.len());
+    let old_prefix_output_artifact_id = stages
+        .last()
+        .map(|stage| stage.output_artifact_id.clone())
+        .unwrap_or_else(|| "final-output".to_string());
+    if let Some(prefix_stage) = stages.last_mut() {
+        prefix_stage.stage_kind = ExecutionStageKind::Checkpoint;
+        prefix_stage.output_artifact_id = prefix_checkpoint_id.clone();
+    }
+    if let Some(prefix_artifact) = artifacts
+        .iter_mut()
+        .find(|artifact| artifact.artifact_id == old_prefix_output_artifact_id)
+    {
+        prefix_artifact.artifact_id = prefix_checkpoint_id.clone();
+        prefix_artifact.role = ExecutionArtifactRole::Checkpoint;
+        prefix_artifact.store_path = None;
+    }
+
+    let family_traits = &operator_traits[prefix_len..];
+    let output_artifact_id = "final-output".to_string();
+    let mut partition_spec = partition_spec_for_traits(family_traits);
+    let classification = stage_execution_classification_for_traits(family_traits);
+    let expected_partition_count =
+        estimate_partition_count(&partition_spec, source_shape, source_chunk_shape);
+    partition_spec.requires_barrier = true;
+    let estimated_cost = cost_estimate_for_traits(family_traits);
+    let resource_envelope = stage_resource_envelope_for_stage(
+        planning_mode,
+        ExecutionStageKind::FinalizeOutput,
+        &classification,
+        None,
+        expected_partition_count,
+        &estimated_cost,
+    );
+    stages.push(ExecutionStage {
+        stage_id: format!("stage-{:02}", stages.len() + 1),
+        stage_kind: ExecutionStageKind::FinalizeOutput,
+        input_artifact_ids: vec![prefix_checkpoint_id],
+        output_artifact_id: output_artifact_id.clone(),
+        pipeline_segment: Some(ExecutionPipelineSegment {
+            family: pipeline_descriptor.family,
+            start_step_index: prefix_len,
+            end_step_index: operator_traits.len() - 1,
+        }),
+        expected_partition_count,
+        partition_spec,
+        halo_spec: halo_spec_for_traits(family_traits),
+        chunk_shape_policy: ChunkShapePolicy::InheritSource,
+        cache_mode: CacheMode::PreferReuse,
+        retry_policy: RetryPolicy { max_attempts: 1 },
+        progress_units: ProgressUnits {
+            total: expected_partition_count.unwrap_or(1) as u64,
+        },
+        classification: classification.clone(),
+        memory_cost_class: classification.max_memory_cost_class,
+        estimated_cost,
+        stage_memory_profile: None,
+        resource_envelope,
+        boundary_reason: None,
+        materialization_class: None,
+        reuse_class: None,
+        output_artifact_key: None,
+        live_set: None,
+        reuse_requirement: None,
+        reuse_resolution: None,
+        planning_decision_id: None,
+        reuse_decision_id: None,
+    });
+    artifacts.push(ArtifactDescriptor {
+        artifact_id: output_artifact_id,
+        role: ExecutionArtifactRole::FinalOutput,
+        store_path: output_store_path
+            .map(str::to_string)
+            .or(Some(artifact_label)),
+        cache_key: None,
+        artifact_key: None,
+        logical_domain: None,
+        chunk_grid_spec: None,
+        geometry_fingerprints: None,
+        materialization_class: None,
+        boundary_reason: None,
+        lifetime_class: None,
+        reuse_requirement: None,
+        reuse_resolution: None,
+        reuse_decision_id: None,
+        artifact_derivation_decision_id: None,
+    });
+    (stages, artifacts)
 }
 
 fn validation_report_for_layout(
@@ -654,6 +2376,77 @@ fn cost_estimate_for_traits(operator_traits: &[OperatorExecutionTraits]) -> Cost
     CostEstimate {
         relative_cpu_cost,
         estimated_peak_memory_bytes,
+    }
+}
+
+fn stage_resource_envelope_for_stage(
+    planning_mode: PlanningMode,
+    stage_kind: ExecutionStageKind,
+    classification: &StageExecutionClassification,
+    stage_memory_profile: Option<&StageMemoryProfile>,
+    expected_partition_count: Option<usize>,
+    estimated_cost: &CostEstimate,
+) -> StageResourceEnvelope {
+    let preferred_queue_class = if classification.requires_full_volume {
+        ExecutionQueueClass::ExclusiveFullVolume
+    } else {
+        match planning_mode {
+            PlanningMode::InteractivePreview => ExecutionQueueClass::InteractivePartition,
+            PlanningMode::ForegroundMaterialize => ExecutionQueueClass::ForegroundPartition,
+            PlanningMode::BackgroundBatch => ExecutionQueueClass::BackgroundPartition,
+        }
+    };
+    let resident_bytes_per_partition = stage_memory_profile
+        .map(|profile| {
+            profile
+                .reserve_hint_bytes
+                .saturating_add(profile.shared_stage_bytes)
+                .saturating_add(profile.output_tile_bytes)
+                .max(estimated_cost.estimated_peak_memory_bytes)
+        })
+        .unwrap_or(estimated_cost.estimated_peak_memory_bytes);
+    let workspace_bytes_per_worker = stage_memory_profile
+        .map(|profile| profile.per_worker_workspace_bytes)
+        .unwrap_or_else(|| resident_bytes_per_partition / 4);
+    let partition_count = expected_partition_count.unwrap_or(1).max(1);
+    let progress_granularity = if partition_count > 1 {
+        ExecutionProgressGranularity::Partition
+    } else {
+        ExecutionProgressGranularity::Stage
+    };
+    let retry_granularity = if partition_count > 1 {
+        ExecutionRetryGranularity::Partition
+    } else {
+        ExecutionRetryGranularity::Stage
+    };
+
+    StageResourceEnvelope {
+        preferred_queue_class,
+        spillability: if classification.requires_full_volume {
+            ExecutionSpillabilityClass::Exclusive
+        } else if stage_memory_profile.is_some() {
+            ExecutionSpillabilityClass::Spillable
+        } else {
+            ExecutionSpillabilityClass::Unspillable
+        },
+        exclusive_scope: if classification.requires_full_volume {
+            ExecutionExclusiveScope::FullVolume
+        } else {
+            ExecutionExclusiveScope::None
+        },
+        retry_granularity,
+        progress_granularity,
+        min_partition_count: Some(1),
+        target_partition_count: expected_partition_count,
+        max_partition_count: expected_partition_count,
+        preferred_partition_waves: match (planning_mode, stage_kind) {
+            (PlanningMode::InteractivePreview, _) => 1,
+            (_, ExecutionStageKind::Checkpoint | ExecutionStageKind::FinalizeOutput) => 1,
+            (PlanningMode::ForegroundMaterialize, _) => 2,
+            (PlanningMode::BackgroundBatch, _) => 1,
+        },
+        resident_bytes_per_partition,
+        workspace_bytes_per_worker,
     }
 }
 
@@ -766,6 +2559,24 @@ fn execution_plan_summary_for_stages(stages: &[ExecutionStage]) -> ExecutionPlan
         max_expected_partition_count: compute_stages
             .iter()
             .filter_map(|stage| stage.expected_partition_count)
+            .max(),
+        max_live_set_bytes: compute_stages
+            .iter()
+            .filter_map(|stage| {
+                stage
+                    .live_set
+                    .as_ref()
+                    .map(|live_set| live_set.estimated_resident_bytes)
+            })
+            .max(),
+        max_live_artifact_count: compute_stages
+            .iter()
+            .filter_map(|stage| {
+                stage
+                    .live_set
+                    .as_ref()
+                    .map(|live_set| live_set.resident_artifacts.len())
+            })
             .max(),
     }
 }
@@ -1025,11 +2836,86 @@ fn trace_local_spectral_workspace_bytes(samples: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use ophiolite_seismic::{
+        GatherInterpolationMode, GatherProcessingOperation, GatherProcessingPipeline,
+        PostStackNeighborhoodProcessingOperation, PostStackNeighborhoodProcessingPipeline,
+        PostStackNeighborhoodWindow, SubvolumeCropOperation, SubvolumeProcessingPipeline,
         TraceLocalProcessingOperation, TraceLocalProcessingPipeline, TraceLocalProcessingStep,
-        TraceLocalVolumeArithmeticOperator,
+        TraceLocalVolumeArithmeticOperator, VelocityFunctionSource,
     };
+    use std::fs;
+    use std::path::PathBuf;
 
     use super::*;
+    use crate::metadata::{
+        DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, VolumeAxes,
+        VolumeMetadata, generate_store_id, segy_sample_data_fidelity,
+    };
+    use crate::storage::tbvol::TbvolManifest;
+
+    fn canonical_test_store_path(
+        label: &str,
+        shape: [usize; 3],
+        chunk_shape: [usize; 3],
+    ) -> String {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("ophiolite-planner-{label}-{unique}.tbvol"));
+        fs::create_dir_all(&path).expect("create test store directory");
+        let manifest = TbvolManifest::new(
+            VolumeMetadata {
+                kind: DatasetKind::Source,
+                store_id: generate_store_id(),
+                source: SourceIdentity {
+                    source_path: PathBuf::from("input.sgy"),
+                    file_size: 1,
+                    trace_count: 1,
+                    samples_per_trace: shape[2],
+                    sample_interval_us: 2000,
+                    sample_format_code: 5,
+                    sample_data_fidelity: segy_sample_data_fidelity(5),
+                    endianness: "little".to_string(),
+                    revision_raw: 0,
+                    fixed_length_trace_flag_raw: 1,
+                    extended_textual_headers: 0,
+                    geometry: GeometryProvenance {
+                        inline_field: HeaderFieldSpec {
+                            name: "INLINE_3D".to_string(),
+                            start_byte: 189,
+                            value_type: "I32".to_string(),
+                        },
+                        crossline_field: HeaderFieldSpec {
+                            name: "CROSSLINE_3D".to_string(),
+                            start_byte: 193,
+                            value_type: "I32".to_string(),
+                        },
+                        third_axis_field: None,
+                    },
+                    regularization: None,
+                },
+                shape,
+                axes: VolumeAxes::from_time_axis(
+                    (0..shape[0]).map(|value| value as f64).collect(),
+                    (0..shape[1]).map(|value| value as f64).collect(),
+                    (0..shape[2]).map(|value| value as f32 * 2.0).collect(),
+                ),
+                segy_export: None,
+                coordinate_reference_binding: None,
+                spatial: None,
+                created_by: "test".to_string(),
+                processing_lineage: None,
+            },
+            chunk_shape,
+            false,
+        );
+        fs::write(
+            path.join("manifest.json"),
+            serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("write manifest");
+        path.to_string_lossy().into_owned()
+    }
 
     #[test]
     fn trace_local_planner_splits_checkpoint_stages() {
@@ -1099,7 +2985,7 @@ mod tests {
             MemoryCostClass::Medium
         );
         assert_eq!(plan.plan_summary.max_cpu_cost_class, CpuCostClass::Medium);
-        assert_eq!(plan.plan_summary.max_io_cost_class, IoCostClass::Low);
+        assert_eq!(plan.plan_summary.max_io_cost_class, IoCostClass::Medium);
         assert_eq!(
             plan.plan_summary.min_parallel_efficiency_class,
             ParallelEfficiencyClass::High
@@ -1311,5 +3197,380 @@ mod tests {
             three_jobs.recommended_partition_count() >= single_job.recommended_partition_count()
         );
         assert_eq!(three_jobs.preferred_partition_count, 15);
+    }
+
+    #[test]
+    fn planner_populates_artifact_identity_and_live_set_metadata() {
+        let input_store_path =
+            canonical_test_store_path("identity-input", [8, 8, 128], [4, 4, 128]);
+        let secondary_store_path =
+            canonical_test_store_path("identity-secondary", [8, 8, 128], [4, 4, 128]);
+        let request = PlanProcessingRequest {
+            store_path: input_store_path,
+            layout: SeismicLayout::PostStack3D,
+            source_shape: Some([8, 8, 128]),
+            source_chunk_shape: Some([4, 4, 128]),
+            pipeline: ProcessingPipelineSpec::TraceLocal {
+                pipeline: TraceLocalProcessingPipeline {
+                    schema_version: 1,
+                    revision: 1,
+                    preset_id: None,
+                    name: Some("identity-demo".to_string()),
+                    description: None,
+                    steps: vec![
+                        TraceLocalProcessingStep {
+                            operation: TraceLocalProcessingOperation::AmplitudeScalar {
+                                factor: 2.0,
+                            },
+                            checkpoint: true,
+                        },
+                        TraceLocalProcessingStep {
+                            operation: TraceLocalProcessingOperation::VolumeArithmetic {
+                                operator: TraceLocalVolumeArithmeticOperator::Add,
+                                secondary_store_path,
+                            },
+                            checkpoint: false,
+                        },
+                    ],
+                },
+            },
+            output_store_path: Some("output.tbvol".to_string()),
+            planning_mode: PlanningMode::ForegroundMaterialize,
+            max_active_partitions: Some(2),
+        };
+
+        let plan = build_execution_plan(&request).expect("plan should build");
+        let source = plan
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.artifact_id == "source")
+            .expect("source artifact");
+        assert_eq!(
+            source.materialization_class,
+            Some(MaterializationClass::ReusedArtifact)
+        );
+        assert_eq!(
+            source.boundary_reason,
+            Some(ArtifactBoundaryReason::SourceInput)
+        );
+        assert_eq!(source.lifetime_class, Some(ArtifactLifetimeClass::Source));
+        assert!(source.cache_key.is_some());
+        assert!(source.artifact_key.is_some());
+        assert!(matches!(
+            source.logical_domain,
+            Some(LogicalDomain::Volume { .. })
+        ));
+
+        let checkpoint_stage = plan
+            .stages
+            .iter()
+            .find(|stage| stage.stage_kind == ExecutionStageKind::Checkpoint)
+            .expect("checkpoint stage");
+        assert_eq!(
+            checkpoint_stage.materialization_class,
+            Some(MaterializationClass::Checkpoint)
+        );
+        assert_eq!(
+            checkpoint_stage.boundary_reason,
+            Some(ArtifactBoundaryReason::AuthoredCheckpoint)
+        );
+        assert_eq!(
+            checkpoint_stage.reuse_class,
+            Some(crate::ReuseClass::InPlaceSameWindow)
+        );
+        assert!(checkpoint_stage.output_artifact_key.is_some());
+        assert!(
+            checkpoint_stage
+                .live_set
+                .as_ref()
+                .is_some_and(|live_set| live_set.estimated_resident_bytes > 0)
+        );
+
+        let final_stage = plan
+            .stages
+            .iter()
+            .find(|stage| stage.stage_kind == ExecutionStageKind::FinalizeOutput)
+            .expect("final stage");
+        assert_eq!(
+            final_stage.materialization_class,
+            Some(MaterializationClass::PublishedOutput)
+        );
+        assert_eq!(
+            final_stage.boundary_reason,
+            Some(ArtifactBoundaryReason::FinalOutput)
+        );
+        assert_eq!(
+            final_stage.reuse_class,
+            Some(crate::ReuseClass::RequiresExternalInputs)
+        );
+        assert!(plan.plan_summary.max_live_set_bytes.is_some());
+        assert!(plan.plan_summary.max_live_artifact_count.is_some());
+    }
+
+    #[test]
+    fn subvolume_prefix_is_planned_as_native_trace_local_checkpoint_boundary() {
+        let input_store_path =
+            canonical_test_store_path("subvolume-prefix", [8, 8, 128], [4, 4, 128]);
+        let request = PlanProcessingRequest {
+            store_path: input_store_path,
+            layout: SeismicLayout::PostStack3D,
+            source_shape: Some([8, 8, 128]),
+            source_chunk_shape: Some([4, 4, 128]),
+            pipeline: ProcessingPipelineSpec::Subvolume {
+                pipeline: SubvolumeProcessingPipeline {
+                    schema_version: 1,
+                    revision: 11,
+                    preset_id: None,
+                    name: Some("subvolume-with-prefix".to_string()),
+                    description: None,
+                    trace_local_pipeline: Some(TraceLocalProcessingPipeline {
+                        schema_version: 1,
+                        revision: 7,
+                        preset_id: None,
+                        name: Some("prefix".to_string()),
+                        description: None,
+                        steps: vec![
+                            TraceLocalProcessingStep {
+                                operation: TraceLocalProcessingOperation::Envelope,
+                                checkpoint: false,
+                            },
+                            TraceLocalProcessingStep {
+                                operation: TraceLocalProcessingOperation::InstantaneousPhase,
+                                checkpoint: false,
+                            },
+                        ],
+                    }),
+                    crop: SubvolumeCropOperation {
+                        inline_min: 1,
+                        inline_max: 4,
+                        xline_min: 2,
+                        xline_max: 5,
+                        z_min_ms: 0.0,
+                        z_max_ms: 127.0,
+                    },
+                },
+            },
+            output_store_path: Some("output.tbvol".to_string()),
+            planning_mode: PlanningMode::ForegroundMaterialize,
+            max_active_partitions: Some(2),
+        };
+
+        let plan = build_execution_plan(&request).expect("plan should build");
+        assert_eq!(plan.stages.len(), 2);
+
+        let prefix_stage = &plan.stages[0];
+        assert_eq!(prefix_stage.stage_kind, ExecutionStageKind::Checkpoint);
+        assert_eq!(
+            prefix_stage.pipeline_segment,
+            Some(ExecutionPipelineSegment {
+                family: ProcessingPipelineFamily::TraceLocal,
+                start_step_index: 0,
+                end_step_index: 1,
+            })
+        );
+        assert_eq!(
+            prefix_stage.boundary_reason,
+            Some(ArtifactBoundaryReason::TraceLocalPrefix)
+        );
+        assert_eq!(
+            prefix_stage
+                .reuse_requirement
+                .as_ref()
+                .map(|requirement| requirement.boundary_kind),
+            Some(ReuseBoundaryKind::TraceLocalPrefix)
+        );
+        assert_eq!(
+            prefix_stage
+                .reuse_requirement
+                .as_ref()
+                .map(|requirement| requirement.artifact.pipeline_family),
+            Some(ProcessingPipelineFamily::TraceLocal)
+        );
+        assert_eq!(
+            prefix_stage
+                .reuse_requirement
+                .as_ref()
+                .map(|requirement| requirement.artifact.pipeline_revision),
+            Some(7)
+        );
+
+        let final_stage = &plan.stages[1];
+        assert_eq!(final_stage.stage_kind, ExecutionStageKind::FinalizeOutput);
+        assert_eq!(
+            final_stage.pipeline_segment,
+            Some(ExecutionPipelineSegment {
+                family: ProcessingPipelineFamily::Subvolume,
+                start_step_index: 2,
+                end_step_index: 2,
+            })
+        );
+
+        let prefix_artifact = plan
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.artifact_id == prefix_stage.output_artifact_id)
+            .expect("prefix artifact");
+        assert_eq!(prefix_artifact.role, ExecutionArtifactRole::Checkpoint);
+        assert_eq!(
+            prefix_artifact.boundary_reason,
+            Some(ArtifactBoundaryReason::TraceLocalPrefix)
+        );
+    }
+
+    #[test]
+    fn post_stack_prefix_is_planned_as_checkpoint_plus_family_stage() {
+        let request = PlanProcessingRequest {
+            store_path: "input.tbvol".to_string(),
+            layout: SeismicLayout::PostStack3D,
+            source_shape: Some([8, 8, 128]),
+            source_chunk_shape: Some([4, 4, 128]),
+            pipeline: ProcessingPipelineSpec::PostStackNeighborhood {
+                pipeline: PostStackNeighborhoodProcessingPipeline {
+                    schema_version: 1,
+                    revision: 5,
+                    preset_id: None,
+                    name: Some("post-stack-with-prefix".to_string()),
+                    description: None,
+                    trace_local_pipeline: Some(TraceLocalProcessingPipeline {
+                        schema_version: 1,
+                        revision: 3,
+                        preset_id: None,
+                        name: Some("prefix".to_string()),
+                        description: None,
+                        steps: vec![
+                            TraceLocalProcessingStep {
+                                operation: TraceLocalProcessingOperation::Envelope,
+                                checkpoint: false,
+                            },
+                            TraceLocalProcessingStep {
+                                operation: TraceLocalProcessingOperation::InstantaneousPhase,
+                                checkpoint: false,
+                            },
+                        ],
+                    }),
+                    operations: vec![PostStackNeighborhoodProcessingOperation::Similarity {
+                        window: PostStackNeighborhoodWindow {
+                            gate_ms: 24.0,
+                            inline_stepout: 1,
+                            xline_stepout: 1,
+                        },
+                    }],
+                },
+            },
+            output_store_path: Some("output.tbvol".to_string()),
+            planning_mode: PlanningMode::ForegroundMaterialize,
+            max_active_partitions: Some(2),
+        };
+
+        let plan = build_execution_plan(&request).expect("plan should build");
+        assert_eq!(plan.stages.len(), 2);
+        assert_eq!(plan.stages[0].stage_kind, ExecutionStageKind::Checkpoint);
+        assert_eq!(
+            plan.stages[0].pipeline_segment,
+            Some(ExecutionPipelineSegment {
+                family: ProcessingPipelineFamily::TraceLocal,
+                start_step_index: 0,
+                end_step_index: 1,
+            })
+        );
+        assert_eq!(
+            plan.stages[0].boundary_reason,
+            Some(ArtifactBoundaryReason::TraceLocalPrefix)
+        );
+        assert_eq!(
+            plan.stages[1].stage_kind,
+            ExecutionStageKind::FinalizeOutput
+        );
+        assert_eq!(
+            plan.stages[1].pipeline_segment,
+            Some(ExecutionPipelineSegment {
+                family: ProcessingPipelineFamily::PostStackNeighborhood,
+                start_step_index: 2,
+                end_step_index: 2,
+            })
+        );
+        assert_eq!(
+            plan.stages[1].boundary_reason,
+            Some(ArtifactBoundaryReason::FinalOutput)
+        );
+    }
+
+    #[test]
+    fn gather_prefix_is_planned_as_checkpoint_plus_family_stage() {
+        let request = PlanProcessingRequest {
+            store_path: "input.tbgath".to_string(),
+            layout: SeismicLayout::PreStack3DOffset,
+            source_shape: Some([8, 8, 128]),
+            source_chunk_shape: Some([4, 4, 128]),
+            pipeline: ProcessingPipelineSpec::Gather {
+                pipeline: GatherProcessingPipeline {
+                    schema_version: 1,
+                    revision: 8,
+                    preset_id: None,
+                    name: Some("gather-with-prefix".to_string()),
+                    description: None,
+                    trace_local_pipeline: Some(TraceLocalProcessingPipeline {
+                        schema_version: 1,
+                        revision: 4,
+                        preset_id: None,
+                        name: Some("prefix".to_string()),
+                        description: None,
+                        steps: vec![
+                            TraceLocalProcessingStep {
+                                operation: TraceLocalProcessingOperation::AmplitudeScalar {
+                                    factor: 2.0,
+                                },
+                                checkpoint: false,
+                            },
+                            TraceLocalProcessingStep {
+                                operation: TraceLocalProcessingOperation::TraceRmsNormalize,
+                                checkpoint: false,
+                            },
+                        ],
+                    }),
+                    operations: vec![GatherProcessingOperation::NmoCorrection {
+                        velocity_model: VelocityFunctionSource::ConstantVelocity {
+                            velocity_m_per_s: 2000.0,
+                        },
+                        interpolation: GatherInterpolationMode::Linear,
+                    }],
+                },
+            },
+            output_store_path: Some("output.tbgath".to_string()),
+            planning_mode: PlanningMode::ForegroundMaterialize,
+            max_active_partitions: Some(2),
+        };
+
+        let plan = build_execution_plan(&request).expect("plan should build");
+        assert_eq!(plan.stages.len(), 2);
+        assert_eq!(plan.stages[0].stage_kind, ExecutionStageKind::Checkpoint);
+        assert_eq!(
+            plan.stages[0].pipeline_segment,
+            Some(ExecutionPipelineSegment {
+                family: ProcessingPipelineFamily::TraceLocal,
+                start_step_index: 0,
+                end_step_index: 1,
+            })
+        );
+        assert_eq!(
+            plan.stages[0].boundary_reason,
+            Some(ArtifactBoundaryReason::TraceLocalPrefix)
+        );
+        assert_eq!(
+            plan.stages[1].stage_kind,
+            ExecutionStageKind::FinalizeOutput
+        );
+        assert_eq!(
+            plan.stages[1].pipeline_segment,
+            Some(ExecutionPipelineSegment {
+                family: ProcessingPipelineFamily::Gather,
+                start_step_index: 2,
+                end_step_index: 2,
+            })
+        );
+        assert_eq!(
+            plan.stages[1].boundary_reason,
+            Some(ArtifactBoundaryReason::FinalOutput)
+        );
     }
 }

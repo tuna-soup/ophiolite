@@ -8,6 +8,7 @@ const sourceRoot = path.join(frontendRoot, "src");
 
 const allowedImports = new Set([
   "@ophiolite/charts",
+  "@ophiolite/charts/extras",
   "@ophiolite/charts-toolbar",
   "@ophiolite/charts-data-models",
   "@ophiolite/contracts"

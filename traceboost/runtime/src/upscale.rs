@@ -71,6 +71,7 @@ pub fn upscale_store(
             spatial: input.manifest.volume.spatial.clone(),
             created_by: "seis-runtime-0.1.0".to_string(),
             processing_lineage: Some(ProcessingLineage {
+                schema_version: 1,
                 parent_store: input.root.clone(),
                 parent_store_id: input.manifest.volume.store_id.clone(),
                 artifact_role: ProcessingArtifactRole::FinalOutput,
@@ -90,6 +91,12 @@ pub fn upscale_store(
                         steps: Vec::new(),
                     },
                 },
+                pipeline_identity: None,
+                operator_set_identity: None,
+                planner_profile_identity: None,
+                source_identity: None,
+                runtime_semantics_version: String::new(),
+                store_writer_semantics_version: String::new(),
                 runtime_version: format!(
                     "traceboost-upscale-{}-{}x",
                     match options.method {
@@ -102,6 +109,13 @@ pub fn upscale_store(
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs(),
+                artifact_key: None,
+                input_artifact_keys: Vec::new(),
+                produced_by_stage_id: None,
+                boundary_reason: None,
+                logical_domain: None,
+                chunk_grid_spec: None,
+                geometry_fingerprints: None,
             }),
         },
         resolve_tile_shape(options.chunk_shape, shape),

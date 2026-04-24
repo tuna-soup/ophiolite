@@ -5,7 +5,11 @@ use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::SeismicStoreError;
-use crate::execution::{ExecutionPlan, TraceLocalChunkPlanRecommendation};
+use crate::execution::{
+    ArtifactKey, ChunkGridSpec, ExecutionPlan, GeometryFingerprints, LogicalDomain,
+    MaterializationClass, SectionDomain, TraceLocalChunkPlanRecommendation,
+};
+use crate::identity::{CURRENT_RUNTIME_SEMANTICS_VERSION, CURRENT_STORE_WRITER_SEMANTICS_VERSION};
 use crate::metadata::{DatasetKind, ProcessingLineage, VolumeMetadata, generate_store_id};
 use crate::planner::{
     TraceLocalChunkPlanResolution, recommend_trace_local_chunk_plan_for_execution,
@@ -231,10 +235,7 @@ pub struct PreviewSectionPrefixCache {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PreviewSectionPrefixCacheKey {
-    store_root_hash: u64,
-    axis: u8,
-    index: usize,
-    prefix_hash: u64,
+    artifact_cache_key: String,
 }
 
 #[derive(Debug, Clone)]
@@ -283,19 +284,11 @@ impl PreviewSectionPrefixCache {
 
     fn longest_prefix_hit(
         &mut self,
-        store_root_hash: u64,
-        axis: SectionAxis,
-        index: usize,
-        prefix_hashes: &[u64],
+        artifact_cache_keys: &[String],
         max_prefix_len: usize,
     ) -> Result<Option<(SectionPlane, usize)>, SeismicStoreError> {
-        for prefix_len in (1..=max_prefix_len.min(prefix_hashes.len())).rev() {
-            let key = preview_section_prefix_cache_key(
-                store_root_hash,
-                axis,
-                index,
-                prefix_hashes[prefix_len - 1],
-            );
+        for prefix_len in (1..=max_prefix_len.min(artifact_cache_keys.len())).rev() {
+            let key = preview_section_prefix_cache_key(&artifact_cache_keys[prefix_len - 1]);
             let access = self.next_access();
             if let Some(entry) = self.entries.get_mut(&key) {
                 entry.last_access = access;
@@ -307,17 +300,14 @@ impl PreviewSectionPrefixCache {
 
     fn store_prefix(
         &mut self,
-        store_root_hash: u64,
-        axis: SectionAxis,
-        index: usize,
         prefix_len: usize,
-        prefix_hash: u64,
+        artifact_cache_key: &str,
         plane: &SectionPlane,
     ) -> Result<(), SeismicStoreError> {
         if prefix_len == 0 {
             return Ok(());
         }
-        let key = preview_section_prefix_cache_key(store_root_hash, axis, index, prefix_hash);
+        let key = preview_section_prefix_cache_key(artifact_cache_key);
         let bytes = preview_section_plane_bytes(plane);
         if bytes > self.max_bytes {
             return Ok(());
@@ -402,6 +392,7 @@ impl PreviewSectionSession {
         validate_pipeline(pipeline)?;
         let secondary_readers = open_secondary_store_readers(&self.handle, None, pipeline)?;
         let (plane, reuse) = preview_section_from_tbvol_reader_with_prefix_cache(
+            &self.handle,
             &self.reader,
             self.store_root_hash,
             axis,
@@ -431,6 +422,7 @@ impl PreviewSectionSession {
         let operations = trace_local_operations(pipeline);
         let secondary_readers = open_secondary_store_readers(&self.handle, None, &operations)?;
         preview_section_from_tbvol_reader_with_prefix_cache(
+            &self.handle,
             &self.reader,
             self.store_root_hash,
             axis,
@@ -986,6 +978,7 @@ pub fn preview_section_view_with_prefix_cache(
     let reader = TbvolReader::open(&handle.root)?;
     let secondary_readers = open_secondary_store_readers(&handle, None, pipeline)?;
     let (plane, reuse) = preview_section_from_tbvol_reader_with_prefix_cache(
+        &handle,
         &reader,
         preview_store_root_hash(&handle.root),
         axis,
@@ -1452,14 +1445,28 @@ fn derived_subvolume_volume_metadata(
         spatial: input.spatial.clone(),
         created_by,
         processing_lineage: Some(ProcessingLineage {
+            schema_version: 1,
             parent_store: parent_store.to_path_buf(),
             parent_store_id: input.store_id.clone(),
             artifact_role: ProcessingArtifactRole::FinalOutput,
             pipeline: ProcessingPipelineSpec::Subvolume {
                 pipeline: pipeline.clone(),
             },
+            pipeline_identity: None,
+            operator_set_identity: None,
+            planner_profile_identity: None,
+            source_identity: None,
+            runtime_semantics_version: CURRENT_RUNTIME_SEMANTICS_VERSION.to_string(),
+            store_writer_semantics_version: CURRENT_STORE_WRITER_SEMANTICS_VERSION.to_string(),
             runtime_version: RUNTIME_VERSION.to_string(),
             created_at_unix_s: unix_timestamp_s(),
+            artifact_key: None,
+            input_artifact_keys: Vec::new(),
+            produced_by_stage_id: None,
+            boundary_reason: None,
+            logical_domain: None,
+            chunk_grid_spec: None,
+            geometry_fingerprints: None,
         }),
     }
 }
@@ -1836,6 +1843,7 @@ fn preview_section_from_tbvol_reader(
 }
 
 fn preview_section_from_tbvol_reader_with_prefix_cache(
+    handle: &StoreHandle,
     reader: &TbvolReader,
     store_root_hash: u64,
     axis: SectionAxis,
@@ -1860,15 +1868,13 @@ fn preview_section_from_tbvol_reader_with_prefix_cache(
         })
         .count();
     let prefix_hashes = preview_prefix_hashes(pipeline);
+    let prefix_cache_keys =
+        preview_prefix_artifact_cache_keys(handle, store_root_hash, axis, index, &prefix_hashes)?;
 
     let mut reuse = PreviewSectionPrefixReuse::default();
-    let mut plane = if let Some((cached_plane, prefix_len)) = cache.longest_prefix_hit(
-        store_root_hash,
-        axis,
-        index,
-        &prefix_hashes,
-        max_cacheable_prefix_len,
-    )? {
+    let mut plane = if let Some((cached_plane, prefix_len)) =
+        cache.longest_prefix_hit(&prefix_cache_keys, max_cacheable_prefix_len)?
+    {
         reuse.cache_hit = true;
         reuse.reused_prefix_operations = prefix_len;
         cached_plane
@@ -1885,14 +1891,7 @@ fn preview_section_from_tbvol_reader_with_prefix_cache(
             let operation = &pipeline[prefix_len - 1];
             apply_pipeline_to_plane(&mut plane, std::slice::from_ref(operation))?;
             if prefix_len <= max_cacheable_prefix_len {
-                cache.store_prefix(
-                    store_root_hash,
-                    axis,
-                    index,
-                    prefix_len,
-                    prefix_hashes[prefix_len - 1],
-                    &plane,
-                )?;
+                cache.store_prefix(prefix_len, &prefix_cache_keys[prefix_len - 1], &plane)?;
             }
         }
     }
@@ -2459,20 +2458,9 @@ fn apply_volume_arithmetic(
     }
 }
 
-fn preview_section_prefix_cache_key(
-    store_root_hash: u64,
-    axis: SectionAxis,
-    index: usize,
-    prefix_hash: u64,
-) -> PreviewSectionPrefixCacheKey {
+fn preview_section_prefix_cache_key(artifact_cache_key: &str) -> PreviewSectionPrefixCacheKey {
     PreviewSectionPrefixCacheKey {
-        store_root_hash,
-        axis: match axis {
-            SectionAxis::Inline => 0,
-            SectionAxis::Xline => 1,
-        },
-        index,
-        prefix_hash,
+        artifact_cache_key: artifact_cache_key.to_string(),
     }
 }
 
@@ -2490,6 +2478,80 @@ fn preview_prefix_hashes(pipeline: &[ProcessingOperation]) -> Vec<u64> {
         hashes.push(hasher.finish());
     }
     hashes
+}
+
+fn preview_prefix_artifact_cache_keys(
+    handle: &StoreHandle,
+    store_root_hash: u64,
+    axis: SectionAxis,
+    index: usize,
+    prefix_hashes: &[u64],
+) -> Result<Vec<String>, SeismicStoreError> {
+    let geometry_fingerprints = handle.geometry_fingerprints();
+    let chunk_grid_spec = ChunkGridSpec::Regular {
+        origin: [0, 0, 0],
+        chunk_shape: handle.manifest.tile_shape,
+    };
+    prefix_hashes
+        .iter()
+        .enumerate()
+        .map(|(prefix_index, prefix_hash)| {
+            Ok(preview_section_artifact_key(
+                store_root_hash,
+                axis,
+                index,
+                prefix_index + 1,
+                *prefix_hash,
+                geometry_fingerprints.clone(),
+                chunk_grid_spec.clone(),
+            )?
+            .cache_key)
+        })
+        .collect()
+}
+
+fn preview_section_artifact_key(
+    store_root_hash: u64,
+    axis: SectionAxis,
+    index: usize,
+    prefix_len: usize,
+    prefix_hash: u64,
+    geometry_fingerprints: GeometryFingerprints,
+    chunk_grid_spec: ChunkGridSpec,
+) -> Result<ArtifactKey, SeismicStoreError> {
+    let logical_domain = LogicalDomain::Section {
+        section: SectionDomain {
+            axis,
+            section_index: index,
+        },
+    };
+    let lineage_digest = crate::ProcessingCacheFingerprint::fingerprint_json(&(
+        store_root_hash,
+        match axis {
+            SectionAxis::Inline => 0_u8,
+            SectionAxis::Xline => 1_u8,
+        },
+        index,
+        prefix_len,
+        prefix_hash,
+    ))
+    .map_err(SeismicStoreError::Message)?;
+    let cache_key = crate::ProcessingCacheFingerprint::fingerprint_json(&(
+        &lineage_digest,
+        &geometry_fingerprints,
+        &logical_domain,
+        &chunk_grid_spec,
+        MaterializationClass::EphemeralWindow,
+    ))
+    .map_err(SeismicStoreError::Message)?;
+    Ok(ArtifactKey {
+        lineage_digest,
+        geometry_fingerprints,
+        logical_domain,
+        chunk_grid_spec,
+        materialization_class: MaterializationClass::EphemeralWindow,
+        cache_key,
+    })
 }
 
 fn hash_processing_operation(hasher: &mut DefaultHasher, operation: &ProcessingOperation) {
@@ -3540,14 +3602,28 @@ fn derived_volume_metadata(
         spatial: input.spatial.clone(),
         created_by,
         processing_lineage: Some(ProcessingLineage {
+            schema_version: 1,
             parent_store: parent_store.to_path_buf(),
             parent_store_id: input.store_id.clone(),
             artifact_role: ProcessingArtifactRole::FinalOutput,
             pipeline: ProcessingPipelineSpec::TraceLocal {
                 pipeline: pipeline.clone(),
             },
+            pipeline_identity: None,
+            operator_set_identity: None,
+            planner_profile_identity: None,
+            source_identity: None,
+            runtime_semantics_version: CURRENT_RUNTIME_SEMANTICS_VERSION.to_string(),
+            store_writer_semantics_version: CURRENT_STORE_WRITER_SEMANTICS_VERSION.to_string(),
             runtime_version: RUNTIME_VERSION.to_string(),
             created_at_unix_s: unix_timestamp_s(),
+            artifact_key: None,
+            input_artifact_keys: Vec::new(),
+            produced_by_stage_id: None,
+            boundary_reason: None,
+            logical_domain: None,
+            chunk_grid_spec: None,
+            geometry_fingerprints: None,
         }),
     }
 }
@@ -3604,6 +3680,15 @@ mod tests {
             .map(|(actual, target)| (actual - target).abs())
             .sum::<f32>()
             / (end - start).max(1) as f32
+    }
+
+    fn discrete_central_difference_frequency_hz(frequency_hz: f32, sample_interval_ms: f32) -> f32 {
+        let omega_dt = 2.0 * std::f32::consts::PI * frequency_hz * (sample_interval_ms / 1000.0);
+        if omega_dt.abs() <= f32::EPSILON {
+            frequency_hz
+        } else {
+            frequency_hz * (omega_dt.sin() / omega_dt)
+        }
     }
 
     #[test]
@@ -4051,8 +4136,13 @@ mod tests {
         )
         .unwrap();
 
-        let expected = vec![frequency_hz; samples];
-        assert!(mean_absolute_error(&trace, &expected, 4) < 0.2);
+        let expected =
+            vec![
+                discrete_central_difference_frequency_hz(frequency_hz, sample_interval_ms);
+                samples
+            ];
+        let mae = mean_absolute_error(&trace, &expected, 4);
+        assert!(mae < 0.2);
     }
 
     #[test]
@@ -4073,8 +4163,12 @@ mod tests {
         )
         .unwrap();
 
-        let expected = vec![amplitude / frequency_hz.sqrt(); samples];
-        assert!(mean_absolute_error(&trace, &expected, 4) < 2.5e-3);
+        let stabilized_frequency =
+            discrete_central_difference_frequency_hz(frequency_hz, sample_interval_ms)
+                .max(SWEETNESS_FREQUENCY_FLOOR_HZ);
+        let expected = vec![amplitude / stabilized_frequency.sqrt(); samples];
+        let mae = mean_absolute_error(&trace, &expected, 4);
+        assert!(mae < 2.5e-3);
     }
 
     #[test]
@@ -4088,9 +4182,8 @@ mod tests {
     fn partition_tile_groups_follow_storage_order() {
         let geometry = crate::storage::tile_geometry::TileGeometry::new([8, 6, 4], [2, 3, 4]);
         let groups = partition_tile_groups_for_target_bytes(&geometry, 220);
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0].len(), 2);
-        assert_eq!(groups[1].len(), 2);
+        assert_eq!(groups.len(), 4);
+        assert!(groups.iter().all(|group| group.len() == 2));
         assert_eq!(
             groups[0],
             vec![
@@ -4105,14 +4198,14 @@ mod tests {
             ]
         );
         assert_eq!(
-            groups[1],
+            groups[3],
             vec![
                 TileCoord {
-                    tile_i: 1,
+                    tile_i: 3,
                     tile_x: 0,
                 },
                 TileCoord {
-                    tile_i: 1,
+                    tile_i: 3,
                     tile_x: 1,
                 },
             ]

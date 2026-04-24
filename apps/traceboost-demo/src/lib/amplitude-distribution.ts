@@ -147,10 +147,10 @@ function sliceAmplitudeSelection(
   const rect =
     selection.kind === "viewport"
       ? {
-          left: selection.viewport.trace_start,
-          right: selection.viewport.trace_end,
-          top: selection.viewport.sample_start,
-          bottom: selection.viewport.sample_end
+          left: selection.viewport.traceStart,
+          right: selection.viewport.traceEnd,
+          top: selection.viewport.sampleStart,
+          bottom: selection.viewport.sampleEnd
         }
       : selection.rectangle;
 

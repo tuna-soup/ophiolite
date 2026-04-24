@@ -7,6 +7,7 @@ import type {
   OperatorParameterDoc,
   AmplitudeSpectrumRequest,
   AmplitudeSpectrumResponse,
+  InspectableProcessingPlan,
   LocalVolumeStatistic,
   NeighborhoodDipOutput,
   PostStackNeighborhoodProcessingOperation,
@@ -16,10 +17,12 @@ import type {
   PreviewTraceLocalProcessingRequest as PreviewProcessingRequest,
   ProcessingExecutionMode,
   ProcessingBatchStatus,
+  ProcessingJobRuntimeState,
   ProcessingPreset,
   ProcessingPipelineFamily,
   ProcessingPipelineSpec,
   ProcessingJobStatus,
+  ProcessingRuntimeEvent,
   RunPostStackNeighborhoodProcessingRequest,
   SubvolumeCropOperation,
   SubvolumeProcessingPipeline,
@@ -32,13 +35,17 @@ import type {
   WorkspacePipelineEntry
 } from "@traceboost/seis-contracts";
 import {
+  SCHEMA_VERSION,
   cancelProcessingJob,
   cancelProcessingBatch,
   deletePipelinePreset,
   emitFrontendDiagnosticsEvent,
   fetchAmplitudeSpectrum,
+  getProcessingDebugPlan,
   getProcessingBatch,
   getProcessingJob,
+  getProcessingRuntimeState,
+  listProcessingRuntimeEvents,
   listPipelinePresets,
   loadDatasetOperatorCatalog,
   previewPostStackNeighborhoodProcessing,
@@ -1280,6 +1287,9 @@ export class ProcessingModel {
   datasetOperatorCatalogError = $state<string | null>(null);
   presets = $state.raw<ProcessingPreset[]>([]);
   activeJob = $state<ProcessingJobStatus | null>(null);
+  activeDebugPlan = $state.raw<InspectableProcessingPlan | null>(null);
+  activeRuntimeState = $state.raw<ProcessingJobRuntimeState | null>(null);
+  activeRuntimeEvents = $state.raw<ProcessingRuntimeEvent[]>([]);
   activeBatch = $state.raw<ProcessingBatchStatus | null>(null);
   recentJobs = $state.raw<RecentProcessingJobEntry[]>([]);
   recentBatches = $state.raw<RecentProcessingBatchEntry[]>([]);
@@ -1305,6 +1315,8 @@ export class ProcessingModel {
   #persistSessionPipelinesTimer: number | null = null;
   #runOutputPathRefreshTimer: number | null = null;
   #operatorCatalogRequestId = 0;
+  #activeDebugJobId: string | null = null;
+  #latestRuntimeEventSeq = 0;
 
   constructor(options: ProcessingModelOptions) {
     this.viewerModel = options.viewerModel;
@@ -3040,13 +3052,13 @@ export class ProcessingModel {
       const response =
         this.pipelineFamily === "post_stack_neighborhood"
           ? await previewPostStackNeighborhoodProcessing({
-              schema_version: 1,
+              schema_version: SCHEMA_VERSION,
               store_path: storePath,
               section,
               pipeline: clonePostStackNeighborhoodPipeline(this.postStackNeighborhoodPipeline)
             } satisfies PreviewPostStackNeighborhoodProcessingRequest)
           : await previewProcessing({
-              schema_version: 1,
+              schema_version: SCHEMA_VERSION,
               store_path: storePath,
               section,
               pipeline: clonePipeline(this.pipeline)
@@ -3138,7 +3150,7 @@ export class ProcessingModel {
     this.spectrumError = null;
     try {
       const baseRequest: AmplitudeSpectrumRequest = {
-        schema_version: 1,
+        schema_version: SCHEMA_VERSION,
         store_path: this.viewerModel.activeStorePath,
         section: {
           dataset_id: this.viewerModel.dataset.descriptor.id,
@@ -3276,7 +3288,7 @@ export class ProcessingModel {
     try {
       const familyLabel = batchPipelineFamilyLabel(this.pipelineFamily, this.subvolumeCrop);
       const response = await submitProcessingBatch({
-        schema_version: 1,
+        schema_version: SCHEMA_VERSION,
         items: selectedStorePaths.map((store_path) => ({
           store_path,
           output_store_path: null
@@ -3531,6 +3543,7 @@ export class ProcessingModel {
     try {
       const response = await getProcessingJob(this.activeJob.job_id);
       this.setActiveJobStatus(response.job);
+      await this.refreshActiveJobDebug(response.job.job_id);
       switch (response.job.state) {
         case "queued":
         case "running":
@@ -3617,9 +3630,64 @@ export class ProcessingModel {
   }
 
   private setActiveJobStatus(job: ProcessingJobStatus | null): void {
+    const previousJobId = this.#activeDebugJobId;
     this.activeJob = job;
+    if (!job) {
+      this.#activeDebugJobId = null;
+      this.#latestRuntimeEventSeq = 0;
+      this.activeDebugPlan = null;
+      this.activeRuntimeState = null;
+      this.activeRuntimeEvents = [];
+      return;
+    }
+    if (job.job_id !== previousJobId) {
+      this.#activeDebugJobId = job.job_id;
+      this.#latestRuntimeEventSeq = 0;
+      this.activeDebugPlan = job.inspectable_plan ?? null;
+      this.activeRuntimeState = null;
+      this.activeRuntimeEvents = [];
+      void this.refreshActiveJobDebug(job.job_id, true);
+    } else if (job.inspectable_plan) {
+      this.activeDebugPlan = job.inspectable_plan;
+    }
     if (job) {
       this.upsertRecentJob(job);
+    }
+  }
+
+  private async refreshActiveJobDebug(
+    jobId: string,
+    includePlan = false
+  ): Promise<void> {
+    try {
+      const [planResponse, runtimeResponse, eventsResponse] = await Promise.all([
+        includePlan || !this.activeDebugPlan
+          ? getProcessingDebugPlan(jobId)
+          : Promise.resolve({ schema_version: SCHEMA_VERSION, plan: this.activeDebugPlan }),
+        getProcessingRuntimeState(jobId),
+        listProcessingRuntimeEvents(jobId, this.#latestRuntimeEventSeq || null)
+      ]);
+      if (this.#activeDebugJobId !== jobId) {
+        return;
+      }
+      this.activeDebugPlan = planResponse.plan ?? this.activeDebugPlan;
+      this.activeRuntimeState = runtimeResponse.runtime;
+      const events = eventsResponse.events ?? [];
+      if (events.length > 0) {
+        this.activeRuntimeEvents = [...this.activeRuntimeEvents, ...events].slice(-128);
+        this.#latestRuntimeEventSeq =
+          events[events.length - 1]?.seq ?? this.#latestRuntimeEventSeq;
+      } else {
+        this.#latestRuntimeEventSeq =
+          runtimeResponse.runtime.latest_event_seq ?? this.#latestRuntimeEventSeq;
+      }
+    } catch (error) {
+      this.viewerModel.note(
+        "Processing debug refresh failed.",
+        "backend",
+        "warn",
+        errorMessage(error, "Failed to refresh processing debug state.")
+      );
     }
   }
 
@@ -3752,7 +3820,7 @@ export class ProcessingModel {
     subvolumeCrop: SubvolumeCropOperation | null
   ): Promise<string> {
     const response = await resolveProcessingRunOutput({
-      schema_version: 1,
+      schema_version: SCHEMA_VERSION,
       store_path: activeStorePath,
       family:
         this.pipelineFamily === "post_stack_neighborhood"
@@ -3776,7 +3844,7 @@ export class ProcessingModel {
     const response =
       this.pipelineFamily === "post_stack_neighborhood"
         ? await runPostStackNeighborhoodProcessing({
-            schema_version: 1,
+            schema_version: SCHEMA_VERSION,
             store_path: this.viewerModel.activeStorePath,
             output_store_path: outputStorePath,
             overwrite_existing: overwriteExisting,
@@ -3784,14 +3852,14 @@ export class ProcessingModel {
           } satisfies RunPostStackNeighborhoodProcessingRequest)
         : this.subvolumeCrop
           ? await runSubvolumeProcessing({
-              schema_version: 1,
+              schema_version: SCHEMA_VERSION,
               store_path: this.viewerModel.activeStorePath,
               output_store_path: outputStorePath,
               overwrite_existing: overwriteExisting,
               pipeline: buildSubvolumeProcessingPipeline(this.pipeline, this.subvolumeCrop)
             } satisfies RunSubvolumeProcessingRequest)
           : await runProcessing({
-              schema_version: 1,
+              schema_version: SCHEMA_VERSION,
               store_path: this.viewerModel.activeStorePath,
               output_store_path: outputStorePath,
               overwrite_existing: overwriteExisting,

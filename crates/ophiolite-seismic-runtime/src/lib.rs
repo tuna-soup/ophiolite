@@ -4,6 +4,7 @@ mod error;
 mod execution;
 mod gather_processing;
 mod horizons;
+mod identity;
 mod ingest;
 mod mdio;
 mod metadata;
@@ -13,6 +14,8 @@ mod post_stack_neighborhood;
 mod preflight;
 mod prestack_analysis;
 mod prestack_store;
+mod processing_package;
+mod processing_runtime;
 mod render;
 mod rock_physics;
 mod segy_export;
@@ -43,15 +46,23 @@ pub use compute::{
 };
 pub use error::SeismicStoreError;
 pub use execution::{
-    ArtifactDescriptor, CacheMode, ChunkPlanningMode, ChunkShapePolicy, Chunkability, CostEstimate,
-    CpuCostClass, ExecutionArtifactRole, ExecutionMemoryBudget, ExecutionOperatorScope,
-    ExecutionPipelineSegment, ExecutionPlan, ExecutionPlanSummary, ExecutionPriorityClass,
-    ExecutionSourceDescriptor, ExecutionSpatialDependency, ExecutionStage, ExecutionStageKind,
-    HaloSpec, IoCostClass, MemoryCostClass, OperatorExecutionTraits, ParallelEfficiencyClass,
-    PartitionFamily, PartitionOrdering, PartitionSpec, PipelineDescriptor, PlanningMode,
-    PreferredPartitioning, ProgressUnits, RetryPolicy, SampleHaloRequirement, SchedulerHints,
-    StageExecutionClassification, StageMemoryProfile, TraceLocalChunkPlanRecommendation,
-    ValidationReport, operator_execution_traits_for_pipeline_spec,
+    ArtifactBoundaryReason, ArtifactDerivation, ArtifactDescriptor, ArtifactKey,
+    ArtifactLifetimeClass, ArtifactLiveSet, ArtifactLiveSetEntry, CacheMode, ChunkGridSpec,
+    ChunkPlanningMode, ChunkShapePolicy, Chunkability, CostEstimate, CpuCostClass, DecisionFactor,
+    DomainSpace, ExecutionArtifactRole, ExecutionExclusiveScope, ExecutionMemoryBudget,
+    ExecutionOperatorScope, ExecutionPipelineSegment, ExecutionPlan, ExecutionPlanSummary,
+    ExecutionPriorityClass, ExecutionProgressGranularity, ExecutionQueueClass,
+    ExecutionRetryGranularity, ExecutionSourceDescriptor, ExecutionSpatialDependency,
+    ExecutionSpillabilityClass, ExecutionStage, ExecutionStageKind, GeometryFingerprints, HaloSpec,
+    IoCostClass, LogicalDomain, MaterializationClass, MemoryCostClass, OperatorExecutionTraits,
+    ParallelEfficiencyClass, PartitionDomain, PartitionFamily, PartitionKey, PartitionOrdering,
+    PartitionSpec, PipelineDescriptor, PlanDecision, PlanDecisionKind, PlanDecisionSubjectKind,
+    PlannerDiagnostics, PlannerPassSnapshot, PlanningMode, PlanningPassId, PreferredPartitioning,
+    ProgressUnits, RetryPolicy, ReuseClass, ReuseDecision, ReuseDecisionEvidence,
+    ReuseDecisionOutcome, SampleHaloRequirement, SchedulerHints, SectionDomain,
+    SectionWindowDomain, StageExecutionClassification, StageMemoryProfile, StagePlanningDecision,
+    StageResourceEnvelope, TileDomain, TraceLocalChunkPlanRecommendation, ValidationReport,
+    VolumeDomain, operator_execution_traits_for_pipeline_spec,
 };
 pub use gather_processing::{
     GatherPlane, apply_gather_processing_pipeline, apply_trace_local_pipeline_to_gather,
@@ -64,6 +75,18 @@ pub use horizons::{
     import_horizon_xyzs, import_horizon_xyzs_from_draft, import_horizon_xyzs_with_vertical_domain,
     inspect_horizon_xyz_files, load_horizon_grids, preview_horizon_source_import,
     preview_horizon_xyzs, preview_horizon_xyzs_with_vertical_domain, section_horizon_overlays,
+};
+pub use identity::{
+    CURRENT_RUNTIME_SEMANTICS_VERSION, CURRENT_STORE_WRITER_SEMANTICS_VERSION,
+    CanonicalArtifactIdentity, CanonicalIdentityStatus, CanonicalLineageValidation,
+    LoadedSourceSemanticIdentity, canonical_artifact_identity,
+    canonical_identity_status_supports_canonical_reuse, canonical_processing_lineage_validation,
+    combine_canonical_identity_status, fingerprint_json as canonical_identity_fingerprint_json,
+    operator_set_identity_for_pipeline, pipeline_external_identity_status,
+    pipeline_identity_status, pipeline_semantic_identity, planner_profile_identity_for_pipeline,
+    source_artifact_identity_from_source_identity, source_identity_digest,
+    source_semantic_identity_from_store_path, source_semantic_identity_or_degraded,
+    source_semantic_identity_with_status_from_store_path,
 };
 pub use ingest::{
     IngestOptions, SeisGeometryOptions, SourceVolume, SparseSurveyPolicy, VolumeImportFormat,
@@ -148,12 +171,37 @@ pub use prestack_store::{
     read_gather_plane as read_prestack_gather_plane,
     set_prestack_store_native_coordinate_reference,
 };
+pub use processing_package::{
+    PROCESSING_OUTPUT_PACKAGE_CONFIG_SCHEMA_VERSION, PROCESSING_OUTPUT_PACKAGE_SCHEMA_VERSION,
+    ProcessingOutputPackage, ProcessingOutputPackageBlobRef, ProcessingOutputPackageConfig,
+    ProcessingOutputPackageManifest, open_processing_output_package, package_processing_output,
+};
+pub use processing_runtime::{
+    GatherExecutionObserver, GatherJobStartedEvent, PostStackNeighborhoodExecutionObserver,
+    PostStackNeighborhoodJobStartedEvent, ProcessingCacheFingerprint,
+    ProcessingExecutionSummaryState, ReusedTraceLocalCheckpoint,
+    SubvolumeCheckpointStageCompletedEvent, SubvolumeCheckpointStageStartedEvent,
+    SubvolumeExecutionObserver, SubvolumeFinalStageStartedEvent, SubvolumeJobStartedEvent,
+    TraceLocalCheckpointLookupKey, TraceLocalExecutionObserver, TraceLocalJobStartedEvent,
+    TraceLocalProcessingStagePlan, TraceLocalStageCompletedEvent, TraceLocalStageStartedEvent,
+    build_trace_local_checkpoint_stages_from_pipeline,
+    build_trace_local_processing_stages_from_plan, checkpoint_output_store_path,
+    execute_gather_processing_job, execute_post_stack_neighborhood_processing_job,
+    execute_subvolume_processing_job, execute_trace_local_processing_job,
+    resolve_reused_trace_local_checkpoint, resolve_trace_local_checkpoint_indexes,
+    rewrite_tbgath_processing_lineage, rewrite_tbvol_processing_lineage, trace_local_pipeline_hash,
+    trace_local_pipeline_prefix, trace_local_pipeline_segment, trace_local_source_fingerprint,
+};
 pub use render::{render_section_csv, render_section_csv_for_request};
 pub use rock_physics::{avo_intercept_gradient_attribute, rock_physics_attribute};
 pub use segy_export::{
     attach_store_segy_export, copy_store_segy_export, crop_store_segy_export, export_store_to_segy,
 };
-pub use storage::section_assembler::read_section_plane as assemble_section_plane;
+pub use storage::section_assembler::{
+    AssembledSectionArtifact, SectionAssemblyPlan, SectionWindowArtifact,
+    read_assembled_section_artifact, read_section_plane as assemble_section_plane,
+    read_section_window_artifact,
+};
 pub use storage::tbvol::{
     TbvolManifest, TbvolReader, TbvolWriter, recommended_default_tbvol_tile_target_mib,
     recommended_tbvol_tile_shape,

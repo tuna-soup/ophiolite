@@ -2,8 +2,11 @@
 
 <script lang="ts">
   import type {
+    InspectableProcessingPlan,
+    ProcessingJobRuntimeState,
     ProcessingJobArtifact,
     ProcessingJobStatus,
+    ProcessingRuntimeEvent,
     SubvolumeCropOperation
   } from "@traceboost/seis-contracts";
   import {
@@ -19,17 +22,19 @@
     isPhaseRotation,
     isSweetness,
     isVolumeArithmetic,
-    summarizeProcessingExecution,
-    summarizeProcessingPlan,
     type OperatorCatalogItem,
     type SourceSubvolumeBounds,
     type WorkspaceOperation
   } from "../processing-model.svelte";
+  import ProcessingDebugPanel from "./ProcessingDebugPanel.svelte";
 
   let {
     selectedOperation,
     selectedOperatorCatalogItem,
     activeJob,
+    activeDebugPlan = null,
+    activeRuntimeState = null,
+    activeRuntimeEvents = [],
     processingError,
     primaryVolumeLabel,
     sourceSubvolumeBounds,
@@ -57,6 +62,9 @@
     selectedOperation: WorkspaceOperation | null;
     selectedOperatorCatalogItem: OperatorCatalogItem | null;
     activeJob: ProcessingJobStatus | null;
+    activeDebugPlan?: InspectableProcessingPlan | null;
+    activeRuntimeState?: ProcessingJobRuntimeState | null;
+    activeRuntimeEvents?: ProcessingRuntimeEvent[];
     processingError: string | null;
     primaryVolumeLabel: string;
     sourceSubvolumeBounds: SourceSubvolumeBounds | null;
@@ -107,9 +115,6 @@
   function parameterDescription(name: string, fallback: string | null = null): string | null {
     return parameterDoc(name)?.description ?? fallback;
   }
-
-  let planSummary = $derived(summarizeProcessingPlan(activeJob?.plan_summary));
-  let executionSummary = $derived(summarizeProcessingExecution(activeJob?.execution_summary));
 </script>
 
 <section class="editor-panel">
@@ -496,54 +501,14 @@
       <div class="job-progress">
         {activeJob.progress.completed} / {activeJob.progress.total || 0} tiles
       </div>
-      {#if planSummary}
-        <div class="job-plan">
-          <strong>Planned Execution</strong>
-          <p>{planSummary.overview}</p>
-          {#if planSummary.detail}
-            <p>{planSummary.detail}</p>
-          {/if}
-          {#if planSummary.stages.length}
-            <div class="job-plan-stages">
-              {#each planSummary.stages as stageSummary (`${activeJob.job_id}:${stageSummary}`)}
-                <span>{stageSummary}</span>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/if}
-      {#if executionSummary}
-        <div class="job-plan">
-          <strong>Actual Execution</strong>
-          <p>{executionSummary.overview}</p>
-          {#if executionSummary.detail}
-            <p>{executionSummary.detail}</p>
-          {/if}
-          {#if executionSummary.stages.length}
-            <div class="job-plan-stages">
-              {#each executionSummary.stages as stageSummary (`${activeJob.job_id}:actual:${stageSummary}`)}
-                <span>{stageSummary}</span>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/if}
-      {#if activeJob.state === "queued" || activeJob.state === "running"}
-        <button class="chip danger" onclick={onCancelJob}>Cancel Job</button>
-      {/if}
-      {#if activeJob.artifacts.length}
-        <div class="artifact-list">
-          {#each activeJob.artifacts as artifact (`${artifact.kind}:${artifact.store_path}`)}
-            <div class="artifact-row">
-              <div class="artifact-copy">
-                <strong>{artifact.label}</strong>
-                <span>{artifactKindLabel(artifact)}</span>
-              </div>
-              <button class="chip" onclick={() => onOpenArtifact(artifact.store_path)}>Open</button>
-            </div>
-          {/each}
-        </div>
-      {/if}
+      <ProcessingDebugPanel
+        {activeJob}
+        debugPlan={activeDebugPlan}
+        runtimeState={activeRuntimeState}
+        runtimeEvents={activeRuntimeEvents}
+        {onCancelJob}
+        {onOpenArtifact}
+      />
     </div>
   {/if}
 
@@ -838,77 +803,6 @@
   .job-stage {
     font-size: 11px;
     color: #315b75;
-  }
-
-  .job-plan {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding-top: 6px;
-    border-top: 1px solid var(--app-border);
-  }
-
-  .job-plan strong {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: 11px;
-  }
-
-  .job-plan p {
-    margin: 0;
-    color: var(--text-muted);
-    font-size: 11px;
-    line-height: 1.45;
-  }
-
-  .job-plan-stages {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-  }
-
-  .job-plan-stages span {
-    color: var(--text-dim);
-    font-size: 10px;
-    line-height: 1.4;
-  }
-
-  .artifact-list {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    margin-top: 2px;
-    padding-top: 6px;
-    border-top: 1px solid var(--app-border);
-  }
-
-  .artifact-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 10px;
-    align-items: center;
-  }
-
-  .artifact-copy {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .artifact-copy strong {
-    font-size: 11px;
-    color: var(--text-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .artifact-copy span {
-    font-size: 10px;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
   }
 
   .error-bar {

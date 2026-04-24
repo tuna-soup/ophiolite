@@ -3691,6 +3691,7 @@ dependencies = [
  "ophiolite-seismic",
  "ophiolite-seismic-runtime",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -3708,6 +3709,7 @@ dependencies = [
 name = "ophiolite-seismic-runtime"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "clap",
  "criterion",
  "lz4_flex 0.11.6",

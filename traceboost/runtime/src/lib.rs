@@ -18,6 +18,10 @@ pub use metadata::{
     DatasetKind, GeometryProvenance, HeaderFieldSpec, InterpMethod, ProcessingLineage,
     RegularizationProvenance, SourceIdentity, TbvolManifest, VolumeAxes, VolumeMetadata,
 };
+pub use ophiolite_seismic::contracts::{
+    InspectableProcessingPlan, ReuseArtifactKind, ReuseBoundaryKind, ReuseMissReason,
+    ReuseRequirement, ReuseResolution,
+};
 pub use ophiolite_seismic::{
     AmplitudeSpectrumCurve, AmplitudeSpectrumRequest, AmplitudeSpectrumResponse, AxisSummaryF32,
     AxisSummaryI32, BuildSurveyPropertyFieldRequest, BuildSurveyTimeDepthTransformRequest,
@@ -28,12 +32,16 @@ pub use ophiolite_seismic::{
     GatherInterpolationMode, GatherPreviewView, GatherProcessingOperation,
     GatherProcessingPipeline, GatherRequest, GatherSelector, GeometryDescriptor,
     GeometryProvenanceSummary, GeometrySummary, GetProcessingBatchRequest,
-    GetProcessingBatchResponse, GetProcessingJobRequest, GetProcessingJobResponse,
-    ImportHorizonXyzRequest, ImportHorizonXyzResponse, ImportPrestackOffsetDatasetRequest,
-    ImportPrestackOffsetDatasetResponse, ImportedHorizonDescriptor, InterpretationPoint,
-    LateralInterpolationMethod, LayeredVelocityInterval, LayeredVelocityModel,
-    ListPipelinePresetsResponse, LoadSectionHorizonsRequest, LoadSectionHorizonsResponse,
-    LocalVolumeStatistic, NeighborhoodDipOutput, PostStackNeighborhoodProcessingOperation,
+    GetProcessingBatchResponse, GetProcessingDebugPlanRequest, GetProcessingDebugPlanResponse,
+    GetProcessingJobRequest, GetProcessingJobResponse, GetProcessingRuntimeStateRequest,
+    GetProcessingRuntimeStateResponse, ImportHorizonXyzRequest, ImportHorizonXyzResponse,
+    ImportPrestackOffsetDatasetRequest, ImportPrestackOffsetDatasetResponse,
+    ImportedHorizonDescriptor, InterpretationPoint, LateralInterpolationMethod,
+    LayeredVelocityInterval, LayeredVelocityModel, ListPipelinePresetsResponse,
+    ListProcessingRuntimeEventsRequest, ListProcessingRuntimeEventsResponse,
+    LoadSectionHorizonsRequest, LoadSectionHorizonsResponse, LocalVolumeStatistic,
+    NeighborhoodDipOutput, OperatorSetIdentity, PipelineArtifactIdentity, PipelineSemanticIdentity,
+    PlannerProfileIdentity, PostStackNeighborhoodProcessingOperation,
     PostStackNeighborhoodProcessingPipeline, PostStackNeighborhoodWindow, PrestackThirdAxisField,
     PreviewGatherProcessingRequest, PreviewGatherProcessingResponse,
     PreviewPostStackNeighborhoodProcessingRequest, PreviewPostStackNeighborhoodProcessingResponse,
@@ -42,18 +50,20 @@ pub use ophiolite_seismic::{
     ProcessingBatchItemStatus, ProcessingBatchProgress, ProcessingBatchState,
     ProcessingBatchStatus, ProcessingExecutionMode, ProcessingJobArtifact,
     ProcessingJobArtifactKind, ProcessingJobChunkPlanSummary, ProcessingJobExecutionSummary,
-    ProcessingJobProgress, ProcessingJobStageExecutionSummary, ProcessingJobState,
-    ProcessingJobStatus, ProcessingOperation, ProcessingPipeline, ProcessingPipelineFamily,
-    ProcessingPipelineSpec, ProcessingPreset, ProcessingSchedulerReason, ProjectedPoint2,
-    ProjectedVector2, ResolvedSectionDisplayView, RunGatherProcessingRequest,
-    RunGatherProcessingResponse, RunPostStackNeighborhoodProcessingRequest,
-    RunPostStackNeighborhoodProcessingResponse, RunProcessingRequest, RunProcessingResponse,
-    RunTraceLocalProcessingRequest, RunTraceLocalProcessingResponse, SampleDataConversionKind,
-    SampleDataFidelity, SampleValuePreservation, SavePipelinePresetRequest,
-    SavePipelinePresetResponse, SectionAxis, SectionHorizonLineStyle, SectionHorizonOverlayView,
-    SectionHorizonSample, SectionHorizonStyle, SectionRequest, SectionSpectrumSelection,
-    SectionTileRequest, SemblancePanel, SpatialCoverageRelationship, SpatialCoverageSummary,
-    StratigraphicBoundaryReference, SubmitProcessingBatchRequest, SubmitProcessingBatchResponse,
+    ProcessingJobProgress, ProcessingJobRuntimeState, ProcessingJobStageExecutionSummary,
+    ProcessingJobState, ProcessingJobStatus, ProcessingOperation, ProcessingPipeline,
+    ProcessingPipelineFamily, ProcessingPipelineSpec, ProcessingPreset, ProcessingRuntimeEvent,
+    ProcessingSchedulerReason, ProjectedPoint2, ProjectedVector2, ResolvedSectionDisplayView,
+    RunGatherProcessingRequest, RunGatherProcessingResponse,
+    RunPostStackNeighborhoodProcessingRequest, RunPostStackNeighborhoodProcessingResponse,
+    RunProcessingRequest, RunProcessingResponse, RunTraceLocalProcessingRequest,
+    RunTraceLocalProcessingResponse, SampleDataConversionKind, SampleDataFidelity,
+    SampleValuePreservation, SavePipelinePresetRequest, SavePipelinePresetResponse, SectionAxis,
+    SectionHorizonLineStyle, SectionHorizonOverlayView, SectionHorizonSample, SectionHorizonStyle,
+    SectionRequest, SectionSpectrumSelection, SectionTileRequest, SemblancePanel,
+    SourceArtifactIdentity, SourceSemanticIdentity, SpatialCoverageRelationship,
+    SpatialCoverageSummary, StoreFormatIdentity, StratigraphicBoundaryReference,
+    SubmitProcessingBatchRequest, SubmitProcessingBatchResponse,
     SubmitTraceLocalProcessingBatchRequest, SubmitTraceLocalProcessingBatchResponse,
     SubvolumeProcessingPipeline, SurveyGridTransform, SurveyPropertyField3D,
     SurveySpatialAvailability, SurveySpatialDescriptor, SurveyTimeDepthTransform3D,
@@ -67,18 +77,41 @@ pub use ophiolite_seismic::{
 };
 pub use ophiolite_seismic::{PreviewView, SectionView};
 pub use ophiolite_seismic_runtime::{
-    ArtifactDescriptor, CacheMode, ChunkShapePolicy, CostEstimate, CpuCostClass,
-    ExecutionArtifactRole, ExecutionOperatorScope, ExecutionPipelineSegment, ExecutionPlan,
-    ExecutionPlanSummary, ExecutionPriorityClass, ExecutionSourceDescriptor,
-    ExecutionSpatialDependency, ExecutionStage, ExecutionStageKind, HaloSpec, IoCostClass,
-    MemoryCostClass, OperatorExecutionTraits, ParallelEfficiencyClass, PartitionFamily,
-    PartitionOrdering, PartitionSpec, PipelineDescriptor, PlanProcessingRequest, PlanningMode,
-    PreferredPartitioning, ProgressUnits, RetryPolicy, SampleHaloRequirement, SchedulerHints,
+    ArtifactBoundaryReason, ArtifactDescriptor, ArtifactKey, ArtifactLifetimeClass, CacheMode,
+    ChunkGridSpec, ChunkShapePolicy, CostEstimate, CpuCostClass, ExecutionArtifactRole,
+    ExecutionOperatorScope, ExecutionPipelineSegment, ExecutionPlan, ExecutionPlanSummary,
+    ExecutionPriorityClass, ExecutionSourceDescriptor, ExecutionSpatialDependency, ExecutionStage,
+    ExecutionStageKind, GeometryFingerprints, HaloSpec, IoCostClass, LogicalDomain,
+    MaterializationClass, MemoryCostClass, OperatorExecutionTraits, ParallelEfficiencyClass,
+    PartitionFamily, PartitionOrdering, PartitionSpec, PipelineDescriptor, PlanProcessingRequest,
+    PlanningMode, PreferredPartitioning, ProgressUnits, RetryPolicy,
+    ReuseDecisionEvidence as RuntimeReuseDecisionEvidence,
+    ReuseDecisionOutcome as RuntimeReuseDecisionOutcome, SampleHaloRequirement, SchedulerHints,
     StageExecutionClassification, TraceLocalChunkPlanRecommendation, TraceLocalChunkPlanResolution,
-    TraceLocalMaterializeOptionsResolution, ValidationReport,
+    TraceLocalMaterializeOptionsResolution, ValidationReport, VolumeDomain,
     operator_execution_traits_for_pipeline_spec, recommend_adaptive_partition_target,
     recommend_adaptive_partition_target_for_job_concurrency,
     recommend_trace_local_chunk_plan_for_execution,
+};
+pub use ophiolite_seismic_runtime::{
+    CURRENT_RUNTIME_SEMANTICS_VERSION, CURRENT_STORE_WRITER_SEMANTICS_VERSION,
+    CanonicalIdentityStatus, canonical_artifact_identity, canonical_processing_lineage_validation,
+    operator_set_identity_for_pipeline, pipeline_semantic_identity,
+    planner_profile_identity_for_pipeline, source_identity_digest,
+};
+pub use ophiolite_seismic_runtime::{
+    GatherExecutionObserver, GatherJobStartedEvent, PostStackNeighborhoodExecutionObserver,
+    PostStackNeighborhoodJobStartedEvent, ProcessingCacheFingerprint,
+    ProcessingExecutionSummaryState, ReusedTraceLocalCheckpoint,
+    SubvolumeCheckpointStageCompletedEvent, SubvolumeCheckpointStageStartedEvent,
+    SubvolumeExecutionObserver, SubvolumeFinalStageStartedEvent, SubvolumeJobStartedEvent,
+    TraceLocalCheckpointLookupKey, TraceLocalExecutionObserver, TraceLocalJobStartedEvent,
+    TraceLocalProcessingStagePlan, TraceLocalStageCompletedEvent, TraceLocalStageStartedEvent,
+    build_trace_local_checkpoint_stages_from_pipeline,
+    build_trace_local_processing_stages_from_plan, checkpoint_output_store_path,
+    execute_gather_processing_job, execute_post_stack_neighborhood_processing_job,
+    execute_subvolume_processing_job, execute_trace_local_processing_job,
+    rewrite_tbgath_processing_lineage, rewrite_tbvol_processing_lineage,
 };
 pub use ophiolite_seismic_runtime::{
     HorizonImportPreview, HorizonImportPreviewFile, HorizonSourceImportCanonicalDraft,
@@ -105,11 +138,11 @@ pub use ophiolite_seismic_runtime::{
     preview_processing_section_plane, preview_processing_section_view,
     preview_processing_section_view_with_prefix_cache, preview_section_from_reader,
     preview_section_plane, preview_section_view, preview_section_view_with_prefix_cache,
-    preview_subvolume_processing_section_view, resolve_trace_local_materialize_options,
+    preview_subvolume_processing_section_view, resolve_reused_trace_local_checkpoint,
+    resolve_trace_local_checkpoint_indexes, resolve_trace_local_materialize_options,
     resolved_section_display_view, store_survey_property_field, store_survey_time_depth_transform,
-    validate_pipeline, validate_post_stack_neighborhood_processing_pipeline,
-    validate_post_stack_neighborhood_processing_pipeline_for_layout, validate_processing_pipeline,
-    velocity_scan,
+    trace_local_pipeline_hash, trace_local_pipeline_prefix, trace_local_pipeline_segment,
+    trace_local_source_fingerprint,
 };
 pub use ophiolite_seismic_runtime::{MdioTbvolStorageEstimate, VolumeSubset};
 pub use ophiolite_seismic_runtime::{
@@ -128,10 +161,21 @@ pub use ophiolite_seismic_runtime::{
     transcode_tbvolc_to_tbvol,
 };
 pub use ophiolite_seismic_runtime::{
+    PROCESSING_OUTPUT_PACKAGE_CONFIG_SCHEMA_VERSION, PROCESSING_OUTPUT_PACKAGE_SCHEMA_VERSION,
+    ProcessingOutputPackage, ProcessingOutputPackageBlobRef, ProcessingOutputPackageConfig,
+    ProcessingOutputPackageManifest, open_processing_output_package, package_processing_output,
+};
+pub use ophiolite_seismic_runtime::{ReuseDecisionEvidence, ReuseDecisionOutcome};
+pub use ophiolite_seismic_runtime::{
     TbvolArchiveSiblingStatus, TbvolcAmplitudeEncoding, TbvolcManifest,
 };
 pub use ophiolite_seismic_runtime::{
     materialize_gather_processing_store, materialize_gather_processing_store_with_progress,
+};
+pub use ophiolite_seismic_runtime::{
+    validate_pipeline, validate_post_stack_neighborhood_processing_pipeline,
+    validate_post_stack_neighborhood_processing_pipeline_for_layout, validate_processing_pipeline,
+    velocity_scan,
 };
 pub use preflight::{PreflightAction, PreflightGeometry, SurveyPreflight, preflight_segy};
 pub use render::{render_section_csv, render_section_csv_for_request};

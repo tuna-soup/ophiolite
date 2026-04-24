@@ -1,4 +1,4 @@
-import type { SeismicSectionAnalysisSelection } from "@ophiolite/charts";
+import type { SeismicSectionAnalysisSelection, SeismicViewport } from "@ophiolite/charts";
 import type { SectionSpectrumSelection, SectionViewport, SectionView } from "@traceboost/seis-contracts";
 import type { TransportSectionView } from "./bridge";
 
@@ -6,7 +6,7 @@ export type DisplaySectionView = SectionView | TransportSectionView;
 
 export function selectionFromMode(
   mode: "whole-section" | "viewport",
-  viewport: SectionViewport | null
+  viewport: SectionViewport | SeismicViewport | null
 ): SeismicSectionAnalysisSelection | null {
   if (mode === "viewport") {
     if (!viewport) {
@@ -14,7 +14,24 @@ export function selectionFromMode(
     }
     return {
       kind: "viewport",
-      viewport: { ...viewport }
+      viewport: {
+        traceStart:
+          (viewport as { traceStart?: number; trace_start?: number }).traceStart ??
+          (viewport as { trace_start?: number }).trace_start ??
+          0,
+        traceEnd:
+          (viewport as { traceEnd?: number; trace_end?: number }).traceEnd ??
+          (viewport as { trace_end?: number }).trace_end ??
+          0,
+        sampleStart:
+          (viewport as { sampleStart?: number; sample_start?: number }).sampleStart ??
+          (viewport as { sample_start?: number }).sample_start ??
+          0,
+        sampleEnd:
+          (viewport as { sampleEnd?: number; sample_end?: number }).sampleEnd ??
+          (viewport as { sample_end?: number }).sample_end ??
+          0
+      }
     };
   }
 
@@ -35,7 +52,7 @@ export function buildAnalysisSelectionKey(
     case "whole-section":
       return `${baseKey}:whole-section`;
     case "viewport":
-      return `${baseKey}:viewport:${selection.viewport.trace_start}:${selection.viewport.trace_end}:${selection.viewport.sample_start}:${selection.viewport.sample_end}`;
+      return `${baseKey}:viewport:${selection.viewport.traceStart}:${selection.viewport.traceEnd}:${selection.viewport.sampleStart}:${selection.viewport.sampleEnd}`;
     case "rectangle":
       return `${baseKey}:rectangle:${selection.rectangle.left}:${selection.rectangle.top}:${selection.rectangle.right}:${selection.rectangle.bottom}`;
     default:
@@ -55,8 +72,8 @@ export function buildAnalysisSelectionSummary(
     case "whole-section":
       return `Displayed ${section.axis} section ${section.coordinate.index} · ${section.traces} traces x ${section.samples} samples`;
     case "viewport": {
-      const traces = Math.max(0, selection.viewport.trace_end - selection.viewport.trace_start);
-      const samples = Math.max(0, selection.viewport.sample_end - selection.viewport.sample_start);
+      const traces = Math.max(0, selection.viewport.traceEnd - selection.viewport.traceStart);
+      const samples = Math.max(0, selection.viewport.sampleEnd - selection.viewport.sampleStart);
       return `Viewport of ${section.axis} section ${section.coordinate.index} · ${traces} traces x ${samples} samples`;
     }
     case "rectangle": {
@@ -76,10 +93,10 @@ export function toSpectrumSelection(selection: SeismicSectionAnalysisSelection):
     case "viewport":
       return {
         rect_window: {
-          trace_start: selection.viewport.trace_start,
-          trace_end: selection.viewport.trace_end,
-          sample_start: selection.viewport.sample_start,
-          sample_end: selection.viewport.sample_end
+          trace_start: selection.viewport.traceStart,
+          trace_end: selection.viewport.traceEnd,
+          sample_start: selection.viewport.sampleStart,
+          sample_end: selection.viewport.sampleEnd
         }
       };
     case "rectangle":

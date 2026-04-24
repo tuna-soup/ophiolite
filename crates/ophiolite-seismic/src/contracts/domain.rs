@@ -99,7 +99,9 @@ pub struct ProcessingLineageSummary {
     pub pipeline_family: ProcessingPipelineFamily,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline_name: Option<String>,
+    pub pipeline_schema_version: u32,
     pub pipeline_revision: u32,
+    pub pipeline_content_digest: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]

@@ -1,10 +1,36 @@
 use crate::SectionAxis;
 use crate::error::SeismicStoreError;
+use crate::execution::{SectionDomain, SectionWindowDomain};
 use crate::metadata::VolumeMetadata;
 use crate::store::SectionPlane;
 
 use super::tile_geometry::{TileCoord, TileGeometry};
 use super::volume_store::VolumeStoreReader;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SectionAssemblyPlan {
+    pub axis: SectionAxis,
+    pub section_index: usize,
+    pub trace_range: [usize; 2],
+    pub sample_range: [usize; 2],
+    pub lod: u8,
+    pub source_tiles: Vec<TileCoord>,
+    pub output_shape: [usize; 2],
+}
+
+#[derive(Debug, Clone)]
+pub struct SectionWindowArtifact {
+    pub domain: SectionWindowDomain,
+    pub assembly_plan: SectionAssemblyPlan,
+    pub plane: SectionPlane,
+}
+
+#[derive(Debug, Clone)]
+pub struct AssembledSectionArtifact {
+    pub domain: SectionDomain,
+    pub assembly_plan: SectionAssemblyPlan,
+    pub plane: SectionPlane,
+}
 
 pub fn read_section_plane<R: VolumeStoreReader>(
     reader: &R,
@@ -132,6 +158,105 @@ pub fn read_section_tile_plane<R: VolumeStoreReader>(
         sample_axis_ms: sampled_axis_f32(&volume.axes.sample_axis_ms, sample_range, sample_step),
         amplitudes,
         occupancy,
+    })
+}
+
+pub fn section_assembly_plan<R: VolumeStoreReader>(
+    reader: &R,
+    axis: SectionAxis,
+    index: usize,
+    trace_range: [usize; 2],
+    sample_range: [usize; 2],
+    lod: u8,
+) -> Result<SectionAssemblyPlan, SeismicStoreError> {
+    let volume = reader.volume();
+    validate_section_index(volume, axis, index)?;
+    validate_tile_window(
+        match axis {
+            SectionAxis::Inline => volume.shape[1],
+            SectionAxis::Xline => volume.shape[0],
+        },
+        volume.shape[2],
+        trace_range,
+        sample_range,
+    )?;
+    let trace_step = lod_step(lod)?;
+    let sample_step = lod_step(lod)?;
+    let geometry = reader.tile_geometry();
+    let source_tiles = geometry
+        .section_tiles(axis, index)
+        .into_iter()
+        .filter(|tile| {
+            let origin = geometry.tile_origin(*tile);
+            let effective_shape = geometry.effective_tile_shape(*tile);
+            let (tile_trace_start, tile_trace_end) = match axis {
+                SectionAxis::Inline => (origin[1], origin[1] + effective_shape[1]),
+                SectionAxis::Xline => (origin[0], origin[0] + effective_shape[0]),
+            };
+            !(tile_trace_end <= trace_range[0] || tile_trace_start >= trace_range[1])
+        })
+        .collect();
+    Ok(SectionAssemblyPlan {
+        axis,
+        section_index: index,
+        trace_range,
+        sample_range,
+        lod,
+        source_tiles,
+        output_shape: [
+            (trace_range[1] - trace_range[0]).div_ceil(trace_step),
+            (sample_range[1] - sample_range[0]).div_ceil(sample_step),
+        ],
+    })
+}
+
+pub fn read_assembled_section_artifact<R: VolumeStoreReader>(
+    reader: &R,
+    axis: SectionAxis,
+    index: usize,
+) -> Result<AssembledSectionArtifact, SeismicStoreError> {
+    let volume = reader.volume();
+    let traces = match axis {
+        SectionAxis::Inline => volume.shape[1],
+        SectionAxis::Xline => volume.shape[0],
+    };
+    let plane = read_section_plane(reader, axis, index)?;
+    Ok(AssembledSectionArtifact {
+        domain: SectionDomain {
+            axis,
+            section_index: index,
+        },
+        assembly_plan: section_assembly_plan(
+            reader,
+            axis,
+            index,
+            [0, traces],
+            [0, volume.shape[2]],
+            0,
+        )?,
+        plane,
+    })
+}
+
+pub fn read_section_window_artifact<R: VolumeStoreReader>(
+    reader: &R,
+    axis: SectionAxis,
+    index: usize,
+    trace_range: [usize; 2],
+    sample_range: [usize; 2],
+    lod: u8,
+) -> Result<SectionWindowArtifact, SeismicStoreError> {
+    let plane = read_section_tile_plane(reader, axis, index, trace_range, sample_range, lod)?;
+    Ok(SectionWindowArtifact {
+        domain: SectionWindowDomain {
+            axis,
+            section_index: index,
+            trace_range,
+            sample_range,
+            lod,
+        },
+        assembly_plan: section_assembly_plan(reader, axis, index, trace_range, sample_range, lod)?,
+        plane,
     })
 }
 

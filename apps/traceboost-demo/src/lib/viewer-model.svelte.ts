@@ -5,7 +5,13 @@ import type {
   SectionScalarOverlay as ChartSectionScalarOverlay,
   SectionWellOverlay as ChartSectionWellOverlay
 } from "@ophiolite/charts-data-models";
-import type { SeismicChartInteractionState, SeismicChartTool } from "@ophiolite/charts";
+import type {
+  SeismicChartInteractionChangePayload,
+  SeismicChartInteractionState,
+  SeismicChartTool,
+  SeismicSectionProbeChangePayload,
+  SeismicSectionViewportChangePayload
+} from "@ophiolite/charts";
 import type {
   BuildSurveyTimeDepthTransformRequest,
   DatasetRegistryEntry,
@@ -21,12 +27,9 @@ import type {
   SegyHeaderValueType,
   SegyImportPlan,
   SectionAxis,
-  SectionInteractionChanged,
   SectionHorizonOverlayView,
   SectionTimeDepthDiagnostics,
-  SectionProbeChanged,
   SectionView,
-  SectionViewportChanged,
   SurveyTimeDepthTransform3D,
   SurveyPreflightResponse,
   VelocityFunctionSource,
@@ -154,6 +157,7 @@ import {
 } from "./viewer-session-keys";
 
 type DisplaySectionView = SectionView | TransportSectionView | TransportWindowedSectionView;
+type ViewerSectionViewport = NonNullable<SeismicSectionViewportChangePayload["viewport"]>;
 type SectionDisplayDomain = "time" | "depth";
 type SampleDataFidelity =
   | DatasetSummary["descriptor"]["sample_data_fidelity"]
@@ -482,12 +486,12 @@ function expandAndSnapRange(
 }
 
 function chooseSectionTileLod(
-  viewport: SectionViewportChanged["viewport"],
+  viewport: ViewerSectionViewport,
   chartWidthPx = 1600,
   chartHeightPx = 900
 ): number {
-  const traceSpan = Math.max(1, viewport.trace_end - viewport.trace_start);
-  const sampleSpan = Math.max(1, viewport.sample_end - viewport.sample_start);
+  const traceSpan = Math.max(1, viewport.traceEnd - viewport.traceStart);
+  const sampleSpan = Math.max(1, viewport.sampleEnd - viewport.sampleStart);
   let lod = 0;
   while (
     lod < 6 &&
@@ -501,20 +505,20 @@ function chooseSectionTileLod(
 
 function buildSectionTileRequest(
   section: DisplaySectionView,
-  viewport: SectionViewportChanged["viewport"]
+  viewport: ViewerSectionViewport
 ): SectionTileWindowRequest {
   const logical = sectionLogicalDimensions(section);
   return {
     traceRange: expandAndSnapRange(
-      viewport.trace_start,
-      viewport.trace_end,
+      viewport.traceStart,
+      viewport.traceEnd,
       logical.traces,
       SECTION_TILE_BUCKET_TRACES,
       SECTION_TILE_HALO_FACTOR
     ),
     sampleRange: expandAndSnapRange(
-      viewport.sample_start,
-      viewport.sample_end,
+      viewport.sampleStart,
+      viewport.sampleEnd,
       logical.samples,
       SECTION_TILE_BUCKET_SAMPLES,
       SECTION_TILE_HALO_FACTOR
@@ -1056,13 +1060,13 @@ function datasetGeometryFingerprint(dataset: DatasetSummary | null): string | nu
 }
 
 function cloneViewport(
-  viewport: SectionViewportChanged["viewport"]
-): SectionViewportChanged["viewport"] {
+  viewport: ViewerSectionViewport
+): ViewerSectionViewport {
   return {
-    trace_start: viewport.trace_start,
-    trace_end: viewport.trace_end,
-    sample_start: viewport.sample_start,
-    sample_end: viewport.sample_end
+    traceStart: viewport.traceStart,
+    traceEnd: viewport.traceEnd,
+    sampleStart: viewport.sampleStart,
+    sampleEnd: viewport.sampleEnd
   };
 }
 
@@ -1166,8 +1170,8 @@ export class ViewerModel {
     clipMax: undefined as number | undefined
   });
   chartTool = $state<SeismicChartTool>("crosshair");
-  lastProbe = $state<SectionProbeChanged | null>(null);
-  lastInteraction = $state<SectionInteractionChanged | null>(null);
+  lastProbe = $state<SeismicSectionProbeChangePayload | null>(null);
+  lastInteraction = $state<SeismicChartInteractionChangePayload | null>(null);
   displayStorePath = $state("");
   displayGeometryFingerprint = $state<string | null>(null);
   displayAxis = $state<SectionAxis>("inline");
@@ -1248,7 +1252,7 @@ export class ViewerModel {
   #sectionTilePrefetchRequestId = 0;
   #sectionTileCache = new Map<string, SectionTileCacheEntry>();
   #sectionTileCacheBytes = 0;
-  #viewportMemory = new Map<string, SectionViewportChanged["viewport"]>();
+  #viewportMemory = new Map<string, ViewerSectionViewport>();
   #surveyMapRequestId = 0;
   #projectWellOverlayInventoryRequestId = 0;
   #projectWellTimeDepthModelsRequestId = 0;
@@ -1373,8 +1377,8 @@ export class ViewerModel {
       traceRange: request.traceRange,
       sampleRange: request.sampleRange,
       lod: request.lod,
-      viewportTraceRange: viewport ? [viewport.trace_start, viewport.trace_end] : null,
-      viewportSampleRange: viewport ? [viewport.sample_start, viewport.sample_end] : null,
+      viewportTraceRange: viewport ? [viewport.traceStart, viewport.traceEnd] : null,
+      viewportSampleRange: viewport ? [viewport.sampleStart, viewport.sampleEnd] : null,
       cacheBytes: this.#sectionTileCacheBytes,
       cacheHits: this.sectionTileStats.cacheHits,
       fetches: this.sectionTileStats.fetches,
@@ -1444,7 +1448,7 @@ export class ViewerModel {
     };
   }
 
-  #rememberDisplayedViewport(viewport: SectionViewportChanged["viewport"]): void {
+  #rememberDisplayedViewport(viewport: ViewerSectionViewport): void {
     const key = this.displayedViewportMemoryKey;
     if (!key) {
       return;
@@ -1552,7 +1556,7 @@ export class ViewerModel {
     return { ...this.sectionTileStats };
   }
 
-  get displayedViewport(): SectionViewportChanged["viewport"] | null {
+  get displayedViewport(): ViewerSectionViewport | null {
     this.viewportMemoryRevision;
     const key = this.displayedViewportMemoryKey;
     return key ? this.#viewportMemory.get(key) ?? null : null;
@@ -4739,16 +4743,19 @@ export class ViewerModel {
     this.chartTool = tool;
   };
 
-  setProbe = (event: SectionProbeChanged): void => {
+  setProbe = (event: SeismicSectionProbeChangePayload): void => {
     this.lastProbe = event;
   };
 
-  setViewport = (event: SectionViewportChanged): void => {
+  setViewport = (event: SeismicSectionViewportChangePayload): void => {
+    if (!event.viewport) {
+      return;
+    }
     this.#rememberDisplayedViewport(event.viewport);
-    this.scheduleSectionTileRefresh(event);
+    this.scheduleSectionTileRefresh(event.viewport);
   };
 
-  setInteraction = (event: SectionInteractionChanged): void => {
+  setInteraction = (event: SeismicChartInteractionChangePayload): void => {
     this.lastInteraction = event;
   };
 
@@ -4768,7 +4775,7 @@ export class ViewerModel {
     );
   }
 
-  private scheduleSectionTileRefresh(event: SectionViewportChanged): void {
+  private scheduleSectionTileRefresh(viewport: ViewerSectionViewport): void {
     if (this.#sectionTileViewportTimer !== null) {
       clearTimeout(this.#sectionTileViewportTimer);
       this.#sectionTileViewportTimer = null;
@@ -4778,12 +4785,12 @@ export class ViewerModel {
     }
     this.#sectionTileViewportTimer = setTimeout(() => {
       this.#sectionTileViewportTimer = null;
-      void this.refreshSectionTileForViewport(event.viewport);
+      void this.refreshSectionTileForViewport(viewport);
     }, SECTION_TILE_VIEWPORT_DEBOUNCE_MS);
   }
 
   private async refreshSectionTileForViewport(
-    viewport: SectionViewportChanged["viewport"]
+    viewport: ViewerSectionViewport
   ): Promise<void> {
     if (!this.canUseSectionTiles() || !this.section) {
       return;

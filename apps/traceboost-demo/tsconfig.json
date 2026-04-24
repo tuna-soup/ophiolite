@@ -9,6 +9,7 @@
       "svelte": ["./node_modules/svelte"],
       "svelte/*": ["./node_modules/svelte/*"],
       "@ophiolite/charts": ["../../charts/packages/svelte/src/index.ts"],
+      "@ophiolite/charts/extras": ["../../charts/packages/svelte/src/extras.ts"],
       "@ophiolite/charts-toolbar": ["../../charts/packages/svelte-toolbar/src/index.ts"],
       "@ophiolite/charts-renderer": ["../../charts/packages/renderer/src/index.ts"],
       "@ophiolite/charts-domain": ["../../charts/packages/domain-geoscience/src/index.ts"],

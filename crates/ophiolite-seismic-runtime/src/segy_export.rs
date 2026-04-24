@@ -44,6 +44,7 @@ struct SegyExportBundle {
     descriptor: SegyExportDescriptor,
 }
 
+#[allow(dead_code)]
 pub fn capture_store_segy_export(
     segy_path: &Path,
     summary: &FileSummary,

@@ -1,0 +1,47 @@
+{
+  "$schema": "../../manifests/schemas/ophiolite-charts-module.schema.json",
+  "kind": "ophioliteChartsModule",
+  "id": "@ophiolite/charts-domain",
+  "displayName": "Ophiolite Charts Domain",
+  "layer": "domain",
+  "supportTier": "internal",
+  "description": "Family-specific controller and interpretation behavior for seismic, survey-map, rock-physics, and preview surfaces.",
+  "entrypoints": [
+    {
+      "subpath": ".",
+      "tier": "internal",
+      "description": "Internal chart-domain controller entrypoint."
+    },
+    {
+      "subpath": "./preview",
+      "tier": "preview",
+      "description": "Preview-only domain entrypoint for opt-in families."
+    }
+  ],
+  "dependsOn": [
+    {
+      "id": "@ophiolite/charts-core",
+      "role": "runtime"
+    },
+    {
+      "id": "@ophiolite/charts-data-models",
+      "role": "runtime"
+    },
+    {
+      "id": "@ophiolite/charts-renderer",
+      "role": "runtime"
+    }
+  ],
+  "testPolicy": {
+    "requiredSuites": ["typecheck", "controller-fixtures", "interaction-fixtures"],
+    "releaseBlocking": true
+  },
+  "consumerGuarantees": {
+    "traceboostApproved": false,
+    "externalConsumerApproved": false
+  },
+  "notes": [
+    "Keep app workflow state out of this layer.",
+    "This package supports the wrappers but is not part of the default embedder story."
+  ]
+}

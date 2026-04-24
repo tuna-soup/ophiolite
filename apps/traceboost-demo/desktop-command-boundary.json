@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "description": "TraceBoost desktop command boundary policy. Commands in the backend handler must either be referenced by the frontend bridge or explicitly allowed to remain backend-only.",
+  "backend_handler_file": "apps/traceboost-demo/src-tauri/src/lib.rs",
+  "frontend_bridge_file": "apps/traceboost-demo/src/lib/bridge.ts",
+  "generated_bridge_stub_file": "apps/traceboost-demo/src/lib/generated/desktop-bridge-stubs.ts",
+  "backend_only_commands": [
+    {
+      "command": "import_prestack_offset_dataset_command",
+      "reason": "Prestack offset dataset ingest is backend-ready but does not yet have a frontend bridge entry point."
+    },
+    {
+      "command": "preview_project_well_import_command",
+      "reason": "Project well import preview remains adapter-local while the well-source import UX stays split."
+    },
+    {
+      "command": "default_import_prestack_store_path_command",
+      "reason": "Prestack default-path resolution is not yet exposed in the desktop bridge."
+    },
+    {
+      "command": "export_diagnostics_bundle_command",
+      "reason": "Diagnostics bundle export exists in the shell but is not yet exposed through the bridge."
+    }
+  ],
+  "command_groups": [
+    {
+      "id": "import_manager",
+      "pattern": "^(list_import_providers_command|begin_import_session_command)$",
+      "owner": "desktop.import_manager",
+      "notes": "Import-provider discovery and session orchestration remain app-local desktop concerns."
+    },
+    {
+      "id": "security_and_path_grants",
+      "pattern": "^(pick_runtime_store_command|pick_project_root_command|pick_output_path_command|authorize_managed_store_command|authorize_managed_output_command)$",
+      "owner": "desktop.security",
+      "notes": "Path picking and handle/grant authorization stay in the desktop shell."
+    },
+    {
+      "id": "dataset_ingest_and_open",
+      "pattern": "^(preflight_import_command|scan_segy_import_command|validate_segy_import_plan_command|import_segy_with_plan_command|import_dataset_command|import_prestack_offset_dataset_command|open_dataset_command)$",
+      "owner": "desktop.ingest",
+      "notes": "Dataset ingest and open flows bridge desktop security/persistence into shared runtime services."
+    },
+    {
+      "id": "store_defaults_and_exports",
+      "pattern": "^(default_import_store_path_command|default_import_prestack_store_path_command|get_dataset_export_capabilities_command|export_dataset_segy_command|export_dataset_zarr_command|default_processing_store_path_command|default_post_stack_neighborhood_processing_store_path_command|default_subvolume_processing_store_path_command|default_gather_processing_store_path_command|resolve_processing_run_output_command)$",
+      "owner": "desktop.security",
+      "notes": "Default path and export/output resolution belong to the shell because they consume grants and local path policy."
+    },
+    {
+      "id": "processing_authoring",
+      "pattern": "^(persist_processing_session_pipelines_command|resolve_processing_authoring_palette_command|apply_processing_authoring_session_action_command|save_processing_authoring_session_command)$",
+      "owner": "desktop.processing_authoring",
+      "notes": "Processing authoring palette/session lifecycle remains app-local desktop logic while TraceBoost stays the only consumer; the legacy persist command remains as a temporary compatibility path."
+    },
+    {
+      "id": "catalog_velocity_and_horizons",
+      "pattern": "^(dataset_operator_catalog_command|ensure_demo_survey_time_depth_transform_command|load_velocity_models_command|describe_velocity_volume_command|ingest_velocity_volume_command|load_horizon_assets_command|import_velocity_functions_model_command|build_velocity_model_transform_command|convert_horizon_domain_command|preview_horizon_xyz_import_command|preview_horizon_source_import_command|inspect_horizon_xyz_files_command|commit_horizon_source_import_command|import_horizon_xyz_command|load_section_horizons_command)$",
+      "owner": "desktop.workflow",
+      "notes": "These commands compose shared contracts/runtime semantics with TraceBoost workflow policy."
+    },
+    {
+      "id": "section_and_gather_views",
+      "pattern": "^(load_section_command|load_section_binary_command|load_section_tile_binary_command|load_depth_converted_section_binary_command|load_resolved_section_display_binary_command|load_gather_command)$",
+      "owner": "desktop.workflow",
+      "notes": "Section and gather loading remains a desktop adapter surface over shared runtime/store readers."
+    },
+    {
+      "id": "processing_preview_and_analysis",
+      "pattern": "^(preview_processing_command|preview_processing_binary_command|preview_post_stack_neighborhood_processing_command|preview_post_stack_neighborhood_processing_binary_command|preview_subvolume_processing_command|preview_subvolume_processing_binary_command|preview_gather_processing_command|amplitude_spectrum_command|velocity_scan_command)$",
+      "owner": "desktop.processing",
+      "notes": "Preview and analysis commands are shell-owned adapters over shared runtime planning/execution APIs."
+    },
+    {
+      "id": "processing_execution",
+      "pattern": "^(run_processing_command|submit_trace_local_processing_batch_command|submit_processing_batch_command|run_post_stack_neighborhood_processing_command|run_subvolume_processing_command|run_gather_processing_command|get_processing_job_command|get_processing_debug_plan_command|get_processing_runtime_state_command|list_processing_runtime_events_command|get_processing_batch_command|cancel_processing_job_command|cancel_processing_batch_command|list_pipeline_presets_command|save_pipeline_preset_command|delete_pipeline_preset_command)$",
+      "owner": "desktop.processing",
+      "notes": "Processing execution and preset management stay in the app-local shell and workflow adapter layers."
+    },
+    {
+      "id": "workspace_and_import_recipes",
+      "pattern": "^(list_segy_import_recipes_command|save_segy_import_recipe_command|delete_segy_import_recipe_command|load_workspace_state_command|upsert_dataset_entry_command|remove_dataset_entry_command|set_active_dataset_entry_command|save_workspace_session_command)$",
+      "owner": "desktop.workspace",
+      "notes": "Workspace state and import-recipe persistence are app-local concerns."
+    },
+    {
+      "id": "geospatial_and_coordinate_reference",
+      "pattern": "^(load_project_geospatial_settings_command|save_project_geospatial_settings_command|search_coordinate_references_command|resolve_coordinate_reference_command|set_dataset_native_coordinate_reference_command|resolve_survey_map_command|resolve_project_survey_map_command)$",
+      "owner": "desktop.geospatial",
+      "notes": "Geospatial policy spans shell settings, CRS lookup, and shared survey-map contracts."
+    },
+    {
+      "id": "vendor_project_import",
+      "pattern": "^(scan_vendor_project_command|plan_vendor_project_import_command|commit_vendor_project_import_command)$",
+      "owner": "desktop.vendor_project",
+      "notes": "Vendor-project import remains an app-local adapter flow."
+    },
+    {
+      "id": "project_time_depth_and_well_import",
+      "pattern": "^(list_project_survey_horizons_command|list_project_well_overlay_inventory_command|list_project_well_marker_residual_inventory_command|list_project_well_time_depth_models_command|list_project_well_time_depth_inventory_command|compute_project_well_marker_residual_command|set_project_active_well_time_depth_model_command|import_project_well_time_depth_model_command|preview_project_well_time_depth_asset_command|preview_project_well_time_depth_import_command|preview_project_well_sources_command|preview_project_well_import_command|commit_project_well_sources_command|commit_project_well_import_command|import_project_well_time_depth_asset_command|commit_project_well_time_depth_import_command|analyze_project_well_tie_command|accept_project_well_tie_command|compile_project_well_time_depth_authored_model_command|read_project_well_time_depth_model_command|resolve_project_section_well_overlays_command)$",
+      "owner": "desktop.project_workflows",
+      "notes": "Project/time-depth/well flows are explicit TraceBoost consumer logic, not public SDK surface."
+    },
+    {
+      "id": "diagnostics_and_benchmarking",
+      "pattern": "^(get_diagnostics_status_command|set_diagnostics_verbosity_command|export_diagnostics_bundle_command|emit_frontend_diagnostics_event_command|run_section_browsing_benchmark_command)$",
+      "owner": "desktop.diagnostics",
+      "notes": "Diagnostics and benchmark endpoints remain desktop-local operational surfaces."
+    }
+  ]
+}

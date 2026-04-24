@@ -1,4 +1,6 @@
 import type {
+  ChartInteractionStyle,
+  ChartRendererTelemetryEvent,
   ComparisonMode,
   DisplayTransform,
   Horizon,
@@ -10,6 +12,8 @@ import type {
   OverlayPayload,
   PrimaryInteractionMode,
   SectionHorizonOverlay,
+  SeismicSectionDataSource,
+  SeismicSectionDataSourceState,
   SectionWellOverlay,
   SectionScalarOverlay,
   SectionPayload,
@@ -21,6 +25,7 @@ import { InteractionManager } from "@ophiolite/charts-core";
 import { clampViewport, fullViewport, zoomViewport, zoomViewportAt } from "./viewport";
 import { getPlotRect, resolveNearestTraceIndex, type RendererAdapter } from "@ophiolite/charts-renderer";
 import { buildCursorProbe, createHorizon, parseHorizons, recomputeHorizon, serializeHorizons, upsertAnchor } from "./interpretation";
+import { SectionViewportLoader } from "./viewport-loader";
 
 const DEFAULT_DISPLAY: DisplayTransform = {
   gain: 1,
@@ -29,12 +34,53 @@ const DEFAULT_DISPLAY: DisplayTransform = {
   polarity: "normal"
 };
 
+const SEISMIC_INTERACTION_STYLE: ChartInteractionStyle = {
+  id: "seismic-navigation",
+  label: "Seismic Navigation",
+  manipulators: ["viewport-navigation", "crosshair-probe"],
+  bindings: [
+    {
+      trigger: "pointer-primary",
+      primaryMode: "panZoom",
+      command: "viewport.pan"
+    },
+    {
+      trigger: "pointer-primary",
+      primaryMode: "cursor",
+      modifier: "crosshair",
+      command: "probe.crosshair"
+    },
+    {
+      trigger: "wheel",
+      primaryMode: "cursor",
+      command: "viewport.zoomAtCursor"
+    }
+  ]
+};
+
+export interface SeismicViewerControllerOptions {
+  chartId?: string;
+  viewId?: string;
+  dataSource?: SeismicSectionDataSource | null;
+  onDataSourceStateChange?: (state: SeismicSectionDataSourceState) => void;
+}
+
 export class SeismicViewerController {
   private container: HTMLElement | null = null;
   private readonly renderer: RendererAdapter;
-  readonly interactions = new InteractionManager(SEISMIC_INTERACTION_CAPABILITIES, "cursor", ["crosshair"]);
+  readonly interactions = new InteractionManager(
+    SEISMIC_INTERACTION_CAPABILITIES,
+    "cursor",
+    ["crosshair"],
+    SEISMIC_INTERACTION_STYLE
+  );
   private readonly listeners = new Set<(state: ViewerState) => void>();
   private readonly interactionEventListeners = new Set<(event: InteractionEvent) => void>();
+  private readonly rendererTelemetryListeners = new Set<(event: ChartRendererTelemetryEvent) => void>();
+  private readonly chartId?: string;
+  private readonly viewId?: string;
+  private onDataSourceStateChange: ((state: SeismicSectionDataSourceState) => void) | null;
+  private viewportLoader: SectionViewportLoader | null = null;
   private state: ViewerState = {
     section: null,
     secondarySection: null,
@@ -53,8 +99,15 @@ export class SeismicViewerController {
     activeHorizonId: null
   };
 
-  constructor(renderer: RendererAdapter) {
+  constructor(renderer: RendererAdapter, options: SeismicViewerControllerOptions = {}) {
     this.renderer = renderer;
+    this.renderer.setTelemetryListener((event) => {
+      this.emitRendererTelemetry(event);
+    });
+    this.chartId = options.chartId;
+    this.viewId = options.viewId;
+    this.onDataSourceStateChange = options.onDataSourceStateChange ?? null;
+    this.setDataSource(options.dataSource ?? null);
     this.interactions.on((event) => {
       this.state.interactions = this.interactions.getState();
       this.render();
@@ -86,7 +139,7 @@ export class SeismicViewerController {
       ...DEFAULT_DISPLAY,
       ...section.displayDefaults
     };
-    this.render();
+    this.renderAndSyncViewportLoad();
   }
 
   setSecondarySection(section: SectionPayload | null): void {
@@ -117,7 +170,7 @@ export class SeismicViewerController {
       return;
     }
     this.state.viewport = clampViewport(viewport, resolveLogicalSectionDimensions(this.state.section));
-    this.render();
+    this.renderAndSyncViewportLoad();
   }
 
   fitToData(): void {
@@ -125,7 +178,7 @@ export class SeismicViewerController {
       return;
     }
     this.state.viewport = fullViewport(resolveLogicalSectionDimensions(this.state.section));
-    this.render();
+    this.renderAndSyncViewportLoad();
   }
 
   zoom(factor: number): void {
@@ -137,7 +190,7 @@ export class SeismicViewerController {
       resolveLogicalSectionDimensions(this.state.section),
       factor
     );
-    this.render();
+    this.renderAndSyncViewportLoad();
   }
 
   pan(deltaTrace: number, deltaSample: number): void {
@@ -298,6 +351,9 @@ export class SeismicViewerController {
     }
 
     this.interactions.commitSession();
+    if (changed) {
+      this.syncViewportLoad();
+    }
     return changed;
   }
 
@@ -326,7 +382,7 @@ export class SeismicViewerController {
       centerTrace,
       centerSample
     );
-    this.render();
+    this.renderAndSyncViewportLoad();
     return true;
   }
 
@@ -346,6 +402,56 @@ export class SeismicViewerController {
     return () => {
       this.interactionEventListeners.delete(listener);
     };
+  }
+
+  onRendererTelemetry(listener: (event: ChartRendererTelemetryEvent) => void): () => void {
+    this.rendererTelemetryListeners.add(listener);
+    return () => {
+      this.rendererTelemetryListeners.delete(listener);
+    };
+  }
+
+  setDataSource(dataSource: SeismicSectionDataSource | null): void {
+    if (!this.viewportLoader) {
+      this.viewportLoader = new SectionViewportLoader(
+        dataSource,
+        {
+          chartId: this.chartId,
+          viewId: this.viewId
+        },
+        {
+          onSectionLoaded: (section) => {
+            this.state.section = section;
+            this.state.overlay = section.overlay ?? null;
+            this.render();
+          },
+          onStateChange: (state) => {
+            this.onDataSourceStateChange?.({
+              status: state.status,
+              request: state.request
+                ? {
+                    ...state.request,
+                    viewport: { ...state.request.viewport },
+                    traceRange: [...state.request.traceRange] as [number, number],
+                    sampleRange: [...state.request.sampleRange] as [number, number]
+                  }
+                : null,
+              source: state.source,
+              metrics: { ...state.metrics },
+              cacheKey: state.cacheKey ?? null,
+              errorMessage: state.errorMessage ?? null
+            });
+          }
+        }
+      );
+      return;
+    }
+    this.viewportLoader.setDataSource(dataSource);
+    this.syncViewportLoad();
+  }
+
+  setDataSourceStateListener(listener: ((state: SeismicSectionDataSourceState) => void) | null): void {
+    this.onDataSourceStateChange = listener;
   }
 
   createNewHorizon(name: string, color: string, snapMode: HorizonSnapMode): string {
@@ -440,6 +546,8 @@ export class SeismicViewerController {
   }
 
   dispose(): void {
+    this.viewportLoader?.dispose();
+    this.renderer.setTelemetryListener(null);
     this.renderer.dispose();
     this.container = null;
   }
@@ -449,10 +557,38 @@ export class SeismicViewerController {
       return;
     }
     const state = this.getState();
-    this.renderer.render({ state });
+    try {
+      this.renderer.render({ state });
+    } catch (error) {
+      this.emitRendererTelemetry({
+        kind: "frame-failed",
+        phase: "render",
+        backend: null,
+        recoverable: true,
+        message: error instanceof Error ? error.message : String(error),
+        detail: "Seismic controller observed a renderer frame failure.",
+        timestampMs: nowMs()
+      });
+    }
     for (const listener of this.listeners) {
       listener(state);
     }
+  }
+
+  private emitRendererTelemetry(event: ChartRendererTelemetryEvent): void {
+    const clonedEvent = { ...event };
+    for (const listener of this.rendererTelemetryListeners) {
+      listener(clonedEvent);
+    }
+  }
+
+  private renderAndSyncViewportLoad(): void {
+    this.render();
+    this.syncViewportLoad();
+  }
+
+  private syncViewportLoad(): void {
+    this.viewportLoader?.sync(this.state.section, this.state.viewport);
   }
 }
 
@@ -513,6 +649,10 @@ function clampPointToPlot(x: number, y: number, plotRect: ReturnType<typeof getP
     x: clamp(x, plotRect.x, plotRect.x + plotRect.width),
     y: clamp(y, plotRect.y, plotRect.y + plotRect.height)
   };
+}
+
+function nowMs(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
 
 function pointInRect(point: LassoPoint, plotRect: ReturnType<typeof getPlotRect>): boolean {

@@ -14,7 +14,7 @@ use ophiolite_seismic::{
 
 use crate::execution::{
     ArtifactBoundaryReason, ArtifactKey, ChunkGridSpec, ExecutionPlan, ExecutionStageKind,
-    GeometryFingerprints, LogicalDomain, MaterializationClass,
+    GeometryFingerprints, LogicalDomain, LoweredStageSchedulerPolicy, MaterializationClass,
 };
 use crate::identity::{
     CURRENT_RUNTIME_SEMANTICS_VERSION, CURRENT_STORE_WRITER_SEMANTICS_VERSION,
@@ -49,11 +49,14 @@ pub struct PlannedArtifactLineageSeed {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TraceLocalProcessingStagePlan {
+    pub stage_id: String,
     pub segment_pipeline: TraceLocalProcessingPipeline,
     pub lineage_pipeline: TraceLocalProcessingPipeline,
     pub stage_label: String,
     pub artifact: ProcessingJobArtifact,
     pub partition_target_bytes: Option<u64>,
+    pub expected_partition_count: Option<usize>,
+    pub planned_scheduler_policy: Option<LoweredStageSchedulerPolicy>,
     pub planned_lineage: Option<PlannedArtifactLineageSeed>,
 }
 
@@ -212,7 +215,13 @@ fn planned_lineage_seed_for_runtime_stage_label(
 ) -> Option<PlannedArtifactLineageSeed> {
     plan.stages
         .iter()
-        .find(|stage| runtime_stage_label_for_execution_stage(stage, pipeline) == stage_label)
+        .find(|stage| {
+            if stage.stage_label == stage_label {
+                true
+            } else {
+                crate::execution::execution_stage_label(stage, pipeline) == stage_label
+            }
+        })
         .and_then(|stage| planned_lineage_seed_for_stage(plan, &stage.stage_id))
 }
 
@@ -475,9 +484,17 @@ pub fn build_trace_local_processing_stages_from_plan(
             .map(|step| &step.operation)
             .ok_or_else(|| format!("Missing operation at stage end index {end_index}"))?;
         let stage_label = format!(
-            "Step {}: {}",
-            end_index + 1,
-            processing_operation_display_label(operation)
+            "{}",
+            if stage.stage_label.is_empty() {
+                crate::execution::execution_stage_label(
+                    stage,
+                    &ProcessingPipelineSpec::TraceLocal {
+                        pipeline: request.pipeline.clone(),
+                    },
+                )
+            } else {
+                stage.stage_label.clone()
+            }
         );
         let artifact = ProcessingJobArtifact {
             kind: if matches!(stage.stage_kind, ExecutionStageKind::FinalizeOutput) {
@@ -494,6 +511,7 @@ pub fn build_trace_local_processing_stages_from_plan(
             },
         };
         stages.push(TraceLocalProcessingStagePlan {
+            stage_id: stage.stage_id.clone(),
             segment_pipeline: trace_local_pipeline_segment(
                 &request.pipeline,
                 segment_start,
@@ -503,6 +521,8 @@ pub fn build_trace_local_processing_stages_from_plan(
             stage_label,
             artifact,
             partition_target_bytes: stage.partition_spec.target_bytes,
+            expected_partition_count: stage.expected_partition_count,
+            planned_scheduler_policy: Some(stage.lowered_scheduler_policy.clone()),
             planned_lineage: planned_lineage_seed_for_stage(plan, &stage.stage_id),
         });
     }
@@ -548,11 +568,14 @@ pub fn build_trace_local_checkpoint_stages_from_pipeline(
             ),
         };
         stages.push(TraceLocalProcessingStagePlan {
+            stage_id: format!("stage-unplanned-{:02}", stages.len() + 1),
             segment_pipeline: trace_local_pipeline_segment(pipeline, segment_start, end_index),
             lineage_pipeline: trace_local_pipeline_prefix(pipeline, end_index),
             stage_label,
             artifact,
             partition_target_bytes: None,
+            expected_partition_count: None,
+            planned_scheduler_policy: None,
             planned_lineage: None,
         });
         segment_start = end_index + 1;
@@ -572,7 +595,9 @@ fn attach_planned_lineage_to_trace_local_stages(
     for stage in stages {
         if stage.planned_lineage.is_none() {
             stage.planned_lineage =
-                planned_lineage_seed_for_runtime_stage_label(plan, pipeline, &stage.stage_label);
+                planned_lineage_seed_for_stage(plan, &stage.stage_id).or_else(|| {
+                    planned_lineage_seed_for_runtime_stage_label(plan, pipeline, &stage.stage_label)
+                });
         }
     }
 }
@@ -1007,11 +1032,7 @@ pub fn execute_trace_local_processing_job(
             .map_err(|error| error.to_string())?
             .manifest
             .tile_shape;
-        let worker_count = std::thread::available_parallelism()
-            .map(usize::from)
-            .unwrap_or(4)
-            .saturating_sub(1)
-            .max(1);
+        let worker_count = execution_plan.runtime_environment.worker_budget.max(1);
         let materialize_resolution = resolve_trace_local_materialize_options(
             Some(execution_plan),
             chunk_shape,
@@ -1621,82 +1642,6 @@ fn prepare_processing_output_store(
     Ok(())
 }
 
-fn runtime_stage_label_for_execution_stage(
-    stage: &crate::execution::ExecutionStage,
-    pipeline: &ProcessingPipelineSpec,
-) -> String {
-    if let Some(segment) = stage.pipeline_segment.as_ref() {
-        match segment.family {
-            crate::ProcessingPipelineFamily::TraceLocal => {
-                let trace_local_pipeline = match pipeline {
-                    ProcessingPipelineSpec::TraceLocal { pipeline } => Some(pipeline),
-                    ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
-                        pipeline.trace_local_pipeline.as_ref()
-                    }
-                    ProcessingPipelineSpec::Subvolume { pipeline } => {
-                        pipeline.trace_local_pipeline.as_ref()
-                    }
-                    ProcessingPipelineSpec::Gather { pipeline } => {
-                        pipeline.trace_local_pipeline.as_ref()
-                    }
-                };
-                if let Some(trace_local_pipeline) = trace_local_pipeline {
-                    if let Some(operation) = trace_local_pipeline
-                        .steps
-                        .get(segment.end_step_index)
-                        .map(|step| &step.operation)
-                    {
-                        return format!(
-                            "Step {}: {}",
-                            segment.end_step_index + 1,
-                            processing_operation_display_label(operation)
-                        );
-                    }
-                }
-            }
-            crate::ProcessingPipelineFamily::PostStackNeighborhood => {
-                if let ProcessingPipelineSpec::PostStackNeighborhood { pipeline } = pipeline {
-                    return post_stack_neighborhood_progress_label(pipeline).to_string();
-                }
-            }
-            crate::ProcessingPipelineFamily::Subvolume => {
-                if matches!(stage.stage_kind, ExecutionStageKind::FinalizeOutput) {
-                    return "Crop Subvolume".to_string();
-                }
-            }
-            crate::ProcessingPipelineFamily::Gather => {
-                if let ProcessingPipelineSpec::Gather { pipeline } = pipeline {
-                    return gather_processing_progress_label(pipeline);
-                }
-            }
-        }
-    }
-
-    match stage.stage_kind {
-        ExecutionStageKind::FinalizeOutput => match pipeline {
-            ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
-                post_stack_neighborhood_progress_label(pipeline).to_string()
-            }
-            ProcessingPipelineSpec::Subvolume { .. } => "Crop Subvolume".to_string(),
-            ProcessingPipelineSpec::Gather { pipeline } => {
-                gather_processing_progress_label(pipeline)
-            }
-            ProcessingPipelineSpec::TraceLocal { pipeline } => pipeline
-                .steps
-                .last()
-                .map(|step| {
-                    format!(
-                        "Step {}: {}",
-                        pipeline.steps.len(),
-                        processing_operation_display_label(&step.operation)
-                    )
-                })
-                .unwrap_or_else(|| stage.output_artifact_id.clone()),
-        },
-        _ => stage.output_artifact_id.clone(),
-    }
-}
-
 fn processing_operation_display_label(operation: &TraceLocalProcessingOperation) -> &'static str {
     match operation {
         TraceLocalProcessingOperation::AmplitudeScalar { .. } => "Amplitude Scale",
@@ -1799,6 +1744,9 @@ impl ProcessingCacheFingerprint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::planner::{PlanProcessingRequest, build_execution_plan};
+    use crate::{ExecutionQueueClass, PlanningMode, SeismicLayout};
+    use ophiolite_seismic::TraceLocalProcessingStep;
 
     #[test]
     fn checkpoint_output_store_path_preserves_output_extension() {
@@ -1817,5 +1765,78 @@ mod tests {
 
         assert!(gather_checkpoint.ends_with(".tbgath"));
         assert!(volume_checkpoint.ends_with(".tbvol"));
+    }
+
+    #[test]
+    fn plan_built_trace_local_stages_carry_stage_ids_and_lowered_policy() {
+        let request = crate::RunTraceLocalProcessingRequest {
+            schema_version: 1,
+            store_path: "input.tbvol".to_string(),
+            output_store_path: Some("output.tbvol".to_string()),
+            pipeline: TraceLocalProcessingPipeline {
+                schema_version: 1,
+                revision: 1,
+                preset_id: None,
+                name: Some("stage-plan-demo".to_string()),
+                description: None,
+                steps: vec![
+                    TraceLocalProcessingStep {
+                        operation: TraceLocalProcessingOperation::AmplitudeScalar { factor: 2.0 },
+                        checkpoint: true,
+                    },
+                    TraceLocalProcessingStep {
+                        operation: TraceLocalProcessingOperation::TraceRmsNormalize,
+                        checkpoint: false,
+                    },
+                ],
+            },
+            overwrite_existing: false,
+        };
+        let plan = build_execution_plan(&PlanProcessingRequest {
+            store_path: request.store_path.clone(),
+            layout: SeismicLayout::PostStack3D,
+            source_shape: Some([8, 8, 128]),
+            source_chunk_shape: Some([4, 4, 128]),
+            pipeline: ProcessingPipelineSpec::TraceLocal {
+                pipeline: request.pipeline.clone(),
+            },
+            output_store_path: request.output_store_path.clone(),
+            planning_mode: PlanningMode::ForegroundMaterialize,
+            max_active_partitions: Some(2),
+        })
+        .expect("plan should build");
+
+        let stages = build_trace_local_processing_stages_from_plan(
+            &request,
+            &plan,
+            request
+                .output_store_path
+                .as_deref()
+                .expect("output path should exist"),
+            "job-1",
+            0,
+        )
+        .expect("runtime stages should build");
+
+        assert_eq!(stages.len(), 2);
+        assert_eq!(stages[0].stage_id, plan.stages[0].stage_id);
+        assert_eq!(stages[0].stage_label, plan.stages[0].stage_label);
+        assert_eq!(
+            stages[0]
+                .planned_scheduler_policy
+                .as_ref()
+                .expect("planned policy")
+                .queue_class,
+            ExecutionQueueClass::ForegroundPartition
+        );
+        assert_eq!(
+            stages[0]
+                .planned_scheduler_policy
+                .as_ref()
+                .expect("planned policy")
+                .effective_max_active_partitions,
+            1
+        );
+        assert_eq!(stages[0].expected_partition_count, Some(1));
     }
 }

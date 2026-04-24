@@ -6,9 +6,11 @@ Accepted
 
 ## Context
 
-The repo now has a clearer processing authority split, but the packaging boundary is still loose.
+The repo now has a clearer processing authority split, and the packaging
+boundary is now encoded more explicitly than it was when this ADR was first
+written.
 
-Today:
+Before the recent hardening pass:
 
 - core crates, app adapters, export scripts, and compatibility facades all sit in one workspace
 - the root `ophiolite` crate is still a broad compatibility facade
@@ -32,13 +34,23 @@ The dedicated public-core facade crate is:
 
 - `crates/ophiolite-sdk`
 
+The same boundary rule now also applies to the embeddable chart SDK surface:
+
+- public chart consumption happens through `@ophiolite/charts` and approved public subpaths
+- first-party consumers such as `traceboost-demo` must use those public package entrypoints rather than chart internals
+- chart wrappers may expose embedder-facing view seams such as viewport data sources, renderer status, and renderer telemetry
+- renderer/controller internals remain internal implementation detail unless they are promoted deliberately into the public wrapper API
+
 ### Publishable core direction
 
 The crates that define the intended public core direction are:
 
 - `ophiolite-sdk`
 - `ophiolite-operators`
-- publishable shared contracts under `traceboost/contracts/*`
+- publishable shared contracts:
+  - `seis-contracts-core`
+  - `seis-contracts-views`
+  - `seis-contracts-operations`
 - `ophiolite-seismic-runtime`
 - `ophiolite-seismic-execution`
 - `seis-runtime`
@@ -46,6 +58,7 @@ The crates that define the intended public core direction are:
 Supporting crates that remain transitively required by those layers may also need to be published later, but they are not treated as the initial stable SDK promise by this ADR.
 
 The contract layer is now expected to stay project-independent. Project-aware request DTOs may remain elsewhere, but shared operations/view/core contract packages should not depend on `ophiolite-project`.
+Compatibility rename shims such as `seis-contracts-interop` remain adapter-local and must not be re-exported from `ophiolite-sdk`.
 
 ### Internal or adapter direction
 
@@ -78,12 +91,26 @@ They may be used by adapters and applications, but they are not part of the dura
 
 ## Implementation
 
-The repo will encode this boundary in two immediate ways:
+The repo now encodes this boundary in four concrete ways:
 
 1. internal and adapter packages are marked `publish = false`
-2. architecture docs explicitly distinguish public-core direction from app/adaptor layers
+2. `workspace.metadata.ophiolite.boundaries` classifies package ownership and allowed dependency directions
+3. `scripts/ophiolite-boundary-check` enforces those class rules against the live Cargo workspace
+4. `crates/ophiolite-sdk` no longer re-exports adapter-local compatibility shims such as `seis-contracts-interop`
 
 This ADR does not force early extraction of authoring semantics.
+
+The app-local desktop shell remains separate by policy and tooling:
+
+- TraceBoost desktop commands are declared in `apps/traceboost-demo/desktop-command-boundary.json`
+- generated frontend bridge stubs consume that manifest/backend command table
+- neither the command names nor the app-local transport glue are treated as public SDK surface
+
+For the chart SDK, the same public-versus-internal split is now explicit in the wrapper layer:
+
+- `@ophiolite/charts` owns the public launch-wrapper contract
+- embedder-facing chart seams such as `dataSource`, `onDataSourceStateChange`, `onRendererStatusChange`, and `onRendererTelemetry` are allowed public wrapper APIs
+- controller event channels and renderer callback wiring remain internal to `charts/` and are not part of the public platform/core SDK promise
 
 ## Consequences
 

@@ -1,0 +1,33 @@
+{
+  "$schema": "../../manifests/schemas/ophiolite-charts-module.schema.json",
+  "kind": "ophioliteChartsModule",
+  "id": "@ophiolite/charts-toolbar",
+  "displayName": "Ophiolite Charts Toolbar",
+  "layer": "toolbar",
+  "supportTier": "public-launch",
+  "description": "Companion toolbar package for chart interaction chrome on top of the launch wrapper surfaces.",
+  "entrypoints": [
+    {
+      "subpath": ".",
+      "tier": "public-launch",
+      "description": "Public toolbar wrapper components for chart interaction controls."
+    }
+  ],
+  "dependsOn": [
+    {
+      "id": "svelte",
+      "role": "peer"
+    }
+  ],
+  "testPolicy": {
+    "requiredSuites": ["typecheck", "toolbar-smoke"],
+    "releaseBlocking": true
+  },
+  "consumerGuarantees": {
+    "traceboostApproved": true,
+    "externalConsumerApproved": true
+  },
+  "notes": [
+    "This is a companion surface, not the first step in the getting-started flow."
+  ]
+}

@@ -6,9 +6,14 @@ import type {
   SectionWellOverlay as ChartSectionWellOverlay
 } from "@ophiolite/charts-data-models";
 import type {
+  SeismicSectionData,
+  SeismicSectionDataSource,
+  SeismicSectionDataSourceStatePayload,
   SeismicChartInteractionChangePayload,
   SeismicChartInteractionState,
   SeismicChartTool,
+  SeismicSectionRendererTelemetryPayload,
+  SeismicSectionRendererStatusPayload,
   SeismicSectionProbeChangePayload,
   SeismicSectionViewportChangePayload
 } from "@ophiolite/charts";
@@ -46,6 +51,7 @@ import type {
   AcceptProjectWellTieRequest,
   AcceptProjectWellTieResponse,
   AnalyzeProjectWellTieRequest,
+  ApplyProcessingAuthoringSessionActionRequest,
   ComputeProjectWellMarkerResidualRequest,
   ComputeProjectWellMarkerResidualResponse,
   ProjectWellTieAnalysisResponse,
@@ -74,6 +80,7 @@ import type {
   ProjectWellOverlayInventoryResponse,
   ProjectWellTimeDepthModelDescriptor,
   ProjectWellTimeDepthObservationDescriptor,
+  ProcessingAuthoringSessionResponse,
   TransportResolvedSectionDisplayView,
   TransportSectionScalarOverlayView,
   TransportSectionTileView,
@@ -116,7 +123,7 @@ import {
   loadWorkspaceState,
   listenToDiagnosticsEvents,
   openDataset,
-  persistProcessingSessionPipelines,
+  applyProcessingAuthoringSessionAction,
   preflightImport,
   readProjectWellTimeDepthModel,
   removeDatasetEntry,
@@ -124,6 +131,7 @@ import {
   resolveProjectSectionWellOverlays,
   resolveSurveyMap,
   saveProjectGeospatialSettings,
+  saveProcessingAuthoringSession,
   saveWorkspaceSession,
   setProjectActiveWellTimeDepthModel,
   setActiveDatasetEntry,
@@ -157,6 +165,7 @@ import {
 } from "./viewer-session-keys";
 
 type DisplaySectionView = SectionView | TransportSectionView | TransportWindowedSectionView;
+type SectionTileSource = DisplaySectionView | SeismicSectionData;
 type ViewerSectionViewport = NonNullable<SeismicSectionViewportChangePayload["viewport"]>;
 type SectionDisplayDomain = "time" | "depth";
 type SampleDataFidelity =
@@ -182,18 +191,12 @@ const SECTION_TILE_BUCKET_TRACES = 256;
 const SECTION_TILE_BUCKET_SAMPLES = 512;
 const SECTION_TILE_HALO_FACTOR = 0.35;
 const SECTION_TILE_VIEWPORT_DEBOUNCE_MS = 90;
+const SECTION_TILE_PREFETCH_WINDOWS = 1;
 
 interface SectionTileWindowRequest {
   traceRange: [number, number];
   sampleRange: [number, number];
   lod: number;
-}
-
-interface SectionTileCacheEntry {
-  key: string;
-  view: TransportWindowedSectionView;
-  bytes: number;
-  lastUsedAt: number;
 }
 
 interface SectionTileStats {
@@ -450,13 +453,31 @@ function estimateSectionPayloadBytes(section: DisplaySectionView): number {
   );
 }
 
+function estimateChartSectionPayloadBytes(section: SeismicSectionData): number {
+  return (
+    section.horizontalAxis.byteLength +
+    (section.inlineAxis?.byteLength ?? 0) +
+    (section.xlineAxis?.byteLength ?? 0) +
+    section.sampleAxis.byteLength +
+    section.amplitudes.byteLength +
+    (section.overlay?.values.byteLength ?? 0)
+  );
+}
+
 function isWindowedSectionView(section: DisplaySectionView | null): section is TransportWindowedSectionView {
   return Boolean(section && "window" in section && section.window && "logical_dimensions" in section);
 }
 
+function isNeutralSeismicSection(section: SectionTileSource): section is SeismicSectionData {
+  return "dimensions" in section && "horizontalAxis" in section;
+}
+
 function sectionLogicalDimensions(
-  section: DisplaySectionView
+  section: SectionTileSource
 ): { traces: number; samples: number } {
+  if (isNeutralSeismicSection(section)) {
+    return section.logicalDimensions ?? section.dimensions;
+  }
   if (isWindowedSectionView(section)) {
     return section.logical_dimensions;
   }
@@ -504,7 +525,7 @@ function chooseSectionTileLod(
 }
 
 function buildSectionTileRequest(
-  section: DisplaySectionView,
+  section: SectionTileSource,
   viewport: ViewerSectionViewport
 ): SectionTileWindowRequest {
   const logical = sectionLogicalDimensions(section);
@@ -571,6 +592,76 @@ function decodeF32Le(bytes: Array<number> | Uint8Array | null | undefined): Floa
     throw new Error(`Expected f32 little-endian bytes, found ${source.byteLength} bytes.`);
   }
   return new Float32Array(source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength));
+}
+
+function decodeF64Le(bytes: Array<number> | Uint8Array | null | undefined): Float64Array {
+  if (!bytes) {
+    return new Float64Array(0);
+  }
+  const source = bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes);
+  if (source.byteLength % Float64Array.BYTES_PER_ELEMENT !== 0) {
+    throw new Error(`Expected f64 little-endian bytes, found ${source.byteLength} bytes.`);
+  }
+  return new Float64Array(source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength));
+}
+
+function adaptTransportWindowedSectionToChartData(section: TransportWindowedSectionView): SeismicSectionData {
+  return {
+    axis: section.axis,
+    coordinate: {
+      index: section.coordinate.index,
+      value: section.coordinate.value
+    },
+    horizontalAxis: decodeF64Le(section.horizontal_axis_f64le),
+    inlineAxis: section.inline_axis_f64le ? decodeF64Le(section.inline_axis_f64le) : undefined,
+    xlineAxis: section.xline_axis_f64le ? decodeF64Le(section.xline_axis_f64le) : undefined,
+    sampleAxis: decodeF32Le(section.sample_axis_f32le),
+    amplitudes: decodeF32Le(section.amplitudes_f32le),
+    dimensions: {
+      traces: section.traces,
+      samples: section.samples
+    },
+    units: section.units
+      ? {
+          horizontal: section.units.horizontal ?? undefined,
+          sample: section.units.sample ?? undefined,
+          amplitude: section.units.amplitude ?? undefined
+        }
+      : undefined,
+    metadata: section.metadata
+      ? {
+          storeId: section.metadata.store_id ?? undefined,
+          derivedFrom: section.metadata.derived_from ?? undefined,
+          notes: section.metadata.notes
+        }
+      : undefined,
+    logicalDimensions: section.logical_dimensions
+      ? {
+          traces: section.logical_dimensions.traces,
+          samples: section.logical_dimensions.samples
+        }
+      : undefined,
+    window: section.window
+      ? {
+          traceStart: section.window.trace_start,
+          traceEnd: section.window.trace_end,
+          sampleStart: section.window.sample_start,
+          sampleEnd: section.window.sample_end,
+          lod: section.window.lod ?? undefined
+        }
+      : undefined,
+    displayDefaults: section.display_defaults
+      ? {
+          gain: section.display_defaults.gain,
+          clipMin: section.display_defaults.clip_min ?? undefined,
+          clipMax: section.display_defaults.clip_max ?? undefined,
+          renderMode: section.display_defaults.render_mode === "wiggle" ? "wiggle" : "heatmap",
+          colormap:
+            section.display_defaults.colormap === "red_white_blue" ? "red-white-blue" : "grayscale",
+          polarity: section.display_defaults.polarity === "reversed" ? "reversed" : "normal"
+        }
+      : undefined
+  };
 }
 
 function adaptSectionHorizonOverlays(
@@ -1241,17 +1332,54 @@ export class ViewerModel {
     evictions: 0,
     cachedBytes: 0
   });
+  lastSectionTileDataSourceState = $state.raw<SeismicSectionDataSourceStatePayload["state"] | null>(null);
+  lastChartRendererStatus = $state.raw<SeismicSectionRendererStatusPayload["status"] | null>(null);
+  lastChartRendererTelemetry = $state.raw<SeismicSectionRendererTelemetryPayload["event"] | null>(null);
 
   #activityCounter = 0;
   #diagnosticsUnlisten: (() => void) | null = null;
   #outputPathSource: "auto" | "manual" = "auto";
   #backgroundLoadRequestId = 0;
   #backgroundSectionKey: string | null = null;
-  #sectionTileViewportTimer: ReturnType<typeof setTimeout> | null = null;
-  #sectionTileLoadRequestId = 0;
-  #sectionTilePrefetchRequestId = 0;
-  #sectionTileCache = new Map<string, SectionTileCacheEntry>();
-  #sectionTileCacheBytes = 0;
+  #sectionChartDataSource: SeismicSectionDataSource = {
+    id: "traceboost-section-tiles",
+    debounceMs: SECTION_TILE_VIEWPORT_DEBOUNCE_MS,
+    cachePolicy: {
+      maxBytes: SECTION_TILE_CACHE_BUDGET_BYTES
+    },
+    prefetchPolicy: {
+      adjacentViewportWindows: SECTION_TILE_PREFETCH_WINDOWS
+    },
+    getRequestKey: (request) => {
+      const section = this.section;
+      if (!section) {
+        return [
+          trimPath(this.activeStorePath) || "no-store",
+          this.axis,
+          this.index,
+          request.viewport.traceStart,
+          request.viewport.traceEnd,
+          request.viewport.sampleStart,
+          request.viewport.sampleEnd
+        ].join(":");
+      }
+      return tileCacheKey(
+        this.activeStorePath,
+        this.axis,
+        this.index,
+        buildSectionTileRequest(section, request.viewport)
+      );
+    },
+    estimateBytes: (section) => estimateChartSectionPayloadBytes(section),
+    loadWindow: async (request, context) => {
+      const section = context.currentSection ?? this.section;
+      if (!section) {
+        throw new Error("No active section is available for viewport-driven tile loading.");
+      }
+      const normalizedRequest = buildSectionTileRequest(section, request.viewport);
+      return this.loadSectionTileRequest(normalizedRequest, section);
+    }
+  };
   #viewportMemory = new Map<string, ViewerSectionViewport>();
   #surveyMapRequestId = 0;
   #projectWellOverlayInventoryRequestId = 0;
@@ -1379,7 +1507,7 @@ export class ViewerModel {
       lod: request.lod,
       viewportTraceRange: viewport ? [viewport.traceStart, viewport.traceEnd] : null,
       viewportSampleRange: viewport ? [viewport.sampleStart, viewport.sampleEnd] : null,
-      cacheBytes: this.#sectionTileCacheBytes,
+      cacheBytes: this.sectionTileStats.cachedBytes,
       cacheHits: this.sectionTileStats.cacheHits,
       fetches: this.sectionTileStats.fetches,
       prefetchRequests: this.sectionTileStats.prefetchRequests,
@@ -1481,42 +1609,7 @@ export class ViewerModel {
   }
 
   #evictSectionTileCacheForStore(storePath: string): void {
-    const normalizedStorePath = trimPath(storePath);
-    if (!normalizedStorePath) {
-      return;
-    }
-    const prefix = `${normalizedStorePath}:`;
-    let freedBytes = 0;
-    let removedEntries = 0;
-    for (const [key, entry] of this.#sectionTileCache.entries()) {
-      if (!key.startsWith(prefix)) {
-        continue;
-      }
-      this.#sectionTileCache.delete(key);
-      this.#sectionTileCacheBytes -= entry.bytes;
-      freedBytes += entry.bytes;
-      removedEntries += 1;
-    }
-    if (removedEntries === 0) {
-      return;
-    }
-    this.sectionTileStats.cachedBytes = this.#sectionTileCacheBytes;
-    if (!this.tauriRuntime) {
-      return;
-    }
-    void emitFrontendDiagnosticsEvent({
-      stage: "section_tile",
-      level: "debug",
-      message: "Evicted cached section tiles for an inactive store.",
-      fields: {
-        storePath: normalizedStorePath,
-        removedEntries,
-        freedBytes,
-        cacheBytes: this.#sectionTileCacheBytes
-      }
-    }).catch((error) => {
-      console.warn("Failed to record section tile cache eviction diagnostics.", error);
-    });
+    void storePath;
   }
 
   #notePotentiallyLossySampleData(
@@ -1554,6 +1647,10 @@ export class ViewerModel {
 
   get sectionTileStatsSnapshot(): SectionTileStats {
     return { ...this.sectionTileStats };
+  }
+
+  get sectionChartDataSource(): SeismicSectionDataSource | null {
+    return this.canUseSectionTiles() ? this.#sectionChartDataSource : null;
   }
 
   get displayedViewport(): ViewerSectionViewport | null {
@@ -4043,6 +4140,28 @@ export class ViewerModel {
     }
   };
 
+  applyProcessingAuthoringResponse = (response: ProcessingAuthoringSessionResponse): void => {
+    this.workspaceEntries = mergeWorkspaceEntry(this.workspaceEntries, response.entry);
+    this.#applyWorkspaceSession(response.session);
+  };
+
+  applyProcessingAuthoringSessionAction = async (
+    action: ApplyProcessingAuthoringSessionActionRequest["action"]
+  ): Promise<ProcessingAuthoringSessionResponse> => {
+    const activeEntry = this.activeDatasetEntry;
+    if (!activeEntry) {
+      throw new Error("No active dataset entry is available for processing authoring.");
+    }
+
+    const response = await applyProcessingAuthoringSessionAction({
+      schema_version: 1,
+      entry_id: activeEntry.entry_id,
+      action
+    });
+    this.applyProcessingAuthoringResponse(response);
+    return response;
+  };
+
   updateActiveEntryPipelines = async (
     sessionPipelines: WorkspacePipelineEntry[],
     activeSessionPipelineId: string | null
@@ -4053,17 +4172,16 @@ export class ViewerModel {
     }
 
     try {
-      const response = await persistProcessingSessionPipelines({
+      const response = await saveProcessingAuthoringSession({
         schema_version: 1,
         entry_id: activeEntry.entry_id,
         session_pipelines: sessionPipelines,
         active_session_pipeline_id: activeSessionPipelineId
       });
-      this.workspaceEntries = mergeWorkspaceEntry(this.workspaceEntries, response.entry);
-      this.#applyWorkspaceSession(response.session);
+      this.applyProcessingAuthoringResponse(response);
     } catch (error) {
       this.note(
-        "Failed to persist session pipelines for the active dataset.",
+        "Failed to save processing authoring changes for the active dataset.",
         "backend",
         "warn",
         errorMessage(error, "Unknown pipeline workspace error")
@@ -4752,7 +4870,29 @@ export class ViewerModel {
       return;
     }
     this.#rememberDisplayedViewport(event.viewport);
-    this.scheduleSectionTileRefresh(event.viewport);
+  };
+
+  setSectionDataSourceState = (payload: SeismicSectionDataSourceStatePayload): void => {
+    this.lastSectionTileDataSourceState = payload.state;
+    this.sectionTileStats = {
+      viewportRequests: payload.state.metrics.viewportRequests,
+      cacheHits: payload.state.metrics.cacheHits,
+      fetches: payload.state.metrics.fetches,
+      fetchErrors: payload.state.metrics.fetchErrors,
+      prefetchRequests: payload.state.metrics.prefetchRequests,
+      prefetchCacheHits: payload.state.metrics.prefetchCacheHits,
+      prefetchErrors: payload.state.metrics.prefetchErrors,
+      evictions: payload.state.metrics.evictions,
+      cachedBytes: payload.state.metrics.cacheBytes
+    };
+  };
+
+  setChartRendererStatus = (payload: SeismicSectionRendererStatusPayload): void => {
+    this.lastChartRendererStatus = payload.status;
+  };
+
+  setChartRendererTelemetry = (payload: SeismicSectionRendererTelemetryPayload): void => {
+    this.lastChartRendererTelemetry = payload.event;
   };
 
   setInteraction = (event: SeismicChartInteractionChangePayload): void => {
@@ -4775,72 +4915,27 @@ export class ViewerModel {
     );
   }
 
-  private scheduleSectionTileRefresh(viewport: ViewerSectionViewport): void {
-    if (this.#sectionTileViewportTimer !== null) {
-      clearTimeout(this.#sectionTileViewportTimer);
-      this.#sectionTileViewportTimer = null;
-    }
+  private async loadSectionTileRequest(
+    request: SectionTileWindowRequest,
+    section: SectionTileSource,
+    sectionIndex: number = this.index
+  ): Promise<SeismicSectionData> {
     if (!this.canUseSectionTiles()) {
-      return;
+      throw new Error("Viewport-driven section tile loading is currently unavailable.");
     }
-    this.#sectionTileViewportTimer = setTimeout(() => {
-      this.#sectionTileViewportTimer = null;
-      void this.refreshSectionTileForViewport(viewport);
-    }, SECTION_TILE_VIEWPORT_DEBOUNCE_MS);
-  }
-
-  private async refreshSectionTileForViewport(
-    viewport: ViewerSectionViewport
-  ): Promise<void> {
-    if (!this.canUseSectionTiles() || !this.section) {
-      return;
-    }
-
-    this.sectionTileStats.viewportRequests += 1;
-    const request = buildSectionTileRequest(this.section, viewport);
-    const cacheKey = tileCacheKey(this.activeStorePath, this.axis, this.index, request);
-    const cached = this.#sectionTileCache.get(cacheKey);
-    if (cached) {
-      cached.lastUsedAt = nowMs();
-      this.sectionTileStats.cacheHits += 1;
-      this.#emitSectionTileDiagnostics(
-        "debug",
-        "Viewport request satisfied from section tile cache.",
-        request,
-        {
-          source: "cache_hit",
-          cacheKey,
-          payloadBytes: cached.bytes,
-          hitRate:
-            this.sectionTileStats.cacheHits + this.sectionTileStats.fetches > 0
-              ? this.sectionTileStats.cacheHits / (this.sectionTileStats.cacheHits + this.sectionTileStats.fetches)
-              : null
-        }
-      );
-      this.section = cached.view;
-      void this.prefetchNeighborSectionTiles(request);
-      return;
-    }
-
-    const requestId = ++this.#sectionTileLoadRequestId;
     const fetchStartedMs = nowMs();
     try {
-      const logical = sectionLogicalDimensions(this.section);
-      this.sectionTileStats.fetches += 1;
+      const logical = sectionLogicalDimensions(section);
       const tile = await fetchSectionTileView(
         this.activeStorePath,
         this.axis,
-        this.index,
+        sectionIndex,
         request.traceRange,
         request.sampleRange,
         request.lod
       );
-      if (requestId !== this.#sectionTileLoadRequestId) {
-        return;
-      }
       const windowed = tileViewToWindowedSection(tile, logical);
-      this.storeSectionTileCacheEntry(cacheKey, windowed);
-      this.section = windowed;
+      const chartSection = adaptTransportWindowedSectionToChartData(windowed);
       const elapsedMs = nowMs() - fetchStartedMs;
       this.#emitSectionTileDiagnostics(
         "info",
@@ -4848,17 +4943,18 @@ export class ViewerModel {
         request,
         {
           source: "viewport_fetch",
-          cacheKey,
           elapsedMs,
-          payloadBytes: estimateSectionPayloadBytes(windowed),
+          payloadBytes: estimateChartSectionPayloadBytes(chartSection),
           traceStep: tile.trace_step,
           sampleStep: tile.sample_step
         },
-        { mirrorToActivity: true }
+        {
+          sectionIndex,
+          mirrorToActivity: sectionIndex === this.index
+        }
       );
-      void this.prefetchNeighborSectionTiles(request);
+      return chartSection;
     } catch (error) {
-      this.sectionTileStats.fetchErrors += 1;
       this.note(
         "Section tile fetch fell back to the current section payload.",
         "backend",
@@ -4872,146 +4968,12 @@ export class ViewerModel {
         {
           source: "viewport_fetch_error",
           error: error instanceof Error ? error.message : String(error)
+        },
+        {
+          sectionIndex
         }
       );
-    }
-  }
-
-  private async prefetchNeighborSectionTiles(request: SectionTileWindowRequest): Promise<void> {
-    if (!this.canUseSectionTiles() || !this.section) {
-      return;
-    }
-    const logical = sectionLogicalDimensions(this.section);
-    const requestId = ++this.#sectionTilePrefetchRequestId;
-    const neighborIndices = [this.index - 1, this.index + 1].filter(
-      (candidate) => candidate >= 0 && candidate < this.sectionCountForAxis(this.axis)
-    );
-
-    for (const neighborIndex of neighborIndices) {
-      if (requestId !== this.#sectionTilePrefetchRequestId) {
-        return;
-      }
-      const cacheKey = tileCacheKey(this.activeStorePath, this.axis, neighborIndex, request);
-      if (this.#sectionTileCache.has(cacheKey)) {
-        this.sectionTileStats.prefetchCacheHits += 1;
-        this.#emitSectionTileDiagnostics(
-          "debug",
-          "Adjacent section tile already present in cache.",
-          request,
-          {
-            source: "prefetch_cache_hit",
-            cacheKey
-          },
-          {
-            sectionIndex: neighborIndex
-          }
-        );
-        continue;
-      }
-      try {
-        this.sectionTileStats.prefetchRequests += 1;
-        const prefetchStartedMs = nowMs();
-        const tile = await fetchSectionTileView(
-          this.activeStorePath,
-          this.axis,
-          neighborIndex,
-          request.traceRange,
-          request.sampleRange,
-          request.lod
-        );
-        const windowed = tileViewToWindowedSection(tile, logical);
-        this.storeSectionTileCacheEntry(cacheKey, windowed);
-        this.#emitSectionTileDiagnostics(
-          "debug",
-          "Prefetched adjacent section tile.",
-          request,
-          {
-            source: "prefetch_fetch",
-            cacheKey,
-            elapsedMs: nowMs() - prefetchStartedMs,
-            payloadBytes: estimateSectionPayloadBytes(windowed),
-            traceStep: tile.trace_step,
-            sampleStep: tile.sample_step
-          },
-          {
-            sectionIndex: neighborIndex
-          }
-        );
-      } catch (error) {
-        this.sectionTileStats.prefetchErrors += 1;
-        this.#emitSectionTileDiagnostics(
-          "debug",
-          "Adjacent section tile prefetch failed.",
-          request,
-          {
-            source: "prefetch_error",
-            error: error instanceof Error ? error.message : String(error)
-          },
-          {
-            sectionIndex: neighborIndex
-          }
-        );
-        return;
-      }
-    }
-  }
-
-  private sectionCountForAxis(axis: SectionAxis): number {
-    const summary = this.dataset?.descriptor;
-    return axis === "inline" ? summary?.shape[0] ?? 0 : summary?.shape[1] ?? 0;
-  }
-
-  private storeSectionTileCacheEntry(key: string, view: TransportWindowedSectionView): void {
-    const bytes = estimateSectionPayloadBytes(view);
-    const existing = this.#sectionTileCache.get(key);
-    if (existing) {
-      this.#sectionTileCacheBytes -= existing.bytes;
-    }
-    this.#sectionTileCache.set(key, {
-      key,
-      view,
-      bytes,
-      lastUsedAt: nowMs()
-    });
-    this.#sectionTileCacheBytes += bytes;
-    this.trimSectionTileCache();
-    this.sectionTileStats.cachedBytes = this.#sectionTileCacheBytes;
-  }
-
-  private trimSectionTileCache(): void {
-    if (this.#sectionTileCacheBytes <= SECTION_TILE_CACHE_BUDGET_BYTES) {
-      return;
-    }
-    const bytesBeforeTrim = this.#sectionTileCacheBytes;
-    let evictedEntries = 0;
-    const entries = [...this.#sectionTileCache.values()].sort((left, right) => left.lastUsedAt - right.lastUsedAt);
-    for (const entry of entries) {
-      if (this.#sectionTileCacheBytes <= SECTION_TILE_CACHE_BUDGET_BYTES) {
-        break;
-      }
-      this.#sectionTileCache.delete(entry.key);
-      this.#sectionTileCacheBytes -= entry.bytes;
-      this.sectionTileStats.evictions += 1;
-      evictedEntries += 1;
-    }
-    this.sectionTileStats.cachedBytes = this.#sectionTileCacheBytes;
-    if (evictedEntries > 0) {
-      const viewport = this.displayedViewport;
-      const request = viewport && this.section ? buildSectionTileRequest(this.section, viewport) : null;
-      if (request) {
-        this.#emitSectionTileDiagnostics(
-          "debug",
-          "Trimmed the section tile cache to the configured budget.",
-          request,
-          {
-            source: "cache_trim",
-            evictedEntries,
-            bytesBeforeTrim,
-            bytesAfterTrim: this.#sectionTileCacheBytes,
-            bytesFreed: bytesBeforeTrim - this.#sectionTileCacheBytes
-          }
-        );
-      }
+      throw error;
     }
   }
 
@@ -6147,12 +6109,6 @@ export class ViewerModel {
     this.activeStorePath = storePathOverride ?? this.activeStorePath;
     this.axis = axis;
     this.index = index;
-    this.#sectionTileLoadRequestId += 1;
-    this.#sectionTilePrefetchRequestId += 1;
-    if (this.#sectionTileViewportTimer !== null) {
-      clearTimeout(this.#sectionTileViewportTimer);
-      this.#sectionTileViewportTimer = null;
-    }
     this.loading = true;
     this.busyLabel = this.sectionDomain === "depth" ? "Converting section to depth" : "Loading section";
     this.error = null;

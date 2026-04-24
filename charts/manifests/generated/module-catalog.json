@@ -1,0 +1,413 @@
+{
+  "supportTiers": [
+    {
+      "tier": "public-launch",
+      "packageCount": 2,
+      "entrypointCount": 3,
+      "packages": [
+        "@ophiolite/charts",
+        "@ophiolite/charts-toolbar"
+      ]
+    },
+    {
+      "tier": "public-adapter",
+      "packageCount": 0,
+      "entrypointCount": 1,
+      "packages": []
+    },
+    {
+      "tier": "preview",
+      "packageCount": 0,
+      "entrypointCount": 4,
+      "packages": []
+    },
+    {
+      "tier": "internal",
+      "packageCount": 4,
+      "entrypointCount": 5,
+      "packages": [
+        "@ophiolite/charts-core",
+        "@ophiolite/charts-data-models",
+        "@ophiolite/charts-domain",
+        "@ophiolite/charts-renderer"
+      ]
+    }
+  ],
+  "packageCatalog": [
+    {
+      "packageName": "@ophiolite/charts",
+      "displayName": "Ophiolite Charts",
+      "manifestPath": "packages/svelte/ophiolite.module.json",
+      "packageDir": "packages/svelte",
+      "layer": "wrapper",
+      "tier": "public-launch",
+      "description": "Default documented Svelte wrapper surface for launch chart families, public model types, and explicit adapter entrypoints.",
+      "entrypoints": [
+        {
+          "subpath": ".",
+          "tier": "public-launch",
+          "description": "Launch chart wrappers and public model types."
+        },
+        {
+          "subpath": "./adapters/ophiolite",
+          "tier": "public-adapter",
+          "description": "Explicit Ophiolite DTO adaptation into neutral public chart models."
+        },
+        {
+          "subpath": "./types",
+          "tier": "public-launch",
+          "description": "Public wrapper and handle types."
+        },
+        {
+          "subpath": "./preview",
+          "tier": "preview",
+          "description": "Opt-in preview chart families with narrower guarantees."
+        },
+        {
+          "subpath": "./extras",
+          "tier": "preview",
+          "description": "Adjacent preview widgets and inspectors."
+        },
+        {
+          "subpath": "./contracts",
+          "tier": "internal",
+          "description": "Internal compatibility surface kept off the default public path."
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "@ophiolite/charts-data-models",
+          "role": "runtime"
+        },
+        {
+          "id": "@ophiolite/charts-domain",
+          "role": "runtime"
+        },
+        {
+          "id": "@ophiolite/charts-renderer",
+          "role": "runtime"
+        },
+        {
+          "id": "@ophiolite/contracts",
+          "role": "adapter-runtime",
+          "optional": true
+        },
+        {
+          "id": "svelte",
+          "role": "peer"
+        }
+      ],
+      "releaseBlocking": true,
+      "requiredSuites": [
+        "typecheck",
+        "public-entrypoints",
+        "visual-docs"
+      ],
+      "traceboostApproved": true,
+      "externalConsumerApproved": true,
+      "notes": [
+        "Teach this package first in public docs.",
+        "Use the adapter subpath only when source data begins as Ophiolite contract DTOs."
+      ]
+    },
+    {
+      "packageName": "@ophiolite/charts-core",
+      "displayName": "Ophiolite Charts Core",
+      "manifestPath": "packages/chart-core/ophiolite.module.json",
+      "packageDir": "packages/chart-core",
+      "layer": "core",
+      "tier": "internal",
+      "description": "Shared presentation, layout, geometry, and chart-native core logic used by domain and renderer layers.",
+      "entrypoints": [
+        {
+          "subpath": ".",
+          "tier": "internal",
+          "description": "Internal core helpers and presentation models."
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "@ophiolite/charts-data-models",
+          "role": "runtime"
+        }
+      ],
+      "releaseBlocking": true,
+      "requiredSuites": [
+        "typecheck",
+        "presentation-math",
+        "layout-fixtures"
+      ],
+      "traceboostApproved": false,
+      "externalConsumerApproved": false,
+      "notes": [
+        "Keep reusable chart logic here rather than in wrapper-local implementations."
+      ]
+    },
+    {
+      "packageName": "@ophiolite/charts-data-models",
+      "displayName": "Ophiolite Charts Data Models",
+      "manifestPath": "packages/data-models/ophiolite.module.json",
+      "packageDir": "packages/data-models",
+      "layer": "models",
+      "tier": "internal",
+      "description": "Shared chart-family payloads, registries, adapters, and interaction vocabulary that back the public wrapper surface.",
+      "entrypoints": [
+        {
+          "subpath": ".",
+          "tier": "internal",
+          "description": "Internal and advanced package surface used by wrappers and tooling."
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "@ophiolite/contracts",
+          "role": "adapter-runtime"
+        }
+      ],
+      "releaseBlocking": true,
+      "requiredSuites": [
+        "typecheck",
+        "registry-fixtures",
+        "adapter-fixtures"
+      ],
+      "traceboostApproved": false,
+      "externalConsumerApproved": false,
+      "notes": [
+        "Do not lead public docs with this package.",
+        "Public examples should prefer @ophiolite/charts root exports over direct data-model imports."
+      ]
+    },
+    {
+      "packageName": "@ophiolite/charts-domain",
+      "displayName": "Ophiolite Charts Domain",
+      "manifestPath": "packages/domain-geoscience/ophiolite.module.json",
+      "packageDir": "packages/domain-geoscience",
+      "layer": "domain",
+      "tier": "internal",
+      "description": "Family-specific controller and interpretation behavior for seismic, survey-map, rock-physics, and preview surfaces.",
+      "entrypoints": [
+        {
+          "subpath": ".",
+          "tier": "internal",
+          "description": "Internal chart-domain controller entrypoint."
+        },
+        {
+          "subpath": "./preview",
+          "tier": "preview",
+          "description": "Preview-only domain entrypoint for opt-in families."
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "@ophiolite/charts-core",
+          "role": "runtime"
+        },
+        {
+          "id": "@ophiolite/charts-data-models",
+          "role": "runtime"
+        },
+        {
+          "id": "@ophiolite/charts-renderer",
+          "role": "runtime"
+        }
+      ],
+      "releaseBlocking": true,
+      "requiredSuites": [
+        "typecheck",
+        "controller-fixtures",
+        "interaction-fixtures"
+      ],
+      "traceboostApproved": false,
+      "externalConsumerApproved": false,
+      "notes": [
+        "Keep app workflow state out of this layer.",
+        "This package supports the wrappers but is not part of the default embedder story."
+      ]
+    },
+    {
+      "packageName": "@ophiolite/charts-renderer",
+      "displayName": "Ophiolite Charts Renderer",
+      "manifestPath": "packages/renderer/ophiolite.module.json",
+      "packageDir": "packages/renderer",
+      "layer": "renderer",
+      "tier": "internal",
+      "description": "Dense raster, canvas, and preview rendering kernels behind the public chart wrappers.",
+      "entrypoints": [
+        {
+          "subpath": ".",
+          "tier": "internal",
+          "description": "Internal renderer entrypoint for launch chart families."
+        },
+        {
+          "subpath": "./preview",
+          "tier": "preview",
+          "description": "Preview renderer entrypoint used by opt-in chart families."
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "@ophiolite/charts-core",
+          "role": "runtime"
+        },
+        {
+          "id": "@ophiolite/charts-data-models",
+          "role": "runtime"
+        },
+        {
+          "id": "@kitware/vtk.js",
+          "role": "preview-runtime",
+          "optional": true
+        }
+      ],
+      "releaseBlocking": true,
+      "requiredSuites": [
+        "typecheck",
+        "renderer-fixtures",
+        "visual-scenes"
+      ],
+      "traceboostApproved": false,
+      "externalConsumerApproved": false,
+      "notes": [
+        "Backend and fallback policy should surface through @ophiolite/charts rather than this package."
+      ]
+    },
+    {
+      "packageName": "@ophiolite/charts-toolbar",
+      "displayName": "Ophiolite Charts Toolbar",
+      "manifestPath": "packages/svelte-toolbar/ophiolite.module.json",
+      "packageDir": "packages/svelte-toolbar",
+      "layer": "toolbar",
+      "tier": "public-launch",
+      "description": "Companion toolbar package for chart interaction chrome on top of the launch wrapper surfaces.",
+      "entrypoints": [
+        {
+          "subpath": ".",
+          "tier": "public-launch",
+          "description": "Public toolbar wrapper components for chart interaction controls."
+        }
+      ],
+      "dependencies": [
+        {
+          "id": "svelte",
+          "role": "peer"
+        }
+      ],
+      "releaseBlocking": true,
+      "requiredSuites": [
+        "typecheck",
+        "toolbar-smoke"
+      ],
+      "traceboostApproved": true,
+      "externalConsumerApproved": true,
+      "notes": [
+        "This is a companion surface, not the first step in the getting-started flow."
+      ]
+    }
+  ],
+  "surfaceCatalog": [
+    {
+      "surface": "@ophiolite/charts",
+      "packageName": "@ophiolite/charts",
+      "manifestPath": "packages/svelte/ophiolite.module.json",
+      "layer": "wrapper",
+      "tier": "public-launch",
+      "role": "Launch chart wrappers and public model types."
+    },
+    {
+      "surface": "@ophiolite/charts-core",
+      "packageName": "@ophiolite/charts-core",
+      "manifestPath": "packages/chart-core/ophiolite.module.json",
+      "layer": "core",
+      "tier": "internal",
+      "role": "Internal core helpers and presentation models."
+    },
+    {
+      "surface": "@ophiolite/charts-data-models",
+      "packageName": "@ophiolite/charts-data-models",
+      "manifestPath": "packages/data-models/ophiolite.module.json",
+      "layer": "models",
+      "tier": "internal",
+      "role": "Internal and advanced package surface used by wrappers and tooling."
+    },
+    {
+      "surface": "@ophiolite/charts-domain",
+      "packageName": "@ophiolite/charts-domain",
+      "manifestPath": "packages/domain-geoscience/ophiolite.module.json",
+      "layer": "domain",
+      "tier": "internal",
+      "role": "Internal chart-domain controller entrypoint."
+    },
+    {
+      "surface": "@ophiolite/charts-domain/preview",
+      "packageName": "@ophiolite/charts-domain",
+      "manifestPath": "packages/domain-geoscience/ophiolite.module.json",
+      "layer": "domain",
+      "tier": "preview",
+      "role": "Preview-only domain entrypoint for opt-in families."
+    },
+    {
+      "surface": "@ophiolite/charts-renderer",
+      "packageName": "@ophiolite/charts-renderer",
+      "manifestPath": "packages/renderer/ophiolite.module.json",
+      "layer": "renderer",
+      "tier": "internal",
+      "role": "Internal renderer entrypoint for launch chart families."
+    },
+    {
+      "surface": "@ophiolite/charts-renderer/preview",
+      "packageName": "@ophiolite/charts-renderer",
+      "manifestPath": "packages/renderer/ophiolite.module.json",
+      "layer": "renderer",
+      "tier": "preview",
+      "role": "Preview renderer entrypoint used by opt-in chart families."
+    },
+    {
+      "surface": "@ophiolite/charts-toolbar",
+      "packageName": "@ophiolite/charts-toolbar",
+      "manifestPath": "packages/svelte-toolbar/ophiolite.module.json",
+      "layer": "toolbar",
+      "tier": "public-launch",
+      "role": "Public toolbar wrapper components for chart interaction controls."
+    },
+    {
+      "surface": "@ophiolite/charts/adapters/ophiolite",
+      "packageName": "@ophiolite/charts",
+      "manifestPath": "packages/svelte/ophiolite.module.json",
+      "layer": "wrapper",
+      "tier": "public-adapter",
+      "role": "Explicit Ophiolite DTO adaptation into neutral public chart models."
+    },
+    {
+      "surface": "@ophiolite/charts/contracts",
+      "packageName": "@ophiolite/charts",
+      "manifestPath": "packages/svelte/ophiolite.module.json",
+      "layer": "wrapper",
+      "tier": "internal",
+      "role": "Internal compatibility surface kept off the default public path."
+    },
+    {
+      "surface": "@ophiolite/charts/extras",
+      "packageName": "@ophiolite/charts",
+      "manifestPath": "packages/svelte/ophiolite.module.json",
+      "layer": "wrapper",
+      "tier": "preview",
+      "role": "Adjacent preview widgets and inspectors."
+    },
+    {
+      "surface": "@ophiolite/charts/preview",
+      "packageName": "@ophiolite/charts",
+      "manifestPath": "packages/svelte/ophiolite.module.json",
+      "layer": "wrapper",
+      "tier": "preview",
+      "role": "Opt-in preview chart families with narrower guarantees."
+    },
+    {
+      "surface": "@ophiolite/charts/types",
+      "packageName": "@ophiolite/charts",
+      "manifestPath": "packages/svelte/ophiolite.module.json",
+      "layer": "wrapper",
+      "tier": "public-launch",
+      "role": "Public wrapper and handle types."
+    }
+  ]
+}

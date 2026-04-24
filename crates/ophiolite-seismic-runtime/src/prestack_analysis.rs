@@ -5,15 +5,22 @@ use ophiolite_seismic::{
 };
 
 use crate::error::SeismicStoreError;
+#[cfg(test)]
+use crate::gather_processing::nmo_input_time_ms;
 use crate::gather_processing::{
-    interpolate_trace_sample, nmo_input_time_ms, sample_interval_ms_from_axis,
-    validate_velocity_function_source,
+    interpolate_trace_sample, sample_interval_ms_from_axis, validate_velocity_function_source,
 };
 use crate::prestack_store::{open_prestack_store, read_gather_plane};
 
 const SEMBLANCE_EPSILON: f32 = 1.0e-12;
 const MAX_VELOCITY_SCAN_SAMPLES: usize = 4096;
 const MAX_AUTOPICK_SMOOTHING_SAMPLES: usize = 1024;
+
+#[derive(Debug, Default)]
+struct SemblanceWorkspace {
+    sample_time_sq_s: Vec<f32>,
+    offset_sq: Vec<f32>,
+}
 
 pub fn velocity_scan(
     request: VelocityScanRequest,
@@ -143,18 +150,23 @@ fn compute_semblance_panel(
         )));
     }
 
+    let mut workspace = SemblanceWorkspace::default();
+    workspace.prepare(sample_axis_ms, offsets_m);
     let mut panel = vec![0.0_f32; velocities_m_per_s.len() * samples];
     for (velocity_index, velocity_m_per_s) in velocities_m_per_s.iter().copied().enumerate() {
-        let model = VelocityFunctionSource::ConstantVelocity { velocity_m_per_s };
+        let inverse_velocity_sq = 1.0 / (velocity_m_per_s * velocity_m_per_s);
+        let panel_row = &mut panel[velocity_index * samples..(velocity_index + 1) * samples];
         for sample_index in 0..samples {
-            let zero_offset_time_ms = sample_axis_ms[sample_index];
             let mut stack_sum = 0.0_f32;
             let mut energy_sum = 0.0_f32;
             for trace_index in 0..traces {
                 let trace_start = trace_index * samples;
                 let trace = &amplitudes[trace_start..trace_start + samples];
-                let input_time_ms =
-                    nmo_input_time_ms(zero_offset_time_ms, offsets_m[trace_index] as f32, &model)?;
+                let input_time_ms = semblance_input_time_ms(
+                    workspace.sample_time_sq_s[sample_index],
+                    workspace.offset_sq[trace_index],
+                    inverse_velocity_sq,
+                );
                 let sample = interpolate_trace_sample(
                     trace,
                     input_time_ms,
@@ -171,11 +183,31 @@ fn compute_semblance_panel(
                 ((stack_sum * stack_sum) / (traces as f32 * energy_sum + SEMBLANCE_EPSILON))
                     .clamp(0.0, 1.0)
             };
-            panel[velocity_index * samples + sample_index] = semblance;
+            panel_row[sample_index] = semblance;
         }
     }
 
     Ok(panel)
+}
+
+impl SemblanceWorkspace {
+    fn prepare(&mut self, sample_axis_ms: &[f32], offsets_m: &[f64]) {
+        self.sample_time_sq_s.resize(sample_axis_ms.len(), 0.0);
+        for (index, time_ms) in sample_axis_ms.iter().copied().enumerate() {
+            let time_s = time_ms.max(0.0) / 1000.0;
+            self.sample_time_sq_s[index] = time_s * time_s;
+        }
+
+        self.offset_sq.resize(offsets_m.len(), 0.0);
+        for (index, offset_m) in offsets_m.iter().copied().enumerate() {
+            let offset_m = offset_m as f32;
+            self.offset_sq[index] = offset_m * offset_m;
+        }
+    }
+}
+
+fn semblance_input_time_ms(sample_time_sq_s: f32, offset_sq: f32, inverse_velocity_sq: f32) -> f32 {
+    (sample_time_sq_s + (offset_sq * inverse_velocity_sq)).sqrt() * 1000.0
 }
 
 fn pick_velocity_function(

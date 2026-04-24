@@ -24,15 +24,16 @@ use crate::execution::{
     ExecutionArtifactRole, ExecutionExclusiveScope, ExecutionMemoryBudget,
     ExecutionPipelineSegment, ExecutionPlan, ExecutionPlanSummary, ExecutionPriorityClass,
     ExecutionProgressGranularity, ExecutionQueueClass, ExecutionRetryGranularity,
-    ExecutionSourceDescriptor, ExecutionSpillabilityClass, ExecutionStage, ExecutionStageKind,
-    GeometryFingerprints, HaloSpec, IoCostClass, LogicalDomain, MaterializationClass,
-    MemoryCostClass, OperatorExecutionTraits, ParallelEfficiencyClass, PartitionFamily,
-    PartitionOrdering, PartitionSpec, PipelineDescriptor, PlanDecision, PlanDecisionKind,
-    PlanDecisionSubjectKind, PlannerDiagnostics, PlannerPassSnapshot, PlanningMode, PlanningPassId,
-    PreferredPartitioning, ProgressUnits, RetryPolicy, ReuseDecision, ReuseDecisionEvidence,
-    ReuseDecisionOutcome, SampleHaloRequirement, SchedulerHints, SectionDomain,
-    StageExecutionClassification, StageMemoryProfile, StagePlanningDecision, StageResourceEnvelope,
-    TraceLocalChunkPlanRecommendation, ValidationReport, VolumeDomain,
+    ExecutionRuntimeEnvironment, ExecutionSourceDescriptor, ExecutionSpillabilityClass,
+    ExecutionStage, ExecutionStageKind, GeometryFingerprints, HaloSpec, IoCostClass, LogicalDomain,
+    LoweredStageSchedulerPolicy, MaterializationClass, MemoryCostClass, OperatorExecutionTraits,
+    ParallelEfficiencyClass, PartitionFamily, PartitionOrdering, PartitionSpec, PipelineDescriptor,
+    PlanDecision, PlanDecisionKind, PlanDecisionSubjectKind, PlannerDiagnostics,
+    PlannerPassSnapshot, PlanningMode, PlanningPassId, PreferredPartitioning, ProgressUnits,
+    RetryPolicy, ReuseDecision, ReuseDecisionEvidence, ReuseDecisionOutcome, SampleHaloRequirement,
+    SchedulerHints, SectionDomain, StageExecutionClassification, StageMemoryProfile,
+    StagePlanningDecision, StageResourceEnvelope, StageResourceOwnership,
+    TraceLocalChunkPlanRecommendation, ValidationReport, VolumeDomain, execution_stage_label,
     operator_execution_traits_for_pipeline_spec,
 };
 use crate::identity::{
@@ -77,6 +78,7 @@ struct PlannerPassContext<'a> {
     artifacts: Vec<ArtifactDescriptor>,
     expected_partition_count: Option<usize>,
     plan_summary: Option<ExecutionPlanSummary>,
+    runtime_environment: Option<ExecutionRuntimeEnvironment>,
     planner_pass_snapshots: Vec<PlannerPassSnapshot>,
     plan_decisions: Vec<PlanDecision>,
 }
@@ -134,6 +136,7 @@ impl<'a> PlannerPassContext<'a> {
             artifacts: Vec::new(),
             expected_partition_count: None,
             plan_summary: None,
+            runtime_environment: None,
             planner_pass_snapshots: Vec::new(),
             plan_decisions: Vec::new(),
         }
@@ -566,6 +569,23 @@ fn plan_artifacts_and_reuse_pass(context: &mut PlannerPassContext<'_>) {
     annotate_live_sets(&mut stages, &derived_artifacts);
     context.expected_partition_count = expected_partition_count_for_stages(&stages);
     context.plan_summary = Some(execution_plan_summary_for_stages(&stages));
+    context.runtime_environment = Some(runtime_environment_for_stages(
+        context.request,
+        &stages,
+        context
+            .plan_summary
+            .as_ref()
+            .expect("plan summary should exist before runtime lowering"),
+    ));
+    annotate_stage_lowering(
+        context.request,
+        context
+            .runtime_environment
+            .as_ref()
+            .expect("runtime environment should exist before stage lowering"),
+        &mut stages,
+        &mut context.plan_decisions,
+    );
     context.artifacts.append(&mut derived_artifacts);
     context.stages.append(&mut stages);
     let reuse_candidate_count = context
@@ -931,83 +951,6 @@ fn annotate_materialization_and_identity(
         stage.output_artifact_key = artifact_key
             .as_ref()
             .map(|identity| identity.artifact_key.clone());
-        stage.resource_envelope = stage_resource_envelope_for_stage(
-            request.planning_mode,
-            stage.stage_kind,
-            &stage.classification,
-            stage.stage_memory_profile.as_ref(),
-            stage.expected_partition_count,
-            &stage.estimated_cost,
-        );
-        let planning_decision_id = format!("stage-plan-{}", stage.stage_id);
-        let reservation_bytes = stage
-            .stage_memory_profile
-            .as_ref()
-            .map(|profile| profile.reserve_hint_bytes)
-            .unwrap_or(stage.estimated_cost.estimated_peak_memory_bytes);
-        plan_decisions.push(PlanDecision {
-            decision_id: planning_decision_id.clone(),
-            subject_kind: PlanDecisionSubjectKind::Stage,
-            subject_id: stage.stage_id.clone(),
-            decision_kind: PlanDecisionKind::Scheduling,
-            reason_code: partition_family_name(stage.partition_spec.family).to_string(),
-            human_summary: format!(
-                "stage {} uses {:?} partitions in {:?}",
-                stage.stage_id,
-                stage.partition_spec.family,
-                stage.resource_envelope.preferred_queue_class
-            ),
-            stage_planning: Some(StagePlanningDecision {
-                selected_partition_family: stage.partition_spec.family,
-                selected_ordering: stage.partition_spec.ordering,
-                selected_target_bytes: stage.partition_spec.target_bytes,
-                selected_expected_partition_count: stage.expected_partition_count,
-                selected_queue_class: stage.resource_envelope.preferred_queue_class,
-                selected_spillability: stage.resource_envelope.spillability,
-                selected_exclusive_scope: stage.resource_envelope.exclusive_scope,
-                selected_preferred_partition_waves: stage
-                    .resource_envelope
-                    .preferred_partition_waves,
-                selected_reservation_bytes: reservation_bytes,
-                factors: vec![
-                    DecisionFactor {
-                        code: "planning_mode".to_string(),
-                        summary: "planner mode".to_string(),
-                        value: Some(format!("{:?}", request.planning_mode).to_ascii_lowercase()),
-                    },
-                    DecisionFactor {
-                        code: "partition_family".to_string(),
-                        summary: "selected partition family".to_string(),
-                        value: Some(partition_family_name(stage.partition_spec.family).to_string()),
-                    },
-                    DecisionFactor {
-                        code: "requires_full_volume".to_string(),
-                        summary: "full-volume constraint".to_string(),
-                        value: Some(stage.classification.requires_full_volume.to_string()),
-                    },
-                    DecisionFactor {
-                        code: "uses_external_inputs".to_string(),
-                        summary: "external-input fan-in".to_string(),
-                        value: Some(stage.classification.uses_external_inputs.to_string()),
-                    },
-                    DecisionFactor {
-                        code: "expected_partitions".to_string(),
-                        summary: "expected partition count".to_string(),
-                        value: stage
-                            .expected_partition_count
-                            .map(|value| value.to_string()),
-                    },
-                    DecisionFactor {
-                        code: "peak_memory_bytes".to_string(),
-                        summary: "estimated peak memory".to_string(),
-                        value: Some(stage.estimated_cost.estimated_peak_memory_bytes.to_string()),
-                    },
-                ],
-            }),
-            reuse_decision: None,
-            artifact_derivation: None,
-        });
-        stage.planning_decision_id = Some(planning_decision_id);
         if let Some(artifact) = artifacts
             .iter_mut()
             .find(|artifact| artifact.artifact_id == stage.output_artifact_id)
@@ -1379,6 +1322,10 @@ fn assemble_execution_plan_pass(context: PlannerPassContext<'_>) -> Result<Execu
         .validation
         .clone()
         .expect("validate pass should populate validation report");
+    let runtime_environment = context
+        .runtime_environment
+        .clone()
+        .expect("plan artifacts pass should populate runtime environment");
     let mut planner_pass_snapshots = context.planner_pass_snapshots;
     let mut plan_decisions = context.plan_decisions;
     let assemble_decision_id = "pass-assemble-execution-plan".to_string();
@@ -1427,6 +1374,7 @@ fn assemble_execution_plan_pass(context: PlannerPassContext<'_>) -> Result<Execu
         pipeline_identity,
         operator_set_identity,
         planner_profile_identity,
+        runtime_environment,
         stages: context.stages,
         plan_summary,
         artifacts: context.artifacts,
@@ -1587,6 +1535,16 @@ fn partition_family_name(family: PartitionFamily) -> &'static str {
         PartitionFamily::Section => "section",
         PartitionFamily::GatherGroup => "gather_group",
         PartitionFamily::FullVolume => "full_volume",
+    }
+}
+
+fn execution_queue_class_name(queue_class: ExecutionQueueClass) -> &'static str {
+    match queue_class {
+        ExecutionQueueClass::Control => "control",
+        ExecutionQueueClass::InteractivePartition => "interactive_partition",
+        ExecutionQueueClass::ForegroundPartition => "foreground_partition",
+        ExecutionQueueClass::BackgroundPartition => "background_partition",
+        ExecutionQueueClass::ExclusiveFullVolume => "exclusive_full_volume",
     }
 }
 
@@ -1987,6 +1945,7 @@ fn build_trace_local_stages(
         );
         stages.push(ExecutionStage {
             stage_id: format!("stage-{stage_index:02}"),
+            stage_label: String::new(),
             stage_kind,
             input_artifact_ids: vec![current_input_artifact_id.clone()],
             output_artifact_id: output_artifact_id.clone(),
@@ -2009,6 +1968,10 @@ fn build_trace_local_stages(
             estimated_cost,
             stage_memory_profile,
             resource_envelope,
+            lowered_scheduler_policy: unlowered_stage_scheduler_policy(
+                &[current_input_artifact_id.clone()],
+                &output_artifact_id,
+            ),
             boundary_reason: None,
             materialization_class: None,
             reuse_class: None,
@@ -2057,6 +2020,7 @@ fn build_single_stage_plan(
     );
     let stage = ExecutionStage {
         stage_id: "stage-01".to_string(),
+        stage_label: String::new(),
         stage_kind: ExecutionStageKind::FinalizeOutput,
         input_artifact_ids: vec![source_artifact_id.to_string()],
         output_artifact_id: output_artifact_id.clone(),
@@ -2079,6 +2043,10 @@ fn build_single_stage_plan(
         estimated_cost,
         stage_memory_profile: None,
         resource_envelope,
+        lowered_scheduler_policy: unlowered_stage_scheduler_policy(
+            &[source_artifact_id.to_string()],
+            &output_artifact_id,
+        ),
         boundary_reason: None,
         materialization_class: None,
         reuse_class: None,
@@ -2217,8 +2185,9 @@ fn build_prefixed_family_plan(
     );
     stages.push(ExecutionStage {
         stage_id: format!("stage-{:02}", stages.len() + 1),
+        stage_label: String::new(),
         stage_kind: ExecutionStageKind::FinalizeOutput,
-        input_artifact_ids: vec![prefix_checkpoint_id],
+        input_artifact_ids: vec![prefix_checkpoint_id.clone()],
         output_artifact_id: output_artifact_id.clone(),
         pipeline_segment: Some(ExecutionPipelineSegment {
             family: pipeline_descriptor.family,
@@ -2239,6 +2208,10 @@ fn build_prefixed_family_plan(
         estimated_cost,
         stage_memory_profile: None,
         resource_envelope,
+        lowered_scheduler_policy: unlowered_stage_scheduler_policy(
+            &[prefix_checkpoint_id.clone()],
+            &output_artifact_id,
+        ),
         boundary_reason: None,
         materialization_class: None,
         reuse_class: None,
@@ -2447,6 +2420,238 @@ fn stage_resource_envelope_for_stage(
         },
         resident_bytes_per_partition,
         workspace_bytes_per_worker,
+    }
+}
+
+fn runtime_environment_for_stages(
+    request: &PlanProcessingRequest,
+    stages: &[ExecutionStage],
+    plan_summary: &ExecutionPlanSummary,
+) -> ExecutionRuntimeEnvironment {
+    let worker_budget = request
+        .max_active_partitions
+        .or_else(|| expected_partition_count_for_stages(stages))
+        .unwrap_or(1)
+        .max(1);
+    let reserve_bytes = stages
+        .iter()
+        .map(stage_reservation_bytes)
+        .max()
+        .unwrap_or(plan_summary.max_estimated_peak_memory_bytes)
+        .max(plan_summary.max_estimated_peak_memory_bytes);
+    let usable_bytes = plan_summary
+        .max_live_set_bytes
+        .unwrap_or(0)
+        .max(reserve_bytes.saturating_mul(worker_budget as u64))
+        .max(reserve_bytes);
+    let queue_class = stages
+        .first()
+        .map(|stage| stage.resource_envelope.preferred_queue_class)
+        .unwrap_or_else(|| match request.planning_mode {
+            PlanningMode::InteractivePreview => ExecutionQueueClass::InteractivePartition,
+            PlanningMode::ForegroundMaterialize => ExecutionQueueClass::ForegroundPartition,
+            PlanningMode::BackgroundBatch => ExecutionQueueClass::BackgroundPartition,
+        });
+    let exclusive_scope = stages
+        .first()
+        .map(|stage| stage.resource_envelope.exclusive_scope)
+        .unwrap_or(ExecutionExclusiveScope::None);
+
+    ExecutionRuntimeEnvironment {
+        worker_budget,
+        memory_budget: ExecutionMemoryBudget {
+            usable_bytes,
+            reserve_bytes,
+            worker_count: worker_budget,
+        },
+        queue_class,
+        exclusive_scope,
+        requested_max_active_partitions: request.max_active_partitions,
+    }
+}
+
+fn annotate_stage_lowering(
+    request: &PlanProcessingRequest,
+    runtime_environment: &ExecutionRuntimeEnvironment,
+    stages: &mut [ExecutionStage],
+    plan_decisions: &mut Vec<PlanDecision>,
+) {
+    for stage in stages.iter_mut() {
+        stage.stage_label = execution_stage_label(stage, &request.pipeline);
+        stage.lowered_scheduler_policy = LoweredStageSchedulerPolicy {
+            queue_class: stage.resource_envelope.preferred_queue_class,
+            spillability: stage.resource_envelope.spillability,
+            exclusive_scope: stage.resource_envelope.exclusive_scope,
+            retry_granularity: stage.resource_envelope.retry_granularity,
+            progress_granularity: stage.resource_envelope.progress_granularity,
+            min_partition_count: stage.resource_envelope.min_partition_count,
+            target_partition_count: stage.resource_envelope.target_partition_count,
+            max_partition_count: stage.resource_envelope.max_partition_count,
+            effective_max_active_partitions: effective_max_active_partitions_for_stage(
+                stage,
+                runtime_environment.worker_budget,
+            ),
+            preferred_partition_waves: stage.resource_envelope.preferred_partition_waves,
+            reservation_bytes: stage_reservation_bytes(stage),
+            resident_bytes_per_partition: stage.resource_envelope.resident_bytes_per_partition,
+            workspace_bytes_per_worker: stage.resource_envelope.workspace_bytes_per_worker,
+            ownership: StageResourceOwnership {
+                input_artifact_ids: stage.input_artifact_ids.clone(),
+                output_artifact_id: stage.output_artifact_id.clone(),
+                live_artifact_ids: stage
+                    .live_set
+                    .as_ref()
+                    .map(|live_set| {
+                        live_set
+                            .resident_artifacts
+                            .iter()
+                            .map(|entry| entry.artifact_id.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            },
+        };
+
+        let planning_decision_id = format!("stage-plan-{}", stage.stage_id);
+        plan_decisions.push(PlanDecision {
+            decision_id: planning_decision_id.clone(),
+            subject_kind: PlanDecisionSubjectKind::Stage,
+            subject_id: stage.stage_id.clone(),
+            decision_kind: PlanDecisionKind::Scheduling,
+            reason_code: partition_family_name(stage.partition_spec.family).to_string(),
+            human_summary: format!(
+                "stage {} lowers to {} queue reserve={} active_partitions={} ownership={}=>{}",
+                stage.stage_id,
+                execution_queue_class_name(stage.lowered_scheduler_policy.queue_class),
+                stage.lowered_scheduler_policy.reservation_bytes,
+                stage
+                    .lowered_scheduler_policy
+                    .effective_max_active_partitions,
+                stage.input_artifact_ids.join(","),
+                stage.output_artifact_id
+            ),
+            stage_planning: Some(StagePlanningDecision {
+                selected_partition_family: stage.partition_spec.family,
+                selected_ordering: stage.partition_spec.ordering,
+                selected_target_bytes: stage.partition_spec.target_bytes,
+                selected_expected_partition_count: stage.expected_partition_count,
+                selected_queue_class: stage.lowered_scheduler_policy.queue_class,
+                selected_spillability: stage.lowered_scheduler_policy.spillability,
+                selected_exclusive_scope: stage.lowered_scheduler_policy.exclusive_scope,
+                selected_preferred_partition_waves: stage
+                    .lowered_scheduler_policy
+                    .preferred_partition_waves,
+                selected_reservation_bytes: stage.lowered_scheduler_policy.reservation_bytes,
+                factors: vec![
+                    DecisionFactor {
+                        code: "planning_mode".to_string(),
+                        summary: "planner mode".to_string(),
+                        value: Some(format!("{:?}", request.planning_mode).to_ascii_lowercase()),
+                    },
+                    DecisionFactor {
+                        code: "stage_label".to_string(),
+                        summary: "lowered execution label".to_string(),
+                        value: Some(stage.stage_label.clone()),
+                    },
+                    DecisionFactor {
+                        code: "worker_budget".to_string(),
+                        summary: "planner-visible worker budget".to_string(),
+                        value: Some(runtime_environment.worker_budget.to_string()),
+                    },
+                    DecisionFactor {
+                        code: "memory_budget_bytes".to_string(),
+                        summary: "planner-visible memory budget".to_string(),
+                        value: Some(runtime_environment.memory_budget.usable_bytes.to_string()),
+                    },
+                    DecisionFactor {
+                        code: "effective_max_active_partitions".to_string(),
+                        summary: "admitted partition concurrency".to_string(),
+                        value: Some(
+                            stage
+                                .lowered_scheduler_policy
+                                .effective_max_active_partitions
+                                .to_string(),
+                        ),
+                    },
+                    DecisionFactor {
+                        code: "live_artifact_count".to_string(),
+                        summary: "planner-visible live artifacts".to_string(),
+                        value: Some(
+                            stage
+                                .lowered_scheduler_policy
+                                .ownership
+                                .live_artifact_ids
+                                .len()
+                                .to_string(),
+                        ),
+                    },
+                ],
+            }),
+            reuse_decision: None,
+            artifact_derivation: None,
+        });
+        stage.planning_decision_id = Some(planning_decision_id);
+    }
+}
+
+fn stage_reservation_bytes(stage: &ExecutionStage) -> u64 {
+    stage
+        .stage_memory_profile
+        .as_ref()
+        .map(|profile| profile.reserve_hint_bytes)
+        .unwrap_or_else(|| {
+            stage.estimated_cost.estimated_peak_memory_bytes.max(
+                stage
+                    .resource_envelope
+                    .resident_bytes_per_partition
+                    .saturating_add(stage.resource_envelope.workspace_bytes_per_worker),
+            )
+        })
+}
+
+fn effective_max_active_partitions_for_stage(
+    stage: &ExecutionStage,
+    worker_budget: usize,
+) -> usize {
+    if matches!(
+        stage.resource_envelope.exclusive_scope,
+        ExecutionExclusiveScope::FullVolume
+    ) {
+        return 1;
+    }
+    let partition_cap = stage
+        .resource_envelope
+        .max_partition_count
+        .or(stage.resource_envelope.target_partition_count)
+        .or(stage.expected_partition_count)
+        .unwrap_or(1)
+        .max(1);
+    partition_cap.min(worker_budget.max(1)).max(1)
+}
+
+fn unlowered_stage_scheduler_policy(
+    input_artifact_ids: &[String],
+    output_artifact_id: &str,
+) -> LoweredStageSchedulerPolicy {
+    LoweredStageSchedulerPolicy {
+        queue_class: ExecutionQueueClass::BackgroundPartition,
+        spillability: ExecutionSpillabilityClass::Unspillable,
+        exclusive_scope: ExecutionExclusiveScope::None,
+        retry_granularity: ExecutionRetryGranularity::Stage,
+        progress_granularity: ExecutionProgressGranularity::Stage,
+        min_partition_count: None,
+        target_partition_count: None,
+        max_partition_count: None,
+        effective_max_active_partitions: 1,
+        preferred_partition_waves: 1,
+        reservation_bytes: 0,
+        resident_bytes_per_partition: 0,
+        workspace_bytes_per_worker: 0,
+        ownership: StageResourceOwnership {
+            input_artifact_ids: input_artifact_ids.to_vec(),
+            output_artifact_id: output_artifact_id.to_string(),
+            live_artifact_ids: Vec::new(),
+        },
     }
 }
 
@@ -3008,6 +3213,107 @@ mod tests {
                 .expect("trace-local stage should expose a memory profile")
                 .secondary_input_count,
             1
+        );
+    }
+
+    #[test]
+    fn planner_lowers_runtime_environment_and_stage_policy() {
+        let request = PlanProcessingRequest {
+            store_path: "input.tbvol".to_string(),
+            layout: SeismicLayout::PostStack3D,
+            source_shape: Some([8, 8, 128]),
+            source_chunk_shape: Some([4, 4, 128]),
+            pipeline: ProcessingPipelineSpec::TraceLocal {
+                pipeline: TraceLocalProcessingPipeline {
+                    schema_version: 1,
+                    revision: 1,
+                    preset_id: None,
+                    name: Some("policy-demo".to_string()),
+                    description: None,
+                    steps: vec![
+                        TraceLocalProcessingStep {
+                            operation: TraceLocalProcessingOperation::AmplitudeScalar {
+                                factor: 2.0,
+                            },
+                            checkpoint: true,
+                        },
+                        TraceLocalProcessingStep {
+                            operation: TraceLocalProcessingOperation::TraceRmsNormalize,
+                            checkpoint: false,
+                        },
+                    ],
+                },
+            },
+            output_store_path: Some("output.tbvol".to_string()),
+            planning_mode: PlanningMode::ForegroundMaterialize,
+            max_active_partitions: Some(2),
+        };
+
+        let plan = build_execution_plan(&request).expect("plan should build");
+        let checkpoint_stage = &plan.stages[0];
+
+        assert_eq!(plan.runtime_environment.worker_budget, 2);
+        assert_eq!(
+            plan.runtime_environment.queue_class,
+            ExecutionQueueClass::ForegroundPartition
+        );
+        assert_eq!(
+            plan.runtime_environment.exclusive_scope,
+            ExecutionExclusiveScope::None
+        );
+        assert!(plan.runtime_environment.memory_budget.usable_bytes > 0);
+        assert!(plan.runtime_environment.memory_budget.reserve_bytes > 0);
+
+        assert_eq!(checkpoint_stage.stage_label, "Step 1: Amplitude Scale");
+        assert_eq!(
+            checkpoint_stage.lowered_scheduler_policy.queue_class,
+            ExecutionQueueClass::ForegroundPartition
+        );
+        assert_eq!(
+            checkpoint_stage
+                .lowered_scheduler_policy
+                .effective_max_active_partitions,
+            1
+        );
+        assert_eq!(
+            checkpoint_stage
+                .lowered_scheduler_policy
+                .ownership
+                .input_artifact_ids,
+            vec!["source".to_string()]
+        );
+        assert_eq!(
+            checkpoint_stage
+                .lowered_scheduler_policy
+                .ownership
+                .output_artifact_id,
+            checkpoint_stage.output_artifact_id
+        );
+        assert!(
+            checkpoint_stage
+                .lowered_scheduler_policy
+                .ownership
+                .live_artifact_ids
+                .contains(&checkpoint_stage.output_artifact_id)
+        );
+        let decision = plan
+            .plan_decisions
+            .iter()
+            .find(|decision| decision.subject_id == checkpoint_stage.stage_id)
+            .and_then(|decision| decision.stage_planning.as_ref())
+            .expect("stage planning decision");
+        assert_eq!(
+            decision.selected_queue_class,
+            checkpoint_stage.lowered_scheduler_policy.queue_class
+        );
+        assert_eq!(
+            decision.selected_reservation_bytes,
+            checkpoint_stage.lowered_scheduler_policy.reservation_bytes
+        );
+        assert!(
+            decision.factors.iter().any(
+                |factor| factor.code == "worker_budget" && factor.value.as_deref() == Some("2")
+            )
         );
     }
 

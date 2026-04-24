@@ -26,6 +26,7 @@ import {
   resizeCanvasBackingStore
 } from "../internal/rasterSurface";
 import type { WellCorrelationRenderFrame, WellCorrelationRendererAdapter } from "./adapter";
+import { createRendererTelemetryEvent, type RendererTelemetryListener } from "../telemetry";
 import {
   createBaseRenderState,
   createOverlayRenderState,
@@ -60,9 +61,14 @@ export class WellCorrelationCanvasRenderer implements WellCorrelationRendererAda
   private lastOverlayState: OverlayRenderState | null = null;
   private lastLayoutCache: WellCorrelationLayoutCache | null = null;
   private readonly axisChrome: "canvas" | "none";
+  private telemetryListener: RendererTelemetryListener | null = null;
 
   constructor(options: WellCorrelationCanvasRendererOptions = {}) {
     this.axisChrome = options.axisChrome ?? "canvas";
+  }
+
+  setTelemetryListener(listener: RendererTelemetryListener | null): void {
+    this.telemetryListener = listener;
   }
 
   mount(container: HTMLElement): void {
@@ -90,126 +96,155 @@ export class WellCorrelationCanvasRenderer implements WellCorrelationRendererAda
     container.replaceChildren(this.host);
     this.baseContext = this.baseCanvas.getContext("2d");
     this.overlayContext = this.overlayCanvas.getContext("2d");
+    if (!this.baseContext || !this.overlayContext) {
+      this.emitTelemetry({
+        kind: "mount-failed",
+        phase: "mount",
+        backend: "canvas-2d",
+        recoverable: false,
+        message: "Well correlation renderer could not acquire required 2D canvas contexts."
+      });
+      throw new Error("WellCorrelationCanvasRenderer could not acquire required 2D canvas contexts.");
+    }
+    this.emitTelemetry({
+      kind: "backend-selected",
+      phase: "mount",
+      backend: "canvas-2d",
+      recoverable: true,
+      message: "Well correlation renderer selected the canvas-2d backend."
+    });
   }
 
   render(frame: WellCorrelationRenderFrame): void {
     const renderStart = typeof performance !== "undefined" ? performance.now() : Date.now();
-    if (
-      !this.host ||
-      !this.baseCanvas ||
-      !this.overlayCanvas ||
-      !this.baseContext ||
-      !this.overlayContext
-    ) {
-      return;
-    }
-    this.lastFrame = frame;
-    const viewportWidth = Math.max(1, Math.round(resolveViewportWidth(this.host, this.container) || this.host.clientWidth || 1));
-    const viewportHeight = Math.max(1, Math.round(this.host.clientHeight || 1));
-    const baseState = createBaseRenderState(
-      frame,
-      viewportWidth,
-      viewportHeight,
-      window.devicePixelRatio || 1,
-      0,
-      viewportWidth
-    );
-    const overlayState = createOverlayRenderState(
-      frame,
-      viewportWidth,
-      viewportHeight,
-      window.devicePixelRatio || 1,
-      0,
-      viewportWidth
-    );
-    const invalidation = diffRenderStates(this.lastBaseState, baseState, this.lastOverlayState, overlayState);
-    const { panel, viewport } = frame.state;
-    if (!panel || !viewport) {
-      clearCanvas(this.baseContext, this.baseCanvas);
-      clearCanvas(this.overlayContext, this.overlayCanvas);
-      this.lastBaseState = baseState;
-      this.lastOverlayState = overlayState;
-      this.lastLayoutCache = null;
-      this.host.style.width = "100%";
-      return;
-    }
+    try {
+      if (
+        !this.host ||
+        !this.baseCanvas ||
+        !this.overlayCanvas ||
+        !this.baseContext ||
+        !this.overlayContext
+      ) {
+        return;
+      }
+      this.lastFrame = frame;
+      const viewportWidth = Math.max(1, Math.round(resolveViewportWidth(this.host, this.container) || this.host.clientWidth || 1));
+      const viewportHeight = Math.max(1, Math.round(this.host.clientHeight || 1));
+      const baseState = createBaseRenderState(
+        frame,
+        viewportWidth,
+        viewportHeight,
+        window.devicePixelRatio || 1,
+        0,
+        viewportWidth
+      );
+      const overlayState = createOverlayRenderState(
+        frame,
+        viewportWidth,
+        viewportHeight,
+        window.devicePixelRatio || 1,
+        0,
+        viewportWidth
+      );
+      const invalidation = diffRenderStates(this.lastBaseState, baseState, this.lastOverlayState, overlayState);
+      const { panel, viewport } = frame.state;
+      if (!panel || !viewport) {
+        clearCanvas(this.baseContext, this.baseCanvas);
+        clearCanvas(this.overlayContext, this.overlayCanvas);
+        this.lastBaseState = baseState;
+        this.lastOverlayState = overlayState;
+        this.lastLayoutCache = null;
+        this.host.style.width = "100%";
+        return;
+      }
 
-    if (invalidation.baseChanged || !this.lastLayoutCache) {
-      this.lastLayoutCache = buildWellCorrelationLayoutCache(panel, viewportWidth, viewportHeight);
-    }
-    const layoutCache = this.lastLayoutCache;
-    const layout = layoutCache.layout;
-    const visibleRect = visibleContentRect(layout.contentWidth, viewportHeight);
-    const surface = createRasterSurfaceMetrics(layout.contentWidth, viewportHeight);
-    resizeCanvasBackingStore(this.baseCanvas, surface);
-    resizeCanvasBackingStore(this.overlayCanvas, surface);
-    this.host.style.width = `${layout.contentWidth}px`;
-    this.baseCanvas.style.width = `${layout.contentWidth}px`;
-    this.overlayCanvas.style.width = `${layout.contentWidth}px`;
+      if (invalidation.baseChanged || !this.lastLayoutCache) {
+        this.lastLayoutCache = buildWellCorrelationLayoutCache(panel, viewportWidth, viewportHeight);
+      }
+      const layoutCache = this.lastLayoutCache;
+      const layout = layoutCache.layout;
+      const visibleRect = visibleContentRect(layout.contentWidth, viewportHeight);
+      const surface = createRasterSurfaceMetrics(layout.contentWidth, viewportHeight);
+      resizeCanvasBackingStore(this.baseCanvas, surface);
+      resizeCanvasBackingStore(this.overlayCanvas, surface);
+      this.host.style.width = `${layout.contentWidth}px`;
+      this.baseCanvas.style.width = `${layout.contentWidth}px`;
+      this.overlayCanvas.style.width = `${layout.contentWidth}px`;
 
-    if (invalidation.baseChanged) {
-      const context = this.baseContext;
-      applyCanvasSurfaceTransform(context, surface);
-      context.clearRect(visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height);
-      context.fillStyle = panel.background ?? "#f8f5ef";
-      context.fillRect(visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height);
-      withHorizontalClip(context, visibleRect, () => {
-        drawDepthGrid(context, layout.plotRect, viewport);
-      });
+      if (invalidation.baseChanged) {
+        const context = this.baseContext;
+        applyCanvasSurfaceTransform(context, surface);
+        context.clearRect(visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height);
+        context.fillStyle = panel.background ?? "#f8f5ef";
+        context.fillRect(visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height);
+        withHorizontalClip(context, visibleRect, () => {
+          drawDepthGrid(context, layout.plotRect, viewport);
+        });
 
-      for (const column of layout.columns) {
-        if (!rectIntersectsHorizontally(column.bodyRect, visibleRect)) {
-          continue;
-        }
-        const wellHits = trackHitsForWell(layoutCache, column.wellId);
-        if (wellHits.length === 0) {
-          continue;
-        }
-        const well = wellHits[0]!.well;
-        if (this.axisChrome === "canvas") {
-          drawWellHeader(context, column.headerRect, well.name);
-        }
-        for (const hit of wellHits) {
-          if (!rectIntersectsHorizontally(hit.trackFrame.bodyRect, visibleRect)) {
+        for (const column of layout.columns) {
+          if (!rectIntersectsHorizontally(column.bodyRect, visibleRect)) {
             continue;
           }
-          if (this.axisChrome === "canvas") {
-            drawTrackHeader(context, hit.trackFrame.headerRect, hit.track, well.nativeDepthDatum);
+          const wellHits = trackHitsForWell(layoutCache, column.wellId);
+          if (wellHits.length === 0) {
+            continue;
           }
-          drawTrackBodyFrame(context, hit.trackFrame.bodyRect);
-          drawTrack(context, hit.track, well.panelDepthMapping, viewport, hit.trackFrame.bodyRect, this.axisChrome);
+          const well = wellHits[0]!.well;
+          if (this.axisChrome === "canvas") {
+            drawWellHeader(context, column.headerRect, well.name);
+          }
+          for (const hit of wellHits) {
+            if (!rectIntersectsHorizontally(hit.trackFrame.bodyRect, visibleRect)) {
+              continue;
+            }
+            if (this.axisChrome === "canvas") {
+              drawTrackHeader(context, hit.trackFrame.headerRect, hit.track, well.nativeDepthDatum);
+            }
+            drawTrackBodyFrame(context, hit.trackFrame.bodyRect);
+            drawTrack(context, hit.track, well.panelDepthMapping, viewport, hit.trackFrame.bodyRect, this.axisChrome);
+          }
         }
       }
-    }
 
-    if (invalidation.overlayNeedsDraw) {
-      const context = this.overlayContext;
-      applyCanvasSurfaceTransform(context, surface);
-      context.clearRect(visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height);
-      withHorizontalClip(context, visibleRect, () => {
-        drawCorrelationLines(context, layout, overlayState.previewCorrelationLines ?? overlayState.correlationLines, viewport);
-        if (overlayState.probe && overlayState.interactions.modifiers.includes("crosshair")) {
-          drawProbeGuides(context, layout.plotRect, overlayState.probe.screenX, overlayState.probe.screenY);
+      if (invalidation.overlayNeedsDraw) {
+        const context = this.overlayContext;
+        applyCanvasSurfaceTransform(context, surface);
+        context.clearRect(visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height);
+        withHorizontalClip(context, visibleRect, () => {
+          drawCorrelationLines(context, layout, overlayState.previewCorrelationLines ?? overlayState.correlationLines, viewport);
+          if (overlayState.probe && overlayState.interactions.modifiers.includes("crosshair")) {
+            drawProbeGuides(context, layout.plotRect, overlayState.probe.screenX, overlayState.probe.screenY);
+          }
+          if (overlayState.interactions.session?.kind === "lasso") {
+            drawLassoOverlay(context, overlayState.interactions.session.points);
+          }
+        });
+      }
+
+      this.host.style.cursor = cursorForInteractionState(overlayState.interactions);
+      this.lastBaseState = baseState;
+      this.lastOverlayState = overlayState;
+      this.host.dispatchEvent(new CustomEvent("ophiolite-charts:correlation-render-debug", {
+        bubbles: true,
+        detail: {
+          renderMs: (typeof performance !== "undefined" ? performance.now() : Date.now()) - renderStart,
+          baseChanged: invalidation.baseChanged,
+          overlayDraw: invalidation.overlayNeedsDraw,
+          contentWidth: layout.contentWidth,
+          viewportWidth: layout.viewportWidth
         }
-        if (overlayState.interactions.session?.kind === "lasso") {
-          drawLassoOverlay(context, overlayState.interactions.session.points);
-        }
+      }));
+    } catch (error) {
+      this.emitTelemetry({
+        kind: "frame-failed",
+        phase: "render",
+        backend: "canvas-2d",
+        recoverable: true,
+        message: error instanceof Error ? error.message : String(error),
+        detail: "Well correlation renderer failed while drawing a frame."
       });
+      throw error;
     }
-
-    this.host.style.cursor = cursorForInteractionState(overlayState.interactions);
-    this.lastBaseState = baseState;
-    this.lastOverlayState = overlayState;
-    this.host.dispatchEvent(new CustomEvent("ophiolite-charts:correlation-render-debug", {
-      bubbles: true,
-      detail: {
-        renderMs: (typeof performance !== "undefined" ? performance.now() : Date.now()) - renderStart,
-        baseChanged: invalidation.baseChanged,
-        overlayDraw: invalidation.overlayNeedsDraw,
-        contentWidth: layout.contentWidth,
-        viewportWidth: layout.viewportWidth
-      }
-    }));
   }
 
   dispose(): void {
@@ -224,6 +259,10 @@ export class WellCorrelationCanvasRenderer implements WellCorrelationRendererAda
     this.lastBaseState = null;
     this.lastOverlayState = null;
     this.lastLayoutCache = null;
+  }
+
+  private emitTelemetry(event: Parameters<typeof createRendererTelemetryEvent>[0]): void {
+    this.telemetryListener?.(createRendererTelemetryEvent(event));
   }
 }
 

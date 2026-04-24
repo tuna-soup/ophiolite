@@ -12,14 +12,14 @@ use ophiolite_seismic::contracts::{
     default_execution_plan_schema_version,
 };
 use ophiolite_seismic::{
-    GatherProcessingOperation, PostStackNeighborhoodProcessingOperation,
-    ProcessingLayoutCompatibility, ProcessingOperatorDependencyProfile, ProcessingPipelineFamily,
-    ProcessingPipelineSpec, ProcessingPlannerCostClass, ProcessingPlannerHints,
-    ProcessingPlannerParallelEfficiencyClass, ProcessingPlannerPartitioningHint,
-    ProcessingSampleDependency, ProcessingSpatialDependency, SectionAxis, SeismicLayout,
-    SubvolumeCropOperation, TraceLocalProcessingOperation, gather_operator_planner_hints,
-    post_stack_neighborhood_operator_planner_hints, subvolume_operator_planner_hints,
-    trace_local_operator_planner_hints,
+    GatherProcessingOperation, GatherProcessingPipeline, PostStackNeighborhoodProcessingOperation,
+    PostStackNeighborhoodProcessingPipeline, ProcessingLayoutCompatibility,
+    ProcessingOperatorDependencyProfile, ProcessingPipelineFamily, ProcessingPipelineSpec,
+    ProcessingPlannerCostClass, ProcessingPlannerHints, ProcessingPlannerParallelEfficiencyClass,
+    ProcessingPlannerPartitioningHint, ProcessingSampleDependency, ProcessingSpatialDependency,
+    SectionAxis, SeismicLayout, SubvolumeCropOperation, TraceLocalProcessingOperation,
+    gather_operator_planner_hints, post_stack_neighborhood_operator_planner_hints,
+    subvolume_operator_planner_hints, trace_local_operator_planner_hints,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
@@ -127,11 +127,23 @@ impl OperatorExecutionTraits {
         dependency_profile: ProcessingOperatorDependencyProfile,
         hints: ProcessingPlannerHints,
     ) -> Self {
+        let reuse_class = reuse_class_from_contract_semantics(&dependency_profile, &hints);
+        let preview_prefix_reuse_safe = reuse_class.allows_preview_prefix_reuse();
+        let ProcessingPlannerHints {
+            preferred_partitioning,
+            requires_full_volume,
+            checkpoint_safe,
+            memory_cost_class,
+            cpu_cost_class,
+            io_cost_class,
+            parallel_efficiency_class,
+        } = hints;
+
         Self {
             operator_id: operator_id.to_string(),
             scope,
             layout_support,
-            preferred_partitioning: preferred_partitioning_from_hint(hints.preferred_partitioning),
+            preferred_partitioning: preferred_partitioning_from_hint(preferred_partitioning),
             sample_halo: match dependency_profile.sample_dependency {
                 ProcessingSampleDependency::Pointwise => SampleHaloRequirement::None,
                 ProcessingSampleDependency::BoundedWindow { window_ms_hint } => {
@@ -154,21 +166,15 @@ impl OperatorExecutionTraits {
             },
             halo_inline: dependency_profile.inline_radius,
             halo_xline: dependency_profile.crossline_radius,
-            requires_full_volume: hints.requires_full_volume,
-            checkpoint_safe: hints.checkpoint_safe,
+            requires_full_volume,
+            checkpoint_safe,
             deterministic: dependency_profile.deterministic,
-            preview_prefix_reuse_safe: reuse_class_from_contract_semantics(
-                &dependency_profile,
-                &hints,
-            )
-            .allows_preview_prefix_reuse(),
-            reuse_class: reuse_class_from_contract_semantics(&dependency_profile, &hints),
-            memory_cost_class: memory_cost_class_from_hint(hints.memory_cost_class),
-            cpu_cost_class: cpu_cost_class_from_hint(hints.cpu_cost_class),
-            io_cost_class: io_cost_class_from_hint(hints.io_cost_class),
-            parallel_efficiency_class: parallel_efficiency_from_hint(
-                hints.parallel_efficiency_class,
-            ),
+            preview_prefix_reuse_safe,
+            reuse_class,
+            memory_cost_class: memory_cost_class_from_hint(memory_cost_class),
+            cpu_cost_class: cpu_cost_class_from_hint(cpu_cost_class),
+            io_cost_class: io_cost_class_from_hint(io_cost_class),
+            parallel_efficiency_class: parallel_efficiency_from_hint(parallel_efficiency_class),
         }
     }
 
@@ -925,9 +931,42 @@ pub struct StageResourceEnvelope {
     pub workspace_bytes_per_worker: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct StageResourceOwnership {
+    pub input_artifact_ids: Vec<String>,
+    pub output_artifact_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub live_artifact_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct LoweredStageSchedulerPolicy {
+    pub queue_class: ExecutionQueueClass,
+    pub spillability: ExecutionSpillabilityClass,
+    pub exclusive_scope: ExecutionExclusiveScope,
+    pub retry_granularity: ExecutionRetryGranularity,
+    pub progress_granularity: ExecutionProgressGranularity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_partition_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_partition_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_partition_count: Option<usize>,
+    pub effective_max_active_partitions: usize,
+    pub preferred_partition_waves: usize,
+    #[ts(type = "number")]
+    pub reservation_bytes: u64,
+    #[ts(type = "number")]
+    pub resident_bytes_per_partition: u64,
+    #[ts(type = "number")]
+    pub workspace_bytes_per_worker: u64,
+    pub ownership: StageResourceOwnership,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct ExecutionStage {
     pub stage_id: String,
+    pub stage_label: String,
     pub stage_kind: ExecutionStageKind,
     pub input_artifact_ids: Vec<String>,
     pub output_artifact_id: String,
@@ -947,6 +986,7 @@ pub struct ExecutionStage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stage_memory_profile: Option<StageMemoryProfile>,
     pub resource_envelope: StageResourceEnvelope,
+    pub lowered_scheduler_policy: LoweredStageSchedulerPolicy,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boundary_reason: Option<ArtifactBoundaryReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1006,6 +1046,16 @@ pub struct ValidationReport {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
+pub struct ExecutionRuntimeEnvironment {
+    pub worker_budget: usize,
+    pub memory_budget: ExecutionMemoryBudget,
+    pub queue_class: ExecutionQueueClass,
+    pub exclusive_scope: ExecutionExclusiveScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_max_active_partitions: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
 pub struct PlannerPassSnapshot {
     pub pass_id: PlanningPassId,
     pub pass_name: String,
@@ -1033,6 +1083,7 @@ pub struct ExecutionPlan {
     pub pipeline_identity: PipelineSemanticIdentity,
     pub operator_set_identity: OperatorSetIdentity,
     pub planner_profile_identity: PlannerProfileIdentity,
+    pub runtime_environment: ExecutionRuntimeEnvironment,
     pub stages: Vec<ExecutionStage>,
     pub plan_summary: ExecutionPlanSummary,
     pub artifacts: Vec<ArtifactDescriptor>,
@@ -1155,6 +1206,128 @@ impl PipelineDescriptor {
                     .unwrap_or_default(),
             },
         }
+    }
+}
+
+pub fn execution_stage_label(stage: &ExecutionStage, pipeline: &ProcessingPipelineSpec) -> String {
+    if let Some(segment) = stage.pipeline_segment.as_ref() {
+        match segment.family {
+            ProcessingPipelineFamily::TraceLocal => {
+                let trace_local_pipeline = match pipeline {
+                    ProcessingPipelineSpec::TraceLocal { pipeline } => Some(pipeline),
+                    ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
+                        pipeline.trace_local_pipeline.as_ref()
+                    }
+                    ProcessingPipelineSpec::Subvolume { pipeline } => {
+                        pipeline.trace_local_pipeline.as_ref()
+                    }
+                    ProcessingPipelineSpec::Gather { pipeline } => {
+                        pipeline.trace_local_pipeline.as_ref()
+                    }
+                };
+                if let Some(trace_local_pipeline) = trace_local_pipeline {
+                    if let Some(operation) = trace_local_pipeline
+                        .steps
+                        .get(segment.end_step_index)
+                        .map(|step| &step.operation)
+                    {
+                        return format!(
+                            "Step {}: {}",
+                            segment.end_step_index + 1,
+                            execution_trace_local_operation_label(operation)
+                        );
+                    }
+                }
+            }
+            ProcessingPipelineFamily::PostStackNeighborhood => {
+                if let ProcessingPipelineSpec::PostStackNeighborhood { pipeline } = pipeline {
+                    return execution_post_stack_progress_label(pipeline).to_string();
+                }
+            }
+            ProcessingPipelineFamily::Subvolume => {
+                if matches!(stage.stage_kind, ExecutionStageKind::FinalizeOutput) {
+                    return "Crop Subvolume".to_string();
+                }
+            }
+            ProcessingPipelineFamily::Gather => {
+                if let ProcessingPipelineSpec::Gather { pipeline } = pipeline {
+                    return execution_gather_progress_label(pipeline);
+                }
+            }
+        }
+    }
+
+    match stage.stage_kind {
+        ExecutionStageKind::FinalizeOutput => match pipeline {
+            ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
+                execution_post_stack_progress_label(pipeline).to_string()
+            }
+            ProcessingPipelineSpec::Subvolume { .. } => "Crop Subvolume".to_string(),
+            ProcessingPipelineSpec::Gather { pipeline } => {
+                execution_gather_progress_label(pipeline)
+            }
+            ProcessingPipelineSpec::TraceLocal { pipeline } => pipeline
+                .steps
+                .last()
+                .map(|step| {
+                    format!(
+                        "Step {}: {}",
+                        pipeline.steps.len(),
+                        execution_trace_local_operation_label(&step.operation)
+                    )
+                })
+                .unwrap_or_else(|| stage.output_artifact_id.clone()),
+        },
+        _ => stage.output_artifact_id.clone(),
+    }
+}
+
+pub fn execution_trace_local_operation_label(
+    operation: &TraceLocalProcessingOperation,
+) -> &'static str {
+    match operation {
+        TraceLocalProcessingOperation::AmplitudeScalar { .. } => "Amplitude Scale",
+        TraceLocalProcessingOperation::TraceRmsNormalize => "Trace RMS Normalize",
+        TraceLocalProcessingOperation::AgcRms { .. } => "AGC RMS",
+        TraceLocalProcessingOperation::PhaseRotation { .. } => "Phase Rotation",
+        TraceLocalProcessingOperation::Envelope => "Envelope",
+        TraceLocalProcessingOperation::InstantaneousPhase => "Instantaneous Phase",
+        TraceLocalProcessingOperation::InstantaneousFrequency => "Instantaneous Frequency",
+        TraceLocalProcessingOperation::Sweetness => "Sweetness",
+        TraceLocalProcessingOperation::LowpassFilter { .. } => "Lowpass Filter",
+        TraceLocalProcessingOperation::HighpassFilter { .. } => "Highpass Filter",
+        TraceLocalProcessingOperation::BandpassFilter { .. } => "Bandpass Filter",
+        TraceLocalProcessingOperation::VolumeArithmetic { .. } => "Volume Arithmetic",
+    }
+}
+
+pub fn execution_post_stack_progress_label(
+    pipeline: &PostStackNeighborhoodProcessingPipeline,
+) -> &'static str {
+    match pipeline.operations.first() {
+        Some(PostStackNeighborhoodProcessingOperation::Similarity { .. }) => "Similarity",
+        Some(PostStackNeighborhoodProcessingOperation::LocalVolumeStats { .. }) => {
+            "Local Volume Stats"
+        }
+        Some(PostStackNeighborhoodProcessingOperation::Dip { .. }) => "Dip",
+        None => "Neighborhood",
+    }
+}
+
+pub fn execution_gather_progress_label(pipeline: &GatherProcessingPipeline) -> String {
+    let operations = pipeline
+        .operations
+        .iter()
+        .map(|operation| match operation {
+            GatherProcessingOperation::NmoCorrection { .. } => "NMO Correction",
+            GatherProcessingOperation::StretchMute { .. } => "Stretch Mute",
+            GatherProcessingOperation::OffsetMute { .. } => "Offset Mute",
+        })
+        .collect::<Vec<_>>();
+    if operations.is_empty() {
+        "Gather".to_string()
+    } else {
+        operations.join(" -> ")
     }
 }
 

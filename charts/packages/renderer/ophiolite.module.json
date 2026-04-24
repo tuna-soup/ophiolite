@@ -1,0 +1,47 @@
+{
+  "$schema": "../../manifests/schemas/ophiolite-charts-module.schema.json",
+  "kind": "ophioliteChartsModule",
+  "id": "@ophiolite/charts-renderer",
+  "displayName": "Ophiolite Charts Renderer",
+  "layer": "renderer",
+  "supportTier": "internal",
+  "description": "Dense raster, canvas, and preview rendering kernels behind the public chart wrappers.",
+  "entrypoints": [
+    {
+      "subpath": ".",
+      "tier": "internal",
+      "description": "Internal renderer entrypoint for launch chart families."
+    },
+    {
+      "subpath": "./preview",
+      "tier": "preview",
+      "description": "Preview renderer entrypoint used by opt-in chart families."
+    }
+  ],
+  "dependsOn": [
+    {
+      "id": "@ophiolite/charts-core",
+      "role": "runtime"
+    },
+    {
+      "id": "@ophiolite/charts-data-models",
+      "role": "runtime"
+    },
+    {
+      "id": "@kitware/vtk.js",
+      "role": "preview-runtime",
+      "optional": true
+    }
+  ],
+  "testPolicy": {
+    "requiredSuites": ["typecheck", "renderer-fixtures", "visual-scenes"],
+    "releaseBlocking": true
+  },
+  "consumerGuarantees": {
+    "traceboostApproved": false,
+    "externalConsumerApproved": false
+  },
+  "notes": [
+    "Backend and fallback policy should surface through @ophiolite/charts rather than this package."
+  ]
+}

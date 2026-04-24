@@ -6,6 +6,8 @@ export * from "./seismic-axis";
 export * from "./probe-panel-presentation";
 export * from "./depth-mapping";
 export * from "./interaction-manager";
+export * from "./interaction-style";
+export * from "./interaction-dispatcher";
 export * from "./layout";
 export * from "./well-correlation-layout-cache";
 export * from "./well-correlation-chrome";

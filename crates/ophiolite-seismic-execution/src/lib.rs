@@ -30,13 +30,12 @@ use ophiolite_seismic::contracts::{
     ProcessingRuntimePolicyDivergenceField, ProcessingRuntimeState, ProcessingStageRuntimeSnapshot,
 };
 use ophiolite_seismic::{
-    GatherProcessingOperation, GatherProcessingPipeline, PostStackNeighborhoodProcessingOperation,
-    PostStackNeighborhoodProcessingPipeline, ProcessingBatchItemRequest, ProcessingBatchItemStatus,
-    ProcessingBatchProgress, ProcessingBatchState, ProcessingBatchStatus, ProcessingExecutionMode,
-    ProcessingJobArtifact, ProcessingJobExecutionSummary, ProcessingJobPlanSummary,
-    ProcessingJobProgress, ProcessingJobStageClassificationSummary, ProcessingJobState,
-    ProcessingJobStatus, ProcessingPipelineFamily, ProcessingPipelineSpec,
-    ProcessingSchedulerReason, TraceLocalProcessingOperation, TraceLocalProcessingPipeline,
+    ProcessingBatchItemRequest, ProcessingBatchItemStatus, ProcessingBatchProgress,
+    ProcessingBatchState, ProcessingBatchStatus, ProcessingExecutionMode, ProcessingJobArtifact,
+    ProcessingJobExecutionSummary, ProcessingJobPlanSummary, ProcessingJobProgress,
+    ProcessingJobStageClassificationSummary, ProcessingJobState, ProcessingJobStatus,
+    ProcessingPipelineFamily, ProcessingPipelineSpec, ProcessingSchedulerReason,
+    TraceLocalProcessingPipeline,
 };
 use ophiolite_seismic_runtime::{
     ExecutionExclusiveScope, ExecutionPlan, ExecutionPriorityClass, ExecutionQueueClass,
@@ -619,17 +618,32 @@ impl ProcessingJobRecord {
 
     pub fn set_stage_running(&self, stage_label: &str) {
         if let Some(stage_id) = self.stage_id_for_label(Some(stage_label)) {
+            let planned_policy = self.plan.as_ref().and_then(|plan| {
+                plan.stages
+                    .iter()
+                    .find(|stage| stage.stage_id == stage_id)
+                    .map(|stage| stage.lowered_scheduler_policy.clone())
+            });
             let started_at = unix_timestamp_s();
             self.update_stage_snapshot(
                 &stage_id,
                 stage_label,
                 ProcessingRuntimeState::Running,
-                None,
-                None,
+                Some(ProcessingJobWaitReason::Running),
+                planned_policy
+                    .as_ref()
+                    .map(|policy| processing_job_queue_class(policy.queue_class)),
                 true,
-                false,
-                0,
-                None,
+                planned_policy.as_ref().is_some_and(|policy| {
+                    matches!(policy.exclusive_scope, ExecutionExclusiveScope::FullVolume)
+                }),
+                planned_policy
+                    .as_ref()
+                    .map(|policy| policy.reservation_bytes)
+                    .unwrap_or(0),
+                planned_policy
+                    .as_ref()
+                    .map(|policy| policy.effective_max_active_partitions),
                 Some(started_at),
                 None,
                 None,
@@ -640,7 +654,23 @@ impl ProcessingJobRecord {
                 Some(stage_label.to_string()),
                 ProcessingRuntimeEventKind::StageRunning,
                 Some(ProcessingRuntimeState::Running),
-                ProcessingRuntimeEventDetails::None,
+                ProcessingRuntimeEventDetails::QueueState {
+                    queue_class: planned_policy
+                        .as_ref()
+                        .map(|policy| processing_job_queue_class(policy.queue_class)),
+                    wait_reason: Some(ProcessingJobWaitReason::Running),
+                    reserved_memory_bytes: planned_policy
+                        .as_ref()
+                        .map(|policy| policy.reservation_bytes)
+                        .unwrap_or(0),
+                    admitted: true,
+                    exclusive_scope_active: planned_policy.as_ref().is_some_and(|policy| {
+                        matches!(policy.exclusive_scope, ExecutionExclusiveScope::FullVolume)
+                    }),
+                    effective_max_active_partitions: planned_policy
+                        .as_ref()
+                        .map(|policy| policy.effective_max_active_partitions),
+                },
             );
         }
     }
@@ -709,7 +739,9 @@ fn initial_runtime_state(status: &ProcessingJobStatus) -> ProcessingJobRuntimeSt
                     started_at_unix_s: None,
                     updated_at_unix_s: status.created_at_unix_s,
                     completed_partitions: None,
-                    total_partitions: stage.expected_partition_count,
+                    total_partitions: stage
+                        .expected_partition_count
+                        .or(stage.resource_envelope.target_partition_count),
                     policy_divergences: Vec::new(),
                 })
                 .collect()
@@ -764,28 +796,15 @@ impl ProcessingJobRecord {
         };
 
         let planned_queue_class =
-            processing_job_queue_class(stage.resource_envelope.preferred_queue_class);
+            processing_job_queue_class(stage.lowered_scheduler_policy.queue_class);
         let planned_exclusive_scope_active = matches!(
-            stage.resource_envelope.exclusive_scope,
+            stage.lowered_scheduler_policy.exclusive_scope,
             ExecutionExclusiveScope::FullVolume
         );
         let planned_effective_max_active_partitions = stage
-            .expected_partition_count
-            .or(stage.resource_envelope.target_partition_count)
-            .or(stage.resource_envelope.max_partition_count)
-            .unwrap_or(1);
-        let planned_reserved_memory_bytes = stage
-            .stage_memory_profile
-            .as_ref()
-            .map(|profile| profile.reserve_hint_bytes)
-            .unwrap_or_else(|| {
-                stage.estimated_cost.estimated_peak_memory_bytes.max(
-                    stage
-                        .resource_envelope
-                        .resident_bytes_per_partition
-                        .saturating_add(stage.resource_envelope.workspace_bytes_per_worker),
-                )
-            });
+            .lowered_scheduler_policy
+            .effective_max_active_partitions;
+        let planned_reserved_memory_bytes = stage.lowered_scheduler_policy.reservation_bytes;
 
         let mut divergences = Vec::new();
         if planned_queue_class != actual_queue_class {
@@ -1374,14 +1393,7 @@ fn queue_class_for_job(
     plan: Option<&ExecutionPlan>,
 ) -> ExecutionQueueClass {
     if let Some(plan) = plan {
-        if let Some(queue_class) = plan
-            .stages
-            .iter()
-            .map(|stage| stage.resource_envelope.preferred_queue_class)
-            .max_by_key(|queue_class| queue_class_rank(*queue_class))
-        {
-            return queue_class;
-        }
+        return plan.runtime_environment.queue_class;
     }
     match priority {
         ExecutionPriorityClass::InteractivePreview => ExecutionQueueClass::InteractivePartition,
@@ -1391,24 +1403,22 @@ fn queue_class_for_job(
 }
 
 fn effective_max_active_partitions_for_job(plan: Option<&ExecutionPlan>) -> usize {
-    plan.and_then(|plan| plan.scheduler_hints.max_active_partitions)
-        .or_else(|| plan.and_then(|plan| plan.scheduler_hints.expected_partition_count))
-        .unwrap_or(1)
+    plan.and_then(|plan| {
+        plan.stages
+            .first()
+            .map(|stage| {
+                stage
+                    .lowered_scheduler_policy
+                    .effective_max_active_partitions
+            })
+            .or(Some(plan.runtime_environment.worker_budget))
+    })
+    .unwrap_or(1)
 }
 
 fn exclusive_scope_for_job(plan: Option<&ExecutionPlan>) -> ExecutionExclusiveScope {
-    if plan.is_some_and(|plan| {
-        plan.stages.iter().any(|stage| {
-            matches!(
-                stage.resource_envelope.exclusive_scope,
-                ExecutionExclusiveScope::FullVolume
-            ) || stage.classification.requires_full_volume
-        })
-    }) {
-        ExecutionExclusiveScope::FullVolume
-    } else {
-        ExecutionExclusiveScope::None
-    }
+    plan.map(|plan| plan.runtime_environment.exclusive_scope)
+        .unwrap_or(ExecutionExclusiveScope::None)
 }
 
 fn reserved_memory_bytes_for_job(
@@ -1417,18 +1427,17 @@ fn reserved_memory_bytes_for_job(
 ) -> u64 {
     plan.map(|plan| {
         let plan_summary_bytes = plan.plan_summary.max_estimated_peak_memory_bytes;
-        let stage_envelope_bytes = plan
+        let stage_policy_bytes = plan
             .stages
             .iter()
-            .map(|stage| {
-                stage
-                    .resource_envelope
-                    .resident_bytes_per_partition
-                    .saturating_add(stage.resource_envelope.workspace_bytes_per_worker)
-            })
+            .map(|stage| stage.lowered_scheduler_policy.reservation_bytes)
             .max()
             .unwrap_or(0);
-        plan_summary_bytes.max(stage_envelope_bytes)
+        plan.runtime_environment
+            .memory_budget
+            .reserve_bytes
+            .max(plan_summary_bytes)
+            .max(stage_policy_bytes)
     })
     .filter(|bytes| *bytes > 0)
     .unwrap_or_else(|| default_reserved_memory_bytes(pipeline))
@@ -1444,16 +1453,6 @@ fn default_reserved_memory_bytes(pipeline: &ProcessingPipelineSpec) -> u64 {
         MemoryCostClass::Low => 128 * 1024 * 1024,
         MemoryCostClass::Medium => 512 * 1024 * 1024,
         MemoryCostClass::High => 1024 * 1024 * 1024,
-    }
-}
-
-fn queue_class_rank(queue_class: ExecutionQueueClass) -> usize {
-    match queue_class {
-        ExecutionQueueClass::BackgroundPartition => 0,
-        ExecutionQueueClass::ForegroundPartition => 1,
-        ExecutionQueueClass::InteractivePartition => 2,
-        ExecutionQueueClass::Control => 3,
-        ExecutionQueueClass::ExclusiveFullVolume => 4,
     }
 }
 
@@ -1977,7 +1976,11 @@ fn inspectable_execution_stage(
     InspectableExecutionStage {
         stage_id: stage.stage_id.clone(),
         stage_kind: inspectable_stage_kind(stage.stage_kind),
-        stage_label: summarize_stage_label(pipeline, stage),
+        stage_label: if stage.stage_label.is_empty() {
+            summarize_stage_label(pipeline, stage)
+        } else {
+            stage.stage_label.clone()
+        },
         boundary_reason: boundary_reason_for_execution_stage(stage),
         input_artifact_ids: stage.input_artifact_ids.clone(),
         output_artifact_id: stage.output_artifact_id.clone(),
@@ -2199,125 +2202,13 @@ fn processing_job_stage_classification_summary(
 }
 
 fn summarize_stage_label(
-    pipeline: &ProcessingPipelineSpec,
+    _pipeline: &ProcessingPipelineSpec,
     stage: &ophiolite_seismic_runtime::ExecutionStage,
 ) -> String {
-    if let Some(segment) = stage.pipeline_segment.as_ref() {
-        match segment.family {
-            ProcessingPipelineFamily::TraceLocal => {
-                let trace_local_pipeline = match pipeline {
-                    ProcessingPipelineSpec::TraceLocal { pipeline } => Some(pipeline),
-                    ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
-                        pipeline.trace_local_pipeline.as_ref()
-                    }
-                    ProcessingPipelineSpec::Subvolume { pipeline } => {
-                        pipeline.trace_local_pipeline.as_ref()
-                    }
-                    ProcessingPipelineSpec::Gather { pipeline } => {
-                        pipeline.trace_local_pipeline.as_ref()
-                    }
-                };
-                if let Some(trace_local_pipeline) = trace_local_pipeline {
-                    if let Some(operation) = trace_local_pipeline
-                        .steps
-                        .get(segment.end_step_index)
-                        .map(|step| &step.operation)
-                    {
-                        return format!(
-                            "Step {}: {}",
-                            segment.end_step_index + 1,
-                            processing_operation_display_label(operation)
-                        );
-                    }
-                }
-            }
-            ProcessingPipelineFamily::PostStackNeighborhood => {
-                if let ProcessingPipelineSpec::PostStackNeighborhood { pipeline } = pipeline {
-                    return post_stack_neighborhood_progress_label(pipeline).to_string();
-                }
-            }
-            ProcessingPipelineFamily::Subvolume => {
-                if matches!(stage.stage_kind, ExecutionStageKind::FinalizeOutput) {
-                    return "Crop Subvolume".to_string();
-                }
-            }
-            ProcessingPipelineFamily::Gather => {
-                if let ProcessingPipelineSpec::Gather { pipeline } = pipeline {
-                    return gather_processing_progress_label(pipeline);
-                }
-            }
-        }
-    }
-
-    match stage.stage_kind {
-        ExecutionStageKind::FinalizeOutput => match pipeline {
-            ProcessingPipelineSpec::PostStackNeighborhood { pipeline } => {
-                post_stack_neighborhood_progress_label(pipeline).to_string()
-            }
-            ProcessingPipelineSpec::Subvolume { .. } => "Crop Subvolume".to_string(),
-            ProcessingPipelineSpec::Gather { pipeline } => {
-                gather_processing_progress_label(pipeline)
-            }
-            ProcessingPipelineSpec::TraceLocal { pipeline } => pipeline
-                .steps
-                .last()
-                .map(|step| {
-                    format!(
-                        "Step {}: {}",
-                        pipeline.steps.len(),
-                        processing_operation_display_label(&step.operation)
-                    )
-                })
-                .unwrap_or_else(|| stage.output_artifact_id.clone()),
-        },
-        _ => stage.output_artifact_id.clone(),
-    }
-}
-
-fn processing_operation_display_label(operation: &TraceLocalProcessingOperation) -> &'static str {
-    match operation {
-        TraceLocalProcessingOperation::AmplitudeScalar { .. } => "Amplitude Scale",
-        TraceLocalProcessingOperation::TraceRmsNormalize => "Trace RMS Normalize",
-        TraceLocalProcessingOperation::AgcRms { .. } => "AGC RMS",
-        TraceLocalProcessingOperation::PhaseRotation { .. } => "Phase Rotation",
-        TraceLocalProcessingOperation::Envelope => "Envelope",
-        TraceLocalProcessingOperation::InstantaneousPhase => "Instantaneous Phase",
-        TraceLocalProcessingOperation::InstantaneousFrequency => "Instantaneous Frequency",
-        TraceLocalProcessingOperation::Sweetness => "Sweetness",
-        TraceLocalProcessingOperation::LowpassFilter { .. } => "Lowpass Filter",
-        TraceLocalProcessingOperation::HighpassFilter { .. } => "Highpass Filter",
-        TraceLocalProcessingOperation::BandpassFilter { .. } => "Bandpass Filter",
-        TraceLocalProcessingOperation::VolumeArithmetic { .. } => "Volume Arithmetic",
-    }
-}
-
-fn post_stack_neighborhood_progress_label(
-    pipeline: &PostStackNeighborhoodProcessingPipeline,
-) -> &'static str {
-    match pipeline.operations.first() {
-        Some(PostStackNeighborhoodProcessingOperation::Similarity { .. }) => "Similarity",
-        Some(PostStackNeighborhoodProcessingOperation::LocalVolumeStats { .. }) => {
-            "Local Volume Stats"
-        }
-        Some(PostStackNeighborhoodProcessingOperation::Dip { .. }) => "Dip",
-        None => "Neighborhood",
-    }
-}
-
-fn gather_processing_progress_label(pipeline: &GatherProcessingPipeline) -> String {
-    let operations = pipeline
-        .operations
-        .iter()
-        .map(|operation| match operation {
-            GatherProcessingOperation::NmoCorrection { .. } => "NMO Correction",
-            GatherProcessingOperation::StretchMute { .. } => "Stretch Mute",
-            GatherProcessingOperation::OffsetMute { .. } => "Offset Mute",
-        })
-        .collect::<Vec<_>>();
-    if operations.is_empty() {
-        "Gather".to_string()
+    if stage.stage_label.is_empty() {
+        stage.output_artifact_id.clone()
     } else {
-        operations.join(" -> ")
+        stage.stage_label.clone()
     }
 }
 
@@ -3536,6 +3427,84 @@ mod tests {
             stage_divergence_fields
                 .contains(&ProcessingRuntimePolicyDivergenceField::ExclusiveScope)
         );
+    }
+
+    #[test]
+    fn stage_running_snapshot_uses_lowered_stage_policy_context() {
+        let service = ProcessingExecutionService::new(1);
+        let input_store_path =
+            canonical_test_store_path("runtime-stage-policy", [16, 16, 128], [4, 4, 128]);
+        let pipeline = ProcessingPipelineSpec::TraceLocal {
+            pipeline: TraceLocalProcessingPipeline {
+                schema_version: 1,
+                revision: 1,
+                preset_id: None,
+                name: Some("stage-policy-demo".to_string()),
+                description: None,
+                steps: vec![TraceLocalProcessingStep {
+                    operation: TraceLocalProcessingOperation::AmplitudeScalar { factor: 2.0 },
+                    checkpoint: false,
+                }],
+            },
+        };
+        let mut plan = build_execution_plan(&PlanProcessingRequest {
+            store_path: input_store_path.clone(),
+            layout: SeismicLayout::PostStack3D,
+            source_shape: Some([16, 16, 128]),
+            source_chunk_shape: Some([4, 4, 128]),
+            pipeline: pipeline.clone(),
+            output_store_path: Some("output.tbvol".to_string()),
+            planning_mode: PlanningMode::ForegroundMaterialize,
+            max_active_partitions: Some(2),
+        })
+        .expect("plan should build");
+        plan.stages[0].lowered_scheduler_policy.reservation_bytes = 777;
+        plan.stages[0]
+            .lowered_scheduler_policy
+            .effective_max_active_partitions = 2;
+        let stage_label = plan.stages[0].stage_label.clone();
+
+        let status = service.register_job(
+            input_store_path,
+            Some("output.tbvol".to_string()),
+            pipeline,
+            Some(plan),
+        );
+        let record = service
+            .job_record(&status.job_id)
+            .expect("registered job should exist");
+
+        record.set_stage_running(&stage_label);
+
+        let runtime = record.runtime_state();
+        let stage_snapshot = runtime
+            .stage_snapshots
+            .first()
+            .expect("stage snapshot should exist");
+        assert_eq!(stage_snapshot.state, ProcessingRuntimeState::Running);
+        assert_eq!(
+            stage_snapshot.queue_class,
+            Some(ProcessingJobQueueClass::ForegroundPartition)
+        );
+        assert_eq!(stage_snapshot.reserved_memory_bytes, 777);
+        assert_eq!(stage_snapshot.effective_max_active_partitions, Some(2));
+
+        let running_event = record
+            .runtime_events_after(None)
+            .into_iter()
+            .find(|event| event.event_kind == ProcessingRuntimeEventKind::StageRunning)
+            .expect("stage running event");
+        match running_event.details {
+            ProcessingRuntimeEventDetails::QueueState {
+                reserved_memory_bytes,
+                effective_max_active_partitions,
+                ..
+            } => {
+                assert_eq!(reserved_memory_bytes, 777);
+                assert_eq!(effective_max_active_partitions, Some(2));
+            }
+            details => panic!("unexpected event details: {details:?}"),
+        }
     }
 
     #[test]

@@ -1,0 +1,34 @@
+{
+  "$schema": "../../manifests/schemas/ophiolite-charts-module.schema.json",
+  "kind": "ophioliteChartsModule",
+  "id": "@ophiolite/charts-data-models",
+  "displayName": "Ophiolite Charts Data Models",
+  "layer": "models",
+  "supportTier": "internal",
+  "description": "Shared chart-family payloads, registries, adapters, and interaction vocabulary that back the public wrapper surface.",
+  "entrypoints": [
+    {
+      "subpath": ".",
+      "tier": "internal",
+      "description": "Internal and advanced package surface used by wrappers and tooling."
+    }
+  ],
+  "dependsOn": [
+    {
+      "id": "@ophiolite/contracts",
+      "role": "adapter-runtime"
+    }
+  ],
+  "testPolicy": {
+    "requiredSuites": ["typecheck", "registry-fixtures", "adapter-fixtures"],
+    "releaseBlocking": true
+  },
+  "consumerGuarantees": {
+    "traceboostApproved": false,
+    "externalConsumerApproved": false
+  },
+  "notes": [
+    "Do not lead public docs with this package.",
+    "Public examples should prefer @ophiolite/charts root exports over direct data-model imports."
+  ]
+}

@@ -23,7 +23,7 @@ It exists to keep the publication story honest.
 | `seis-contracts-views` | Public-core candidate | shared display/view contract package | publishable as part of shared contract surface |
 | `seis-runtime` | Public-core candidate | stable consumer-facing runtime bridge over seismic runtime/contracts | suitable public runtime-facing layer if kept app-neutral |
 | `seis-contracts-operations` | Public-core candidate | shared operations contract package | now decoupled from `ophiolite-project` |
-| `seis-contracts-interop` | Public-core candidate | shared interop contract package | follows decoupled operations package |
+| `seis-contracts-interop` | Internal | TraceBoost compatibility rename shim over `seis-contracts-operations` | keep outside `ophiolite-sdk` and public-core promises |
 | root `ophiolite` crate | Internal | broad compatibility facade over mixed workspace concerns | useful internally, wrong public promise |
 | `ophiolite-project` | Internal | project/catalog integration layer with broad local-app concerns | not current public SDK boundary |
 | `ophiolite-cli` | Internal | app/tooling surface | not a library SDK package |

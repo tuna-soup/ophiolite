@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "crates/ophiolite-capabilities",
     "crates/ophiolite-core",
     "crates/ophiolite-parser",
     "crates/ophiolite-table",
@@ -24,6 +25,7 @@ members = [
     "traceboost/app/traceboost-app",
     "apps/traceboost-demo/src-tauri",
     "scripts/contracts-export",
+    "scripts/ophiolite-boundary-check",
     "scripts/traceboost-contracts-export",
 ]
 exclude = ["apps/ophiolite-harness/src-tauri"]
@@ -49,6 +51,87 @@ schemars = "0.8"
 ts-rs = "12.0.1"
 thiserror = "2.0.18"
 tracing = "0.1.44"
+
+[workspace.metadata.ophiolite.boundaries]
+schema_version = 1
+source_of_truth = "workspace.metadata.ophiolite.boundaries"
+default_dependency_policy = "deny"
+public_surface_crate = "ophiolite-sdk"
+capability_registry_crate = "ophiolite-capabilities"
+
+[workspace.metadata.ophiolite.boundaries.class_rules.platform_core]
+allowed_dependencies = ["platform_core", "platform_support", "contract_shared"]
+forbidden_dependencies = ["adapter_compat", "app_support", "app_shell", "repo_tooling", "internal_compat"]
+export_policy = "may_publish"
+
+[workspace.metadata.ophiolite.boundaries.class_rules.platform_support]
+allowed_dependencies = ["platform_core", "platform_support", "contract_shared"]
+forbidden_dependencies = ["adapter_compat", "app_support", "app_shell", "repo_tooling"]
+export_policy = "internal_default"
+
+[workspace.metadata.ophiolite.boundaries.class_rules.contract_shared]
+allowed_dependencies = ["platform_core", "platform_support", "contract_shared"]
+forbidden_dependencies = ["adapter_compat", "app_support", "app_shell", "repo_tooling", "internal_compat"]
+export_policy = "may_publish"
+
+[workspace.metadata.ophiolite.boundaries.class_rules.adapter_compat]
+allowed_dependencies = ["platform_core", "platform_support", "contract_shared", "adapter_compat"]
+forbidden_dependencies = ["app_support", "app_shell", "repo_tooling"]
+export_policy = "compatibility_lane"
+
+[workspace.metadata.ophiolite.boundaries.class_rules.control_surface]
+allowed_dependencies = ["platform_core", "platform_support", "contract_shared", "adapter_compat", "internal_compat"]
+forbidden_dependencies = ["app_support", "app_shell", "repo_tooling"]
+export_policy = "internal_default"
+
+[workspace.metadata.ophiolite.boundaries.class_rules.app_support]
+allowed_dependencies = ["platform_core", "platform_support", "contract_shared", "adapter_compat", "control_surface", "app_support", "internal_compat"]
+forbidden_dependencies = ["repo_tooling"]
+export_policy = "app_local"
+
+[workspace.metadata.ophiolite.boundaries.class_rules.app_shell]
+allowed_dependencies = ["platform_core", "platform_support", "contract_shared", "adapter_compat", "control_surface", "app_support", "app_shell", "internal_compat"]
+forbidden_dependencies = ["repo_tooling"]
+export_policy = "app_local"
+
+[workspace.metadata.ophiolite.boundaries.class_rules.repo_tooling]
+allowed_dependencies = ["platform_core", "platform_support", "contract_shared", "adapter_compat", "control_surface", "app_support", "app_shell", "internal_compat", "repo_tooling"]
+forbidden_dependencies = []
+export_policy = "never_publish"
+
+[workspace.metadata.ophiolite.boundaries.class_rules.internal_compat]
+allowed_dependencies = ["platform_core", "platform_support", "contract_shared", "adapter_compat", "control_surface", "internal_compat"]
+forbidden_dependencies = ["app_support", "app_shell", "repo_tooling"]
+export_policy = "never_publish"
+
+[workspace.metadata.ophiolite.boundaries.packages]
+"ophiolite" = { class = "internal_compat", exposure = "internal_compatibility_facade" }
+"ophiolite-capabilities" = { class = "platform_core", exposure = "public_core_candidate" }
+"ophiolite-core" = { class = "platform_support", exposure = "internal_support" }
+"ophiolite-parser" = { class = "platform_support", exposure = "internal_support" }
+"ophiolite-table" = { class = "platform_support", exposure = "internal_support" }
+"ophiolite-package" = { class = "platform_support", exposure = "internal_support" }
+"ophiolite-project" = { class = "internal_compat", exposure = "internal_project_layer" }
+"ophiolite-ingest" = { class = "internal_compat", exposure = "internal_project_import_wrapper" }
+"ophiolite-compute" = { class = "platform_support", exposure = "internal_support" }
+"ophiolite-operators" = { class = "platform_core", exposure = "public_core_candidate" }
+"ophiolite-sdk" = { class = "platform_core", exposure = "public_core_candidate" }
+"ophiolite-seismic" = { class = "platform_core", exposure = "public_core_candidate" }
+"ophiolite-seismic-io" = { class = "platform_support", exposure = "internal_support" }
+"ophiolite-seismic-runtime" = { class = "platform_core", exposure = "public_core_candidate" }
+"ophiolite-seismic-execution" = { class = "platform_core", exposure = "public_core_candidate" }
+"ophiolite-cli" = { class = "control_surface", exposure = "internal_control_surface" }
+"seis-contracts-core" = { class = "contract_shared", exposure = "public_core_candidate" }
+"seis-contracts-views" = { class = "contract_shared", exposure = "public_core_candidate" }
+"seis-contracts-operations" = { class = "contract_shared", exposure = "public_core_candidate" }
+"seis-contracts-interop" = { class = "adapter_compat", exposure = "compatibility_lane" }
+"seis-io" = { class = "app_support", exposure = "demo_support" }
+"seis-runtime" = { class = "platform_core", exposure = "public_core_candidate" }
+"traceboost-app" = { class = "app_support", exposure = "demo_support" }
+"traceboost-desktop" = { class = "app_shell", exposure = "demo_shell" }
+"contracts-export" = { class = "repo_tooling", exposure = "repo_tooling" }
+"ophiolite-boundary-check" = { class = "repo_tooling", exposure = "repo_tooling" }
+"traceboost-contracts-export" = { class = "repo_tooling", exposure = "repo_tooling" }
 
 [package]
 name = "ophiolite"

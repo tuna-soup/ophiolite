@@ -17,6 +17,7 @@ use crate::identity::{CURRENT_RUNTIME_SEMANTICS_VERSION, CURRENT_STORE_WRITER_SE
 use crate::metadata::{DatasetKind, default_sample_axis_unit_for_domain, validate_vertical_axis};
 use crate::storage::section_assembler;
 use crate::storage::tbvol::{TbvolManifest, TbvolReader, TbvolWriter, load_tbvol_manifest};
+use crate::storage::tile_geometry::section_lod_step;
 use crate::storage::volume_store::{
     VolumeStoreWriter, read_dense_occupancy, read_dense_volume, write_dense_volume,
 };
@@ -191,8 +192,8 @@ impl StoreHandle {
         sample_range: [usize; 2],
         lod: u8,
     ) -> Result<SectionTileView, SeismicStoreError> {
-        let trace_step = section_tile_stride(lod)?;
-        let sample_step = section_tile_stride(lod)?;
+        let trace_step = section_lod_step(lod)?;
+        let sample_step = section_lod_step(lod)?;
         Ok(SectionTileView {
             section: self.section_view_from_plane(plane),
             trace_range,
@@ -410,14 +411,6 @@ pub fn load_array(handle: &StoreHandle) -> Result<Array3<f32>, SeismicStoreError
 pub fn load_occupancy(handle: &StoreHandle) -> Result<Option<Array2<u8>>, SeismicStoreError> {
     let reader = TbvolReader::open(&handle.root)?;
     read_dense_occupancy(&reader)
-}
-
-fn section_tile_stride(lod: u8) -> Result<usize, SeismicStoreError> {
-    1usize.checked_shl(lod as u32).ok_or_else(|| {
-        SeismicStoreError::Message(format!(
-            "section tile lod {lod} exceeds the supported stride width"
-        ))
-    })
 }
 
 pub(crate) fn apply_native_coordinate_reference_override(

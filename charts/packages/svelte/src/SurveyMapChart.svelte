@@ -8,9 +8,11 @@
     screenToWorld,
     SURVEY_MAP_MARGIN
   } from "@ophiolite/charts-core";
+  import type { ChartRendererTelemetryEvent } from "@ophiolite/charts-data-models";
   import { SurveyMapController } from "@ophiolite/charts-domain";
   import { SurveyMapCanvasRenderer } from "@ophiolite/charts-renderer";
   import ProbePanel from "./ProbePanel.svelte";
+  import { emitRendererStatusForChart } from "./renderer-status";
   import { adaptSurveyMapInputToModel } from "./survey-map-public-model";
   import { resolveSurveyMapStageSize, scaleSurveyMapStageSize } from "./survey-map-stage";
   import {
@@ -27,6 +29,7 @@
   let {
     chartId,
     map = null,
+    renderer = undefined,
     viewport = null,
     interactions = undefined,
     loading = false,
@@ -43,7 +46,9 @@
     onProbeChange,
     onSelectionChange,
     onInteractionStateChange,
-    onInteractionEvent
+    onInteractionEvent,
+    onRendererStatusChange,
+    onRendererTelemetry
   }: SurveyMapChartProps = $props();
 
   let controller: SurveyMapController | null = null;
@@ -56,9 +61,12 @@
   let lastSelectionKey = "";
   let lastInteractionKey = "";
   let lastInteractionStateKey = "";
+  let lastRendererStatusKey = "";
+  let lastRendererTelemetryEvent = $state.raw<ChartRendererTelemetryEvent | null>(null);
   let activePointerId: number | null = null;
   let activeDragKind: "pan" | null = null;
   let lastPanPoint = $state.raw<PanDragPoint | null>(null);
+  let rendererErrorMessage = $state<string | null>(null);
   let hostElement = $state.raw<HTMLDivElement | null>(null);
   let lastRequestedTool = resolveRequestedTool();
   let effectiveTool = $state(lastRequestedTool);
@@ -89,8 +97,43 @@
     }
     return null;
   });
+  $effect(() => {
+    lastRendererStatusKey = emitRendererStatusForChart(
+      "survey-map",
+      {
+        chartId,
+        renderer: rendererErrorMessage ? { ...(renderer ?? {}), runtimeErrorMessage: rendererErrorMessage } : renderer,
+        telemetryEvent: lastRendererTelemetryEvent
+      },
+      lastRendererStatusKey,
+      onRendererStatusChange
+    );
+  });
+
+  function handleRendererTelemetry(event: ChartRendererTelemetryEvent): void {
+    lastRendererTelemetryEvent = { ...event };
+    if (
+      event.kind === "mount-failed" ||
+      event.kind === "frame-failed" ||
+      event.kind === "context-lost"
+    ) {
+      rendererErrorMessage = event.message;
+    } else if (
+      event.kind === "backend-selected" ||
+      event.kind === "fallback-used" ||
+      event.kind === "context-restored"
+    ) {
+      rendererErrorMessage = null;
+    }
+    onRendererTelemetry?.({
+      chartId,
+      event: { ...event }
+    });
+  }
 
   function attachChartHost(element: HTMLDivElement): () => void {
+    rendererErrorMessage = null;
+    lastRendererTelemetryEvent = null;
     const activeController = new SurveyMapController(new SurveyMapCanvasRenderer());
     controller = activeController;
     currentProbe = null;
@@ -145,6 +188,9 @@
         });
       }
     });
+    const unsubscribeRendererTelemetry = activeController.onRendererTelemetry((event) => {
+      handleRendererTelemetry(event);
+    });
 
     const resizeObserver = new ResizeObserver(() => {
       activeController.refresh();
@@ -159,7 +205,33 @@
     const onKeyDown = (event: KeyboardEvent) => handleKeyDown(event);
     const onWheel = (event: WheelEvent) => handleWheel(event);
 
-    activeController.mount(element);
+    try {
+      activeController.mount(element);
+    } catch (error) {
+      if (!lastRendererTelemetryEvent) {
+        handleRendererTelemetry({
+          kind: "mount-failed",
+          phase: "mount",
+          backend: null,
+          recoverable: false,
+          message: error instanceof Error ? error.message : String(error),
+          detail: "Survey map wrapper observed a controller initialization failure.",
+          timestampMs: performance.now()
+        });
+      }
+      console.error("SurveyMapChart initialization failed.", error);
+      unsubscribeRendererTelemetry();
+      unsubscribeInteractionEvent();
+      unsubscribeStateChange();
+      resizeObserver.disconnect();
+      if (controller === activeController) {
+        controller = null;
+      }
+      currentProbe = null;
+      currentViewport = null;
+      activeController.dispose();
+      return () => {};
+    }
     resizeObserver.observe(element);
     element.addEventListener("pointerdown", onPointerDown);
     element.addEventListener("pointermove", onPointerMove);
@@ -172,10 +244,24 @@
     element.addEventListener("wheel", onWheel, { passive: false });
 
     $effect(() => {
-      syncController(activeController);
+      try {
+        syncController(activeController);
+      } catch (error) {
+        handleRendererTelemetry({
+          kind: "frame-failed",
+          phase: "render",
+          backend: null,
+          recoverable: true,
+          message: error instanceof Error ? error.message : String(error),
+          detail: "Survey map wrapper observed a controller sync failure.",
+          timestampMs: performance.now()
+        });
+        console.error("SurveyMapChart sync failed.", error);
+      }
     });
 
     return () => {
+      unsubscribeRendererTelemetry();
       unsubscribeInteractionEvent();
       unsubscribeStateChange();
       resizeObserver.disconnect();
@@ -269,8 +355,7 @@
     }
     activePointerId = event.pointerId;
     element.setPointerCapture(event.pointerId);
-    controller.focus();
-    if (effectiveTool === "pan") {
+    if (controller.handlePrimaryPointerDown() === "pan") {
       activeDragKind = "pan";
       lastPanPoint = {
         clientX: event.clientX,
@@ -288,11 +373,14 @@
     if (!(element instanceof HTMLDivElement)) {
       return;
     }
-    if (!activeDragKind && effectiveTool === "pointer") {
-      const point = pointerPoint(event, element);
-      controller.selectAt(point.x, point.y, element.clientWidth, element.clientHeight);
-      controller.updatePointer(point.x, point.y, element.clientWidth, element.clientHeight);
-    }
+    const point = pointerPoint(event, element);
+    controller.handlePrimaryPointerUp(
+      point.x,
+      point.y,
+      element.clientWidth,
+      element.clientHeight,
+      activeDragKind === "pan"
+    );
     activeDragKind = null;
     lastPanPoint = null;
     releasePointerCapture(element, event.pointerId);
@@ -327,41 +415,20 @@
   }
 
   function handleKeyDown(event: KeyboardEvent): void {
-    if (!controller || !currentViewport) {
+    if (!controller) {
       return;
     }
     if (event.key === "Escape") {
       activeDragKind = null;
       lastPanPoint = null;
-      event.preventDefault();
-      return;
     }
-
-    const stepX = (currentViewport.xMax - currentViewport.xMin) * 0.08;
-    const stepY = (currentViewport.yMax - currentViewport.yMin) * 0.08;
-
-    switch (event.key) {
-      case "ArrowLeft":
-        controller.pan(-stepX, 0);
-        event.preventDefault();
-        break;
-      case "ArrowRight":
-        controller.pan(stepX, 0);
-        event.preventDefault();
-        break;
-      case "ArrowUp":
-        controller.pan(0, stepY);
-        event.preventDefault();
-        break;
-      case "ArrowDown":
-        controller.pan(0, -stepY);
-        event.preventDefault();
-        break;
+    if (controller.handleKeyboardNavigation(event.key)) {
+      event.preventDefault();
     }
   }
 
   function handleWheel(event: WheelEvent): void {
-    if (!controller || !currentViewport) {
+    if (!controller) {
       return;
     }
     const element = event.currentTarget;
@@ -369,10 +436,9 @@
       return;
     }
     const point = pointerPoint(event, element);
-    const plotRect = getSurveyMapPlotRect(element.clientWidth, element.clientHeight);
-    const world = screenToWorld(point.x, point.y, currentViewport, plotRect);
-    controller.zoomAround(world.x, world.y, event.deltaY < 0 ? 1.12 : 0.9);
-    event.preventDefault();
+    if (controller.handleWheelAt(point.x, point.y, element.clientWidth, element.clientHeight, event.deltaY)) {
+      event.preventDefault();
+    }
   }
 
   function resolveRequestedTool(): "pointer" | "pan" {
@@ -464,8 +530,10 @@
       ></div>
       {#if loading}
         <div class="ophiolite-charts-overlay">{emptyMessage}</div>
-      {:else if errorMessage}
-        <div class="ophiolite-charts-overlay ophiolite-charts-overlay-error">{errorMessage}</div>
+      {:else if errorMessage || rendererErrorMessage}
+        <div class="ophiolite-charts-overlay ophiolite-charts-overlay-error">
+          {errorMessage ?? rendererErrorMessage}
+        </div>
       {:else if !normalizedMap}
         <div class="ophiolite-charts-overlay">{emptyMessage}</div>
       {/if}
@@ -504,7 +572,7 @@
           </div>
         </div>
       {/if}
-      {#if currentProbe && !loading && !errorMessage && normalizedMap && surveyMapProbePanelPosition}
+      {#if currentProbe && !loading && !errorMessage && !rendererErrorMessage && normalizedMap && surveyMapProbePanelPosition}
         <ProbePanel
           theme="light"
           size="compact"

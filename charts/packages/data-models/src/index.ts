@@ -1,4 +1,5 @@
 export * from "./interactions";
+export * from "./renderer-capabilities";
 export * from "./cartesian-axis";
 export * from "./chart-registry";
 export * from "./gather";
@@ -6,6 +7,7 @@ export * from "./gather-mock";
 export * from "./survey-map";
 export * from "./survey-map-mock";
 export * from "./seismic";
+export * from "./seismic-data-source";
 export * from "./seismic-mock";
 export * from "./ophiolite-seismic-adapter";
 export * from "./ophiolite-avo-adapter";

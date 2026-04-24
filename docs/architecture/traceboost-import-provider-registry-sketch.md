@@ -5,7 +5,7 @@ accepted in `ADR-0029`.
 
 ## Scope
 
-This is intentionally a TraceBoost app-layer sketch, not yet a shared `ophiolite` crate API.
+This is intentionally a TraceBoost app-layer sketch, not a shared `ophiolite` crate API or a public platform command surface.
 
 The goal is to standardize:
 
@@ -13,6 +13,11 @@ The goal is to standardize:
 - session state
 - normalized blockers and results
 - provider registration
+
+With the introduction of `crates/ophiolite-capabilities`, provider discovery should now be read as:
+
+- shared capability vocabulary and discovery record shape are platform-owned
+- provider activation, session lifecycle, and app transport remain TraceBoost-owned
 
 The goal is not to replace:
 
@@ -31,6 +36,7 @@ pub struct ImportManagerState {
 }
 
 pub struct ImportProviderRegistry {
+    capabilities: CapabilityRegistry,
     providers: BTreeMap<ImportProviderId, Box<dyn ImportProvider>>,
 }
 

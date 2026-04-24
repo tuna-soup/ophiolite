@@ -8,11 +8,14 @@ export {
   CHART_FAMILIES,
   getChartDefinition,
   getChartFamilyDefinition,
-  listChartDefinitionsByFamily
+  listChartDefinitionsByFamily,
+  listChartDefinitionsBySupportTier
 } from "@ophiolite/charts-data-models";
 export type * from "./types";
 export type {
   ChartAssetFamilyId,
+  ChartBackendId,
+  ChartBackendPreference,
   ChartCanonicalBoundaryId,
   ChartDefinition,
   ChartDefinitionId,
@@ -22,7 +25,13 @@ export type {
   ChartInteractionProfile,
   ChartInteractionToolId,
   ChartPublicSurfaceId,
-  ChartRendererKernelId
+  ChartRendererKernelId,
+  ChartRendererStatus,
+  ChartRendererTelemetryEvent,
+  ChartSupportTier,
+  SeismicSectionDataSource,
+  SeismicSectionDataSourceState,
+  SeismicSectionWindowRequest
 } from "@ophiolite/charts-data-models";
 export {
   ROCK_PHYSICS_CROSSPLOT_CHART_INTERACTION_CAPABILITIES,

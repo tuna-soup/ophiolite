@@ -4,7 +4,10 @@ use crate::execution::{SectionDomain, SectionWindowDomain};
 use crate::metadata::VolumeMetadata;
 use crate::store::SectionPlane;
 
-use super::tile_geometry::{TileCoord, TileGeometry};
+use super::tile_geometry::{
+    SectionTileIntersection, SectionWindowIntersection, TileCoord, TraceMajorTileLayout,
+    section_lod_step,
+};
 use super::volume_store::VolumeStoreReader;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,19 +48,21 @@ pub fn read_section_plane<R: VolumeStoreReader>(
         SectionAxis::Inline => volume.shape[1],
         SectionAxis::Xline => volume.shape[0],
     };
+    let layout = geometry.trace_major_layout();
     let mut amplitudes = vec![0.0_f32; traces * volume.shape[2]];
     let mut occupancy = volume_has_occupancy(reader).then(|| vec![0_u8; traces]);
 
     for tile in geometry.section_tiles(axis, index) {
+        let Some(intersection) = geometry.section_intersection(axis, index, tile) else {
+            continue;
+        };
         let tile_values = reader.read_tile(tile)?;
-        let tile_values = tile_values.as_slice();
         let tile_occupancy = reader.read_tile_occupancy(tile)?;
         copy_tile_into_section(
-            geometry,
             axis,
-            index,
-            tile,
-            tile_values,
+            &layout,
+            intersection,
+            tile_values.as_slice(),
             tile_occupancy.as_ref().map(|value| value.as_slice()),
             &mut amplitudes,
             occupancy.as_deref_mut(),
@@ -100,34 +105,29 @@ pub fn read_section_tile_plane<R: VolumeStoreReader>(
     };
     validate_tile_window(total_traces, volume.shape[2], trace_range, sample_range)?;
 
-    let trace_step = lod_step(lod)?;
-    let sample_step = lod_step(lod)?;
+    let trace_step = section_lod_step(lod)?;
+    let sample_step = section_lod_step(lod)?;
+    let layout = geometry.trace_major_layout();
     let traces = (trace_range[1] - trace_range[0]).div_ceil(trace_step);
     let samples = (sample_range[1] - sample_range[0]).div_ceil(sample_step);
     let mut amplitudes = vec![0.0_f32; traces * samples];
     let mut occupancy = volume_has_occupancy(reader).then(|| vec![0_u8; traces]);
 
     for tile in geometry.section_tiles(axis, index) {
-        let origin = geometry.tile_origin(tile);
-        let effective_shape = geometry.effective_tile_shape(tile);
-        let (tile_trace_start, tile_trace_end) = match axis {
-            SectionAxis::Inline => (origin[1], origin[1] + effective_shape[1]),
-            SectionAxis::Xline => (origin[0], origin[0] + effective_shape[0]),
-        };
-        if tile_trace_end <= trace_range[0] || tile_trace_start >= trace_range[1] {
+        let Some(intersection) =
+            geometry.section_window_intersection(axis, index, tile, trace_range)
+        else {
             continue;
-        }
+        };
 
         let tile_values = reader.read_tile(tile)?;
         let tile_occupancy = reader.read_tile_occupancy(tile)?;
         copy_tile_into_section_tile(
-            geometry,
             axis,
-            index,
-            tile,
+            &layout,
+            intersection,
             tile_values.as_slice(),
             tile_occupancy.as_ref().map(|value| value.as_slice()),
-            trace_range,
             sample_range,
             trace_step,
             sample_step,
@@ -180,20 +180,16 @@ pub fn section_assembly_plan<R: VolumeStoreReader>(
         trace_range,
         sample_range,
     )?;
-    let trace_step = lod_step(lod)?;
-    let sample_step = lod_step(lod)?;
+    let trace_step = section_lod_step(lod)?;
+    let sample_step = section_lod_step(lod)?;
     let geometry = reader.tile_geometry();
     let source_tiles = geometry
         .section_tiles(axis, index)
         .into_iter()
         .filter(|tile| {
-            let origin = geometry.tile_origin(*tile);
-            let effective_shape = geometry.effective_tile_shape(*tile);
-            let (tile_trace_start, tile_trace_end) = match axis {
-                SectionAxis::Inline => (origin[1], origin[1] + effective_shape[1]),
-                SectionAxis::Xline => (origin[0], origin[0] + effective_shape[0]),
-            };
-            !(tile_trace_end <= trace_range[0] || tile_trace_start >= trace_range[1])
+            geometry
+                .section_window_intersection(axis, index, *tile, trace_range)
+                .is_some()
         })
         .collect();
     Ok(SectionAssemblyPlan {
@@ -304,14 +300,6 @@ fn validate_tile_window(
     Ok(())
 }
 
-fn lod_step(lod: u8) -> Result<usize, SeismicStoreError> {
-    1usize.checked_shl(lod as u32).ok_or_else(|| {
-        SeismicStoreError::Message(format!(
-            "section tile lod {lod} exceeds the supported stride width"
-        ))
-    })
-}
-
 fn sampled_axis_f64(values: &[f64], range: [usize; 2], step: usize) -> Vec<f64> {
     (range[0]..range[1])
         .step_by(step)
@@ -327,48 +315,44 @@ fn sampled_axis_f32(values: &[f32], range: [usize; 2], step: usize) -> Vec<f32> 
 }
 
 fn copy_tile_into_section(
-    geometry: &TileGeometry,
     axis: SectionAxis,
-    index: usize,
-    tile: TileCoord,
+    layout: &TraceMajorTileLayout,
+    intersection: SectionTileIntersection,
     tile_values: &[f32],
     tile_occupancy: Option<&[u8]>,
     section_amplitudes: &mut [f32],
     mut section_occupancy: Option<&mut [u8]>,
 ) {
-    let tile_shape = geometry.tile_shape();
-    let effective_shape = geometry.effective_tile_shape(tile);
-    let origin = geometry.tile_origin(tile);
-    let samples = tile_shape[2];
+    let samples = layout.samples();
 
     match axis {
         SectionAxis::Inline => {
-            let local_i = index - origin[0];
-            for local_x in 0..effective_shape[1] {
-                let src_trace = ((local_i * tile_shape[1]) + local_x) * samples;
-                let dst_trace = origin[1] + local_x;
+            let local_i = intersection.section_local_offset;
+            for local_x in 0..intersection.trace_len() {
+                let src_trace = layout.amplitude_trace_offset(local_i, local_x);
+                let dst_trace = intersection.section_trace_range[0] + local_x;
                 let dst_start = dst_trace * samples;
                 section_amplitudes[dst_start..dst_start + samples]
                     .copy_from_slice(&tile_values[src_trace..src_trace + samples]);
                 if let (Some(tile_mask), Some(section_mask)) =
                     (tile_occupancy, section_occupancy.as_deref_mut())
                 {
-                    section_mask[dst_trace] = tile_mask[local_i * tile_shape[1] + local_x];
+                    section_mask[dst_trace] = tile_mask[layout.occupancy_index(local_i, local_x)];
                 }
             }
         }
         SectionAxis::Xline => {
-            let local_x = index - origin[1];
-            for local_i in 0..effective_shape[0] {
-                let src_trace = ((local_i * tile_shape[1]) + local_x) * samples;
-                let dst_trace = origin[0] + local_i;
+            let local_x = intersection.section_local_offset;
+            for local_i in 0..intersection.trace_len() {
+                let src_trace = layout.amplitude_trace_offset(local_i, local_x);
+                let dst_trace = intersection.section_trace_range[0] + local_i;
                 let dst_start = dst_trace * samples;
                 section_amplitudes[dst_start..dst_start + samples]
                     .copy_from_slice(&tile_values[src_trace..src_trace + samples]);
                 if let (Some(tile_mask), Some(section_mask)) =
                     (tile_occupancy, section_occupancy.as_deref_mut())
                 {
-                    section_mask[dst_trace] = tile_mask[local_i * tile_shape[1] + local_x];
+                    section_mask[dst_trace] = tile_mask[layout.occupancy_index(local_i, local_x)];
                 }
             }
         }
@@ -377,13 +361,11 @@ fn copy_tile_into_section(
 
 #[allow(clippy::too_many_arguments)]
 fn copy_tile_into_section_tile(
-    geometry: &TileGeometry,
     axis: SectionAxis,
-    index: usize,
-    tile: TileCoord,
+    layout: &TraceMajorTileLayout,
+    intersection: SectionWindowIntersection,
     tile_values: &[f32],
     tile_occupancy: Option<&[u8]>,
-    trace_range: [usize; 2],
     sample_range: [usize; 2],
     trace_step: usize,
     sample_step: usize,
@@ -391,25 +373,19 @@ fn copy_tile_into_section_tile(
     section_amplitudes: &mut [f32],
     mut section_occupancy: Option<&mut [u8]>,
 ) {
-    let tile_shape = geometry.tile_shape();
-    let effective_shape = geometry.effective_tile_shape(tile);
-    let origin = geometry.tile_origin(tile);
-    let tile_samples = tile_shape[2];
+    let tile_samples = layout.samples();
 
     match axis {
         SectionAxis::Inline => {
-            let local_i = index - origin[0];
-            for local_x in 0..effective_shape[1] {
-                let global_trace = origin[1] + local_x;
-                if global_trace < trace_range[0] || global_trace >= trace_range[1] {
-                    continue;
-                }
-                let relative_trace = global_trace - trace_range[0];
+            let local_i = intersection.section_local_offset;
+            for offset in 0..intersection.trace_len() {
+                let local_x = intersection.tile_trace_range[0] + offset;
+                let relative_trace = intersection.window_trace_range[0] + offset;
                 if relative_trace % trace_step != 0 {
                     continue;
                 }
                 let dst_trace = relative_trace / trace_step;
-                let src_trace_index = (local_i * tile_shape[1]) + local_x;
+                let src_trace_index = layout.trace_index(local_i, local_x);
                 let src_trace_start = src_trace_index * tile_samples;
                 let dst_trace_start = dst_trace * output_samples;
 
@@ -429,18 +405,15 @@ fn copy_tile_into_section_tile(
             }
         }
         SectionAxis::Xline => {
-            let local_x = index - origin[1];
-            for local_i in 0..effective_shape[0] {
-                let global_trace = origin[0] + local_i;
-                if global_trace < trace_range[0] || global_trace >= trace_range[1] {
-                    continue;
-                }
-                let relative_trace = global_trace - trace_range[0];
+            let local_x = intersection.section_local_offset;
+            for offset in 0..intersection.trace_len() {
+                let local_i = intersection.tile_trace_range[0] + offset;
+                let relative_trace = intersection.window_trace_range[0] + offset;
                 if relative_trace % trace_step != 0 {
                     continue;
                 }
                 let dst_trace = relative_trace / trace_step;
-                let src_trace_index = (local_i * tile_shape[1]) + local_x;
+                let src_trace_index = layout.trace_index(local_i, local_x);
                 let src_trace_start = src_trace_index * tile_samples;
                 let dst_trace_start = dst_trace * output_samples;
 
@@ -458,6 +431,181 @@ fn copy_tile_into_section_tile(
                     section_mask[dst_trace] = tile_mask[src_trace_index];
                 }
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use ndarray::{Array2, Array3};
+
+    use crate::metadata::{
+        DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, VolumeAxes,
+        generate_store_id,
+    };
+    use crate::storage::tile_geometry::TileGeometry;
+    use crate::storage::volume_store::{OccupancyTile, TileBuffer};
+
+    use super::*;
+
+    struct MockReader {
+        volume: VolumeMetadata,
+        geometry: TileGeometry,
+        data: Array3<f32>,
+        occupancy: Option<Array2<u8>>,
+    }
+
+    impl MockReader {
+        fn new(shape: [usize; 3], tile_shape: [usize; 3]) -> Self {
+            let mut data = Array3::<f32>::zeros((shape[0], shape[1], shape[2]));
+            let mut occupancy = Array2::<u8>::from_elem((shape[0], shape[1]), 1);
+            for iline in 0..shape[0] {
+                for xline in 0..shape[1] {
+                    for sample in 0..shape[2] {
+                        data[[iline, xline, sample]] =
+                            (iline as f32 * 100.0) + (xline as f32 * 10.0) + sample as f32;
+                    }
+                }
+            }
+            occupancy[[1, 4]] = 0;
+            Self {
+                volume: test_volume_metadata(shape),
+                geometry: TileGeometry::new(shape, tile_shape),
+                data,
+                occupancy: Some(occupancy),
+            }
+        }
+    }
+
+    impl VolumeStoreReader for MockReader {
+        fn volume(&self) -> &VolumeMetadata {
+            &self.volume
+        }
+
+        fn tile_geometry(&self) -> &TileGeometry {
+            &self.geometry
+        }
+
+        fn read_tile<'a>(&'a self, tile: TileCoord) -> Result<TileBuffer<'a>, SeismicStoreError> {
+            let extent = self.geometry.tile_extent(tile);
+            let layout = self.geometry.trace_major_layout();
+            let mut amplitudes = vec![0.0_f32; self.geometry.amplitude_tile_len()];
+            for local_i in 0..extent.trace_shape[0] {
+                for local_x in 0..extent.trace_shape[1] {
+                    for sample in 0..extent.samples {
+                        amplitudes[layout.amplitude_index(local_i, local_x, sample)] = self.data[[
+                            extent.origin[0] + local_i,
+                            extent.origin[1] + local_x,
+                            sample,
+                        ]];
+                    }
+                }
+            }
+            Ok(TileBuffer::owned(amplitudes))
+        }
+
+        fn read_tile_occupancy<'a>(
+            &'a self,
+            tile: TileCoord,
+        ) -> Result<Option<OccupancyTile<'a>>, SeismicStoreError> {
+            let Some(mask) = &self.occupancy else {
+                return Ok(None);
+            };
+            let extent = self.geometry.tile_extent(tile);
+            let layout = self.geometry.trace_major_layout();
+            let mut occupancy = vec![0_u8; self.geometry.occupancy_tile_len()];
+            for local_i in 0..extent.trace_shape[0] {
+                for local_x in 0..extent.trace_shape[1] {
+                    occupancy[layout.occupancy_index(local_i, local_x)] =
+                        mask[[extent.origin[0] + local_i, extent.origin[1] + local_x]];
+                }
+            }
+            Ok(Some(OccupancyTile::owned(occupancy)))
+        }
+    }
+
+    #[test]
+    fn read_section_tile_plane_clips_edge_tiles_with_lod() {
+        let reader = MockReader::new([3, 5, 4], [2, 3, 4]);
+
+        let plane = read_section_tile_plane(&reader, SectionAxis::Inline, 1, [2, 5], [1, 4], 1)
+            .expect("assemble inline window");
+
+        assert_eq!(plane.traces, 2);
+        assert_eq!(plane.samples, 2);
+        assert_eq!(plane.horizontal_axis, vec![2.0, 4.0]);
+        assert_eq!(plane.sample_axis_ms, vec![2.0, 6.0]);
+        assert_eq!(plane.amplitudes, vec![121.0, 123.0, 141.0, 143.0]);
+        assert_eq!(plane.occupancy, Some(vec![1, 0]));
+    }
+
+    #[test]
+    fn section_assembly_plan_only_lists_intersecting_tiles() {
+        let reader = MockReader::new([3, 5, 4], [2, 3, 4]);
+
+        let plan = section_assembly_plan(&reader, SectionAxis::Inline, 1, [2, 5], [0, 4], 0)
+            .expect("build assembly plan");
+
+        assert_eq!(
+            plan.source_tiles,
+            vec![
+                TileCoord {
+                    tile_i: 0,
+                    tile_x: 0,
+                },
+                TileCoord {
+                    tile_i: 0,
+                    tile_x: 1,
+                },
+            ]
+        );
+        assert_eq!(plan.output_shape, [3, 4]);
+    }
+
+    fn test_volume_metadata(shape: [usize; 3]) -> VolumeMetadata {
+        VolumeMetadata {
+            kind: DatasetKind::Source,
+            store_id: generate_store_id(),
+            source: SourceIdentity {
+                source_path: PathBuf::from("synthetic://section-assembler-test"),
+                file_size: 0,
+                trace_count: (shape[0] * shape[1]) as u64,
+                samples_per_trace: shape[2],
+                sample_interval_us: 2000,
+                sample_format_code: 5,
+                sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(5),
+                endianness: "big".to_string(),
+                revision_raw: 0,
+                fixed_length_trace_flag_raw: 1,
+                extended_textual_headers: 0,
+                geometry: GeometryProvenance {
+                    inline_field: HeaderFieldSpec {
+                        name: "INLINE".to_string(),
+                        start_byte: 189,
+                        value_type: "I32".to_string(),
+                    },
+                    crossline_field: HeaderFieldSpec {
+                        name: "XLINE".to_string(),
+                        start_byte: 193,
+                        value_type: "I32".to_string(),
+                    },
+                    third_axis_field: None,
+                },
+                regularization: None,
+            },
+            shape,
+            axes: VolumeAxes::from_time_axis(
+                (0..shape[0]).map(|value| value as f64).collect(),
+                (0..shape[1]).map(|value| value as f64).collect(),
+                (0..shape[2]).map(|value| value as f32 * 2.0).collect(),
+            ),
+            segy_export: None,
+            coordinate_reference_binding: None,
+            spatial: None,
+            created_by: "section-assembler-test".to_string(),
+            processing_lineage: None,
         }
     }
 }

@@ -9,6 +9,8 @@ draft: false
 
 The CLI is the operational command boundary for Ophiolite.
 
+It is the platform command surface, not the TraceBoost desktop command table.
+
 ## Current commands
 
 The current public command set includes:
@@ -41,6 +43,24 @@ The current public command set includes:
 ## Design rule
 
 If a behavior is part of the public platform contract, it should be visible as an intentional command, not hidden behind app-specific glue.
+
+The inverse is also true:
+
+- TraceBoost desktop command names are app-local adapter details
+- the CLI should teach platform meanings directly
+- app transport quirks should not be documented as if they were stable CLI API
+
+## Relationship to TraceBoost desktop
+
+TraceBoost desktop uses its own internal command boundary for frontend-to-backend transport.
+
+That boundary may call the same shared runtime and contract layers as the CLI, but it is still an application shell concern:
+
+- the command list is not a public Ophiolite API commitment
+- desktop commands should stay thin and delegate to shared or app-framework behavior
+- compatibility shims can exist in the desktop layer without expanding the platform promise
+
+Use the CLI when you want a platform-owned operational surface. Use TraceBoost desktop when you want the first-party workflow application.
 
 ## Example
 

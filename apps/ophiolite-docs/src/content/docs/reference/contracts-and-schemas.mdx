@@ -16,6 +16,23 @@ Use this section when you need exact boundary shapes.
 - generated TypeScript contracts
 - compatibility expectations for external packages
 
+## Canonical versus compatibility contracts
+
+The contract story has two lanes:
+
+- canonical shared contracts owned by the platform
+- compatibility contracts or re-export paths that exist for migration and adapter support
+
+Canonical contracts should be the first choice for new integrations.
+
+Compatibility lanes remain valid when needed, but they should be marked and taught as such. A compatibility package carrying canonical payloads does not make that package the source of truth.
+
 ## Rule
 
 Contracts are boundary artifacts. They should stay aligned with core concepts, but they should not become the primary way newcomers learn the product.
+
+The same ownership rule applies to app shells:
+
+- TraceBoost desktop commands may transport canonical contracts
+- TraceBoost-oriented contract packages may re-export canonical types during migration
+- neither one becomes the public Ophiolite contract merely by existing

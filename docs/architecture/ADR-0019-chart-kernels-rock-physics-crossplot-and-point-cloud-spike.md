@@ -20,6 +20,17 @@ The first new family in this structure is `RockPhysicsCrossplot`.
 
 The first concrete template/preset is `VpVs_vs_AI`.
 
+## Implementation Status
+
+The initial spike described by this ADR is now implemented in the chart SDK.
+
+Current implemented shape:
+
+- `RockPhysicsCrossplotChart` exists as a public launch wrapper in `@ophiolite/charts`
+- the point-cloud spike renderer remains the family-specific dense drawing path
+- the wrapper now exposes the same renderer status/telemetry contract used by the other launch families
+- backend fallback and runtime failure are surfaced through wrapper status rather than remaining local renderer behavior only
+
 ## Why
 
 The current chart SDK already has a sound boundary rule:
@@ -179,6 +190,7 @@ The first spike is intentionally narrower than the final product:
 - color modes: constrained categorical/continuous options
 - no authored editing
 - no production picking contract yet
+- public wrapper availability and renderer diagnostics are in scope and now implemented
 
 ### 3. Add demo and benchmark surfaces
 
@@ -204,8 +216,11 @@ This ADR does not yet define:
 - the exact upstream Ophiolite contract type name for the resolved rock-physics DTO
 - the full production `PointCloudKernel` API
 - authored interpretation editing for crossplots
-- a final public Svelte wrapper for `RockPhysicsCrossplot`
 - full benchmark automation/gating infrastructure
+
+The public `RockPhysicsCrossplotChart` wrapper is no longer future work. The
+remaining open questions are about deep kernel/runtime evolution, not whether
+the family has a public launch wrapper.
 
 Those belong to the next implementation slices after the first spike and DTO stabilization.
 
@@ -214,7 +229,7 @@ Those belong to the next implementation slices after the first spike and DTO sta
 The next implementation phases should add:
 
 - generated contract types for resolved rock-physics chart DTOs
-- public `RockPhysicsCrossplotChart` wrappers
 - point-cloud picking and selection contracts
 - exact/progressive interaction switching in the runtime kernel
 - stronger benchmark scenarios for recolor, filter, and selection latency
+- richer renderer/backend telemetry below the wrapper if the point-cloud kernel grows more recovery modes

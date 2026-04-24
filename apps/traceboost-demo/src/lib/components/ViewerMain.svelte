@@ -163,7 +163,8 @@
   const distributionStale = $derived(
     Boolean(distributionResult && distributionResultKey && distributionCurrentKey && distributionResultKey !== distributionCurrentKey)
   );
-  const tileWindow = $derived(resolveSectionTileWindow(viewerModel.section));
+  const tileWindow = $derived(resolveSectionTileWindow(viewerModel.lastSectionTileDataSourceState));
+  const rendererStatus = $derived(viewerModel.lastChartRendererStatus);
   const tileHitRate = $derived(
     tileStats.cacheHits + tileStats.fetches > 0 ? tileStats.cacheHits / (tileStats.cacheHits + tileStats.fetches) : null
   );
@@ -189,6 +190,18 @@
     if (viewerModel.sectionScalarOverlays.length > 0) {
       return "Scalar overlays";
     }
+    if (viewerModel.lastSectionTileDataSourceState?.status === "scheduled") {
+      return "Queued";
+    }
+    if (viewerModel.lastSectionTileDataSourceState?.status === "loading") {
+      return "Loading";
+    }
+    if (viewerModel.lastSectionTileDataSourceState?.status === "error") {
+      return "Tile error";
+    }
+    if (viewerModel.lastSectionTileDataSourceState?.source === "cache") {
+      return "Cache hit";
+    }
     return "Active";
   });
   const tileDiagnosticsDetail = $derived.by(() => {
@@ -203,8 +216,16 @@
         return "Velocity overlays currently force full-section loads.";
       case "Scalar overlays":
         return "Scalar overlays currently force full-section loads.";
+      case "Queued":
+        return "The chart scheduled a viewport tile request and is waiting for the debounce window.";
+      case "Loading":
+        return "The chart is loading a viewport tile through the public dataSource boundary.";
+      case "Tile error":
+        return viewerModel.lastSectionTileDataSourceState?.errorMessage ?? "Viewport tile loading failed.";
+      case "Cache hit":
+        return "The chart satisfied the viewport request from the SDK loader cache.";
       case "Active":
-        return "Viewport tiles with halo plus adjacent-slice prefetch.";
+        return "Viewport tiles flow through the chart dataSource seam; TraceBoost keeps transport, cache policy, and diagnostics.";
       case "Waiting":
         return "Load a section and move the viewport to start tile traffic.";
       default:
@@ -463,30 +484,19 @@
   }
 
   function resolveSectionTileWindow(
-    section: unknown
+    state: { request?: { traceRange?: readonly [number, number]; sampleRange?: readonly [number, number]; lod?: number } | null } | null
   ): { trace_start: number; trace_end: number; sample_start: number; sample_end: number; lod?: number } | null {
-    if (!section || typeof section !== "object" || !("window" in section)) {
+    const request = state?.request;
+    if (!request?.traceRange || !request?.sampleRange) {
       return null;
     }
-    const candidate = (section as { window?: unknown }).window;
-    if (!candidate || typeof candidate !== "object") {
-      return null;
-    }
-    if (
-      "trace_start" in candidate &&
-      "trace_end" in candidate &&
-      "sample_start" in candidate &&
-      "sample_end" in candidate
-    ) {
-      return candidate as {
-        trace_start: number;
-        trace_end: number;
-        sample_start: number;
-        sample_end: number;
-        lod?: number;
-      };
-    }
-    return null;
+    return {
+      trace_start: request.traceRange[0],
+      trace_end: request.traceRange[1],
+      sample_start: request.sampleRange[0],
+      sample_end: request.sampleRange[1],
+      lod: request.lod
+    };
   }
 
   function formatIndexRange(start: number, end: number): string {
@@ -765,6 +775,12 @@
           <dd>{tileStats.fetches} viewport · {tileStats.prefetchRequests} prefetch</dd>
         </div>
         <div>
+          <dt>Renderer</dt>
+          <dd>
+            {rendererStatus?.activeBackend ?? "none"} · {rendererStatus?.availability ?? "unknown"}
+          </dd>
+        </div>
+        <div>
           <dt>Errors</dt>
           <dd>{tileStats.fetchErrors + tileStats.prefetchErrors}</dd>
         </div>
@@ -1007,6 +1023,7 @@
             chartId={`traceboost-main:${chartSessionKey}`}
             viewId={displayedViewId}
             section={processingModel.displaySection}
+            dataSource={viewerModel.sectionChartDataSource}
             sectionScalarOverlays={viewerModel.sectionScalarOverlays}
             sectionHorizons={viewerModel.sectionHorizons}
             sectionWellOverlays={viewerModel.sectionWellOverlays}
@@ -1026,6 +1043,9 @@
             onViewportChange={viewerModel.setViewport}
             onInteractionChange={viewerModel.setInteraction}
             onInteractionStateChange={viewerModel.setInteractionState}
+            onDataSourceStateChange={viewerModel.setSectionDataSourceState}
+            onRendererStatusChange={viewerModel.setChartRendererStatus}
+            onRendererTelemetry={viewerModel.setChartRendererTelemetry}
             onSplitPositionChange={(ratio) => viewerModel.setCompareSplitPosition(ratio)}
             stageScale={2}
             stageTopLeft={chartDisplayOverlay}

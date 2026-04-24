@@ -7,10 +7,23 @@ draft: false
 | Surface | Audience | Maturity | Production guidance | Notes |
 | --- | --- | --- | --- | --- |
 | Python SDK | workflow builders | Preview | Recommended first evaluation path | Best starting point, but still narrower than Rust in some areas |
-| CLI | automation and CI | Preview | Good for scripts and operational flows | JSON command boundary |
-| Rust core | embedders and platform teams | Preview | Deepest exact surface | Canonical runtime truth |
+| CLI | automation and CI | Preview | Good for scripts and operational flows | Platform JSON command boundary |
+| Rust core | embedders and platform teams | Preview | Deepest exact surface | Canonical runtime truth and shared capability vocabulary |
 | Operator packages | extension authors | Preview | Strong fit for controlled local extension | Python runtime isolation implemented |
 | Charts integrations | app teams | Experimental | Secondary to the runtime story | Useful in consumers, not the product headline |
+| Compatibility surfaces | advanced users and migration work | Internal | Use only when you need older names, adapter shims, or raw transport shapes | Not part of the durable public promise |
 | Reference apps | internal teams and evaluators | Internal | Do not treat as the platform contract | TraceBoost is a consumer, not the identity |
+
+## Reading the matrix
+
+The platform story is the combination of canonical Rust behavior plus thin public control surfaces over that behavior.
+
+The current split is:
+
+- platform surfaces: Rust core, CLI, Python SDK, shared contracts, chart SDK, capability vocabulary
+- compatibility surfaces: interop packages, migration shims, and raw transport-oriented namespaces
+- app-local surfaces: TraceBoost desktop commands, workflow orchestration, session UX, and import-provider activation
+
+The important rule is that the TraceBoost desktop command boundary is internal to the app even when it transports canonical contracts.
 
 See [stability levels](/docs/advanced/stability-levels/) for the label definitions.

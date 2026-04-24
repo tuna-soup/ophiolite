@@ -1,10 +1,6 @@
 import { createContext, tick } from "svelte";
 import type { SeismicSectionAnalysisSelectionMode } from "@ophiolite/charts";
 import type {
-  OperatorCatalog,
-  OperatorCatalogEntry,
-  OperatorFamily,
-  OperatorParameterDoc,
   AmplitudeSpectrumRequest,
   AmplitudeSpectrumResponse,
   InspectableProcessingPlan,
@@ -47,15 +43,17 @@ import {
   getProcessingRuntimeState,
   listProcessingRuntimeEvents,
   listPipelinePresets,
-  loadDatasetOperatorCatalog,
   previewPostStackNeighborhoodProcessing,
   previewProcessing,
+  resolveProcessingAuthoringPalette,
   resolveProcessingRunOutput,
   runPostStackNeighborhoodProcessing,
   runProcessing,
   runSubvolumeProcessing,
   savePipelinePreset,
   submitProcessingBatch,
+  type ProcessingAuthoringPaletteItem,
+  type ResolveProcessingAuthoringPaletteResponse,
   type TransportSectionView
 } from "./bridge";
 import { confirmOverwriteStore, pickOutputStorePath } from "./file-dialog";
@@ -158,297 +156,13 @@ export type OperatorCatalogId =
   | "highpass_filter"
   | "bandpass_filter";
 
-interface OperatorCatalogDefinition {
-  id: OperatorCatalogId;
-  canonicalId: string;
-  canonicalFamily: Extract<OperatorFamily, "trace_local_processing" | "subvolume_processing">;
-  fallbackLabel: string;
-  fallbackDescription: string;
-  searchTerms: string[];
-  aliasLabel?: string | null;
-  shortcut: "a" | "n" | "g" | "h" | "e" | "p" | "f" | "s" | "l" | "i" | "b" | "v" | "c" | null;
-  create: (viewerModel: ViewerModel) => WorkspaceOperation;
-}
-
 interface CopiedSessionPipeline {
   family: ProcessingWorkspaceFamily;
   pipeline: ProcessingPipeline;
   subvolumeCrop: SubvolumeCropOperation | null;
   postStackNeighborhoodPipeline: PostStackNeighborhoodProcessingPipeline | null;
 }
-
-const OPERATOR_CATALOG: readonly OperatorCatalogDefinition[] = [
-  {
-    id: "amplitude_scalar",
-    canonicalId: "amplitude_scalar",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Amplitude Scalar",
-    fallbackDescription: "Scale trace amplitudes by a constant factor.",
-    searchTerms: ["scalar", "scale", "gain", "amplitude"],
-    shortcut: "a",
-    create: () => ({ amplitude_scalar: { factor: 1 } })
-  },
-  {
-    id: "trace_rms_normalize",
-    canonicalId: "trace_rms_normalize",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Trace RMS Normalize",
-    fallbackDescription: "Normalize each trace to unit RMS amplitude.",
-    searchTerms: ["normalize", "rms", "trace", "balance"],
-    shortcut: "n",
-    create: () => "trace_rms_normalize"
-  },
-  {
-    id: "agc_rms",
-    canonicalId: "agc_rms",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "RMS AGC",
-    fallbackDescription: "Centered moving-window RMS automatic gain control.",
-    searchTerms: ["agc", "gain", "window", "rms", "balance", "automatic gain control"],
-    shortcut: "g",
-    create: () => defaultAgcRms()
-  },
-  {
-    id: "phase_rotation",
-    canonicalId: "phase_rotation",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Phase Rotation",
-    fallbackDescription: "Constant trace phase rotation in degrees.",
-    searchTerms: ["phase", "rotation", "rotate", "constant phase", "quadrature", "hilbert"],
-    shortcut: "h",
-    create: () => defaultPhaseRotation()
-  },
-  {
-    id: "envelope",
-    canonicalId: "envelope",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Envelope",
-    fallbackDescription: "Analytic-trace magnitude using the trace and its Hilbert transform.",
-    searchTerms: ["envelope", "reflection strength", "analytic", "hilbert", "magnitude"],
-    shortcut: "e",
-    create: () => "envelope"
-  },
-  {
-    id: "instantaneous_phase",
-    canonicalId: "instantaneous_phase",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Instantaneous Phase",
-    fallbackDescription: "Wrapped analytic-trace phase in degrees over [-180, 180].",
-    searchTerms: ["instantaneous phase", "phase", "analytic", "hilbert", "degrees"],
-    shortcut: "p",
-    create: () => "instantaneous_phase"
-  },
-  {
-    id: "instantaneous_frequency",
-    canonicalId: "instantaneous_frequency",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Instantaneous Frequency",
-    fallbackDescription: "Classic analytic-signal instantaneous frequency in Hz. Can be noisy or negative.",
-    searchTerms: ["instantaneous frequency", "frequency", "analytic", "hilbert", "barnes", "fomel"],
-    shortcut: "f",
-    create: () => "instantaneous_frequency"
-  },
-  {
-    id: "sweetness",
-    canonicalId: "sweetness",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Sweetness",
-    fallbackDescription: "Envelope divided by the square root of stabilized instantaneous frequency.",
-    searchTerms: ["sweetness", "envelope", "instantaneous frequency", "analytic", "attribute"],
-    shortcut: "s",
-    create: () => "sweetness"
-  },
-  {
-    id: "volume_subtract",
-    canonicalId: "volume_arithmetic",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Subtract Volume",
-    fallbackDescription: "Subtract a compatible workspace volume from the active volume.",
-    searchTerms: ["volume", "arithmetic", "subtract", "difference", "minus", "cube"],
-    aliasLabel: "Subtract Volume",
-    shortcut: "v",
-    create: (viewerModel) => defaultVolumeArithmetic(viewerModel, "subtract")
-  },
-  {
-    id: "volume_add",
-    canonicalId: "volume_arithmetic",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Add Volume",
-    fallbackDescription: "Add a compatible workspace volume to the active volume sample-by-sample.",
-    searchTerms: ["volume", "arithmetic", "add", "sum", "plus", "cube"],
-    aliasLabel: "Add Volume",
-    shortcut: null,
-    create: (viewerModel) => defaultVolumeArithmetic(viewerModel, "add")
-  },
-  {
-    id: "volume_multiply",
-    canonicalId: "volume_arithmetic",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Multiply Volumes",
-    fallbackDescription: "Multiply the active volume by another compatible workspace volume.",
-    searchTerms: ["volume", "arithmetic", "multiply", "product", "times", "cube"],
-    aliasLabel: "Multiply Volumes",
-    shortcut: null,
-    create: (viewerModel) => defaultVolumeArithmetic(viewerModel, "multiply")
-  },
-  {
-    id: "volume_divide",
-    canonicalId: "volume_arithmetic",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Divide Volumes",
-    fallbackDescription: "Divide the active volume by another compatible workspace volume.",
-    searchTerms: ["volume", "arithmetic", "divide", "ratio", "quotient", "cube"],
-    aliasLabel: "Divide Volumes",
-    shortcut: null,
-    create: (viewerModel) => defaultVolumeArithmetic(viewerModel, "divide")
-  },
-  {
-    id: "crop_subvolume",
-    canonicalId: "crop",
-    canonicalFamily: "subvolume_processing",
-    fallbackLabel: "Crop Subvolume",
-    fallbackDescription: "Write a strict subvolume bounded by inline, xline, and time windows.",
-    searchTerms: ["crop", "subvolume", "subset", "window", "inline", "xline", "time", "cube"],
-    aliasLabel: "Crop Subvolume",
-    shortcut: "c",
-    create: (viewerModel) => ({ crop_subvolume: defaultSubvolumeCrop(viewerModel) })
-  },
-  {
-    id: "lowpass_filter",
-    canonicalId: "lowpass_filter",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Lowpass Filter",
-    fallbackDescription: "Zero-phase FFT lowpass with a cosine high-cut taper.",
-    searchTerms: ["lowpass", "filter", "frequency", "spectral", "highcut", "noise"],
-    shortcut: "l",
-    create: (viewerModel) => defaultLowpassFilter(viewerModel.section)
-  },
-  {
-    id: "highpass_filter",
-    canonicalId: "highpass_filter",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Highpass Filter",
-    fallbackDescription: "Zero-phase FFT highpass with a cosine low-cut taper.",
-    searchTerms: ["highpass", "filter", "frequency", "spectral", "lowcut", "drift"],
-    shortcut: "i",
-    create: (viewerModel) => defaultHighpassFilter(viewerModel.section)
-  },
-  {
-    id: "bandpass_filter",
-    canonicalId: "bandpass_filter",
-    canonicalFamily: "trace_local_processing",
-    fallbackLabel: "Bandpass Filter",
-    fallbackDescription: "Zero-phase FFT bandpass with cosine tapers.",
-    searchTerms: ["bandpass", "filter", "frequency", "spectral", "highcut", "lowcut"],
-    shortcut: "b",
-    create: (viewerModel) => defaultBandpassFilter(viewerModel.section)
-  }
-] as const;
-
-export interface OperatorCatalogItem {
-  id: OperatorCatalogId;
-  label: string;
-  description: string;
-  shortHelp: string;
-  helpMarkdown: string | null;
-  helpUrl: string | null;
-  keywords: string[];
-  shortcut: "a" | "n" | "g" | "h" | "e" | "p" | "f" | "s" | "l" | "i" | "b" | "v" | "c" | null;
-  canonicalId: string;
-  canonicalName: string;
-  group: string;
-  groupId: string;
-  provider: string;
-  tags: string[];
-  parameterDocs: readonly OperatorParameterDoc[];
-  aliasLabel: string | null;
-  source: "canonical" | "fallback";
-}
-
-function isDemoAliasDefinition(definition: OperatorCatalogDefinition): boolean {
-  return definition.id !== definition.canonicalId;
-}
-
-function fallbackGroupForDefinition(definition: OperatorCatalogDefinition): string {
-  return definition.canonicalFamily === "subvolume_processing" ? "Subvolume" : "Trace Local";
-}
-
-function fallbackGroupIdForDefinition(definition: OperatorCatalogDefinition): string {
-  return definition.canonicalFamily === "subvolume_processing" ? "subvolume" : "trace_local";
-}
-
-function catalogEntryIsAvailable(entry: OperatorCatalogEntry | null): boolean {
-  if (!entry) {
-    return false;
-  }
-  return entry.availability === "available";
-}
-
-function findCatalogOperatorEntry(
-  catalog: OperatorCatalog | null,
-  definition: OperatorCatalogDefinition
-): OperatorCatalogEntry | null {
-  if (!catalog) {
-    return null;
-  }
-
-  return (
-    catalog.operators.find(
-      (entry) =>
-        entry.id === definition.canonicalId && entry.family === definition.canonicalFamily
-    ) ?? null
-  );
-}
-
-function isCatalogOperatorAvailable(
-  catalog: OperatorCatalog | null,
-  definition: OperatorCatalogDefinition
-): boolean {
-  if (!catalog) {
-    return true;
-  }
-
-  return catalogEntryIsAvailable(findCatalogOperatorEntry(catalog, definition));
-}
-
-function toOperatorCatalogItem(
-  definition: OperatorCatalogDefinition,
-  catalog: OperatorCatalog | null
-): OperatorCatalogItem {
-  const catalogEntry = findCatalogOperatorEntry(catalog, definition);
-  const alias = isDemoAliasDefinition(definition);
-  const canonicalName = catalogEntry?.name || definition.fallbackLabel;
-  const label = definition.aliasLabel || canonicalName;
-  const parameterTerms =
-    catalogEntry?.parameter_docs.flatMap((parameter) => [
-      parameter.name,
-      parameter.label,
-      parameter.description,
-      ...parameter.options
-    ]) ?? [];
-  const keywords = Array.from(new Set([...(catalogEntry?.tags ?? []), ...definition.searchTerms, ...parameterTerms]));
-  const fallbackDescription = definition.fallbackDescription;
-  const shortHelp = catalogEntry?.documentation.short_help || catalogEntry?.description || fallbackDescription;
-  return {
-    id: definition.id,
-    label,
-    description: shortHelp,
-    shortHelp,
-    helpMarkdown: catalogEntry?.documentation.help_markdown ?? null,
-    helpUrl: catalogEntry?.documentation.help_url ?? null,
-    keywords,
-    shortcut: definition.shortcut,
-    canonicalId: definition.canonicalId,
-    canonicalName,
-    group: catalogEntry?.group || fallbackGroupForDefinition(definition),
-    groupId: catalogEntry?.group_id || fallbackGroupIdForDefinition(definition),
-    provider: catalogEntry?.provider || "traceboost-demo",
-    tags: catalogEntry?.tags ?? [],
-    parameterDocs: catalogEntry?.parameter_docs ?? [],
-    aliasLabel: alias ? definition.aliasLabel || definition.fallbackLabel : null,
-    source: catalogEntry ? "canonical" : "fallback"
-  };
-}
+export type OperatorCatalogItem = ProcessingAuthoringPaletteItem;
 
 function operatorCatalogIdForOperation(operation: WorkspaceOperation): OperatorCatalogId {
   if (isCropSubvolume(operation)) {
@@ -508,7 +222,13 @@ export function findOperatorCatalogItemForOperation(
   items: readonly OperatorCatalogItem[]
 ): OperatorCatalogItem | null {
   const operatorId = operatorCatalogIdForOperation(operation);
-  return items.find((item) => item.id === operatorId) ?? null;
+  return items.find((item) => item.item_id === operatorId) ?? null;
+}
+
+function workspaceOperationFromPaletteItem(item: OperatorCatalogItem): WorkspaceOperation {
+  return item.insertable.kind === "subvolume_crop"
+    ? { crop_subvolume: { ...item.insertable.crop } }
+    : cloneOperation(item.insertable.operation);
 }
 
 function createEmptyPipeline(): ProcessingPipeline {
@@ -573,34 +293,6 @@ function previewOperationIds(pipeline: ProcessingPipeline): string[] {
     }
     return Object.keys(operation)[0] ?? "unknown";
   });
-}
-
-function nextDuplicateName(sourceName: string, existingNames: string[]): string {
-  const trimmedSourceName = sourceName.trim() || "Pipeline";
-  const sourceMatch = /^(.*?)(?:_(\d+))?$/.exec(trimmedSourceName);
-  const baseName = sourceMatch?.[1]?.trim() || trimmedSourceName;
-  const lowerBaseName = baseName.toLowerCase();
-  let maxSuffix = 0;
-
-  for (const existingName of existingNames) {
-    const trimmedExistingName = existingName.trim();
-    if (!trimmedExistingName) {
-      continue;
-    }
-
-    const existingMatch = /^(.*?)(?:_(\d+))?$/.exec(trimmedExistingName);
-    const existingBaseName = existingMatch?.[1]?.trim() || trimmedExistingName;
-    if (existingBaseName.toLowerCase() !== lowerBaseName) {
-      continue;
-    }
-
-    const suffix = existingMatch?.[2] ? Number(existingMatch[2]) : 0;
-    if (Number.isFinite(suffix)) {
-      maxSuffix = Math.max(maxSuffix, suffix);
-    }
-  }
-
-  return `${baseName}_${maxSuffix + 1}`;
 }
 
 function sectionKey(viewerModel: ViewerModel): string {
@@ -723,6 +415,31 @@ function cloneWorkspacePipelineEntry(entry: WorkspacePipelineEntry): WorkspacePi
       ? clonePostStackNeighborhoodPipeline(entry.post_stack_neighborhood_pipeline)
       : null,
     updated_at_unix_s: entry.updated_at_unix_s
+  };
+}
+
+function createFallbackSessionPipelineEntry(
+  family: ProcessingWorkspaceFamily
+): WorkspacePipelineEntry {
+  return {
+    pipeline_id: `session-pipeline-fallback-${family}`,
+    family: family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local",
+    pipeline:
+      family === "post_stack_neighborhood"
+        ? null
+        : {
+            ...createEmptyPipeline(),
+            name: "Pipeline"
+          },
+    subvolume_crop: null,
+    post_stack_neighborhood_pipeline:
+      family === "post_stack_neighborhood"
+        ? {
+            ...createEmptyPostStackNeighborhoodPipeline(),
+            name: "Neighborhood"
+          }
+        : null,
+    updated_at_unix_s: pipelineTimestamp()
   };
 }
 
@@ -873,14 +590,6 @@ function postStackNeighborhoodPipelineRunOutputSignature(
   });
 }
 
-function defaultPhaseRotation(): ProcessingOperation {
-  return {
-    phase_rotation: {
-      angle_degrees: 0
-    }
-  };
-}
-
 function defaultNeighborhoodSimilarity(): NeighborhoodOperation {
   return {
     similarity: {
@@ -940,72 +649,6 @@ function neighborhoodWindowForOperation(operation: NeighborhoodOperation): PostS
   };
 }
 
-function sectionNyquistHz(section: DisplaySectionView | null): number {
-  const sampleAxis = section?.sample_axis_f32le ?? [];
-  const sampleIntervalMs =
-    sampleAxis.length >= 2 ? Math.abs((sampleAxis[1] ?? 0) - (sampleAxis[0] ?? 0)) : 2;
-  const safeSampleIntervalMs =
-    Number.isFinite(sampleIntervalMs) && sampleIntervalMs > 0 ? sampleIntervalMs : 2;
-  return 500.0 / safeSampleIntervalMs;
-}
-
-function defaultAgcRms(): ProcessingOperation {
-  return {
-    agc_rms: {
-      window_ms: 250
-    }
-  };
-}
-
-function defaultLowpassFilter(section: DisplaySectionView | null): ProcessingOperation {
-  const nyquistHz = sectionNyquistHz(section);
-  const f3_hz = Math.max(20, nyquistHz * 0.12);
-  const f4_hz = Math.min(nyquistHz, Math.max(f3_hz + 8, nyquistHz * 0.18));
-
-  return {
-    lowpass_filter: {
-      f3_hz: Number(f3_hz.toFixed(1)),
-      f4_hz: Number(f4_hz.toFixed(1)),
-      phase: "zero",
-      window: "cosine_taper"
-    }
-  };
-}
-
-function defaultHighpassFilter(section: DisplaySectionView | null): ProcessingOperation {
-  const nyquistHz = sectionNyquistHz(section);
-  const f1_hz = Math.max(2, nyquistHz * 0.015);
-  const f2_hz = Math.min(nyquistHz, Math.max(f1_hz + 2, nyquistHz * 0.04));
-
-  return {
-    highpass_filter: {
-      f1_hz: Number(f1_hz.toFixed(1)),
-      f2_hz: Number(f2_hz.toFixed(1)),
-      phase: "zero",
-      window: "cosine_taper"
-    }
-  };
-}
-
-function defaultBandpassFilter(section: DisplaySectionView | null): ProcessingOperation {
-  const nyquistHz = sectionNyquistHz(section);
-  const f1_hz = Math.max(4, nyquistHz * 0.06);
-  const f2_hz = Math.max(f1_hz + 1, nyquistHz * 0.1);
-  const f4_hz = Math.min(nyquistHz, Math.max(f2_hz + 6, nyquistHz * 0.45));
-  const f3_hz = Math.min(f4_hz, Math.max(f2_hz + 4, nyquistHz * 0.32));
-
-  return {
-    bandpass_filter: {
-      f1_hz: Number(f1_hz.toFixed(1)),
-      f2_hz: Number(f2_hz.toFixed(1)),
-      f3_hz: Number(f3_hz.toFixed(1)),
-      f4_hz: Number(f4_hz.toFixed(1)),
-      phase: "zero",
-      window: "cosine_taper"
-    }
-  };
-}
-
 function volumeStoreLabel(storePath: string): string {
   const normalizedPath = storePath.trim();
   const separatorIndex = Math.max(normalizedPath.lastIndexOf("/"), normalizedPath.lastIndexOf("\\"));
@@ -1028,34 +671,6 @@ function volumeArithmeticSecondaryOptions(viewerModel: ViewerModel): { storePath
       storePath: candidate.storePath,
       label: candidate.displayName || volumeStoreLabel(candidate.storePath)
     }));
-}
-
-function defaultVolumeArithmetic(
-  viewerModel: ViewerModel,
-  operator: VolumeArithmeticOperator = "subtract"
-): ProcessingOperation {
-  const secondaryOptions = volumeArithmeticSecondaryOptions(viewerModel);
-  return {
-    volume_arithmetic: {
-      operator,
-      secondary_store_path: secondaryOptions[0]?.storePath ?? ""
-    }
-  };
-}
-
-function defaultSubvolumeCrop(viewerModel: ViewerModel): SubvolumeCropOperation {
-  const summary = viewerModel.dataset?.descriptor.geometry?.summary;
-  const inlineAxis = summary?.inline_axis;
-  const xlineAxis = summary?.xline_axis;
-  const sampleAxis = summary?.sample_axis;
-  return {
-    inline_min: inlineAxis?.first ?? 0,
-    inline_max: inlineAxis?.last ?? 0,
-    xline_min: xlineAxis?.first ?? 0,
-    xline_max: xlineAxis?.last ?? 0,
-    z_min_ms: sampleAxis?.first ?? 0,
-    z_max_ms: sampleAxis?.last ?? 0
-  };
 }
 
 function buildSubvolumeProcessingPipeline(
@@ -1132,27 +747,6 @@ function workspaceEntryPresetId(entry: WorkspacePipelineEntry | null | undefined
     return entry.post_stack_neighborhood_pipeline?.preset_id ?? null;
   }
   return entry.pipeline?.preset_id ?? null;
-}
-
-function traceLocalPipelineFromSubvolumePipeline(pipeline: SubvolumeProcessingPipeline): ProcessingPipeline {
-  if (pipeline.trace_local_pipeline) {
-    const traceLocal = clonePipeline(pipeline.trace_local_pipeline);
-    traceLocal.schema_version = pipeline.schema_version;
-    traceLocal.revision = pipeline.revision;
-    traceLocal.preset_id = pipeline.preset_id;
-    traceLocal.name = pipeline.name;
-    traceLocal.description = pipeline.description;
-    return traceLocal;
-  }
-
-  return {
-    schema_version: pipeline.schema_version,
-    revision: pipeline.revision,
-    preset_id: pipeline.preset_id,
-    name: pipeline.name,
-    description: pipeline.description,
-    steps: []
-  };
 }
 
 function withPresetIdOnPipelineSpec(pipeline: ProcessingPipelineSpec, presetId: string): ProcessingPipelineSpec {
@@ -1282,9 +876,9 @@ export class ProcessingModel {
   runBusy = $state(false);
   batchSubmitting = $state(false);
   error = $state<string | null>(null);
-  datasetOperatorCatalog = $state.raw<OperatorCatalog | null>(null);
-  datasetOperatorCatalogLoading = $state(false);
-  datasetOperatorCatalogError = $state<string | null>(null);
+  authoringPalette = $state.raw<ResolveProcessingAuthoringPaletteResponse | null>(null);
+  authoringPaletteLoading = $state(false);
+  authoringPaletteError = $state<string | null>(null);
   presets = $state.raw<ProcessingPreset[]>([]);
   activeJob = $state<ProcessingJobStatus | null>(null);
   activeDebugPlan = $state.raw<InspectableProcessingPlan | null>(null);
@@ -1307,7 +901,6 @@ export class ProcessingModel {
   #jobPollTimer: number | null = null;
   #batchPollTimer: number | null = null;
   #presetCounter = 0;
-  #sessionPipelineCounter = 0;
   #hydratedDatasetEntryId: string | null = null;
   #runOutputPathRequestId = 0;
   #copiedSessionPipeline: CopiedSessionPipeline | null = null;
@@ -1354,40 +947,43 @@ export class ProcessingModel {
 
     $effect(() => {
       const activeStorePath = this.viewerModel.activeStorePath.trim();
-      if (!activeStorePath) {
-        this.datasetOperatorCatalog = null;
-        this.datasetOperatorCatalogError = null;
-        this.datasetOperatorCatalogLoading = false;
-        this.#operatorCatalogRequestId += 1;
-        return;
-      }
+      const family =
+        this.pipelineFamily === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
+      const secondaryStorePaths = this.volumeArithmeticSecondaryOptions.map((option) => option.storePath);
+      const secondarySignature = secondaryStorePaths.join("\n");
+      void secondarySignature;
 
       const requestId = ++this.#operatorCatalogRequestId;
-      this.datasetOperatorCatalogLoading = true;
-      this.datasetOperatorCatalogError = null;
+      this.authoringPaletteLoading = true;
+      this.authoringPaletteError = null;
 
-      void loadDatasetOperatorCatalog(activeStorePath)
-        .then((catalog) => {
+      void resolveProcessingAuthoringPalette({
+        schema_version: SCHEMA_VERSION,
+        store_path: activeStorePath || null,
+        family,
+        secondary_store_paths: secondaryStorePaths
+      })
+        .then((palette) => {
           if (this.#operatorCatalogRequestId !== requestId) {
             return;
           }
-          this.datasetOperatorCatalog = catalog;
+          this.authoringPalette = palette;
         })
         .catch((error) => {
           if (this.#operatorCatalogRequestId !== requestId) {
             return;
           }
-          this.datasetOperatorCatalog = null;
-          this.datasetOperatorCatalogError = errorMessage(
+          this.authoringPalette = null;
+          this.authoringPaletteError = errorMessage(
             error,
-            "Failed to load the dataset operator catalog."
+            "Failed to resolve the processing authoring palette."
           );
         })
         .finally(() => {
           if (this.#operatorCatalogRequestId !== requestId) {
             return;
           }
-          this.datasetOperatorCatalogLoading = false;
+          this.authoringPaletteLoading = false;
         });
     });
 
@@ -1398,7 +994,7 @@ export class ProcessingModel {
       if (!activeEntryId || !activeEntry) {
         this.#hydratedDatasetEntryId = null;
         if (!this.sessionPipelines.length) {
-          const fallback = this.createSessionPipelineEntry(this.nextEmptySessionPipelineName());
+          const fallback = createFallbackSessionPipelineEntry(this.pipelineFamily);
           this.sessionPipelines = [fallback];
           this.activeSessionPipelineId = fallback.pipeline_id;
           this.pipeline = clonePipeline(fallback.pipeline ?? createEmptyPipeline());
@@ -1410,34 +1006,26 @@ export class ProcessingModel {
         return;
       }
 
-       if (this.#hydratedDatasetEntryId === activeEntryId) {
+      if (this.#hydratedDatasetEntryId === activeEntryId) {
         return;
       }
       this.#hydratedDatasetEntryId = activeEntryId;
 
-      const nextSessionPipelines =
-        activeEntry.session_pipelines.length > 0
-          ? activeEntry.session_pipelines.map((entry) => cloneWorkspacePipelineEntry(entry))
-          : [this.createSessionPipelineEntry("Pipeline 1")];
-      const activePipelineId =
-        activeEntry.active_session_pipeline_id &&
-        nextSessionPipelines.some((entry) => entry.pipeline_id === activeEntry.active_session_pipeline_id)
-          ? activeEntry.active_session_pipeline_id
-          : nextSessionPipelines[0]?.pipeline_id ?? null;
-      const activePipeline =
-        nextSessionPipelines.find((entry) => entry.pipeline_id === activePipelineId) ?? nextSessionPipelines[0];
+      if (activeEntry.session_pipelines.length === 0) {
+        void this.runSessionAction(
+          {
+            action: "ensure_family_pipeline",
+            family: this.activeProcessingPipelineFamily
+          },
+          "Failed to initialize a processing session pipeline."
+        );
+        return;
+      }
 
-      this.sessionPipelines = nextSessionPipelines;
-      this.pipelineFamily = activePipeline?.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
-      this.activeSessionPipelineId = activePipeline?.pipeline_id ?? null;
-      this.pipeline = clonePipeline(activePipeline?.pipeline ?? createEmptyPipeline());
-      this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
-        activePipeline?.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+      this.applyAuthoringSessionEntry(
+        activeEntry.session_pipelines,
+        activeEntry.active_session_pipeline_id ?? null
       );
-      this.subvolumeCrop = cloneSubvolumeCrop(activePipeline?.subvolume_crop);
-      this.selectedStepIndex = 0;
-      this.editingParams = false;
-      this.clearPreviewState();
     });
 
     $effect(() => {
@@ -1586,14 +1174,7 @@ export class ProcessingModel {
       return [];
     }
 
-    return OPERATOR_CATALOG
-      .filter((definition) =>
-        this.pipelineFamily === "post_stack_neighborhood"
-          ? definition.canonicalFamily === "trace_local_processing"
-          : true
-      )
-      .filter((definition) => isCatalogOperatorAvailable(this.datasetOperatorCatalog, definition))
-      .map((definition) => toOperatorCatalogItem(definition, this.datasetOperatorCatalog));
+    return this.authoringPalette?.items ?? [];
   }
 
   get operatorCatalogSourceLabel(): string {
@@ -1603,10 +1184,7 @@ export class ProcessingModel {
     if (this.activeDatasetIsGatherNative) {
       return "Gather-native dataset";
     }
-    if (this.datasetOperatorCatalog) {
-      return "Canonical registry-backed";
-    }
-    return "Demo fallback catalog";
+    return this.authoringPalette?.source_label ?? "Processing authoring palette";
   }
 
   get operatorCatalogSourceDetail(): string {
@@ -1616,12 +1194,8 @@ export class ProcessingModel {
     if (this.activeDatasetIsGatherNative) {
       return "This demo remains section-centric. Gather processing and velocity scans are backend-wired but not exposed here yet.";
     }
-    if (this.datasetOperatorCatalog) {
-      return "Operators are filtered from the core-owned dataset catalog based on the active dataset layout.";
-    }
-    return this.datasetOperatorCatalogError
-      ? `${this.datasetOperatorCatalogError} Showing the demo fallback list instead.`
-      : "Using the demo fallback list until the canonical catalog is available.";
+    return this.authoringPalette?.source_detail ??
+      (this.authoringPaletteError ?? "Using the backend processing authoring palette.");
   }
 
   get operatorCatalogEmptyMessage(): string {
@@ -1631,10 +1205,10 @@ export class ProcessingModel {
     if (this.activeDatasetIsGatherNative) {
       return "Gather-native authoring is not exposed in this section viewer yet.";
     }
-    if (this.datasetOperatorCatalogLoading) {
-      return "Loading canonical operators for the active dataset...";
+    if (this.authoringPaletteLoading) {
+      return "Loading processing authoring options for the active dataset...";
     }
-    return "No catalog-backed operators are available for this dataset.";
+    return this.authoringPalette?.empty_message ?? "No processing authoring options are available for this dataset.";
   }
 
   get selectedNeighborhoodOperation(): NeighborhoodOperation | null {
@@ -1887,19 +1461,100 @@ export class ProcessingModel {
     return `${stepCount} step${stepCount === 1 ? "" : "s"}`;
   };
 
+  private applyAuthoringSessionEntry(
+    sessionPipelines: WorkspacePipelineEntry[],
+    activeSessionPipelineId: string | null
+  ): void {
+    const nextSessionPipelines =
+      sessionPipelines.length > 0
+        ? sessionPipelines.map((entry) => cloneWorkspacePipelineEntry(entry))
+        : [createFallbackSessionPipelineEntry(this.pipelineFamily)];
+    const nextActivePipelineId =
+      activeSessionPipelineId &&
+      nextSessionPipelines.some((entry) => entry.pipeline_id === activeSessionPipelineId)
+        ? activeSessionPipelineId
+        : nextSessionPipelines[0]?.pipeline_id ?? null;
+    const activePipeline =
+      nextSessionPipelines.find((entry) => entry.pipeline_id === nextActivePipelineId) ??
+      nextSessionPipelines[0] ??
+      null;
+
+    this.sessionPipelines = nextSessionPipelines;
+    this.pipelineFamily = activePipeline?.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
+    this.activeSessionPipelineId = activePipeline?.pipeline_id ?? null;
+    this.pipeline = clonePipeline(activePipeline?.pipeline ?? createEmptyPipeline());
+    this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
+      activePipeline?.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+    );
+    this.subvolumeCrop = cloneSubvolumeCrop(activePipeline?.subvolume_crop);
+    this.viewerModel.setSelectedPresetId(workspaceEntryPresetId(activePipeline));
+    this.selectedStepIndex = 0;
+    this.editingParams = false;
+    this.clearPreviewState();
+  }
+
+  private async runSessionAction(
+    action:
+      | {
+          action: "ensure_family_pipeline";
+          family: ProcessingPipelineFamily;
+        }
+      | {
+          action: "create_pipeline";
+          family: ProcessingPipelineFamily;
+        }
+      | {
+          action: "duplicate_pipeline";
+          pipeline_id?: string | null;
+        }
+      | {
+          action: "activate_pipeline";
+          pipeline_id: string;
+        }
+      | {
+          action: "remove_pipeline";
+          pipeline_id: string;
+        }
+      | {
+          action: "replace_active_from_pipeline_spec";
+          pipeline: ProcessingPipelineSpec;
+        },
+    fallbackMessage: string
+  ): Promise<boolean> {
+    try {
+      const response = await this.viewerModel.applyProcessingAuthoringSessionAction(action);
+      this.applyAuthoringSessionEntry(
+        response.entry.session_pipelines,
+        response.entry.active_session_pipeline_id ?? null
+      );
+      return true;
+    } catch (error) {
+      this.error = errorMessage(error, fallbackMessage);
+      this.viewerModel.note(fallbackMessage, "backend", "error", this.error);
+      return false;
+    }
+  }
+
+  private copiedSessionPipelineSpec(copied: CopiedSessionPipeline): ProcessingPipelineSpec {
+    return batchPipelineSpecForWorkspace(
+      copied.family,
+      copied.pipeline,
+      copied.postStackNeighborhoodPipeline ?? createEmptyPostStackNeighborhoodPipeline(),
+      copied.subvolumeCrop
+    );
+  }
+
   setPipelineFamily = (family: ProcessingWorkspaceFamily): void => {
     if (this.pipelineFamily === family) {
       return;
     }
-
-    this.pipelineFamily = family;
-    const targetFamily = family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
-    let entry = this.sessionPipelines.find((candidate) => candidate.family === targetFamily) ?? null;
-    if (!entry) {
-      entry = this.createSessionPipelineEntry(this.nextEmptySessionPipelineName(), createEmptyPipeline(), null, null, family);
-      this.sessionPipelines = [...this.sessionPipelines, entry];
-    }
-    this.activateSessionPipeline(entry.pipeline_id);
+    void this.runSessionAction(
+      {
+        action: "ensure_family_pipeline",
+        family: family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local"
+      },
+      "Failed to switch the active processing workflow."
+    );
   };
 
   setRunOutputSettingsOpen = (open: boolean): void => {
@@ -1957,68 +1612,33 @@ export class ProcessingModel {
   };
 
   createSessionPipeline = (): void => {
-    const nextEntry = this.createSessionPipelineEntry(this.nextEmptySessionPipelineName());
-    this.sessionPipelines = [...this.sessionPipelines, nextEntry];
-    this.pipelineFamily = nextEntry.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
-    this.activeSessionPipelineId = nextEntry.pipeline_id;
-    this.pipeline = clonePipeline(nextEntry.pipeline ?? createEmptyPipeline());
-    this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
-      nextEntry.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+    void this.runSessionAction(
+      {
+        action: "create_pipeline",
+        family: this.activeProcessingPipelineFamily
+      },
+      "Failed to create a processing session pipeline."
     );
-    this.subvolumeCrop = cloneSubvolumeCrop(nextEntry.subvolume_crop);
-    this.viewerModel.setSelectedPresetId(null);
-    this.selectedStepIndex = 0;
-    this.editingParams = false;
-    this.clearPreviewState();
-    this.schedulePersistSessionPipelines();
   };
 
   duplicateActiveSessionPipeline = (): void => {
-    const source = this.activeSessionPipeline;
-    if (!source) {
-      return;
-    }
-    const duplicate = this.createCopiedSessionPipelineEntry(
-      source.family === "post_stack_neighborhood"
-        ? null
-        : (source.pipeline ?? createEmptyPipeline()),
-      source.subvolume_crop ?? null,
-      source.post_stack_neighborhood_pipeline ?? null,
-      source.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local"
+    void this.runSessionAction(
+      {
+        action: "duplicate_pipeline",
+        pipeline_id: this.activeSessionPipelineId
+      },
+      "Failed to duplicate the active processing session pipeline."
     );
-    this.sessionPipelines = [...this.sessionPipelines, duplicate];
-    this.pipelineFamily = duplicate.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
-    this.activeSessionPipelineId = duplicate.pipeline_id;
-    this.pipeline = clonePipeline(duplicate.pipeline ?? createEmptyPipeline());
-    this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
-      duplicate.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
-    );
-    this.subvolumeCrop = cloneSubvolumeCrop(duplicate.subvolume_crop);
-    this.viewerModel.setSelectedPresetId(null);
-    this.selectedStepIndex = 0;
-    this.editingParams = false;
-    this.clearPreviewState();
-    this.schedulePersistSessionPipelines();
   };
 
   activateSessionPipeline = (pipelineId: string): void => {
-    const entry = this.sessionPipelines.find((candidate) => candidate.pipeline_id === pipelineId);
-    if (!entry) {
-      return;
-    }
-
-    this.pipelineFamily = entry.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
-    this.activeSessionPipelineId = pipelineId;
-    this.pipeline = clonePipeline(entry.pipeline ?? createEmptyPipeline());
-    this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
-      entry.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
+    void this.runSessionAction(
+      {
+        action: "activate_pipeline",
+        pipeline_id: pipelineId
+      },
+      "Failed to activate the selected processing session pipeline."
     );
-    this.subvolumeCrop = cloneSubvolumeCrop(entry.subvolume_crop);
-    this.viewerModel.setSelectedPresetId(workspaceEntryPresetId(entry));
-    this.selectedStepIndex = 0;
-    this.editingParams = false;
-    this.clearPreviewState();
-    this.schedulePersistSessionPipelines();
   };
 
   removeActiveSessionPipeline = (): void => {
@@ -2034,124 +1654,14 @@ export class ProcessingModel {
     if (this.sessionPipelines.length <= 1) {
       return;
     }
-
-    const activeIndex = this.sessionPipelines.findIndex((entry) => entry.pipeline_id === pipelineId);
-    if (activeIndex < 0) {
-      return;
-    }
-
-    const removingActivePipeline = this.activeSessionPipelineId === pipelineId;
-    const nextSessionPipelines = this.sessionPipelines.filter((entry) => entry.pipeline_id !== pipelineId);
-    this.sessionPipelines = nextSessionPipelines;
-
-    if (removingActivePipeline) {
-      const fallbackEntry = nextSessionPipelines[Math.max(0, activeIndex - 1)] ?? nextSessionPipelines[0];
-      this.activeSessionPipelineId = fallbackEntry?.pipeline_id ?? null;
-      this.pipelineFamily = fallbackEntry?.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
-      this.pipeline = clonePipeline(fallbackEntry?.pipeline ?? createEmptyPipeline());
-      this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
-        fallbackEntry?.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
-      );
-      this.subvolumeCrop = cloneSubvolumeCrop(fallbackEntry?.subvolume_crop);
-      this.viewerModel.setSelectedPresetId(workspaceEntryPresetId(fallbackEntry));
-      this.selectedStepIndex = 0;
-      this.editingParams = false;
-      this.clearPreviewState();
-    }
-
-    this.schedulePersistSessionPipelines();
+    void this.runSessionAction(
+      {
+        action: "remove_pipeline",
+        pipeline_id: pipelineId
+      },
+      "Failed to remove the selected processing session pipeline."
+    );
   };
-
-  private createSessionPipelineEntry(
-    suggestedName: string,
-    template: ProcessingPipeline = createEmptyPipeline(),
-    subvolumeCrop: SubvolumeCropOperation | null = null,
-    postStackNeighborhoodPipeline: PostStackNeighborhoodProcessingPipeline | null = null,
-    family: ProcessingWorkspaceFamily = this.pipelineFamily
-  ): WorkspacePipelineEntry {
-    this.#sessionPipelineCounter += 1;
-    const pipeline = family === "trace_local" ? clonePipeline(template) : null;
-    if (pipeline) {
-      pipeline.name = pipeline.name?.trim() || suggestedName;
-    }
-    const neighborhoodPipeline =
-      family === "post_stack_neighborhood"
-        ? clonePostStackNeighborhoodPipeline(
-            postStackNeighborhoodPipeline ?? createEmptyPostStackNeighborhoodPipeline()
-          )
-        : null;
-    if (neighborhoodPipeline) {
-      neighborhoodPipeline.name = neighborhoodPipeline.name?.trim() || suggestedName;
-    }
-    return {
-      pipeline_id: `session-pipeline-${Date.now()}-${this.#sessionPipelineCounter}`,
-      family: family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local",
-      pipeline,
-      subvolume_crop: family === "trace_local" ? cloneSubvolumeCrop(subvolumeCrop) : null,
-      post_stack_neighborhood_pipeline: neighborhoodPipeline,
-      updated_at_unix_s: pipelineTimestamp()
-    };
-  }
-
-  private nextEmptySessionPipelineName(): string {
-    const baseLabel = this.pipelineFamily === "post_stack_neighborhood" ? "neighborhood" : "pipeline";
-    const existingNames = this.sessionPipelineItems.map((entry) =>
-      (entry.family === "post_stack_neighborhood"
-        ? postStackNeighborhoodPipelineName(
-            entry.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
-          )
-        : pipelineName(entry.pipeline ?? createEmptyPipeline())
-      )
-        .trim()
-        .toLowerCase()
-    );
-    if (!existingNames.includes(baseLabel)) {
-      return this.pipelineFamily === "post_stack_neighborhood" ? "Neighborhood" : "Pipeline";
-    }
-
-    let index = 2;
-    while (existingNames.includes(`${baseLabel} ${index}`)) {
-      index += 1;
-    }
-    return this.pipelineFamily === "post_stack_neighborhood" ? `Neighborhood ${index}` : `Pipeline ${index}`;
-  }
-
-  private createCopiedSessionPipelineEntry(
-    source: ProcessingPipeline | null,
-    subvolumeCrop: SubvolumeCropOperation | null,
-    postStackNeighborhoodPipeline: PostStackNeighborhoodProcessingPipeline | null,
-    family: ProcessingWorkspaceFamily
-  ): WorkspacePipelineEntry {
-    if (family === "post_stack_neighborhood") {
-      const pipeline = clonePostStackNeighborhoodPipeline(
-        postStackNeighborhoodPipeline ?? createEmptyPostStackNeighborhoodPipeline()
-      );
-      pipeline.preset_id = null;
-      pipeline.name = nextDuplicateName(
-        postStackNeighborhoodPipelineName(pipeline),
-        this.sessionPipelineItems.map((entry) =>
-          postStackNeighborhoodPipelineName(
-            entry.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
-          )
-        )
-      );
-      return this.createSessionPipelineEntry(
-        pipeline.name,
-        createEmptyPipeline(),
-        null,
-        pipeline,
-        "post_stack_neighborhood"
-      );
-    }
-
-    const pipeline = clonePipeline(source ?? createEmptyPipeline());
-    pipeline.preset_id = null;
-    pipeline.name = nextDuplicateName(
-      pipelineName(pipeline),
-      this.sessionPipelineItems.map((entry) => pipelineName(entry.pipeline ?? createEmptyPipeline()))
-    );
-    return this.createSessionPipelineEntry(pipeline.name, pipeline, subvolumeCrop, null, "trace_local");
-  }
 
   copyActiveSessionPipeline = (): void => {
     const activePipeline = this.activeSessionPipeline;
@@ -2178,26 +1688,29 @@ export class ProcessingModel {
     if (!this.#copiedSessionPipeline) {
       return;
     }
-
-    const duplicate = this.createCopiedSessionPipelineEntry(
-      this.#copiedSessionPipeline.pipeline,
-      this.#copiedSessionPipeline.subvolumeCrop,
-      this.#copiedSessionPipeline.postStackNeighborhoodPipeline,
-      this.#copiedSessionPipeline.family
-    );
-    this.sessionPipelines = [...this.sessionPipelines, duplicate];
-    this.pipelineFamily = duplicate.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local";
-    this.activeSessionPipelineId = duplicate.pipeline_id;
-    this.pipeline = clonePipeline(duplicate.pipeline ?? createEmptyPipeline());
-    this.postStackNeighborhoodPipeline = clonePostStackNeighborhoodPipeline(
-      duplicate.post_stack_neighborhood_pipeline ?? createEmptyPostStackNeighborhoodPipeline()
-    );
-    this.subvolumeCrop = cloneSubvolumeCrop(duplicate.subvolume_crop);
-    this.viewerModel.setSelectedPresetId(null);
-    this.selectedStepIndex = 0;
-    this.editingParams = false;
-    this.clearPreviewState();
-    this.schedulePersistSessionPipelines();
+    const copied = this.#copiedSessionPipeline;
+    void (async () => {
+      const created = await this.runSessionAction(
+        {
+          action: "create_pipeline",
+          family: copied.family === "post_stack_neighborhood" ? "post_stack_neighborhood" : "trace_local"
+        },
+        "Failed to create a session pipeline for the pasted processing workflow."
+      );
+      if (!created) {
+        return;
+      }
+      const replaced = await this.runSessionAction(
+        {
+          action: "replace_active_from_pipeline_spec",
+          pipeline: this.copiedSessionPipelineSpec(copied)
+        },
+        "Failed to paste the copied processing workflow."
+      );
+      if (replaced) {
+        this.viewerModel.setSelectedPresetId(null);
+      }
+    })();
   };
 
   copySelectedOperation = (): void => {
@@ -2462,16 +1975,16 @@ export class ProcessingModel {
   };
 
   insertOperatorById = (operatorId: OperatorCatalogId): void => {
-    const isAvailable = this.availableOperatorCatalogItems.some((item) => item.id === operatorId);
-    if (!isAvailable) {
+    const item = this.availableOperatorCatalogItems.find((candidate) => candidate.item_id === operatorId);
+    if (!item) {
       this.error = `Operator '${operatorId}' is not available for the active dataset.`;
       return;
     }
-    const operator = OPERATOR_CATALOG.find((candidate) => candidate.id === operatorId);
-    if (!operator) {
+    if (item.insertable.kind === "subvolume_crop") {
+      this.insertCropSubvolume(item.insertable.crop);
       return;
     }
-    this.insertOperation(operator.create(this.viewerModel));
+    this.insertOperation(item.insertable.operation);
   };
 
   insertOperation = (operation: WorkspaceOperation): void => {
@@ -2493,7 +2006,7 @@ export class ProcessingModel {
     this.invalidatePreview();
   };
 
-  insertCropSubvolume = (crop: SubvolumeCropOperation = defaultSubvolumeCrop(this.viewerModel)): void => {
+  insertCropSubvolume = (crop: SubvolumeCropOperation): void => {
     if (this.subvolumeCrop) {
       this.selectedStepIndex = this.pipeline.steps.length;
       this.editingParams = true;
@@ -2923,48 +2436,32 @@ export class ProcessingModel {
     this.invalidatePreview();
   };
 
-  replacePipeline = (pipeline: ProcessingPipeline): void => {
-    this.updateActiveSessionPipeline(clonePipeline(pipeline), null);
-    this.selectedStepIndex = 0;
-    this.editingParams = false;
-    this.invalidatePreview();
-  };
-
-  private applyPresetPipelineSpec(pipeline: ProcessingPipelineSpec): boolean {
-    if ("trace_local" in pipeline) {
-      this.replacePipeline(pipeline.trace_local.pipeline);
-      return true;
+  private async applyPresetPipelineSpec(pipeline: ProcessingPipelineSpec): Promise<boolean> {
+    if ("gather" in pipeline) {
+      this.error = "Gather library templates cannot be applied in this workspace.";
+      this.viewerModel.note("Failed to apply library template.", "ui", "warn", this.error);
+      return false;
     }
-    if ("subvolume" in pipeline) {
-      this.updateActiveSessionPipeline(traceLocalPipelineFromSubvolumePipeline(pipeline.subvolume.pipeline), {
-        ...pipeline.subvolume.pipeline.crop
-      });
-      this.selectedStepIndex = 0;
-      this.editingParams = false;
+    const applied = await this.runSessionAction(
+      {
+        action: "replace_active_from_pipeline_spec",
+        pipeline
+      },
+      "Failed to apply the selected library template."
+    );
+    if (applied) {
       this.invalidatePreview();
-      return true;
     }
-    if ("post_stack_neighborhood" in pipeline) {
-      this.updateActivePostStackNeighborhoodPipeline(
-        clonePostStackNeighborhoodPipeline(pipeline.post_stack_neighborhood.pipeline)
-      );
-      this.selectedStepIndex = 0;
-      this.editingParams = false;
-      this.invalidatePreview();
-      return true;
-    }
-    this.error = "Gather library templates cannot be applied in this workspace.";
-    this.viewerModel.note("Failed to apply library template.", "ui", "warn", this.error);
-    return false;
+    return applied;
   }
 
-  loadPreset = (preset: ProcessingPreset): void => {
+  loadPreset = async (preset: ProcessingPreset): Promise<void> => {
     if (processingPipelineSpecFamily(preset.pipeline) !== this.activePresetFamily) {
       this.error = "Library template family does not match the active processing workflow.";
       this.viewerModel.note("Failed to apply library template.", "ui", "warn", this.error);
       return;
     }
-    if (!this.applyPresetPipelineSpec(preset.pipeline)) {
+    if (!(await this.applyPresetPipelineSpec(preset.pipeline))) {
       return;
     }
     this.viewerModel.setSelectedPresetId(preset.preset_id);
@@ -2991,7 +2488,7 @@ export class ProcessingModel {
     };
     try {
       const response = await savePipelinePreset(preset);
-      this.applyPresetPipelineSpec(response.preset.pipeline);
+      await this.applyPresetPipelineSpec(response.preset.pipeline);
       this.viewerModel.setSelectedPresetId(response.preset.preset_id);
       await this.refreshPresets();
       this.viewerModel.note("Saved pipeline as a library template.", "ui", "info", response.preset.preset_id);

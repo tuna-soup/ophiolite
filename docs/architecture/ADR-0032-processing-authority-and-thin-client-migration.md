@@ -21,8 +21,12 @@ Today processing semantics are still spread across several layers:
 - shared contracts own canonical pipeline and job shapes
 - runtime and execution crates own plan and scheduler behavior
 - `traceboost-demo` still owns a large amount of canonical authoring behavior
-- frontend bridge code still mirrors some canonical catalog DTOs locally
-- TypeScript contract distribution still has both root and TraceBoost-oriented paths
+- frontend bridge code still owns app-local transport wiring, although command
+  names now come from generated desktop bridge stubs rather than handwritten
+  strings
+- TypeScript contract distribution still has both root and TraceBoost-oriented
+  paths, although the root `contracts/ts/ophiolite-contracts` target is now the
+  canonical source of truth and compatibility paths are narrower
 
 This is directionally workable, but it hardens the wrong ownership model:
 
@@ -100,6 +104,27 @@ The planned compatibility window is two release trains:
 2. remove compatibility paths after successful adoption
 
 Legacy preset and workspace-processing shapes will migrate eagerly on load and then be rewritten in canonical form.
+
+## Implementation Status
+
+The migration is now partly implemented, but not fully complete.
+
+Implemented slices:
+
+- the processing-authority matrix exists and is part of the architecture set
+- the unified operator catalog is the canonical discovery direction
+- `contracts/ts/ophiolite-contracts` is now the canonical TS distribution target
+- generated desktop bridge stubs reduce app-local command drift at the shell boundary
+- `ophiolite-sdk` no longer re-exports `seis-contracts-interop`, which narrows the public surface toward canonical contracts instead of compatibility shims
+- an app-local Rust processing authoring boundary now exists in `apps/traceboost-demo/src-tauri/src/processing_authoring.rs`
+- TraceBoost frontend authoring now consumes backend-owned palette resolution instead of a frontend fallback operator catalog
+- processing session-pipeline lifecycle commands now route through backend-owned authoring actions before `WorkspaceState` persistence
+- session-pipeline saves now route through `save_processing_authoring_session_command` rather than the legacy generic persist command
+
+Still in progress:
+
+- full removal of the remaining frontend-local helper logic that is still purely convenience code rather than canonical semantics
+- full retirement of remaining compatibility paths after all primary consumers switch
 
 ## Why
 
@@ -185,12 +210,19 @@ Additional hardening that now belongs to this migration includes:
 11. replace app-local schema/version literals with generated contract versions
 12. remove duplicate subvolume/debug/reuse interpretation paths once canonical consumers are fully switched
 
+As of the current hardening pass, steps 1, 2, 4, 5, and 7 are materially in place,
+and step 6 is now partly implemented: TraceBoost frontend state still owns UI-only
+editing concerns, but the canonical authoring palette and session lifecycle no longer
+live in frontend fallback code. The remaining work is concentrated in deeper frontend
+thinning and later compatibility cleanup rather than contract-source ambiguity.
+
 ## Success Criteria
 
 This decision is working when:
 
 - the frontend no longer owns canonical operator metadata for processing authoring
-- the frontend no longer owns canonical processing workspace rules such as checkpoint legality, preset normalization, or output-signature derivation
+- the frontend no longer owns canonical processing workspace rules such as session-pipeline creation, duplication, activation, removal, or preset-to-session replacement
+- output-path and other remaining mixed concerns continue to move behind backend-owned authoring surfaces until the frontend is UI-only
 - the planner and execution service remain the only owners of execution meaning
 - root TS contract distribution is canonical and product packages no longer act as competing sources of truth
 - SDK, CLI, Python, and desktop consume the same authority layers

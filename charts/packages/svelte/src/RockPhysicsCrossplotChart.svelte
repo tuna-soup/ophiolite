@@ -14,10 +14,12 @@
   import { PointCloudSpikeRenderer } from "@ophiolite/charts-renderer";
   import type {
     CartesianAxisOverrides,
+    ChartRendererTelemetryEvent,
     RockPhysicsCrossplotProbe,
     RockPhysicsCrossplotViewport
   } from "@ophiolite/charts-data-models";
   import ProbePanel from "./ProbePanel.svelte";
+  import { emitRendererStatusForChart } from "./renderer-status";
   import { adaptRockPhysicsCrossplotInputToModel } from "./rock-physics-public-model";
   import { resolveRockPhysicsStageSize, scaleRockPhysicsStageSize } from "./rock-physics-stage";
   import {
@@ -34,6 +36,7 @@
   let {
     chartId,
     model = null,
+    renderer = undefined,
     viewport = null,
     axisOverrides = undefined,
     interactions = undefined,
@@ -52,7 +55,9 @@
     onInteractionStateChange,
     onInteractionEvent,
     onAxisOverridesChange,
-    onAxisContextRequest
+    onAxisContextRequest,
+    onRendererStatusChange,
+    onRendererTelemetry
   }: RockPhysicsCrossplotChartProps = $props();
 
   let controller: RockPhysicsCrossplotController | null = null;
@@ -67,6 +72,8 @@
   let lastRequestedAxisOverridesKey = "";
   let lastInteractionKey = "";
   let lastInteractionStateKey = "";
+  let lastRendererStatusKey = "";
+  let lastRendererTelemetryEvent = $state.raw<ChartRendererTelemetryEvent | null>(null);
   let activePointerId: number | null = null;
   let activeDragKind: "pan" | "zoomRect" | null = null;
   let lastPanPoint = $state.raw<PanDragPoint | null>(null);
@@ -89,6 +96,54 @@
     }
     return null;
   });
+  $effect(() => {
+    lastRendererStatusKey = emitRendererStatusForChart(
+      "rock-physics-crossplot",
+      {
+        chartId,
+        renderer: rendererErrorMessage ? { ...(renderer ?? {}), runtimeErrorMessage: rendererErrorMessage } : renderer,
+        telemetryEvent: lastRendererTelemetryEvent
+      },
+      lastRendererStatusKey,
+      onRendererStatusChange
+    );
+  });
+
+  function handleRendererTelemetry(event: ChartRendererTelemetryEvent): void {
+    lastRendererTelemetryEvent = { ...event };
+    if (event.kind === "mount-failed" || event.kind === "frame-failed" || event.kind === "context-lost") {
+      rendererErrorMessage = event.message;
+    } else if (
+      event.kind === "backend-selected" ||
+      event.kind === "fallback-used" ||
+      event.kind === "context-restored"
+    ) {
+      rendererErrorMessage = null;
+    }
+    onRendererTelemetry?.({
+      chartId,
+      event: { ...event }
+    });
+  }
+
+  function restoreRendererTelemetry(phase: ChartRendererTelemetryEvent["phase"]): void {
+    if (
+      lastRendererTelemetryEvent?.kind !== "mount-failed" &&
+      lastRendererTelemetryEvent?.kind !== "frame-failed" &&
+      lastRendererTelemetryEvent?.kind !== "context-lost"
+    ) {
+      return;
+    }
+    handleRendererTelemetry({
+      kind: "context-restored",
+      phase,
+      backend: lastRendererTelemetryEvent.backend,
+      recoverable: true,
+      message: "Renderer recovered after a transient failure.",
+      detail: "Rock physics wrapper observed a successful controller sync after a prior renderer failure.",
+      timestampMs: performance.now()
+    });
+  }
 
   onMount(() => {
     const element = hostElement;
@@ -96,6 +151,7 @@
       return;
     }
     rendererErrorMessage = null;
+    lastRendererTelemetryEvent = null;
     const activeController = new RockPhysicsCrossplotController(new PointCloudSpikeRenderer());
     controller = activeController;
     currentProbe = null;
@@ -104,6 +160,7 @@
 
     try {
       syncController(activeController);
+      restoreRendererTelemetry("render");
 
       const unsubscribeStateChange = activeController.onStateChange((state) => {
         const nextViewportKey = JSON.stringify(state.viewport);
@@ -159,6 +216,9 @@
           });
         }
       });
+      const unsubscribeRendererTelemetry = activeController.onRendererTelemetry((event) => {
+        handleRendererTelemetry(event);
+      });
 
       const resizeObserver = new ResizeObserver(() => {
         activeController.refresh();
@@ -188,6 +248,7 @@
       element.addEventListener("contextmenu", onContextMenu);
 
       return () => {
+        unsubscribeRendererTelemetry();
         unsubscribeInteractionEvent();
         unsubscribeStateChange();
         resizeObserver.disconnect();
@@ -209,7 +270,17 @@
         activeController.dispose();
       };
     } catch (error) {
-      rendererErrorMessage = error instanceof Error ? error.message : String(error);
+      if (!lastRendererTelemetryEvent) {
+        handleRendererTelemetry({
+          kind: "mount-failed",
+          phase: "mount",
+          backend: null,
+          recoverable: false,
+          message: error instanceof Error ? error.message : String(error),
+          detail: "Rock physics wrapper observed a controller initialization failure.",
+          timestampMs: performance.now()
+        });
+      }
       console.error("RockPhysicsCrossplotChart initialization failed.", error);
       controller = null;
       currentProbe = null;
@@ -223,7 +294,21 @@
     if (!controller) {
       return;
     }
-    syncController(controller);
+    try {
+      syncController(controller);
+      restoreRendererTelemetry("render");
+    } catch (error) {
+      handleRendererTelemetry({
+        kind: "frame-failed",
+        phase: "render",
+        backend: null,
+        recoverable: true,
+        message: error instanceof Error ? error.message : String(error),
+        detail: "Rock physics wrapper observed a controller sync failure.",
+        timestampMs: performance.now()
+      });
+      console.error("RockPhysicsCrossplotChart sync failed.", error);
+    }
   });
 
   export function fitToData(): void {
@@ -648,7 +733,7 @@
           </div>
         </div>
       {/if}
-      {#if currentProbe && !loading && !errorMessage && normalizedModel}
+      {#if currentProbe && !loading && !errorMessage && !rendererErrorMessage && normalizedModel}
         <ProbePanel
           theme="light"
           size="standard"

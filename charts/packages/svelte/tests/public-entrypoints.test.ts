@@ -18,6 +18,10 @@ test("root entrypoint only exposes launch chart wrappers", () => {
   assert.match(rootEntry, /SurveyMapChart/);
   assert.match(rootEntry, /RockPhysicsCrossplotChart/);
   assert.match(rootEntry, /WellCorrelationPanelChart/);
+  assert.match(rootEntry, /ChartRendererStatus/);
+  assert.match(rootEntry, /ChartRendererTelemetryEvent/);
+  assert.match(rootEntry, /SeismicSectionDataSource/);
+  assert.match(rootEntry, /SeismicSectionWindowRequest/);
 
   assert.doesNotMatch(rootEntry, /AvoResponseChart/);
   assert.doesNotMatch(rootEntry, /AvoInterceptGradientCrossplotChart/);

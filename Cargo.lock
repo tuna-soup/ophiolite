@@ -3562,6 +3562,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ophiolite-boundary-check"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+ "serde",
+ "toml 0.8.2",
+]
+
+[[package]]
+name = "ophiolite-capabilities"
+version = "0.1.0"
+dependencies = [
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
+
+[[package]]
 name = "ophiolite-cli"
 version = "0.1.0"
 dependencies = [
@@ -3662,12 +3681,12 @@ dependencies = [
 name = "ophiolite-sdk"
 version = "0.1.0"
 dependencies = [
+ "ophiolite-capabilities",
  "ophiolite-operators",
  "ophiolite-seismic",
  "ophiolite-seismic-execution",
  "ophiolite-seismic-runtime",
  "seis-contracts-core",
- "seis-contracts-interop",
  "seis-contracts-operations",
  "seis-contracts-views",
  "seis-runtime",
@@ -3677,6 +3696,7 @@ dependencies = [
 name = "ophiolite-seismic"
 version = "0.1.0"
 dependencies = [
+ "ophiolite-capabilities",
  "ophiolite-operators",
  "schemars 0.8.22",
  "serde",
@@ -4948,11 +4968,11 @@ dependencies = [
  "clap",
  "ndarray 0.17.2",
  "ophiolite-seismic",
+ "ophiolite-seismic-io",
  "ophiolite-seismic-runtime",
  "rayon",
  "seis-contracts-core",
  "seis-contracts-views",
- "seis-io",
  "serde",
  "serde_json",
  "tempfile",
@@ -6396,6 +6416,7 @@ dependencies = [
  "chrono",
  "log",
  "ophiolite",
+ "ophiolite-capabilities",
  "ophiolite-seismic-execution",
  "proj",
  "proj-sys",

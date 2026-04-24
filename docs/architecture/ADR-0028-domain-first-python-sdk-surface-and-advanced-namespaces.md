@@ -23,6 +23,10 @@ Lower-level transport, admin, and extension shapes move into explicit advanced n
 - `ophiolite_sdk.platform`
 - `ophiolite_sdk.interop`
 
+Compatibility and adapter-shaped transport helpers should stay in those advanced
+namespaces or in explicitly app-local packages. They should not leak back into
+the main `ophiolite-sdk` facade as if they were canonical domain-first API.
+
 Domain objects may expose convenience methods that delegate to Rust-owned platform operations as long as they preserve canonical meaning and do not introduce a second implementation in Python.
 
 Examples:
@@ -36,6 +40,13 @@ Examples:
 - `Survey.section_well_overlays(...)`
 
 Compatibility re-exports may remain at the top level for one preview cycle with deprecation warnings.
+
+That rule now has a concrete packaging consequence in the workspace:
+
+- `seis-contracts-interop` remains a compatibility/adapter lane
+- it is not re-exported from `crates/ophiolite-sdk`
+- canonical cross-language contract ownership stays rooted in the platform-owned
+  contract packages and `contracts/ts/ophiolite-contracts`
 
 ## Why
 
@@ -64,6 +75,15 @@ That pattern is useful for `ophiolite`:
 - new top-level Python exports should be added only when they are durable domain concepts or very high-signal workflow helpers
 - transport-shaped DTOs, operation catalogs, operator authoring helpers, and compatibility models should default to advanced namespaces
 - future API reviews should reject generic application nouns at the main package root unless they are clearly canonical for subsurface workflows
+
+## Implementation Status
+
+This ADR is now partially enforced in the current stack shape:
+
+- the public-core facade is narrower and excludes adapter-only compatibility shims
+- platform docs now teach canonical surfaces separately from compatibility lanes
+- the remaining work is implementation depth in the Python package itself, not
+  the ownership rule
 
 ## Success Criteria
 

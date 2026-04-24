@@ -1,16 +1,18 @@
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use ts_rs::TS;
-
 use ophiolite_operators::{
     GatherProcessingDetail, OPERATOR_CATALOG_SCHEMA_VERSION, OperatorAvailability, OperatorCatalog,
     OperatorCatalogEntry, OperatorContractRef, OperatorDetail, OperatorDocumentation,
     OperatorExecutionKind, OperatorFamily, OperatorOutputLifecycle, OperatorParameterDoc,
     OperatorStability, OperatorSubjectKind, PostStackNeighborhoodProcessingDetail,
-    SeismicAnalysisDetail, SubvolumeProcessingDetail, TraceLocalProcessingDetail,
+    ProcessingPlannerHintSummary as ProcessingPlannerHints, SeismicAnalysisDetail,
+    SubvolumeProcessingDetail, TraceLocalProcessingDetail,
 };
 
-use crate::{SeismicLayout, SeismicTraceDataDescriptor};
+use crate::{
+    CapabilityAvailability, CapabilityContractSet, CapabilityDetail, CapabilityDocumentation,
+    CapabilityIsolation, CapabilityKind, CapabilityLoadPolicy, CapabilityRecord,
+    CapabilityRegistry, CapabilitySource, CapabilityStability, OperatorCapabilityDetail,
+    SeismicLayout, SeismicTraceDataDescriptor,
+};
 
 use super::domain::DatasetId;
 use super::models::VelocityFunctionSource;
@@ -19,159 +21,84 @@ use super::processing::{
     FrequencyPhaseMode, FrequencyWindowShape, GatherInterpolationMode, GatherProcessingOperation,
     LocalVolumeStatistic, PostStackNeighborhoodProcessingOperation, ProcessingLayoutCompatibility,
     SubvolumeCropOperation, TraceLocalProcessingOperation, TraceLocalVolumeArithmeticOperator,
+    velocity_scan_catalog_metadata,
 };
 
 const SEISMIC_OPERATOR_CONTRACT_SCHEMA_ID: &str = "ophiolite.seismic.operations.v1";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(rename_all = "snake_case")]
-pub enum ProcessingPlannerPartitioningHint {
-    TileGroup,
-    Section,
-    GatherGroup,
-    FullVolume,
+struct SeismicCatalogRegistration {
+    id: String,
+    name: String,
+    group: &'static str,
+    group_id: &'static str,
+    description: String,
+    execution_kind: OperatorExecutionKind,
+    output_lifecycle: OperatorOutputLifecycle,
+    stability: OperatorStability,
+    compatibility: ProcessingLayoutCompatibility,
+    tags: Vec<String>,
+    documentation: OperatorDocumentation,
+    parameter_docs: Vec<OperatorParameterDoc>,
+    request_contract_id: &'static str,
+    response_contract_id: &'static str,
+    detail: SeismicCatalogDetailRegistration,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(rename_all = "snake_case")]
-pub enum ProcessingPlannerCostClass {
-    Low,
-    Medium,
-    High,
+enum SeismicCatalogDetailRegistration {
+    TraceLocal(TraceLocalProcessingDetail),
+    PostStackNeighborhood(PostStackNeighborhoodProcessingDetail),
+    Subvolume(SubvolumeProcessingDetail),
+    Gather(GatherProcessingDetail),
+    SeismicAnalysis(SeismicAnalysisDetail),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-#[serde(rename_all = "snake_case")]
-#[ts(rename_all = "snake_case")]
-pub enum ProcessingPlannerParallelEfficiencyClass {
-    High,
-    Medium,
-    Low,
-}
+impl SeismicCatalogDetailRegistration {
+    fn family(&self) -> OperatorFamily {
+        match self {
+            Self::TraceLocal(_) => OperatorFamily::TraceLocalProcessing,
+            Self::PostStackNeighborhood(_) => OperatorFamily::PostStackNeighborhoodProcessing,
+            Self::Subvolume(_) => OperatorFamily::SubvolumeProcessing,
+            Self::Gather(_) => OperatorFamily::GatherProcessing,
+            Self::SeismicAnalysis(_) => OperatorFamily::SeismicAnalysis,
+        }
+    }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, TS)]
-pub struct ProcessingPlannerHints {
-    pub preferred_partitioning: ProcessingPlannerPartitioningHint,
-    pub requires_full_volume: bool,
-    pub checkpoint_safe: bool,
-    pub memory_cost_class: ProcessingPlannerCostClass,
-    pub cpu_cost_class: ProcessingPlannerCostClass,
-    pub io_cost_class: ProcessingPlannerCostClass,
-    pub parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass,
-}
-
-pub fn trace_local_operator_planner_hints(
-    operation: &TraceLocalProcessingOperation,
-) -> ProcessingPlannerHints {
-    match operation {
-        TraceLocalProcessingOperation::AmplitudeScalar { .. } => ProcessingPlannerHints {
-            preferred_partitioning: ProcessingPlannerPartitioningHint::TileGroup,
-            requires_full_volume: false,
-            checkpoint_safe: true,
-            memory_cost_class: ProcessingPlannerCostClass::Low,
-            cpu_cost_class: ProcessingPlannerCostClass::Low,
-            io_cost_class: ProcessingPlannerCostClass::Low,
-            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::High,
-        },
-        TraceLocalProcessingOperation::TraceRmsNormalize
-        | TraceLocalProcessingOperation::PhaseRotation { .. } => ProcessingPlannerHints {
-            preferred_partitioning: ProcessingPlannerPartitioningHint::TileGroup,
-            requires_full_volume: false,
-            checkpoint_safe: true,
-            memory_cost_class: ProcessingPlannerCostClass::Medium,
-            cpu_cost_class: ProcessingPlannerCostClass::Medium,
-            io_cost_class: ProcessingPlannerCostClass::Low,
-            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::High,
-        },
-        TraceLocalProcessingOperation::AgcRms { .. } => ProcessingPlannerHints {
-            preferred_partitioning: ProcessingPlannerPartitioningHint::TileGroup,
-            requires_full_volume: false,
-            checkpoint_safe: true,
-            memory_cost_class: ProcessingPlannerCostClass::Medium,
-            cpu_cost_class: ProcessingPlannerCostClass::Medium,
-            io_cost_class: ProcessingPlannerCostClass::Low,
-            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::High,
-        },
-        TraceLocalProcessingOperation::Envelope
-        | TraceLocalProcessingOperation::InstantaneousPhase
-        | TraceLocalProcessingOperation::InstantaneousFrequency
-        | TraceLocalProcessingOperation::Sweetness
-        | TraceLocalProcessingOperation::LowpassFilter { .. }
-        | TraceLocalProcessingOperation::HighpassFilter { .. }
-        | TraceLocalProcessingOperation::BandpassFilter { .. } => ProcessingPlannerHints {
-            preferred_partitioning: ProcessingPlannerPartitioningHint::TileGroup,
-            requires_full_volume: false,
-            checkpoint_safe: true,
-            memory_cost_class: ProcessingPlannerCostClass::Medium,
-            cpu_cost_class: ProcessingPlannerCostClass::High,
-            io_cost_class: ProcessingPlannerCostClass::Low,
-            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::Medium,
-        },
-        TraceLocalProcessingOperation::VolumeArithmetic { .. } => ProcessingPlannerHints {
-            preferred_partitioning: ProcessingPlannerPartitioningHint::TileGroup,
-            requires_full_volume: false,
-            checkpoint_safe: true,
-            memory_cost_class: ProcessingPlannerCostClass::Medium,
-            cpu_cost_class: ProcessingPlannerCostClass::Medium,
-            io_cost_class: ProcessingPlannerCostClass::Medium,
-            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::High,
-        },
+    fn into_detail(self) -> OperatorDetail {
+        match self {
+            Self::TraceLocal(detail) => OperatorDetail::TraceLocalProcessing(detail),
+            Self::PostStackNeighborhood(detail) => {
+                OperatorDetail::PostStackNeighborhoodProcessing(detail)
+            }
+            Self::Subvolume(detail) => OperatorDetail::SubvolumeProcessing(detail),
+            Self::Gather(detail) => OperatorDetail::GatherProcessing(detail),
+            Self::SeismicAnalysis(detail) => OperatorDetail::SeismicAnalysis(detail),
+        }
     }
 }
 
-pub fn post_stack_neighborhood_operator_planner_hints(
-    _operation: &PostStackNeighborhoodProcessingOperation,
-) -> ProcessingPlannerHints {
-    ProcessingPlannerHints {
-        preferred_partitioning: ProcessingPlannerPartitioningHint::TileGroup,
-        requires_full_volume: false,
-        checkpoint_safe: true,
-        memory_cost_class: ProcessingPlannerCostClass::High,
-        cpu_cost_class: ProcessingPlannerCostClass::High,
-        io_cost_class: ProcessingPlannerCostClass::High,
-        parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::Low,
-    }
-}
-
-pub fn gather_operator_planner_hints(
-    operation: &GatherProcessingOperation,
-) -> ProcessingPlannerHints {
-    match operation {
-        GatherProcessingOperation::OffsetMute { .. } => ProcessingPlannerHints {
-            preferred_partitioning: ProcessingPlannerPartitioningHint::GatherGroup,
-            requires_full_volume: false,
-            checkpoint_safe: true,
-            memory_cost_class: ProcessingPlannerCostClass::Low,
-            cpu_cost_class: ProcessingPlannerCostClass::Low,
-            io_cost_class: ProcessingPlannerCostClass::Low,
-            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::Medium,
-        },
-        GatherProcessingOperation::NmoCorrection { .. }
-        | GatherProcessingOperation::StretchMute { .. } => ProcessingPlannerHints {
-            preferred_partitioning: ProcessingPlannerPartitioningHint::GatherGroup,
-            requires_full_volume: false,
-            checkpoint_safe: true,
-            memory_cost_class: ProcessingPlannerCostClass::Medium,
-            cpu_cost_class: ProcessingPlannerCostClass::High,
-            io_cost_class: ProcessingPlannerCostClass::Medium,
-            parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::Medium,
-        },
-    }
-}
-
-pub fn subvolume_operator_planner_hints(
-    _operation: &SubvolumeCropOperation,
-) -> ProcessingPlannerHints {
-    ProcessingPlannerHints {
-        preferred_partitioning: ProcessingPlannerPartitioningHint::FullVolume,
-        requires_full_volume: true,
-        checkpoint_safe: true,
-        memory_cost_class: ProcessingPlannerCostClass::Low,
-        cpu_cost_class: ProcessingPlannerCostClass::Low,
-        io_cost_class: ProcessingPlannerCostClass::Medium,
-        parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass::High,
+fn register_seismic_operator(
+    layout: SeismicLayout,
+    registration: SeismicCatalogRegistration,
+) -> OperatorCatalogEntry {
+    let family = registration.detail.family();
+    OperatorCatalogEntry {
+        id: registration.id,
+        provider: "ophiolite".to_string(),
+        name: registration.name,
+        group: registration.group.to_string(),
+        group_id: registration.group_id.to_string(),
+        description: registration.description,
+        family,
+        execution_kind: registration.execution_kind,
+        output_lifecycle: registration.output_lifecycle,
+        stability: registration.stability,
+        availability: availability_for_layout(registration.compatibility, layout),
+        tags: registration.tags,
+        documentation: registration.documentation,
+        parameter_docs: registration.parameter_docs,
+        request_contract: contract_ref(registration.request_contract_id),
+        response_contract: contract_ref(registration.response_contract_id),
+        detail: registration.detail.into_detail(),
     }
 }
 
@@ -190,129 +117,233 @@ pub fn operator_catalog_for_trace_data(descriptor: &SeismicTraceDataDescriptor) 
     }
 }
 
+pub fn operator_capability_registry_for_catalog(catalog: &OperatorCatalog) -> CapabilityRegistry {
+    debug_assert_eq!(catalog.subject_kind, OperatorSubjectKind::SeismicTraceData);
+
+    let mut registry = CapabilityRegistry::new();
+    registry.extend(
+        catalog
+            .operators
+            .iter()
+            .map(|entry| operator_capability_record_for_entry(&catalog.subject_kind, entry)),
+    );
+    registry
+}
+
+pub fn operator_capability_record_for_entry(
+    subject_kind: &OperatorSubjectKind,
+    entry: &OperatorCatalogEntry,
+) -> CapabilityRecord {
+    CapabilityRecord {
+        id: entry.id.clone(),
+        kind: CapabilityKind::Operator,
+        source: CapabilitySource::BuiltIn,
+        provider: entry.provider.clone(),
+        name: entry.name.clone(),
+        summary: Some(entry.description.clone()),
+        version: None,
+        stability: capability_stability_for_operator(entry.stability.clone()),
+        availability: capability_availability_for_operator(&entry.availability),
+        tags: entry.tags.clone(),
+        documentation: vec![CapabilityDocumentation {
+            short_help: entry.documentation.short_help.clone(),
+            help_markdown: entry.documentation.help_markdown.clone(),
+            help_url: entry.documentation.help_url.clone(),
+        }],
+        load_policy: CapabilityLoadPolicy::Never,
+        isolation: CapabilityIsolation::InProcess,
+        permissions: Vec::new(),
+        bindings: Vec::new(),
+        host_compatibility: Vec::new(),
+        contracts: CapabilityContractSet {
+            request: Some(capability_contract_ref(&entry.request_contract)),
+            response: Some(capability_contract_ref(&entry.response_contract)),
+        },
+        artifacts: Vec::new(),
+        detail: CapabilityDetail::Operator(OperatorCapabilityDetail {
+            family_id: capability_family_id(entry.family.clone()).to_string(),
+            subject_kind: capability_subject_kind_id(subject_kind).to_string(),
+            execution_kind: capability_execution_kind_id(entry.execution_kind.clone()).to_string(),
+            output_lifecycle: capability_output_lifecycle_id(entry.output_lifecycle.clone())
+                .to_string(),
+            deterministic: capability_operator_deterministic(&entry.detail),
+            parameter_schema_id: None,
+        }),
+    }
+}
+
+pub fn trace_local_operator_planner_hints(
+    operation: &TraceLocalProcessingOperation,
+) -> ProcessingPlannerHints {
+    operation.catalog_metadata().planner_hint_summary
+}
+
+pub fn subvolume_operator_planner_hints(
+    operation: &SubvolumeCropOperation,
+) -> ProcessingPlannerHints {
+    operation.catalog_metadata().planner_hint_summary
+}
+
+pub fn post_stack_neighborhood_operator_planner_hints(
+    operation: &PostStackNeighborhoodProcessingOperation,
+) -> ProcessingPlannerHints {
+    operation.catalog_metadata().planner_hint_summary
+}
+
+pub fn gather_operator_planner_hints(
+    operation: &GatherProcessingOperation,
+) -> ProcessingPlannerHints {
+    operation.catalog_metadata().planner_hint_summary
+}
+
 fn trace_local_operator_entries(layout: SeismicLayout) -> Vec<OperatorCatalogEntry> {
     trace_local_operator_prototypes()
         .into_iter()
         .map(|operation| {
-            let compatibility = operation.compatibility();
-            let operation_id = operation.operator_id().to_string();
-            OperatorCatalogEntry {
-                id: operation_id.clone(),
-                provider: "ophiolite".to_string(),
-                name: title_case(&operation_id),
-                group: "Trace Local".to_string(),
-                group_id: "trace_local".to_string(),
-                description: format!(
-                    "Trace-local seismic processing operator '{}' for {} datasets.",
-                    operation_id,
-                    compatibility.label()
-                ),
-                family: OperatorFamily::TraceLocalProcessing,
-                execution_kind: OperatorExecutionKind::Job,
-                output_lifecycle: OperatorOutputLifecycle::DerivedAsset,
-                stability: OperatorStability::Preview,
-                availability: availability_for_layout(compatibility, layout),
-                tags: vec!["seismic".to_string(), "trace_local".to_string()],
-                documentation: trace_local_documentation(&operation),
-                parameter_docs: trace_local_parameter_docs(&operation),
-                request_contract: contract_ref("run_trace_local_processing_request"),
-                response_contract: contract_ref("run_trace_local_processing_response"),
-                detail: OperatorDetail::TraceLocalProcessing(TraceLocalProcessingDetail {
-                    operation_id,
-                    scope: operation.scope().label().to_string(),
-                    layout_compatibility: compatibility.label().to_string(),
-                    preview_contract: contract_ref("preview_trace_local_processing_request"),
-                    checkpoint_supported: true,
-                }),
-            }
+            let metadata = operation.catalog_metadata();
+            register_seismic_operator(
+                layout,
+                SeismicCatalogRegistration {
+                    id: metadata.operation_id.to_string(),
+                    name: title_case(metadata.operation_id),
+                    group: "Trace Local",
+                    group_id: "trace_local",
+                    description: format!(
+                        "Trace-local seismic processing operator '{}' for {} datasets.",
+                        metadata.operation_id,
+                        metadata.compatibility.label()
+                    ),
+                    execution_kind: OperatorExecutionKind::Job,
+                    output_lifecycle: OperatorOutputLifecycle::DerivedAsset,
+                    stability: OperatorStability::Preview,
+                    compatibility: metadata.compatibility,
+                    tags: vec!["seismic".to_string(), "trace_local".to_string()],
+                    documentation: trace_local_documentation(&operation),
+                    parameter_docs: trace_local_parameter_docs(&operation),
+                    request_contract_id: "run_trace_local_processing_request",
+                    response_contract_id: "run_trace_local_processing_response",
+                    detail: SeismicCatalogDetailRegistration::TraceLocal(
+                        TraceLocalProcessingDetail {
+                            operation_id: metadata.operation_id.to_string(),
+                            scope: metadata.scope.label().to_string(),
+                            layout_compatibility: metadata.compatibility.label().to_string(),
+                            preview_contract: contract_ref(
+                                "preview_trace_local_processing_request",
+                            ),
+                            checkpoint_supported: metadata.capabilities.checkpoint_supported,
+                            planner_hint_summary: metadata.planner_hint_summary,
+                            dependency_profile_summary: metadata.dependency_profile_summary,
+                            capabilities: metadata.capabilities,
+                        },
+                    ),
+                },
+            )
         })
         .collect()
 }
 
 fn subvolume_operator_entry(layout: SeismicLayout) -> OperatorCatalogEntry {
-    let compatibility = ProcessingLayoutCompatibility::PostStackOnly;
-    OperatorCatalogEntry {
-        id: "crop".to_string(),
-        provider: "ophiolite".to_string(),
-        name: "Crop".to_string(),
-        group: "Subvolume".to_string(),
-        group_id: "subvolume".to_string(),
-        description: "Terminal subvolume derivation that crops a post-stack survey.".to_string(),
-        family: OperatorFamily::SubvolumeProcessing,
-        execution_kind: OperatorExecutionKind::Job,
-        output_lifecycle: OperatorOutputLifecycle::DerivedAsset,
-        stability: OperatorStability::Preview,
-        availability: availability_for_layout(compatibility, layout),
-        tags: vec![
-            "seismic".to_string(),
-            "subvolume".to_string(),
-            "geometry".to_string(),
-        ],
-        documentation: OperatorDocumentation {
-            short_help: "Write a strict post-stack subvolume bounded by inline, xline, and vertical windows.".to_string(),
-            help_markdown: Some(
-                "Crop is a terminal subvolume derivation. It preserves sample values inside the requested bounds and emits a new geometry-limited seismic asset.".to_string(),
-            ),
-            help_url: None,
+    let operation = SubvolumeCropOperation {
+        inline_min: 0,
+        inline_max: 0,
+        xline_min: 0,
+        xline_max: 0,
+        z_min_ms: 0.0,
+        z_max_ms: 0.0,
+    };
+    let metadata = operation.catalog_metadata();
+    register_seismic_operator(
+        layout,
+        SeismicCatalogRegistration {
+            id: "crop".to_string(),
+            name: "Crop".to_string(),
+            group: "Subvolume",
+            group_id: "subvolume",
+            description: "Terminal subvolume derivation that crops a post-stack survey."
+                .to_string(),
+            execution_kind: OperatorExecutionKind::Job,
+            output_lifecycle: OperatorOutputLifecycle::DerivedAsset,
+            stability: OperatorStability::Preview,
+            compatibility: metadata.compatibility,
+            tags: vec![
+                "seismic".to_string(),
+                "subvolume".to_string(),
+                "geometry".to_string(),
+            ],
+            documentation: OperatorDocumentation {
+                short_help: "Write a strict post-stack subvolume bounded by inline, xline, and vertical windows.".to_string(),
+                help_markdown: Some(
+                    "Crop is a terminal subvolume derivation. It preserves sample values inside the requested bounds and emits a new geometry-limited seismic asset.".to_string(),
+                ),
+                help_url: None,
+            },
+            parameter_docs: vec![
+                number_parameter_doc("inline_min", "Inline Min", "Inclusive minimum inline index for the output subvolume.", None, Some("survey index"), None, None),
+                number_parameter_doc("inline_max", "Inline Max", "Inclusive maximum inline index for the output subvolume.", None, Some("survey index"), None, None),
+                number_parameter_doc("xline_min", "Xline Min", "Inclusive minimum crossline index for the output subvolume.", None, Some("survey index"), None, None),
+                number_parameter_doc("xline_max", "Xline Max", "Inclusive maximum crossline index for the output subvolume.", None, Some("survey index"), None, None),
+                number_parameter_doc("z_min_ms", "Z Min", "Inclusive minimum vertical bound for the output subvolume.", None, Some("ms"), Some("dataset minimum"), Some("dataset maximum")),
+                number_parameter_doc("z_max_ms", "Z Max", "Inclusive maximum vertical bound for the output subvolume.", None, Some("ms"), Some("dataset minimum"), Some("dataset maximum")),
+            ],
+            request_contract_id: "run_subvolume_processing_request",
+            response_contract_id: "run_subvolume_processing_response",
+            detail: SeismicCatalogDetailRegistration::Subvolume(SubvolumeProcessingDetail {
+                terminal_operation_id: metadata.terminal_operation_id.to_string(),
+                layout_compatibility: metadata.compatibility.label().to_string(),
+                preview_contract: contract_ref("preview_subvolume_processing_request"),
+                trace_local_prefix_supported: metadata.capabilities.trace_local_prefix_supported,
+                planner_hint_summary: metadata.planner_hint_summary,
+                dependency_profile_summary: metadata.dependency_profile_summary,
+                capabilities: metadata.capabilities,
+            }),
         },
-        parameter_docs: vec![
-            number_parameter_doc("inline_min", "Inline Min", "Inclusive minimum inline index for the output subvolume.", None, Some("survey index"), None, None),
-            number_parameter_doc("inline_max", "Inline Max", "Inclusive maximum inline index for the output subvolume.", None, Some("survey index"), None, None),
-            number_parameter_doc("xline_min", "Xline Min", "Inclusive minimum crossline index for the output subvolume.", None, Some("survey index"), None, None),
-            number_parameter_doc("xline_max", "Xline Max", "Inclusive maximum crossline index for the output subvolume.", None, Some("survey index"), None, None),
-            number_parameter_doc("z_min_ms", "Z Min", "Inclusive minimum vertical bound for the output subvolume.", None, Some("ms"), Some("dataset minimum"), Some("dataset maximum")),
-            number_parameter_doc("z_max_ms", "Z Max", "Inclusive maximum vertical bound for the output subvolume.", None, Some("ms"), Some("dataset minimum"), Some("dataset maximum")),
-        ],
-        request_contract: contract_ref("run_subvolume_processing_request"),
-        response_contract: contract_ref("run_subvolume_processing_response"),
-        detail: OperatorDetail::SubvolumeProcessing(SubvolumeProcessingDetail {
-            terminal_operation_id: "crop".to_string(),
-            layout_compatibility: compatibility.label().to_string(),
-            preview_contract: contract_ref("preview_subvolume_processing_request"),
-            trace_local_prefix_supported: true,
-        }),
-    }
+    )
 }
 
 fn post_stack_neighborhood_operator_entries(layout: SeismicLayout) -> Vec<OperatorCatalogEntry> {
     post_stack_neighborhood_operator_prototypes()
         .into_iter()
         .map(|operation| {
-            let compatibility = operation.compatibility();
-            let operation_id = operation.operator_id().to_string();
-            OperatorCatalogEntry {
-                id: operation_id.clone(),
-                provider: "ophiolite".to_string(),
-                name: title_case(&operation_id),
-                group: "Post-Stack Neighborhood".to_string(),
-                group_id: "post_stack_neighborhood".to_string(),
-                description: format!(
-                    "Post-stack neighborhood seismic operator '{}' for {} datasets.",
-                    operation_id,
-                    compatibility.label()
-                ),
-                family: OperatorFamily::PostStackNeighborhoodProcessing,
-                execution_kind: OperatorExecutionKind::Job,
-                output_lifecycle: OperatorOutputLifecycle::DerivedAsset,
-                stability: OperatorStability::Preview,
-                availability: availability_for_layout(compatibility, layout),
-                tags: vec!["seismic".to_string(), "post_stack_neighborhood".to_string()],
-                documentation: post_stack_neighborhood_documentation(&operation),
-                parameter_docs: post_stack_neighborhood_parameter_docs(&operation),
-                request_contract: contract_ref("run_post_stack_neighborhood_processing_request"),
-                response_contract: contract_ref("run_post_stack_neighborhood_processing_response"),
-                detail: OperatorDetail::PostStackNeighborhoodProcessing(
-                    PostStackNeighborhoodProcessingDetail {
-                        operation_id,
-                        scope: operation.scope().label().to_string(),
-                        layout_compatibility: compatibility.label().to_string(),
-                        preview_contract: contract_ref(
-                            "preview_post_stack_neighborhood_processing_request",
-                        ),
-                        trace_local_prefix_supported: true,
-                    },
-                ),
-            }
+            let metadata = operation.catalog_metadata();
+            register_seismic_operator(
+                layout,
+                SeismicCatalogRegistration {
+                    id: metadata.operation_id.to_string(),
+                    name: title_case(metadata.operation_id),
+                    group: "Post-Stack Neighborhood",
+                    group_id: "post_stack_neighborhood",
+                    description: format!(
+                        "Post-stack neighborhood seismic operator '{}' for {} datasets.",
+                        metadata.operation_id,
+                        metadata.compatibility.label()
+                    ),
+                    execution_kind: OperatorExecutionKind::Job,
+                    output_lifecycle: OperatorOutputLifecycle::DerivedAsset,
+                    stability: OperatorStability::Preview,
+                    compatibility: metadata.compatibility,
+                    tags: vec!["seismic".to_string(), "post_stack_neighborhood".to_string()],
+                    documentation: post_stack_neighborhood_documentation(&operation),
+                    parameter_docs: post_stack_neighborhood_parameter_docs(&operation),
+                    request_contract_id: "run_post_stack_neighborhood_processing_request",
+                    response_contract_id: "run_post_stack_neighborhood_processing_response",
+                    detail: SeismicCatalogDetailRegistration::PostStackNeighborhood(
+                        PostStackNeighborhoodProcessingDetail {
+                            operation_id: metadata.operation_id.to_string(),
+                            scope: metadata.scope.label().to_string(),
+                            layout_compatibility: metadata.compatibility.label().to_string(),
+                            preview_contract: contract_ref(
+                                "preview_post_stack_neighborhood_processing_request",
+                            ),
+                            trace_local_prefix_supported: metadata
+                                .capabilities
+                                .trace_local_prefix_supported,
+                            planner_hint_summary: metadata.planner_hint_summary,
+                            dependency_profile_summary: metadata.dependency_profile_summary,
+                            capabilities: metadata.capabilities,
+                        },
+                    ),
+                },
+            )
         })
         .collect()
 }
@@ -321,98 +352,107 @@ fn gather_operator_entries(layout: SeismicLayout) -> Vec<OperatorCatalogEntry> {
     gather_operator_prototypes()
         .into_iter()
         .map(|operation| {
-            let compatibility = operation.compatibility();
-            let operation_id = operation.operator_id().to_string();
-            OperatorCatalogEntry {
-                id: operation_id.clone(),
-                provider: "ophiolite".to_string(),
-                name: title_case(&operation_id),
-                group: "Gather".to_string(),
-                group_id: "gather".to_string(),
-                description: format!(
-                    "Gather-native seismic processing operator '{}' for {} datasets.",
-                    operation_id,
-                    compatibility.label()
-                ),
-                family: OperatorFamily::GatherProcessing,
-                execution_kind: OperatorExecutionKind::Job,
-                output_lifecycle: OperatorOutputLifecycle::DerivedAsset,
-                stability: OperatorStability::Preview,
-                availability: availability_for_layout(compatibility, layout),
-                tags: vec!["seismic".to_string(), "gather".to_string()],
-                documentation: gather_documentation(&operation),
-                parameter_docs: gather_parameter_docs(&operation),
-                request_contract: contract_ref("run_gather_processing_request"),
-                response_contract: contract_ref("run_gather_processing_response"),
-                detail: OperatorDetail::GatherProcessing(GatherProcessingDetail {
-                    operation_id,
-                    scope: operation.scope().label().to_string(),
-                    layout_compatibility: compatibility.label().to_string(),
-                    preview_contract: contract_ref("preview_gather_processing_request"),
-                    trace_local_prefix_supported: true,
-                }),
-            }
+            let metadata = operation.catalog_metadata();
+            register_seismic_operator(
+                layout,
+                SeismicCatalogRegistration {
+                    id: metadata.operation_id.to_string(),
+                    name: title_case(metadata.operation_id),
+                    group: "Gather",
+                    group_id: "gather",
+                    description: format!(
+                        "Gather-native seismic processing operator '{}' for {} datasets.",
+                        metadata.operation_id,
+                        metadata.compatibility.label()
+                    ),
+                    execution_kind: OperatorExecutionKind::Job,
+                    output_lifecycle: OperatorOutputLifecycle::DerivedAsset,
+                    stability: OperatorStability::Preview,
+                    compatibility: metadata.compatibility,
+                    tags: vec!["seismic".to_string(), "gather".to_string()],
+                    documentation: gather_documentation(&operation),
+                    parameter_docs: gather_parameter_docs(&operation),
+                    request_contract_id: "run_gather_processing_request",
+                    response_contract_id: "run_gather_processing_response",
+                    detail: SeismicCatalogDetailRegistration::Gather(GatherProcessingDetail {
+                        operation_id: metadata.operation_id.to_string(),
+                        scope: metadata.scope.label().to_string(),
+                        layout_compatibility: metadata.compatibility.label().to_string(),
+                        preview_contract: contract_ref("preview_gather_processing_request"),
+                        trace_local_prefix_supported: metadata
+                            .capabilities
+                            .trace_local_prefix_supported,
+                        planner_hint_summary: metadata.planner_hint_summary,
+                        dependency_profile_summary: metadata.dependency_profile_summary,
+                        capabilities: metadata.capabilities,
+                    }),
+                },
+            )
         })
         .collect()
 }
 
 fn velocity_scan_operator_entry(layout: SeismicLayout) -> OperatorCatalogEntry {
-    let compatibility = ProcessingLayoutCompatibility::PreStackOffsetOnly;
+    let metadata = velocity_scan_catalog_metadata();
     let _sample_gather_request = GatherRequest {
         dataset_id: DatasetId("dataset:placeholder".to_string()),
         selector: GatherSelector::Ordinal { index: 0 },
     };
 
-    OperatorCatalogEntry {
-        id: "velocity_scan".to_string(),
-        provider: "ophiolite".to_string(),
-        name: "Velocity Scan".to_string(),
-        group: "Analysis".to_string(),
-        group_id: "analysis".to_string(),
-        description: "Prestack offset-gather semblance scan with optional autopick output."
-            .to_string(),
-        family: OperatorFamily::SeismicAnalysis,
-        execution_kind: OperatorExecutionKind::Immediate,
-        output_lifecycle: OperatorOutputLifecycle::AnalysisOnly,
-        stability: OperatorStability::Preview,
-        availability: availability_for_layout(compatibility, layout),
-        tags: vec![
-            "seismic".to_string(),
-            "analysis".to_string(),
-            "velocity".to_string(),
-        ],
-        documentation: OperatorDocumentation {
-            short_help: "Compute a prestack offset-gather semblance panel with optional picked velocity guidance.".to_string(),
-            help_markdown: Some(
-                "Velocity Scan is an analysis workflow over offset gathers. It does not materialize a derived seismic asset; instead it returns semblance-style analysis output for interpretation and picking.".to_string(),
-            ),
-            help_url: None,
+    register_seismic_operator(
+        layout,
+        SeismicCatalogRegistration {
+            id: "velocity_scan".to_string(),
+            name: "Velocity Scan".to_string(),
+            group: "Analysis",
+            group_id: "analysis",
+            description: "Prestack offset-gather semblance scan with optional autopick output."
+                .to_string(),
+            execution_kind: OperatorExecutionKind::Immediate,
+            output_lifecycle: OperatorOutputLifecycle::AnalysisOnly,
+            stability: OperatorStability::Preview,
+            compatibility: metadata.compatibility,
+            tags: vec![
+                "seismic".to_string(),
+                "analysis".to_string(),
+                "velocity".to_string(),
+            ],
+            documentation: OperatorDocumentation {
+                short_help: "Compute a prestack offset-gather semblance panel with optional picked velocity guidance.".to_string(),
+                help_markdown: Some(
+                    "Velocity Scan is an analysis workflow over offset gathers. It does not materialize a derived seismic asset; instead it returns semblance-style analysis output for interpretation and picking.".to_string(),
+                ),
+                help_url: None,
+            },
+            parameter_docs: vec![
+                parameter_doc(
+                    "gather_selector",
+                    "Gather Selector",
+                    "Selects the prestack gather to analyze.",
+                    "gather_selector",
+                    true,
+                    None,
+                    None,
+                    Vec::new(),
+                    None,
+                    None,
+                ),
+                number_parameter_doc("velocity_min_m_per_s", "Velocity Min", "Minimum scan velocity.", None, Some("m/s"), None, None),
+                number_parameter_doc("velocity_max_m_per_s", "Velocity Max", "Maximum scan velocity.", None, Some("m/s"), None, None),
+                number_parameter_doc("velocity_step_m_per_s", "Velocity Step", "Sampling increment in velocity space.", None, Some("m/s"), Some("positive"), None),
+            ],
+            request_contract_id: "velocity_scan_request",
+            response_contract_id: "velocity_scan_response",
+            detail: SeismicCatalogDetailRegistration::SeismicAnalysis(SeismicAnalysisDetail {
+                analysis_kind: metadata.analysis_kind.to_string(),
+                layout_compatibility: metadata.compatibility.label().to_string(),
+                output_kind: metadata.output_kind.to_string(),
+                planner_hint_summary: metadata.planner_hint_summary,
+                dependency_profile_summary: metadata.dependency_profile_summary,
+                capabilities: metadata.capabilities,
+            }),
         },
-        parameter_docs: vec![
-            parameter_doc(
-                "gather_selector",
-                "Gather Selector",
-                "Selects the prestack gather to analyze.",
-                "gather_selector",
-                true,
-                None,
-                None,
-                Vec::new(),
-                None,
-                None,
-            ),
-            number_parameter_doc("velocity_min_m_per_s", "Velocity Min", "Minimum scan velocity.", None, Some("m/s"), None, None),
-            number_parameter_doc("velocity_max_m_per_s", "Velocity Max", "Maximum scan velocity.", None, Some("m/s"), None, None),
-            number_parameter_doc("velocity_step_m_per_s", "Velocity Step", "Sampling increment in velocity space.", None, Some("m/s"), Some("positive"), None),
-        ],
-        request_contract: contract_ref("velocity_scan_request"),
-        response_contract: contract_ref("velocity_scan_response"),
-        detail: OperatorDetail::SeismicAnalysis(SeismicAnalysisDetail {
-            analysis_kind: "velocity_scan".to_string(),
-            layout_compatibility: compatibility.label().to_string(),
-            output_kind: "semblance_panel".to_string(),
-        }),
-    }
+    )
 }
 
 fn availability_for_layout(
@@ -428,6 +468,96 @@ fn availability_for_layout(
                 compatibility.label(),
                 layout
             )],
+        }
+    }
+}
+
+fn capability_stability_for_operator(stability: OperatorStability) -> CapabilityStability {
+    match stability {
+        OperatorStability::Internal => CapabilityStability::Internal,
+        OperatorStability::Preview => CapabilityStability::Preview,
+        OperatorStability::Stable => CapabilityStability::Stable,
+    }
+}
+
+fn capability_availability_for_operator(
+    availability: &OperatorAvailability,
+) -> CapabilityAvailability {
+    match availability {
+        OperatorAvailability::Available => CapabilityAvailability::Available,
+        OperatorAvailability::Unavailable { reasons } => CapabilityAvailability::Unavailable {
+            reasons: reasons.clone(),
+        },
+    }
+}
+
+fn capability_contract_ref(contract: &OperatorContractRef) -> String {
+    format!("{}#{}", contract.schema_id, contract.contract_id)
+}
+
+fn capability_subject_kind_id(subject_kind: &OperatorSubjectKind) -> &'static str {
+    match subject_kind {
+        OperatorSubjectKind::Log => "log",
+        OperatorSubjectKind::Trajectory => "trajectory",
+        OperatorSubjectKind::TopSet => "top_set",
+        OperatorSubjectKind::WellMarkerSet => "well_marker_set",
+        OperatorSubjectKind::PressureObservation => "pressure_observation",
+        OperatorSubjectKind::DrillingObservation => "drilling_observation",
+        OperatorSubjectKind::SeismicTraceData => "seismic_trace_data",
+    }
+}
+
+fn capability_family_id(family: OperatorFamily) -> &'static str {
+    match family {
+        OperatorFamily::LogCompute => "log_compute",
+        OperatorFamily::TrajectoryCompute => "trajectory_compute",
+        OperatorFamily::TopSetCompute => "top_set_compute",
+        OperatorFamily::WellMarkerCompute => "well_marker_compute",
+        OperatorFamily::PressureCompute => "pressure_compute",
+        OperatorFamily::DrillingCompute => "drilling_compute",
+        OperatorFamily::TraceLocalProcessing => "trace_local_processing",
+        OperatorFamily::PostStackNeighborhoodProcessing => "post_stack_neighborhood_processing",
+        OperatorFamily::SubvolumeProcessing => "subvolume_processing",
+        OperatorFamily::GatherProcessing => "gather_processing",
+        OperatorFamily::SeismicAnalysis => "seismic_analysis",
+    }
+}
+
+fn capability_execution_kind_id(kind: OperatorExecutionKind) -> &'static str {
+    match kind {
+        OperatorExecutionKind::Immediate => "immediate",
+        OperatorExecutionKind::Job => "job",
+    }
+}
+
+fn capability_output_lifecycle_id(lifecycle: OperatorOutputLifecycle) -> &'static str {
+    match lifecycle {
+        OperatorOutputLifecycle::DerivedAsset => "derived_asset",
+        OperatorOutputLifecycle::AnalysisOnly => "analysis_only",
+        OperatorOutputLifecycle::ViewOnly => "view_only",
+    }
+}
+
+fn capability_operator_deterministic(detail: &OperatorDetail) -> bool {
+    match detail {
+        OperatorDetail::TraceLocalProcessing(detail) => {
+            detail.dependency_profile_summary.deterministic
+        }
+        OperatorDetail::PostStackNeighborhoodProcessing(detail) => {
+            detail.dependency_profile_summary.deterministic
+        }
+        OperatorDetail::SubvolumeProcessing(detail) => {
+            detail.dependency_profile_summary.deterministic
+        }
+        OperatorDetail::GatherProcessing(detail) => detail.dependency_profile_summary.deterministic,
+        OperatorDetail::SeismicAnalysis(detail) => detail.dependency_profile_summary.deterministic,
+        OperatorDetail::LogCompute(_)
+        | OperatorDetail::TrajectoryCompute(_)
+        | OperatorDetail::TopSetCompute(_)
+        | OperatorDetail::WellMarkerCompute(_)
+        | OperatorDetail::PressureCompute(_)
+        | OperatorDetail::DrillingCompute(_) => {
+            unreachable!("seismic capability projection only supports seismic operator details")
         }
     }
 }
@@ -667,6 +797,101 @@ fn trace_local_documentation(operation: &TraceLocalProcessingOperation) -> Opera
         short_help: short_help.to_string(),
         help_markdown: Some(help_markdown.to_string()),
         help_url: None,
+    }
+}
+
+#[cfg(test)]
+mod capability_projection_tests {
+    use super::*;
+    use crate::{
+        SeismicAssetId, SeismicAxisRole, SeismicDimensionDescriptor, SeismicOrganization,
+        SeismicSampleDomain, SeismicStackingState, SeismicUnits,
+    };
+
+    fn sample_trace_data_descriptor() -> SeismicTraceDataDescriptor {
+        SeismicTraceDataDescriptor {
+            id: SeismicAssetId("dataset:test".to_string()),
+            label: "Test Survey".to_string(),
+            stacking_state: SeismicStackingState::PostStack,
+            organization: SeismicOrganization::BinnedGrid,
+            layout: SeismicLayout::PostStack3D,
+            gather_axis_kind: None,
+            dimensions: vec![
+                SeismicDimensionDescriptor {
+                    role: SeismicAxisRole::Inline,
+                    label: "inline".to_string(),
+                    start: Some(100.0),
+                    step: Some(1.0),
+                    count: 2,
+                    values: None,
+                    unit: None,
+                },
+                SeismicDimensionDescriptor {
+                    role: SeismicAxisRole::Crossline,
+                    label: "crossline".to_string(),
+                    start: Some(200.0),
+                    step: Some(1.0),
+                    count: 2,
+                    values: None,
+                    unit: None,
+                },
+                SeismicDimensionDescriptor {
+                    role: SeismicAxisRole::Sample,
+                    label: "time".to_string(),
+                    start: Some(0.0),
+                    step: Some(4.0),
+                    count: 2,
+                    values: None,
+                    unit: Some("ms".to_string()),
+                },
+            ],
+            chunk_shape: Some(vec![2, 2, 2]),
+            sample_domain: SeismicSampleDomain::Time,
+            units: SeismicUnits {
+                sample: "ms".to_string(),
+                amplitude: None,
+            },
+            bin_grid: None,
+        }
+    }
+
+    #[test]
+    fn projects_trace_data_catalog_into_discovery_capabilities() {
+        let catalog = operator_catalog_for_trace_data(&sample_trace_data_descriptor());
+        let registry = operator_capability_registry_for_catalog(&catalog);
+
+        assert_eq!(registry.records.len(), catalog.operators.len());
+
+        let trace_local = registry.get("amplitude_scalar").unwrap();
+        assert_eq!(trace_local.kind, CapabilityKind::Operator);
+        assert_eq!(trace_local.source, CapabilitySource::BuiltIn);
+        assert_eq!(trace_local.load_policy, CapabilityLoadPolicy::Never);
+        assert_eq!(trace_local.isolation, CapabilityIsolation::InProcess);
+        assert_eq!(
+            trace_local.contracts.request.as_deref(),
+            Some("ophiolite.seismic.operations.v1#run_trace_local_processing_request")
+        );
+        match &trace_local.detail {
+            CapabilityDetail::Operator(detail) => {
+                assert_eq!(detail.family_id, "trace_local_processing");
+                assert_eq!(detail.subject_kind, "seismic_trace_data");
+                assert_eq!(detail.execution_kind, "job");
+                assert_eq!(detail.output_lifecycle, "derived_asset");
+                assert!(detail.deterministic);
+                assert_eq!(detail.parameter_schema_id, None);
+            }
+            other => panic!("unexpected capability detail: {other:?}"),
+        }
+
+        let analysis = registry.get("velocity_scan").unwrap();
+        match &analysis.detail {
+            CapabilityDetail::Operator(detail) => {
+                assert_eq!(detail.family_id, "seismic_analysis");
+                assert_eq!(detail.execution_kind, "immediate");
+                assert_eq!(detail.output_lifecycle, "analysis_only");
+            }
+            other => panic!("unexpected capability detail: {other:?}"),
+        }
     }
 }
 
@@ -1131,45 +1356,83 @@ mod tests {
     }
 
     #[test]
-    fn planner_hints_distinguish_pointwise_and_external_trace_local_ops() {
-        let amplitude =
-            trace_local_operator_planner_hints(&TraceLocalProcessingOperation::AmplitudeScalar {
-                factor: 1.0,
-            });
-        let arithmetic =
-            trace_local_operator_planner_hints(&TraceLocalProcessingOperation::VolumeArithmetic {
-                operator: TraceLocalVolumeArithmeticOperator::Add,
-                secondary_store_path: "secondary.tbvol".to_string(),
-            });
+    fn trace_local_catalog_detail_exposes_additive_metadata() {
+        let catalog = operator_catalog_for_trace_data(&descriptor(SeismicLayout::PostStack3D));
+        let amplitude = catalog
+            .operators
+            .iter()
+            .find(|entry| entry.id == "amplitude_scalar")
+            .unwrap();
+        let arithmetic = catalog
+            .operators
+            .iter()
+            .find(|entry| entry.id == "volume_arithmetic")
+            .unwrap();
+
+        let amplitude_detail = match &amplitude.detail {
+            OperatorDetail::TraceLocalProcessing(detail) => detail,
+            other => panic!("unexpected amplitude detail: {other:?}"),
+        };
+        let arithmetic_detail = match &arithmetic.detail {
+            OperatorDetail::TraceLocalProcessing(detail) => detail,
+            other => panic!("unexpected arithmetic detail: {other:?}"),
+        };
 
         assert_eq!(
-            amplitude.preferred_partitioning,
-            ProcessingPlannerPartitioningHint::TileGroup
+            amplitude_detail.planner_hint_summary.preferred_partitioning,
+            ophiolite_operators::ProcessingPlannerPartitioningHint::TileGroup
         );
-        assert_eq!(amplitude.io_cost_class, ProcessingPlannerCostClass::Low);
-        assert_eq!(arithmetic.io_cost_class, ProcessingPlannerCostClass::Medium);
         assert_eq!(
-            arithmetic.parallel_efficiency_class,
-            ProcessingPlannerParallelEfficiencyClass::High
+            amplitude_detail
+                .dependency_profile_summary
+                .sample_dependency,
+            ophiolite_operators::ProcessingSampleDependencyKind::Pointwise
+        );
+        assert!(
+            !amplitude_detail
+                .capabilities
+                .secondary_volume_input_supported
+        );
+        assert_eq!(
+            arithmetic_detail
+                .dependency_profile_summary
+                .spatial_dependency,
+            ophiolite_operators::ProcessingSpatialDependencyKind::ExternalVolumePointwise
+        );
+        assert_eq!(
+            arithmetic_detail.planner_hint_summary.io_cost_class,
+            ophiolite_operators::ProcessingPlannerCostClass::Medium
+        );
+        assert!(
+            arithmetic_detail
+                .capabilities
+                .secondary_volume_input_supported
         );
     }
 
     #[test]
-    fn planner_hints_keep_subvolume_as_full_volume_terminal_work() {
-        let hints = subvolume_operator_planner_hints(&SubvolumeCropOperation {
-            inline_min: 1000,
-            inline_max: 1004,
-            xline_min: 2000,
-            xline_max: 2004,
-            z_min_ms: 0.0,
-            z_max_ms: 400.0,
-        });
+    fn subvolume_catalog_detail_exposes_terminal_full_volume_metadata() {
+        let catalog = operator_catalog_for_trace_data(&descriptor(SeismicLayout::PostStack3D));
+        let crop = catalog
+            .operators
+            .iter()
+            .find(|entry| entry.family == OperatorFamily::SubvolumeProcessing)
+            .unwrap();
+
+        let detail = match &crop.detail {
+            OperatorDetail::SubvolumeProcessing(detail) => detail,
+            other => panic!("unexpected subvolume detail: {other:?}"),
+        };
 
         assert_eq!(
-            hints.preferred_partitioning,
-            ProcessingPlannerPartitioningHint::FullVolume
+            detail.planner_hint_summary.preferred_partitioning,
+            ophiolite_operators::ProcessingPlannerPartitioningHint::FullVolume
         );
-        assert!(hints.requires_full_volume);
-        assert_eq!(hints.io_cost_class, ProcessingPlannerCostClass::Medium);
+        assert!(detail.planner_hint_summary.requires_full_volume);
+        assert_eq!(
+            detail.dependency_profile_summary.sample_dependency,
+            ophiolite_operators::ProcessingSampleDependencyKind::Pointwise
+        );
+        assert!(detail.capabilities.terminal_only);
     }
 }

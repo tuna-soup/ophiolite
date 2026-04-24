@@ -11,6 +11,10 @@ import type {
   AvoResponseModel,
   AvoResponseProbe,
   CursorProbe,
+  ChartBackendId,
+  ChartBackendPreference,
+  ChartRendererStatus,
+  ChartRendererTelemetryEvent,
   ChartInteractionActionId,
   ChartInteractionToolId,
   GatherPayload,
@@ -22,6 +26,8 @@ import type {
   RockPhysicsCrossplotProbe,
   RockPhysicsCrossplotViewport,
   SectionPayload,
+  SeismicSectionDataSource,
+  SeismicSectionDataSourceState,
   SectionHorizonOverlay,
   SectionWellOverlay,
   SectionScalarOverlay,
@@ -103,6 +109,7 @@ export interface AmplitudeDistributionResult {
 
 export type SeismicSectionData = SectionPayload;
 export type SeismicGatherData = GatherPayload;
+export type SeismicSectionChartDataSource = SeismicSectionDataSource;
 export interface SurveyMapSimpleArea {
   id?: string;
   name: string;
@@ -412,11 +419,51 @@ export interface SeismicChartOverlayProps {
   stageScale?: number;
 }
 
+export interface ChartRendererConfig {
+  backendPreference?: ChartBackendPreference;
+  availableBackends?: readonly ChartBackendId[];
+  runtimeErrorMessage?: string | null;
+}
+
+export interface ChartRendererStatusPayload {
+  chartId: string;
+  viewId?: string;
+  status: ChartRendererStatus;
+}
+
+export interface ChartRendererTelemetryPayload {
+  chartId: string;
+  viewId?: string;
+  event: ChartRendererTelemetryEvent;
+}
+
+export type ChartRendererStatusChangeHandler = (payload: ChartRendererStatusPayload) => void;
+export type ChartRendererTelemetryChangeHandler = (payload: ChartRendererTelemetryPayload) => void;
+export type SeismicChartRendererConfig = ChartRendererConfig;
+export type SeismicSectionRendererStatusPayload = ChartRendererStatusPayload;
+export type SeismicGatherRendererStatusPayload = ChartRendererStatusPayload;
+export type SurveyMapRendererStatusPayload = ChartRendererStatusPayload;
+export type WellCorrelationRendererStatusPayload = ChartRendererStatusPayload;
+export type RockPhysicsCrossplotRendererStatusPayload = ChartRendererStatusPayload;
+export type SeismicSectionRendererTelemetryPayload = ChartRendererTelemetryPayload;
+export type SeismicGatherRendererTelemetryPayload = ChartRendererTelemetryPayload;
+export type SurveyMapRendererTelemetryPayload = ChartRendererTelemetryPayload;
+export type WellCorrelationRendererTelemetryPayload = ChartRendererTelemetryPayload;
+export type RockPhysicsCrossplotRendererTelemetryPayload = ChartRendererTelemetryPayload;
+
+export interface SeismicSectionDataSourceStatePayload {
+  chartId: string;
+  viewId: string;
+  state: SeismicSectionDataSourceState;
+}
+
 export interface SeismicSectionChartProps extends SeismicChartOverlayProps {
   chartId: string;
   viewId: string;
   section: SeismicSectionData | OphioliteSectionView | null;
   secondarySection?: SeismicSectionData | OphioliteSectionView | null;
+  dataSource?: SeismicSectionChartDataSource | null;
+  renderer?: ChartRendererConfig;
   sectionScalarOverlays?: readonly SectionScalarOverlay[];
   sectionHorizons?: readonly SectionHorizonOverlay[];
   sectionWellOverlays?: readonly SectionWellOverlay[];
@@ -439,6 +486,9 @@ export interface SeismicSectionChartProps extends SeismicChartOverlayProps {
   onInteractionChange?: SeismicSectionInteractionChangeHandler;
   onInteractionStateChange?: SeismicSectionInteractionStateChangeHandler;
   onInteractionEvent?: SeismicSectionInteractionEventHandler;
+  onDataSourceStateChange?: SeismicSectionDataSourceStateChangeHandler;
+  onRendererStatusChange?: SeismicSectionRendererStatusChangeHandler;
+  onRendererTelemetry?: SeismicSectionRendererTelemetryChangeHandler;
   onSplitPositionChange?: SeismicSectionSplitPositionChangeHandler;
 }
 
@@ -447,6 +497,9 @@ export type SeismicSectionViewportChangeHandler = (payload: SeismicSectionViewpo
 export type SeismicSectionInteractionChangeHandler = (payload: SeismicChartInteractionChangePayload) => void;
 export type SeismicSectionInteractionStateChangeHandler = (payload: SeismicChartInteractionState) => void;
 export type SeismicSectionInteractionEventHandler = (payload: SeismicChartInteractionEventPayload) => void;
+export type SeismicSectionDataSourceStateChangeHandler = (payload: SeismicSectionDataSourceStatePayload) => void;
+export type SeismicSectionRendererStatusChangeHandler = ChartRendererStatusChangeHandler;
+export type SeismicSectionRendererTelemetryChangeHandler = ChartRendererTelemetryChangeHandler;
 export type SeismicSectionBrowseRequestHandler = (request: SeismicSectionBrowseRequest) => void;
 export type SeismicSectionAnalysisRequestHandler = (request: SeismicSectionAnalysisRequest) => void;
 export type SeismicSectionAnalysisSelectionModeChangeHandler = (
@@ -458,6 +511,7 @@ export interface SeismicGatherChartProps extends SeismicChartOverlayProps {
   chartId: string;
   viewId: string;
   gather: SeismicGatherData | OphioliteGatherView | null;
+  renderer?: ChartRendererConfig;
   viewport?: SeismicViewport | null;
   displayTransform?: Partial<SeismicChartDisplayTransform>;
   interactions?: SeismicChartInteractionConfig;
@@ -472,6 +526,8 @@ export interface SeismicGatherChartProps extends SeismicChartOverlayProps {
   onInteractionChange?: SeismicGatherInteractionChangeHandler;
   onInteractionStateChange?: SeismicGatherInteractionStateChangeHandler;
   onInteractionEvent?: SeismicGatherInteractionEventHandler;
+  onRendererStatusChange?: SeismicGatherRendererStatusChangeHandler;
+  onRendererTelemetry?: SeismicGatherRendererTelemetryChangeHandler;
 }
 
 export type SeismicGatherProbeChangeHandler = (payload: SeismicGatherProbeChangePayload) => void;
@@ -479,6 +535,8 @@ export type SeismicGatherViewportChangeHandler = (payload: SeismicGatherViewport
 export type SeismicGatherInteractionChangeHandler = (payload: SeismicChartInteractionChangePayload) => void;
 export type SeismicGatherInteractionStateChangeHandler = (payload: SeismicChartInteractionState) => void;
 export type SeismicGatherInteractionEventHandler = (payload: SeismicChartInteractionEventPayload) => void;
+export type SeismicGatherRendererStatusChangeHandler = ChartRendererStatusChangeHandler;
+export type SeismicGatherRendererTelemetryChangeHandler = ChartRendererTelemetryChangeHandler;
 
 export type WellCorrelationChartTool = "pointer" | "crosshair" | "pan";
 export type WellCorrelationChartAction = "fitToData";
@@ -566,6 +624,7 @@ export interface WellCorrelationChartOverlayProps {
 export interface WellCorrelationPanelChartProps extends WellCorrelationChartOverlayProps {
   chartId: string;
   panel: WellCorrelationPanelData | null;
+  renderer?: ChartRendererConfig;
   viewport?: WellCorrelationViewport | null;
   interactions?: WellCorrelationChartInteractionConfig;
   loading?: boolean;
@@ -576,12 +635,16 @@ export interface WellCorrelationPanelChartProps extends WellCorrelationChartOver
   onProbeChange?: WellCorrelationProbeChangeHandler;
   onInteractionStateChange?: WellCorrelationInteractionStateChangeHandler;
   onInteractionEvent?: WellCorrelationInteractionEventHandler;
+  onRendererStatusChange?: WellCorrelationRendererStatusChangeHandler;
+  onRendererTelemetry?: WellCorrelationRendererTelemetryChangeHandler;
 }
 
 export type WellCorrelationViewportChangeHandler = (payload: WellCorrelationViewportChangePayload) => void;
 export type WellCorrelationProbeChangeHandler = (payload: WellCorrelationProbeChangePayload) => void;
 export type WellCorrelationInteractionStateChangeHandler = (payload: WellCorrelationChartInteractionState) => void;
 export type WellCorrelationInteractionEventHandler = (payload: WellCorrelationInteractionEventPayload) => void;
+export type WellCorrelationRendererStatusChangeHandler = ChartRendererStatusChangeHandler;
+export type WellCorrelationRendererTelemetryChangeHandler = ChartRendererTelemetryChangeHandler;
 
 export type SurveyMapChartTool = "pointer" | "pan";
 export type SurveyMapChartAction = "fitToData";
@@ -645,6 +708,7 @@ export interface SurveyMapChartOverlayProps {
 export interface SurveyMapChartProps extends SurveyMapChartOverlayProps {
   chartId: string;
   map: SurveyMapData | null;
+  renderer?: ChartRendererConfig;
   viewport?: SurveyMapViewport | null;
   interactions?: SurveyMapChartInteractionConfig;
   loading?: boolean;
@@ -656,6 +720,8 @@ export interface SurveyMapChartProps extends SurveyMapChartOverlayProps {
   onSelectionChange?: SurveyMapSelectionChangeHandler;
   onInteractionStateChange?: SurveyMapInteractionStateChangeHandler;
   onInteractionEvent?: SurveyMapInteractionEventHandler;
+  onRendererStatusChange?: SurveyMapRendererStatusChangeHandler;
+  onRendererTelemetry?: SurveyMapRendererTelemetryChangeHandler;
 }
 
 export type SurveyMapViewportChangeHandler = (payload: SurveyMapViewportChangePayload) => void;
@@ -663,6 +729,8 @@ export type SurveyMapProbeChangeHandler = (payload: SurveyMapProbeChangePayload)
 export type SurveyMapSelectionChangeHandler = (payload: SurveyMapSelectionChangePayload) => void;
 export type SurveyMapInteractionStateChangeHandler = (payload: SurveyMapChartInteractionState) => void;
 export type SurveyMapInteractionEventHandler = (payload: SurveyMapInteractionEventPayload) => void;
+export type SurveyMapRendererStatusChangeHandler = ChartRendererStatusChangeHandler;
+export type SurveyMapRendererTelemetryChangeHandler = ChartRendererTelemetryChangeHandler;
 
 export type RockPhysicsCrossplotChartTool = "pointer" | "crosshair" | "pan";
 export type RockPhysicsCrossplotChartAction = "fitToData";
@@ -716,6 +784,7 @@ export interface RockPhysicsCrossplotChartOverlayProps {
 export interface RockPhysicsCrossplotChartProps extends RockPhysicsCrossplotChartOverlayProps {
   chartId: string;
   model: RockPhysicsCrossplotData | null;
+  renderer?: ChartRendererConfig;
   viewport?: RockPhysicsCrossplotViewport | null;
   axisOverrides?: CartesianAxisOverrides;
   interactions?: RockPhysicsCrossplotChartInteractionConfig;
@@ -729,6 +798,8 @@ export interface RockPhysicsCrossplotChartProps extends RockPhysicsCrossplotChar
   onInteractionEvent?: RockPhysicsCrossplotInteractionEventHandler;
   onAxisOverridesChange?: RockPhysicsCrossplotAxisOverridesChangeHandler;
   onAxisContextRequest?: RockPhysicsCrossplotAxisContextRequestHandler;
+  onRendererStatusChange?: RockPhysicsCrossplotRendererStatusChangeHandler;
+  onRendererTelemetry?: RockPhysicsCrossplotRendererTelemetryChangeHandler;
 }
 
 export type RockPhysicsCrossplotViewportChangeHandler = (payload: RockPhysicsCrossplotViewportChangePayload) => void;
@@ -741,6 +812,8 @@ export type RockPhysicsCrossplotAxisOverridesChangeHandler = (
 export type RockPhysicsCrossplotAxisContextRequestHandler = (
   payload: CartesianAxisContextRequestPayload
 ) => void;
+export type RockPhysicsCrossplotRendererStatusChangeHandler = ChartRendererStatusChangeHandler;
+export type RockPhysicsCrossplotRendererTelemetryChangeHandler = ChartRendererTelemetryChangeHandler;
 
 export type VolumeInterpretationChartTool = VolumeInterpretationTool;
 export type VolumeInterpretationChartAction = "fitToData" | "topView" | "sideView" | "centerSelection";

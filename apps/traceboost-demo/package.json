@@ -8,10 +8,11 @@
     "setup:bun-links": "bun run doctor",
     "doctor": "bun run ./scripts/verify-local-deps.mjs",
     "check:ophiolite-boundary": "bun run ./scripts/check-ophiolite-boundary.mjs",
+    "generate:desktop-bridge-stubs": "node ./scripts/generate-desktop-bridge-stubs.mjs",
     "dev": "vite",
     "build": "vite build",
     "test": "bun test",
-    "typecheck": "bun run check:ophiolite-boundary && svelte-check --tsconfig ./tsconfig.json",
+    "typecheck": "bun run generate:desktop-bridge-stubs && bun run check:ophiolite-boundary && svelte-check --tsconfig ./tsconfig.json",
     "tauri:dev": "bun run typecheck && bun run ./scripts/tauri-dev.mjs",
     "tauri:build": "tauri build"
   },

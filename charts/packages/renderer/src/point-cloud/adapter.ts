@@ -5,6 +5,7 @@ import type {
   RockPhysicsCrossplotProbe,
   RockPhysicsCrossplotViewport
 } from "@ophiolite/charts-data-models";
+import type { RendererTelemetrySource } from "../telemetry";
 
 export interface RockPhysicsCrossplotViewState {
   model: RockPhysicsCrossplotModel | null;
@@ -18,7 +19,7 @@ export interface RockPhysicsCrossplotRenderFrame {
   state: RockPhysicsCrossplotViewState;
 }
 
-export interface RockPhysicsCrossplotRendererAdapter {
+export interface RockPhysicsCrossplotRendererAdapter extends RendererTelemetrySource {
   mount(container: HTMLElement): void;
   render(frame: RockPhysicsCrossplotRenderFrame): void;
   dispose(): void;

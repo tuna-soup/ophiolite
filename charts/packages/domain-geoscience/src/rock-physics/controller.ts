@@ -10,6 +10,7 @@ import {
 import { InteractionManager } from "@ophiolite/charts-core";
 import type {
   CartesianAxisOverrides,
+  ChartRendererTelemetryEvent,
   InteractionCapabilities,
   InteractionEvent,
   RockPhysicsCrossplotModel,
@@ -32,6 +33,7 @@ export class RockPhysicsCrossplotController {
   readonly interactions = new InteractionManager(ROCK_PHYSICS_INTERACTION_CAPABILITIES, "cursor");
   private readonly listeners = new Set<(state: RockPhysicsCrossplotViewState) => void>();
   private readonly interactionEventListeners = new Set<(event: InteractionEvent) => void>();
+  private readonly rendererTelemetryListeners = new Set<(event: ChartRendererTelemetryEvent) => void>();
   private state: RockPhysicsCrossplotViewState = {
     model: null,
     viewport: null,
@@ -42,6 +44,9 @@ export class RockPhysicsCrossplotController {
 
   constructor(renderer: RockPhysicsCrossplotRendererAdapter) {
     this.renderer = renderer;
+    this.renderer.setTelemetryListener((event) => {
+      this.emitRendererTelemetry(event);
+    });
     this.interactions.on((event) => {
       this.state.interactions = this.interactions.getState();
       this.render();
@@ -256,7 +261,15 @@ export class RockPhysicsCrossplotController {
     };
   }
 
+  onRendererTelemetry(listener: (event: ChartRendererTelemetryEvent) => void): () => void {
+    this.rendererTelemetryListeners.add(listener);
+    return () => {
+      this.rendererTelemetryListeners.delete(listener);
+    };
+  }
+
   dispose(): void {
+    this.renderer.setTelemetryListener(null);
     this.renderer.dispose();
     this.container = null;
   }
@@ -270,10 +283,25 @@ export class RockPhysicsCrossplotController {
     try {
       this.renderer.render({ state });
     } catch (error) {
-      console.error("RockPhysicsCrossplotController render failed.", error);
+      this.emitRendererTelemetry({
+        kind: "frame-failed",
+        phase: "render",
+        backend: null,
+        recoverable: true,
+        message: error instanceof Error ? error.message : String(error),
+        detail: "Rock physics controller observed a renderer frame failure.",
+        timestampMs: nowMs()
+      });
     }
     for (const listener of this.listeners) {
       listener(state);
+    }
+  }
+
+  private emitRendererTelemetry(event: ChartRendererTelemetryEvent): void {
+    const clonedEvent = { ...event };
+    for (const listener of this.rendererTelemetryListeners) {
+      listener(clonedEvent);
     }
   }
 }
@@ -395,4 +423,8 @@ function pointInRect(
 
 function cloneInteractionEvent(event: InteractionEvent): InteractionEvent {
   return JSON.parse(JSON.stringify(event)) as InteractionEvent;
+}
+
+function nowMs(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
 }

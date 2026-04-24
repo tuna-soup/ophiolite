@@ -1,3 +1,9 @@
+use ophiolite_capabilities::{
+    CapabilityAvailability, CapabilityContractSet, CapabilityDetail, CapabilityDocumentation,
+    CapabilityIsolation, CapabilityKind, CapabilityLifecycleRegistry, CapabilityLoadPolicy,
+    CapabilityRecord, CapabilityRegistry, CapabilitySource, CapabilityStability,
+    CapabilitySurfaceBinding, ImportProviderCapabilityDetail,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -6,6 +12,12 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
 };
+
+const TRACEBOOST_IMPORT_PROVIDER_CAPABILITY_PROVIDER: &str = "traceboost-desktop";
+const IMPORT_PROVIDER_ICON_ID_BINDING: &str = "traceboost.import_provider.icon_id";
+const IMPORT_PROVIDER_GROUP_BINDING: &str = "traceboost.import_provider.group";
+const IMPORT_PROVIDER_ORDERING_BINDING: &str = "traceboost.import_provider.ordering";
+const IMPORT_PROVIDER_IMPLEMENTED_BINDING: &str = "traceboost.import_provider.implemented";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -189,11 +201,15 @@ impl ImportProvider for StaticImportProvider {
 }
 
 pub struct ImportProviderRegistry {
+    capabilities: CapabilityRegistry,
+    lifecycle: Mutex<CapabilityLifecycleRegistry>,
     providers: BTreeMap<String, Box<dyn ImportProvider>>,
 }
 
 impl ImportProviderRegistry {
     pub fn new() -> Self {
+        let mut capabilities = CapabilityRegistry::new();
+        let mut lifecycle = CapabilityLifecycleRegistry::new();
         let mut providers: BTreeMap<String, Box<dyn ImportProvider>> = BTreeMap::new();
         for provider in [
             StaticImportProvider::new(
@@ -332,16 +348,35 @@ impl ImportProviderRegistry {
                 false,
             ),
         ] {
-            providers.insert(provider.descriptor.provider_id.clone(), Box::new(provider));
+            let descriptor = provider.descriptor();
+            let capability = capability_record_from_descriptor(&descriptor);
+            lifecycle.discover(capability.id.clone());
+            lifecycle.record_validation(
+                capability.id.clone(),
+                validate_import_provider_capability(&capability, true),
+            );
+            capabilities.register(capability);
+            providers.insert(descriptor.provider_id.clone(), Box::new(provider));
         }
-        Self { providers }
+        Self {
+            capabilities,
+            lifecycle: Mutex::new(lifecycle),
+            providers,
+        }
     }
 
     pub fn descriptors(&self) -> Vec<ImportProviderDescriptor> {
         let mut descriptors = self
-            .providers
-            .values()
-            .map(|provider| provider.descriptor())
+            .capabilities
+            .list_by_kind(CapabilityKind::ImportProvider)
+            .into_iter()
+            .filter(|record| {
+                !matches!(
+                    record.availability,
+                    CapabilityAvailability::Unavailable { .. }
+                )
+            })
+            .filter_map(import_provider_descriptor_from_capability)
             .collect::<Vec<_>>();
         descriptors.sort_by(|left, right| {
             left.ordering
@@ -355,6 +390,81 @@ impl ImportProviderRegistry {
         self.providers
             .get(provider_id)
             .map(|provider| provider.as_ref())
+    }
+
+    pub fn prepare_activation(&self, provider_id: &str) -> Result<(), String> {
+        let Some(capability) = self.capabilities.get(provider_id) else {
+            return Err(format!(
+                "import capability `{provider_id}` is not registered for discovery"
+            ));
+        };
+        let reasons = validate_import_provider_capability(
+            capability,
+            self.providers.contains_key(provider_id),
+        );
+        let mut lifecycle = self
+            .lifecycle
+            .lock()
+            .map_err(|_| "import capability lifecycle is unavailable".to_string())?;
+        lifecycle.record_validation(provider_id.to_string(), reasons.clone());
+        if !reasons.is_empty() {
+            lifecycle.mark_activation_failed(provider_id.to_string(), reasons.clone());
+            return Err(format!(
+                "import provider `{provider_id}` cannot activate: {}",
+                reasons.join("; ")
+            ));
+        }
+        lifecycle.mark_active(provider_id.to_string())
+    }
+
+    pub fn finish_activation(&self, provider_id: &str) {
+        if let Ok(mut lifecycle) = self.lifecycle.lock() {
+            lifecycle.mark_dormant(provider_id.to_string());
+        }
+    }
+
+    pub fn fail_activation(&self, provider_id: &str, reason: String) {
+        if let Ok(mut lifecycle) = self.lifecycle.lock() {
+            lifecycle.mark_activation_failed(provider_id.to_string(), vec![reason]);
+        }
+    }
+
+    #[cfg(test)]
+    fn from_parts(
+        providers: BTreeMap<String, Box<dyn ImportProvider>>,
+        capabilities: CapabilityRegistry,
+    ) -> Self {
+        let mut lifecycle = CapabilityLifecycleRegistry::new();
+        for record in &capabilities.records {
+            lifecycle.discover(record.id.clone());
+            lifecycle.record_validation(
+                record.id.clone(),
+                validate_import_provider_capability(
+                    record,
+                    providers.contains_key(record.id.as_str()),
+                ),
+            );
+        }
+        Self {
+            capabilities,
+            lifecycle: Mutex::new(lifecycle),
+            providers,
+        }
+    }
+
+    #[cfg(test)]
+    fn lifecycle_activation_state(&self, provider_id: &str) -> Option<String> {
+        self.lifecycle
+            .lock()
+            .ok()
+            .and_then(|lifecycle| lifecycle.get(provider_id).cloned())
+            .map(|record| match record.activation {
+                ophiolite_capabilities::CapabilityActivationState::Dormant => "dormant".to_string(),
+                ophiolite_capabilities::CapabilityActivationState::Active => "active".to_string(),
+                ophiolite_capabilities::CapabilityActivationState::Failed { .. } => {
+                    "failed".to_string()
+                }
+            })
     }
 }
 
@@ -387,6 +497,7 @@ impl ImportManagerState {
         if provider_id.is_empty() {
             return Err("import session requires a provider id".to_string());
         }
+        self.registry.prepare_activation(provider_id)?;
         let provider = self
             .registry
             .provider(provider_id)
@@ -395,11 +506,309 @@ impl ImportManagerState {
             "import-session-{}",
             self.next_session_id.fetch_add(1, Ordering::Relaxed)
         );
-        let session = provider.begin_session(session_id.clone(), &request)?;
+        let session = match provider.begin_session(session_id.clone(), &request) {
+            Ok(session) => {
+                self.registry.finish_activation(provider_id);
+                session
+            }
+            Err(error) => {
+                self.registry.fail_activation(provider_id, error.clone());
+                return Err(error);
+            }
+        };
         self.sessions
             .lock()
             .map_err(|_| "import session store is unavailable".to_string())?
             .insert(session_id, session.clone());
         Ok(session)
+    }
+
+    #[cfg(test)]
+    fn with_registry(registry: ImportProviderRegistry) -> Self {
+        Self {
+            registry,
+            sessions: Mutex::new(HashMap::new()),
+            next_session_id: AtomicU64::new(1),
+        }
+    }
+}
+
+fn capability_record_from_descriptor(descriptor: &ImportProviderDescriptor) -> CapabilityRecord {
+    CapabilityRecord {
+        id: descriptor.provider_id.clone(),
+        kind: CapabilityKind::ImportProvider,
+        source: CapabilitySource::AppLocal,
+        provider: TRACEBOOST_IMPORT_PROVIDER_CAPABILITY_PROVIDER.to_string(),
+        name: descriptor.label.clone(),
+        summary: Some(descriptor.description.clone()),
+        version: None,
+        stability: CapabilityStability::Stable,
+        availability: if descriptor.implemented {
+            CapabilityAvailability::Available
+        } else {
+            CapabilityAvailability::Deferred
+        },
+        tags: vec![descriptor.group.clone()],
+        documentation: vec![CapabilityDocumentation {
+            short_help: descriptor.description.clone(),
+            help_markdown: None,
+            help_url: None,
+        }],
+        load_policy: CapabilityLoadPolicy::OnDemand,
+        isolation: CapabilityIsolation::InProcess,
+        permissions: vec![],
+        bindings: vec![
+            CapabilitySurfaceBinding {
+                surface: IMPORT_PROVIDER_ICON_ID_BINDING.to_string(),
+                binding: descriptor.icon_id.clone(),
+            },
+            CapabilitySurfaceBinding {
+                surface: IMPORT_PROVIDER_GROUP_BINDING.to_string(),
+                binding: descriptor.group.clone(),
+            },
+            CapabilitySurfaceBinding {
+                surface: IMPORT_PROVIDER_ORDERING_BINDING.to_string(),
+                binding: descriptor.ordering.to_string(),
+            },
+            CapabilitySurfaceBinding {
+                surface: IMPORT_PROVIDER_IMPLEMENTED_BINDING.to_string(),
+                binding: descriptor.implemented.to_string(),
+            },
+        ],
+        host_compatibility: vec![],
+        contracts: CapabilityContractSet {
+            request: None,
+            response: None,
+        },
+        artifacts: vec![],
+        detail: CapabilityDetail::ImportProvider(ImportProviderCapabilityDetail {
+            destination_kind: descriptor.destination_kind.clone(),
+            selection_mode: descriptor.selection_mode.clone(),
+            supported_extensions: descriptor.supported_extensions.clone(),
+            supports_directory: descriptor.supports_directory,
+            supports_drag_drop: descriptor.supports_drag_drop,
+            supports_deep_link: descriptor.supports_deep_link,
+            requires_active_store: descriptor.requires_active_store,
+            requires_project_root: descriptor.requires_project_root,
+            requires_project_well_binding: descriptor.requires_project_well_binding,
+        }),
+    }
+}
+
+fn import_provider_descriptor_from_capability(
+    record: &CapabilityRecord,
+) -> Option<ImportProviderDescriptor> {
+    let CapabilityDetail::ImportProvider(detail) = &record.detail else {
+        return None;
+    };
+
+    Some(ImportProviderDescriptor {
+        provider_id: record.id.clone(),
+        label: record.name.clone(),
+        description: record
+            .summary
+            .clone()
+            .or_else(|| {
+                record
+                    .documentation
+                    .first()
+                    .map(|documentation| documentation.short_help.clone())
+            })
+            .unwrap_or_default(),
+        icon_id: capability_binding(record, IMPORT_PROVIDER_ICON_ID_BINDING)
+            .unwrap_or(record.id.as_str())
+            .to_string(),
+        group: capability_binding(record, IMPORT_PROVIDER_GROUP_BINDING)
+            .or_else(|| record.tags.first().map(String::as_str))
+            .unwrap_or_default()
+            .to_string(),
+        ordering: capability_u32_binding(record, IMPORT_PROVIDER_ORDERING_BINDING).unwrap_or(0),
+        destination_kind: detail.destination_kind.clone(),
+        selection_mode: detail.selection_mode.clone(),
+        supported_extensions: detail.supported_extensions.clone(),
+        supports_directory: detail.supports_directory,
+        requires_active_store: detail.requires_active_store,
+        requires_project_root: detail.requires_project_root,
+        requires_project_well_binding: detail.requires_project_well_binding,
+        supports_drag_drop: detail.supports_drag_drop,
+        supports_deep_link: detail.supports_deep_link,
+        implemented: capability_bool_binding(record, IMPORT_PROVIDER_IMPLEMENTED_BINDING)
+            .unwrap_or(matches!(
+                record.availability,
+                CapabilityAvailability::Available
+            )),
+    })
+}
+
+fn capability_binding<'a>(record: &'a CapabilityRecord, surface: &str) -> Option<&'a str> {
+    record
+        .bindings
+        .iter()
+        .find(|binding| binding.surface == surface)
+        .map(|binding| binding.binding.as_str())
+}
+
+fn capability_u32_binding(record: &CapabilityRecord, surface: &str) -> Option<u32> {
+    capability_binding(record, surface)?.parse().ok()
+}
+
+fn capability_bool_binding(record: &CapabilityRecord, surface: &str) -> Option<bool> {
+    match capability_binding(record, surface)? {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+fn validate_import_provider_capability(
+    record: &CapabilityRecord,
+    has_provider_implementation: bool,
+) -> Vec<String> {
+    let mut reasons = match &record.availability {
+        CapabilityAvailability::Available => Vec::new(),
+        CapabilityAvailability::Deferred => vec![
+            "capability is discovered but deferred and is not ready for activation".to_string(),
+        ],
+        CapabilityAvailability::Unavailable { reasons } => reasons.clone(),
+    };
+    if !capability_bool_binding(record, IMPORT_PROVIDER_IMPLEMENTED_BINDING).unwrap_or(matches!(
+        record.availability,
+        CapabilityAvailability::Available
+    )) {
+        reasons.push(
+            "capability is discovery-only and does not currently expose an activation implementation"
+                .to_string(),
+        );
+    }
+    if !has_provider_implementation {
+        reasons.push("no provider implementation is registered for this capability id".to_string());
+    }
+    reasons
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovery_comes_from_capabilities_while_activation_uses_provider_implementations() {
+        let mut providers: BTreeMap<String, Box<dyn ImportProvider>> = BTreeMap::new();
+        providers.insert(
+            "shared_provider".to_string(),
+            Box::new(StaticImportProvider::new(
+                "shared_provider",
+                "Implementation Provider",
+                "Backs activation in this test.",
+                "impl_icon",
+                "impl_group",
+                5,
+                "project_asset",
+                "single_file",
+                &["json"],
+                false,
+                false,
+                false,
+                false,
+            )),
+        );
+
+        let discovery_descriptor = ImportProviderDescriptor {
+            provider_id: "shared_provider".to_string(),
+            label: "Discovery Provider".to_string(),
+            description: "Backs listing only in this test.".to_string(),
+            icon_id: "discovery_icon".to_string(),
+            group: "discovery_group".to_string(),
+            ordering: 15,
+            destination_kind: "runtime_store".to_string(),
+            selection_mode: "directory".to_string(),
+            supported_extensions: vec!["sgy".to_string(), "zarr".to_string()],
+            supports_directory: true,
+            requires_active_store: true,
+            requires_project_root: false,
+            requires_project_well_binding: false,
+            supports_drag_drop: false,
+            supports_deep_link: true,
+            implemented: true,
+        };
+        let mut capabilities = CapabilityRegistry::new();
+        capabilities.register(capability_record_from_descriptor(&discovery_descriptor));
+
+        let state = ImportManagerState::with_registry(ImportProviderRegistry::from_parts(
+            providers,
+            capabilities,
+        ));
+
+        let providers = state.list_providers().providers;
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].provider_id, "shared_provider");
+        assert_eq!(providers[0].label, "Discovery Provider");
+        assert_eq!(providers[0].icon_id, "discovery_icon");
+        assert_eq!(providers[0].group, "discovery_group");
+        assert_eq!(providers[0].ordering, 15);
+
+        let session = state
+            .begin_session(BeginImportSessionRequest {
+                provider_id: "shared_provider".to_string(),
+                source_refs: Some(vec!["/tmp/source.json".to_string()]),
+                destination_ref: None,
+                activation_intent: None,
+            })
+            .expect("activation should still resolve through provider implementations");
+        assert_eq!(session.provider_id, "shared_provider");
+        assert_eq!(session.destination_kind, "project_asset");
+        assert_eq!(
+            state
+                .registry
+                .lifecycle_activation_state("shared_provider")
+                .as_deref(),
+            Some("dormant")
+        );
+    }
+
+    #[test]
+    fn discovery_only_capability_cannot_activate() {
+        let providers: BTreeMap<String, Box<dyn ImportProvider>> = BTreeMap::new();
+        let discovery_descriptor = ImportProviderDescriptor {
+            provider_id: "discovery_only_provider".to_string(),
+            label: "Discovery Only Provider".to_string(),
+            description: "Visible for discovery but not activation.".to_string(),
+            icon_id: "discovery_only_icon".to_string(),
+            group: "discovery_group".to_string(),
+            ordering: 15,
+            destination_kind: "runtime_store".to_string(),
+            selection_mode: "directory".to_string(),
+            supported_extensions: vec!["sgy".to_string()],
+            supports_directory: true,
+            requires_active_store: true,
+            requires_project_root: false,
+            requires_project_well_binding: false,
+            supports_drag_drop: false,
+            supports_deep_link: true,
+            implemented: false,
+        };
+        let mut capabilities = CapabilityRegistry::new();
+        capabilities.register(capability_record_from_descriptor(&discovery_descriptor));
+
+        let state = ImportManagerState::with_registry(ImportProviderRegistry::from_parts(
+            providers,
+            capabilities,
+        ));
+
+        let error = state
+            .begin_session(BeginImportSessionRequest {
+                provider_id: "discovery_only_provider".to_string(),
+                source_refs: Some(vec!["/tmp/source.json".to_string()]),
+                destination_ref: None,
+                activation_intent: None,
+            })
+            .expect_err("discovery-only capability should fail activation");
+        assert!(error.contains("discovery-only"));
+        assert_eq!(
+            state
+                .registry
+                .lifecycle_activation_state("discovery_only_provider")
+                .as_deref(),
+            Some("failed")
+        );
     }
 }

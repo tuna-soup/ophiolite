@@ -1,0 +1,111 @@
+---
+title: Ownership and Boundaries
+description: What Ophiolite owns, what TraceBoost owns, and which surfaces are public versus compatibility-only.
+draft: false
+---
+
+**Audience:** platform teams, app teams, and advanced evaluators  
+**Status:** Preview
+
+Use this page when you need the current stack split, not just a package list.
+
+## Layer ownership
+
+`ophiolite` owns the canonical subsurface platform:
+
+- domain contracts and generated shared schemas
+- runtime, compute, storage, and validation behavior
+- reusable control surfaces such as the platform CLI and Python SDK
+- reusable chart SDK packages
+- capability vocabulary and boundary metadata
+
+`TraceBoost` owns first-party workflow application behavior:
+
+- import, open, view, process, and export orchestration
+- workspace/session UX and product presets
+- desktop shell concerns such as Tauri command transport, window lifecycle, and app-local filesystem policy
+- app-local capability registration such as TraceBoost import providers
+- app-local processing authoring palette and session-action commands for the current first-party consumer
+
+## Dependency direction
+
+The intended dependency direction is:
+
+`TraceBoost app -> Ophiolite platform + Ophiolite Charts`
+
+The app is a consumer of platform behavior. It does not become a public platform API merely because it ships in the same repo.
+
+## Public, compatibility, and app-local surfaces
+
+### Public or preview platform surfaces
+
+These are the surfaces that define the current platform story:
+
+- `ophiolite-sdk`
+- canonical shared contract packages such as `seis-contracts-core`, `seis-contracts-views`, and `seis-contracts-operations`
+- the platform CLI
+- the Python SDK
+- chart SDK packages
+- the shared capability vocabulary in `ophiolite-capabilities`
+
+### Compatibility surfaces
+
+These exist to preserve migration paths, not to expand the durable platform promise:
+
+- `seis-contracts-interop`
+- TraceBoost-oriented contract distribution paths
+- raw interop namespaces such as `ophiolite_sdk.interop`
+- loose-store compatibility lanes such as `TraceBoostApp` and `SeismicDataset`
+
+Compatibility surfaces may carry canonical payloads, but they should be taught as explicit migration or advanced-use lanes rather than as the primary public story.
+
+### App-local surfaces
+
+These are internal to the first-party application:
+
+- the TraceBoost desktop command table
+- frontend bridge command names
+- app-local session orchestration
+- import-provider activation and session state
+- product-specific presets and workflow defaults
+
+App-local surfaces may consume canonical contracts and capabilities, but their transport names and shell policies are not part of the Ophiolite public contract.
+
+## TraceBoost desktop command boundary
+
+The TraceBoost desktop backend is a thin app command boundary, not a second public SDK.
+
+That means:
+
+- command names are adapter-local and may change with the app
+- commands should delegate to shared runtime or app-framework behavior rather than re-own canonical semantics
+- command request and response payloads should use canonical contracts where possible
+- discovery and capability listing can be app-local, but capability vocabulary should come from shared platform-owned types
+
+The current import-provider split is the first concrete example of this rule: TraceBoost owns provider activation and workflow orchestration, while the capability vocabulary and discovery model are shared.
+
+Processing authoring now follows the same pattern inside the desktop app:
+
+- the TraceBoost frontend consumes backend-owned processing authoring palette/session commands
+- the desktop shell owns those command names and workflow policy
+- canonical shared processing contracts still come from platform-owned Rust/TS packages
+
+The desktop command boundary is now also tracked explicitly in:
+
+- `apps/traceboost-demo/desktop-command-boundary.json`
+- `apps/traceboost-demo/scripts/generate-desktop-bridge-stubs.mjs`
+- `scripts/validate-traceboost-command-boundary.mjs`
+
+## Practical placement rule
+
+- if the behavior is canonical domain meaning, runtime semantics, validation, or reusable control-surface behavior, put it in `ophiolite`
+- if the behavior is reusable chart embedder API shape, put it in Ophiolite Charts
+- if the behavior is workflow composition, desktop shell transport, session UX, or product policy, keep it in `TraceBoost`
+- if a surface exists only to preserve older names or migration paths, mark it as compatibility-only
+
+## Related references
+
+- [Surface matrix](/reference/surface-matrix/)
+- [Contracts and schemas](/reference/contracts-and-schemas/)
+- [Python SDK](/reference/python-sdk/)
+- [CLI](/reference/cli/)

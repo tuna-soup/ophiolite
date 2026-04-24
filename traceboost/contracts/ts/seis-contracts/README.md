@@ -1,7 +1,14 @@
 # @traceboost/seis-contracts
 
-This package is the TypeScript-facing contract artifact generated from the Rust
-`seis-contracts-*` crates in the Ophiolite workspace.
+This package is the TraceBoost-facing TypeScript compatibility artifact
+generated from the Rust `seis-contracts-*` crates in the Ophiolite workspace.
+
+It exists to keep the demo/app boundary typed during the current migration
+window. It should not be described as the canonical platform-owned frontend
+contract surface. Canonical cross-language contract ownership stays with the
+platform-owned Rust contracts and the root `contracts/ts/ophiolite-contracts`
+distribution, and `seis-contracts-interop` remains a compatibility lane that
+stays outside the `ophiolite-sdk` facade.
 
 Contents:
 
@@ -20,7 +27,7 @@ The TraceBoost package itself is emitted by:
 cargo run -p traceboost-contracts-export
 ```
 
-Consumers should treat this package as the frontend contract surface for
-TraceBoost demo IPC payloads, shared dataset/view models, desktop
-workspace/session DTOs, and survey preflight metadata such as resolved stacking
-and layout classification.
+Consumers should treat this package as a TraceBoost compatibility surface for
+demo IPC payloads, shared dataset/view models, desktop workspace/session DTOs,
+and survey preflight metadata such as resolved stacking and layout
+classification.

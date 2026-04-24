@@ -1,20 +1,30 @@
 import type {
+  ChartInteractionCommand,
+  ChartInteractionStyle,
   InteractionCapabilities,
   InteractionEvent,
   InteractionSession,
   InteractionState,
   InteractionTarget,
+  InteractionTrigger,
   PrimaryInteractionMode,
   SecondaryInteractionModifier
 } from "@ophiolite/charts-data-models";
+import { resolveInteractionBinding } from "./interaction-style";
 
 type Listener = (event: InteractionEvent) => void;
 
 export class InteractionManager {
   private readonly listeners = new Set<Listener>();
   private state: InteractionState;
+  private style: ChartInteractionStyle | null;
 
-  constructor(capabilities: InteractionCapabilities, primaryMode: PrimaryInteractionMode, modifiers: SecondaryInteractionModifier[] = []) {
+  constructor(
+    capabilities: InteractionCapabilities,
+    primaryMode: PrimaryInteractionMode,
+    modifiers: SecondaryInteractionModifier[] = [],
+    style: ChartInteractionStyle | null = null
+  ) {
     this.state = {
       capabilities,
       primaryMode,
@@ -23,6 +33,7 @@ export class InteractionManager {
       hoverTarget: null,
       session: null
     };
+    this.style = style;
   }
 
   getState(): InteractionState {
@@ -166,6 +177,37 @@ export class InteractionManager {
 
   hasModifier(modifier: SecondaryInteractionModifier): boolean {
     return this.state.modifiers.includes(modifier);
+  }
+
+  getStyle(): ChartInteractionStyle | null {
+    return this.style
+      ? {
+          ...this.style,
+          manipulators: [...this.style.manipulators],
+          bindings: this.style.bindings.map((binding) => ({ ...binding }))
+        }
+      : null;
+  }
+
+  setStyle(style: ChartInteractionStyle | null): void {
+    this.style = style
+      ? {
+          ...style,
+          manipulators: [...style.manipulators],
+          bindings: style.bindings.map((binding) => ({ ...binding }))
+        }
+      : null;
+  }
+
+  resolveTriggerCommand(trigger: InteractionTrigger): ChartInteractionCommand | null {
+    const binding = resolveInteractionBinding(this.style, trigger);
+    if (!binding) {
+      return null;
+    }
+    return {
+      type: "semanticAction",
+      command: binding.command
+    };
   }
 
   private emit(event: InteractionEvent): void {

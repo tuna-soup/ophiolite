@@ -6,6 +6,7 @@ import {
 } from "@ophiolite/charts-core";
 import type { SurveyMapScalarField, SurveyMapViewport, SurveyMapWell } from "@ophiolite/charts-data-models";
 import type { SurveyMapRenderFrame, SurveyMapRendererAdapter } from "./adapter";
+import { createRendererTelemetryEvent, type RendererTelemetryListener } from "../telemetry";
 
 const DEFAULT_BACKGROUND = "#f4f2ee";
 const PLOT_BACKGROUND = "#fcfbf8";
@@ -24,6 +25,11 @@ export class SurveyMapCanvasRenderer implements SurveyMapRendererAdapter {
   private container: HTMLElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private context: CanvasRenderingContext2D | null = null;
+  private telemetryListener: RendererTelemetryListener | null = null;
+
+  setTelemetryListener(listener: RendererTelemetryListener | null): void {
+    this.telemetryListener = listener;
+  }
 
   mount(container: HTMLElement): void {
     this.dispose();
@@ -33,74 +39,103 @@ export class SurveyMapCanvasRenderer implements SurveyMapRendererAdapter {
     this.canvas.style.width = "100%";
     this.canvas.style.height = "100%";
     this.context = this.canvas.getContext("2d");
+    if (!this.context) {
+      this.emitTelemetry({
+        kind: "mount-failed",
+        phase: "mount",
+        backend: "canvas-2d",
+        recoverable: false,
+        message: "Survey map canvas renderer could not acquire a 2D canvas context."
+      });
+      throw new Error("SurveyMapCanvasRenderer could not acquire a 2D canvas context.");
+    }
     container.appendChild(this.canvas);
+    this.emitTelemetry({
+      kind: "backend-selected",
+      phase: "mount",
+      backend: "canvas-2d",
+      recoverable: true,
+      message: "Survey map renderer selected the canvas-2d backend."
+    });
   }
 
   render(frame: SurveyMapRenderFrame): void {
-    if (!this.container || !this.canvas || !this.context) {
-      return;
-    }
+    try {
+      if (!this.container || !this.canvas || !this.context) {
+        return;
+      }
 
-    const width = Math.max(1, this.container.clientWidth);
-    const height = Math.max(1, this.container.clientHeight);
-    const dpr = window.devicePixelRatio || 1;
+      const width = Math.max(1, this.container.clientWidth);
+      const height = Math.max(1, this.container.clientHeight);
+      const dpr = window.devicePixelRatio || 1;
 
-    if (this.canvas.width !== Math.round(width * dpr) || this.canvas.height !== Math.round(height * dpr)) {
-      this.canvas.width = Math.round(width * dpr);
-      this.canvas.height = Math.round(height * dpr);
-    }
+      if (this.canvas.width !== Math.round(width * dpr) || this.canvas.height !== Math.round(height * dpr)) {
+        this.canvas.width = Math.round(width * dpr);
+        this.canvas.height = Math.round(height * dpr);
+      }
 
-    this.context.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.context.clearRect(0, 0, width, height);
+      this.context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this.context.clearRect(0, 0, width, height);
 
-    const map = frame.state.map;
-    const viewport = frame.state.viewport;
+      const map = frame.state.map;
+      const viewport = frame.state.viewport;
 
-    this.context.fillStyle = map?.background ?? DEFAULT_BACKGROUND;
-    this.context.fillRect(0, 0, width, height);
+      this.context.fillStyle = map?.background ?? DEFAULT_BACKGROUND;
+      this.context.fillRect(0, 0, width, height);
 
-    const plotRect = getSurveyMapPlotRect(width, height);
+      const plotRect = getSurveyMapPlotRect(width, height);
 
-    if (!map || !viewport) {
+      if (!map || !viewport) {
+        this.context.fillStyle = PLOT_BACKGROUND;
+        this.context.fillRect(plotRect.x, plotRect.y, plotRect.width, plotRect.height);
+        this.drawFrame(plotRect);
+        return;
+      }
+
+      const viewMetrics = resolveSurveyMapViewMetrics(viewport, plotRect);
       this.context.fillStyle = PLOT_BACKGROUND;
-      this.context.fillRect(plotRect.x, plotRect.y, plotRect.width, plotRect.height);
-      this.drawFrame(plotRect);
-      return;
+      this.context.fillRect(
+        viewMetrics.drawRect.x,
+        viewMetrics.drawRect.y,
+        viewMetrics.drawRect.width,
+        viewMetrics.drawRect.height
+      );
+
+      this.context.save();
+      this.context.beginPath();
+      this.context.rect(viewMetrics.drawRect.x, viewMetrics.drawRect.y, viewMetrics.drawRect.width, viewMetrics.drawRect.height);
+      this.context.clip();
+
+      if (map.scalarField) {
+        this.drawScalarField(map.scalarField, viewport, plotRect);
+      } else {
+        this.context.fillStyle = "#f7f5f1";
+        this.context.fillRect(viewMetrics.drawRect.x, viewMetrics.drawRect.y, viewMetrics.drawRect.width, viewMetrics.drawRect.height);
+      }
+
+      this.drawSurveyAreas(frame, plotRect);
+      this.drawWells(frame, plotRect);
+
+      this.context.restore();
+
+      this.drawTitle(map.name, viewMetrics.drawRect);
+      this.drawAxes(map, viewport, plotRect);
+      if (map.scalarField) {
+        this.drawLegend(map.scalarField, viewMetrics.drawRect);
+      }
+      this.drawScaleBar(map.coordinateUnit, viewport, plotRect);
+      this.drawFrame(viewMetrics.drawRect);
+    } catch (error) {
+      this.emitTelemetry({
+        kind: "frame-failed",
+        phase: "render",
+        backend: "canvas-2d",
+        recoverable: true,
+        message: error instanceof Error ? error.message : String(error),
+        detail: "Survey map canvas renderer failed while drawing a frame."
+      });
+      throw error;
     }
-
-    const viewMetrics = resolveSurveyMapViewMetrics(viewport, plotRect);
-    this.context.fillStyle = PLOT_BACKGROUND;
-    this.context.fillRect(
-      viewMetrics.drawRect.x,
-      viewMetrics.drawRect.y,
-      viewMetrics.drawRect.width,
-      viewMetrics.drawRect.height
-    );
-
-    this.context.save();
-    this.context.beginPath();
-    this.context.rect(viewMetrics.drawRect.x, viewMetrics.drawRect.y, viewMetrics.drawRect.width, viewMetrics.drawRect.height);
-    this.context.clip();
-
-    if (map.scalarField) {
-      this.drawScalarField(map.scalarField, viewport, plotRect);
-    } else {
-      this.context.fillStyle = "#f7f5f1";
-      this.context.fillRect(viewMetrics.drawRect.x, viewMetrics.drawRect.y, viewMetrics.drawRect.width, viewMetrics.drawRect.height);
-    }
-
-    this.drawSurveyAreas(frame, plotRect);
-    this.drawWells(frame, plotRect);
-
-    this.context.restore();
-
-    this.drawTitle(map.name, viewMetrics.drawRect);
-    this.drawAxes(map, viewport, plotRect);
-    if (map.scalarField) {
-      this.drawLegend(map.scalarField, viewMetrics.drawRect);
-    }
-    this.drawScaleBar(map.coordinateUnit, viewport, plotRect);
-    this.drawFrame(viewMetrics.drawRect);
   }
 
   dispose(): void {
@@ -110,6 +145,10 @@ export class SurveyMapCanvasRenderer implements SurveyMapRendererAdapter {
     this.container = null;
     this.canvas = null;
     this.context = null;
+  }
+
+  private emitTelemetry(event: Parameters<typeof createRendererTelemetryEvent>[0]): void {
+    this.telemetryListener?.(createRendererTelemetryEvent(event));
   }
 
   private drawScalarField(field: SurveyMapScalarField, viewport: SurveyMapViewport, plotRect: SurveyMapRect): void {

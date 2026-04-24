@@ -90,6 +90,104 @@ pub struct OperatorParameterDoc {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[ts(rename_all = "snake_case")]
+pub enum ProcessingPlannerPartitioningHint {
+    TileGroup,
+    Section,
+    GatherGroup,
+    FullVolume,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingPlannerCostClass {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingPlannerParallelEfficiencyClass {
+    High,
+    Medium,
+    Low,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
+pub struct ProcessingPlannerHintSummary {
+    pub preferred_partitioning: ProcessingPlannerPartitioningHint,
+    pub requires_full_volume: bool,
+    pub checkpoint_safe: bool,
+    pub memory_cost_class: ProcessingPlannerCostClass,
+    pub cpu_cost_class: ProcessingPlannerCostClass,
+    pub io_cost_class: ProcessingPlannerCostClass,
+    pub parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingSampleDependencyKind {
+    Pointwise,
+    BoundedWindow,
+    WholeTrace,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum ProcessingSpatialDependencyKind {
+    SingleTrace,
+    SectionNeighborhood,
+    GatherNeighborhood,
+    ExternalVolumePointwise,
+    Global,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
+pub struct ProcessingDependencyProfileSummary {
+    pub deterministic: bool,
+    pub sample_dependency: ProcessingSampleDependencyKind,
+    pub sample_window_ms_hint: Option<f32>,
+    pub spatial_dependency: ProcessingSpatialDependencyKind,
+    pub inline_radius: usize,
+    pub crossline_radius: usize,
+    pub same_section_ephemeral_reuse_safe: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+pub struct TraceLocalProcessingCapabilities {
+    pub checkpoint_supported: bool,
+    pub secondary_volume_input_supported: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+pub struct PostStackNeighborhoodProcessingCapabilities {
+    pub trace_local_prefix_supported: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+pub struct SubvolumeProcessingCapabilities {
+    pub trace_local_prefix_supported: bool,
+    pub terminal_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+pub struct GatherProcessingCapabilities {
+    pub trace_local_prefix_supported: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+pub struct SeismicAnalysisCapabilities {
+    pub preview_supported: bool,
+    pub autopick_output_supported: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
 pub enum OperatorAvailability {
     Available,
     Unavailable { reasons: Vec<String> },
@@ -169,6 +267,9 @@ pub struct TraceLocalProcessingDetail {
     pub layout_compatibility: String,
     pub preview_contract: OperatorContractRef,
     pub checkpoint_supported: bool,
+    pub planner_hint_summary: ProcessingPlannerHintSummary,
+    pub dependency_profile_summary: ProcessingDependencyProfileSummary,
+    pub capabilities: TraceLocalProcessingCapabilities,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
@@ -177,6 +278,9 @@ pub struct SubvolumeProcessingDetail {
     pub layout_compatibility: String,
     pub preview_contract: OperatorContractRef,
     pub trace_local_prefix_supported: bool,
+    pub planner_hint_summary: ProcessingPlannerHintSummary,
+    pub dependency_profile_summary: ProcessingDependencyProfileSummary,
+    pub capabilities: SubvolumeProcessingCapabilities,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
@@ -186,6 +290,9 @@ pub struct PostStackNeighborhoodProcessingDetail {
     pub layout_compatibility: String,
     pub preview_contract: OperatorContractRef,
     pub trace_local_prefix_supported: bool,
+    pub planner_hint_summary: ProcessingPlannerHintSummary,
+    pub dependency_profile_summary: ProcessingDependencyProfileSummary,
+    pub capabilities: PostStackNeighborhoodProcessingCapabilities,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
@@ -195,6 +302,9 @@ pub struct GatherProcessingDetail {
     pub layout_compatibility: String,
     pub preview_contract: OperatorContractRef,
     pub trace_local_prefix_supported: bool,
+    pub planner_hint_summary: ProcessingPlannerHintSummary,
+    pub dependency_profile_summary: ProcessingDependencyProfileSummary,
+    pub capabilities: GatherProcessingCapabilities,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]
@@ -202,6 +312,9 @@ pub struct SeismicAnalysisDetail {
     pub analysis_kind: String,
     pub layout_compatibility: String,
     pub output_kind: String,
+    pub planner_hint_summary: ProcessingPlannerHintSummary,
+    pub dependency_profile_summary: ProcessingDependencyProfileSummary,
+    pub capabilities: SeismicAnalysisCapabilities,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, TS, PartialEq)]

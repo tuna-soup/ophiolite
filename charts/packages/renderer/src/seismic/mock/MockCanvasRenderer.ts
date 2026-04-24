@@ -55,6 +55,7 @@ import {
 } from "./workerProtocol";
 import { getPlotRect, sampleIndexToScreenY, sampleValueToScreenY, traceIndexToScreenX } from "./sectionTransforms";
 import { mapCoordinateToPlotX, type PlotRect } from "./wiggleGeometry";
+import { createRendererTelemetryEvent, type RendererTelemetryListener } from "../../telemetry";
 
 interface GLResources {
   heatmapProgram: WebGLProgram;
@@ -124,13 +125,20 @@ export class MockCanvasRenderer implements RendererAdapter {
   private workerInitTimeout: number | null = null;
   private forcedBaseRenderer: SeismicBaseRendererKind = "auto";
   private readonly axisChrome: "canvas" | "none";
+  private telemetryListener: RendererTelemetryListener | null = null;
+  private activeBackend: "canvas-2d" | "webgl" | null = null;
 
   constructor(options: MockCanvasRendererOptions = {}) {
     this.axisChrome = options.axisChrome ?? "canvas";
   }
 
+  setTelemetryListener(listener: RendererTelemetryListener | null): void {
+    this.telemetryListener = listener;
+  }
+
   mount(container: HTMLElement): void {
     this.mountContainer = container;
+    this.activeBackend = null;
     this.forcedBaseRenderer = resolveForcedBaseRendererKind();
     this.host = document.createElement("div");
     this.host.style.position = "relative";
@@ -152,6 +160,16 @@ export class MockCanvasRenderer implements RendererAdapter {
     this.host.append(this.baseCanvas, this.overlayCanvas);
     container.replaceChildren(this.host);
     this.overlayContext = this.overlayCanvas.getContext("2d");
+    if (!this.overlayContext) {
+      this.emitTelemetry({
+        kind: "mount-failed",
+        phase: "mount",
+        backend: null,
+        recoverable: false,
+        message: "Seismic renderer could not acquire an overlay 2D canvas context."
+      });
+      throw new Error("MockCanvasRenderer could not acquire an overlay 2D canvas context.");
+    }
 
     if (
       (this.forcedBaseRenderer === "auto" || this.forcedBaseRenderer === "worker-webgl") &&
@@ -164,46 +182,58 @@ export class MockCanvasRenderer implements RendererAdapter {
   }
 
   render(frame: RenderFrame): void {
-    if (!this.baseCanvas || !this.overlayCanvas || !this.overlayContext || !this.host) {
-      return;
-    }
-
-    const surface = this.ensureCanvasSize();
-    const plotRect = getPlotRect(surface.cssWidth, surface.cssHeight);
-    const nextBaseState = createBaseRenderState(frame, plotRect, surface.cssWidth, surface.cssHeight, surface.pixelRatio);
-    const nextOverlayState = createOverlayRenderState(
-      frame,
-      plotRect,
-      surface.cssWidth,
-      surface.cssHeight,
-      surface.pixelRatio
-    );
-    if (
-      nextBaseState.comparisonMode === "split" &&
-      nextBaseState.displayTransform.renderMode === "heatmap" &&
-      nextBaseState.secondarySection &&
-      this.workerMode
-    ) {
-      this.fallbackToLocalRenderer();
-    }
-    const invalidation = diffRenderStates(this.lastBaseState, nextBaseState, this.lastOverlayState, nextOverlayState);
-
-    if (invalidation.baseChanged) {
-      if (this.workerMode && this.worker) {
-        this.renderBaseWorker(nextBaseState, invalidation);
-      } else if (this.gl && this.resources) {
-        this.renderBaseWebGl(nextBaseState, invalidation, surface);
-      } else if (this.baseContext2d) {
-        this.renderBaseCanvas(nextBaseState, surface);
+    try {
+      if (!this.baseCanvas || !this.overlayCanvas || !this.overlayContext || !this.host) {
+        return;
       }
-    }
 
-    if (invalidation.overlayNeedsDraw || invalidation.baseChanged) {
-      this.renderOverlay(nextOverlayState, surface);
-    }
+      const surface = this.ensureCanvasSize();
+      const plotRect = getPlotRect(surface.cssWidth, surface.cssHeight);
+      const nextBaseState = createBaseRenderState(frame, plotRect, surface.cssWidth, surface.cssHeight, surface.pixelRatio);
+      const nextOverlayState = createOverlayRenderState(
+        frame,
+        plotRect,
+        surface.cssWidth,
+        surface.cssHeight,
+        surface.pixelRatio
+      );
+      if (
+        nextBaseState.comparisonMode === "split" &&
+        nextBaseState.displayTransform.renderMode === "heatmap" &&
+        nextBaseState.secondarySection &&
+        this.workerMode
+      ) {
+        this.fallbackToLocalRenderer("Seismic renderer fell back to a local backend because split compare is not supported in the worker path.");
+      }
+      const invalidation = diffRenderStates(this.lastBaseState, nextBaseState, this.lastOverlayState, nextOverlayState);
 
-    this.lastBaseState = nextBaseState;
-    this.lastOverlayState = nextOverlayState;
+      if (invalidation.baseChanged) {
+        if (this.workerMode && this.worker) {
+          this.renderBaseWorker(nextBaseState, invalidation);
+        } else if (this.gl && this.resources) {
+          this.renderBaseWebGl(nextBaseState, invalidation, surface);
+        } else if (this.baseContext2d) {
+          this.renderBaseCanvas(nextBaseState, surface);
+        }
+      }
+
+      if (invalidation.overlayNeedsDraw || invalidation.baseChanged) {
+        this.renderOverlay(nextOverlayState, surface);
+      }
+
+      this.lastBaseState = nextBaseState;
+      this.lastOverlayState = nextOverlayState;
+    } catch (error) {
+      this.emitTelemetry({
+        kind: "frame-failed",
+        phase: "render",
+        backend: this.activeBackend,
+        recoverable: this.activeBackend !== "canvas-2d",
+        message: error instanceof Error ? error.message : String(error),
+        detail: "Seismic renderer failed while drawing a frame."
+      });
+      throw error;
+    }
   }
 
   dispose(): void {
@@ -247,6 +277,7 @@ export class MockCanvasRenderer implements RendererAdapter {
     this.lastUploadedOverlay = null;
     this.workerMode = false;
     this.workerReady = false;
+    this.activeBackend = null;
     this.mountContainer = null;
   }
 
@@ -278,7 +309,7 @@ export class MockCanvasRenderer implements RendererAdapter {
       this.worker.onmessage = (event: MessageEvent<WorkerOutgoingMessage>) => this.handleWorkerMessage(event.data);
       this.worker.onerror = (event) => {
         console.error(event);
-        this.fallbackToLocalRenderer();
+        this.fallbackToLocalRenderer("Seismic worker renderer failed and fell back to a local backend.");
       };
       this.worker.postMessage(
         {
@@ -291,12 +322,16 @@ export class MockCanvasRenderer implements RendererAdapter {
       this.workerMode = true;
       this.workerInitTimeout = window.setTimeout(() => {
         if (!this.workerReady) {
-          this.fallbackToLocalRenderer();
+          this.fallbackToLocalRenderer("Seismic worker renderer did not become ready and fell back to a local backend.");
         }
       }, 750);
     } catch (error) {
       console.error(error);
-      this.fallbackToLocalRenderer();
+      this.fallbackToLocalRenderer(
+        `Seismic worker renderer initialization failed and fell back to a local backend: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
     }
   }
 
@@ -307,7 +342,18 @@ export class MockCanvasRenderer implements RendererAdapter {
 
     if (this.forcedBaseRenderer === "local-canvas") {
       this.baseContext2d = this.baseCanvas.getContext("2d");
+      if (!this.baseContext2d) {
+        this.emitTelemetry({
+          kind: "mount-failed",
+          phase: "mount",
+          backend: "canvas-2d",
+          recoverable: false,
+          message: "Seismic renderer could not acquire a 2D canvas context."
+        });
+        throw new Error("MockCanvasRenderer could not acquire a 2D canvas context.");
+      }
       this.setBaseRendererKind("local-canvas");
+      this.selectBackend("canvas-2d", "mount", "Seismic renderer selected the canvas-2d backend.");
       return;
     }
 
@@ -317,14 +363,40 @@ export class MockCanvasRenderer implements RendererAdapter {
       premultipliedAlpha: false
     });
     if (this.gl) {
-      this.resources = createGlResources(this.gl);
-      this.baseContext2d = null;
-      this.setBaseRendererKind("local-webgl");
-      return;
+      try {
+        this.resources = createGlResources(this.gl);
+        this.baseContext2d = null;
+        this.setBaseRendererKind("local-webgl");
+        this.selectBackend("webgl", "mount", "Seismic renderer selected the WebGL backend.");
+        return;
+      } catch (error) {
+        this.emitTelemetry({
+          kind: "fallback-used",
+          phase: "mount",
+          backend: "canvas-2d",
+          previousBackend: "webgl",
+          recoverable: true,
+          message: "Seismic renderer fell back to canvas after WebGL initialization failed.",
+          detail: error instanceof Error ? error.message : String(error)
+        });
+        this.gl = null;
+        this.resources = null;
+      }
     }
 
     this.baseContext2d = this.baseCanvas.getContext("2d");
+    if (!this.baseContext2d) {
+      this.emitTelemetry({
+        kind: "mount-failed",
+        phase: "mount",
+        backend: "canvas-2d",
+        recoverable: false,
+        message: "Seismic renderer could not acquire a 2D canvas context."
+      });
+      throw new Error("MockCanvasRenderer could not acquire a 2D canvas context.");
+    }
     this.setBaseRendererKind("local-canvas");
+    this.selectBackend("canvas-2d", "mount", "Seismic renderer selected the canvas-2d backend.");
   }
 
   private renderBaseWorker(baseState: BaseRenderState, invalidation: ReturnType<typeof diffRenderStates>): void {
@@ -386,24 +458,27 @@ export class MockCanvasRenderer implements RendererAdapter {
           this.workerInitTimeout = null;
         }
         if (!message.webgl2) {
-          this.fallbackToLocalRenderer();
+          this.fallbackToLocalRenderer("Seismic worker renderer reported that WebGL2 is unavailable.");
         } else {
           this.setBaseRendererKind("worker-webgl");
+          this.selectBackend("webgl", "worker", "Seismic renderer selected the worker WebGL backend.");
         }
         break;
       case "error":
         console.error(message.message);
-        this.fallbackToLocalRenderer();
+        this.fallbackToLocalRenderer(`Seismic worker renderer failed: ${message.message}`);
         break;
       case "frameRendered":
         break;
     }
   }
 
-  private fallbackToLocalRenderer(): void {
+  private fallbackToLocalRenderer(detailMessage: string): void {
     if (!this.host || !this.overlayCanvas) {
       return;
     }
+
+    const previousBackend = this.activeBackend ?? "webgl";
 
     if (this.worker) {
       this.worker.terminate();
@@ -429,6 +504,17 @@ export class MockCanvasRenderer implements RendererAdapter {
     this.baseCanvas = replacement;
     const surface = this.ensureCanvasSize();
     this.initLocalBaseRenderer();
+    if (this.activeBackend) {
+      this.emitTelemetry({
+        kind: "fallback-used",
+        phase: "worker",
+        backend: this.activeBackend,
+        previousBackend,
+        recoverable: true,
+        message: `Seismic renderer fell back to ${this.activeBackend}.`,
+        detail: detailMessage
+      });
+    }
 
     if (this.lastBaseState) {
       if (this.gl && this.resources) {
@@ -462,6 +548,25 @@ export class MockCanvasRenderer implements RendererAdapter {
   private setBaseRendererKind(kind: string): void {
     this.host?.setAttribute("data-base-renderer", kind);
     this.mountContainer?.setAttribute("data-base-renderer", kind);
+  }
+
+  private selectBackend(
+    backend: "canvas-2d" | "webgl",
+    phase: "mount" | "worker",
+    message: string
+  ): void {
+    this.activeBackend = backend;
+    this.emitTelemetry({
+      kind: "backend-selected",
+      phase,
+      backend,
+      recoverable: true,
+      message
+    });
+  }
+
+  private emitTelemetry(event: Parameters<typeof createRendererTelemetryEvent>[0]): void {
+    this.telemetryListener?.(createRendererTelemetryEvent(event));
   }
 
   private renderBaseWebGl(

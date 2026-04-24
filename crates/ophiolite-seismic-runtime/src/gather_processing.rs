@@ -10,6 +10,14 @@ const MIN_VELOCITY_M_PER_S: f32 = 1.0;
 const MAX_STRETCH_RATIO: f32 = 100.0;
 const TIME_EPSILON_MS: f32 = 1.0e-3;
 
+#[derive(Debug, Default)]
+struct GatherKernelWorkspace {
+    source_amplitudes: Vec<f32>,
+    sample_time_sq_s: Vec<f32>,
+    inverse_velocity_sq: Vec<f32>,
+    offset_sq: Vec<f32>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct GatherPlane {
     pub label: String,
@@ -88,8 +96,9 @@ pub fn apply_gather_processing_pipeline(
     }
 
     let sample_interval_ms = sample_interval_ms_from_axis(&gather.sample_axis_ms)?;
+    let mut workspace = GatherKernelWorkspace::default();
     for operation in &pipeline.operations {
-        apply_gather_processing_operation(gather, sample_interval_ms, operation)?;
+        apply_gather_processing_operation(gather, sample_interval_ms, operation, &mut workspace)?;
     }
 
     Ok(())
@@ -115,16 +124,23 @@ fn apply_gather_processing_operation(
     gather: &mut GatherPlane,
     sample_interval_ms: f32,
     operation: &GatherProcessingOperation,
+    workspace: &mut GatherKernelWorkspace,
 ) -> Result<(), SeismicStoreError> {
     match operation {
         GatherProcessingOperation::NmoCorrection {
             velocity_model,
             interpolation,
-        } => apply_nmo_correction(gather, sample_interval_ms, velocity_model, *interpolation),
+        } => apply_nmo_correction(
+            gather,
+            sample_interval_ms,
+            velocity_model,
+            *interpolation,
+            workspace,
+        ),
         GatherProcessingOperation::StretchMute {
             velocity_model,
             max_stretch_ratio,
-        } => apply_stretch_mute(gather, velocity_model, *max_stretch_ratio),
+        } => apply_stretch_mute(gather, velocity_model, *max_stretch_ratio, workspace),
         GatherProcessingOperation::OffsetMute {
             min_offset,
             max_offset,
@@ -137,13 +153,21 @@ fn apply_nmo_correction(
     sample_interval_ms: f32,
     velocity_model: &VelocityFunctionSource,
     interpolation: GatherInterpolationMode,
+    workspace: &mut GatherKernelWorkspace,
 ) -> Result<(), SeismicStoreError> {
-    let original = gather.amplitudes.clone();
-    for (trace_index, offset) in gather.horizontal_axis.iter().copied().enumerate() {
+    workspace.copy_source_amplitudes(&gather.amplitudes);
+    workspace.prepare_nmo_terms(
+        &gather.sample_axis_ms,
+        &gather.horizontal_axis,
+        velocity_model,
+    )?;
+    let original = workspace.source_amplitudes.as_slice();
+    for trace_index in 0..gather.horizontal_axis.len() {
         let trace_start = trace_index * gather.samples;
         let trace_end = trace_start + gather.samples;
         let source_trace = &original[trace_start..trace_end];
         let target_trace = &mut gather.amplitudes[trace_start..trace_end];
+        let offset_sq = workspace.offset_sq[trace_index];
 
         for (sample_index, output) in target_trace.iter_mut().enumerate() {
             let zero_offset_time_ms = gather.sample_axis_ms[sample_index];
@@ -152,8 +176,11 @@ fn apply_nmo_correction(
                 continue;
             }
 
-            let input_time_ms =
-                nmo_input_time_ms(zero_offset_time_ms, offset as f32, velocity_model)?;
+            let input_time_ms = nmo_input_time_ms_from_precomputed(
+                workspace.sample_time_sq_s[sample_index],
+                workspace.inverse_velocity_sq[sample_index],
+                offset_sq,
+            );
             *output = interpolate_trace_sample(
                 source_trace,
                 input_time_ms,
@@ -170,13 +197,20 @@ fn apply_stretch_mute(
     gather: &mut GatherPlane,
     velocity_model: &VelocityFunctionSource,
     max_stretch_ratio: f32,
+    workspace: &mut GatherKernelWorkspace,
 ) -> Result<(), SeismicStoreError> {
     validate_max_stretch_ratio(max_stretch_ratio)?;
+    workspace.prepare_nmo_terms(
+        &gather.sample_axis_ms,
+        &gather.horizontal_axis,
+        velocity_model,
+    )?;
 
-    for (trace_index, offset) in gather.horizontal_axis.iter().copied().enumerate() {
+    for trace_index in 0..gather.horizontal_axis.len() {
         let trace_start = trace_index * gather.samples;
         let trace_end = trace_start + gather.samples;
         let trace = &mut gather.amplitudes[trace_start..trace_end];
+        let offset_sq = workspace.offset_sq[trace_index];
 
         for (sample_index, sample) in trace.iter_mut().enumerate() {
             let zero_offset_time_ms = gather.sample_axis_ms[sample_index];
@@ -185,8 +219,11 @@ fn apply_stretch_mute(
                 continue;
             }
 
-            let input_time_ms =
-                nmo_input_time_ms(zero_offset_time_ms, offset as f32, velocity_model)?;
+            let input_time_ms = nmo_input_time_ms_from_precomputed(
+                workspace.sample_time_sq_s[sample_index],
+                workspace.inverse_velocity_sq[sample_index],
+                offset_sq,
+            );
             let stretch_ratio = ((input_time_ms - zero_offset_time_ms)
                 / zero_offset_time_ms.max(TIME_EPSILON_MS))
             .max(0.0);
@@ -197,6 +234,37 @@ fn apply_stretch_mute(
     }
 
     Ok(())
+}
+
+impl GatherKernelWorkspace {
+    fn copy_source_amplitudes(&mut self, amplitudes: &[f32]) {
+        self.source_amplitudes.clear();
+        self.source_amplitudes.extend_from_slice(amplitudes);
+    }
+
+    fn prepare_nmo_terms(
+        &mut self,
+        sample_axis_ms: &[f32],
+        horizontal_axis: &[f64],
+        velocity_model: &VelocityFunctionSource,
+    ) -> Result<(), SeismicStoreError> {
+        self.sample_time_sq_s.resize(sample_axis_ms.len(), 0.0);
+        self.inverse_velocity_sq.resize(sample_axis_ms.len(), 0.0);
+        for (index, time_ms) in sample_axis_ms.iter().copied().enumerate() {
+            let time_s = (time_ms.max(0.0)) / 1000.0;
+            self.sample_time_sq_s[index] = time_s * time_s;
+            let velocity_m_per_s = velocity_at_time_ms(velocity_model, time_ms)?;
+            self.inverse_velocity_sq[index] = 1.0 / (velocity_m_per_s * velocity_m_per_s);
+        }
+
+        self.offset_sq.resize(horizontal_axis.len(), 0.0);
+        for (index, offset) in horizontal_axis.iter().copied().enumerate() {
+            let offset = offset as f32;
+            self.offset_sq[index] = offset * offset;
+        }
+
+        Ok(())
+    }
 }
 
 fn apply_offset_mute(
@@ -384,6 +452,7 @@ fn validate_offset_range(
     Ok(())
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn nmo_input_time_ms(
     zero_offset_time_ms: f32,
     offset_m: f32,
@@ -391,11 +460,19 @@ pub(crate) fn nmo_input_time_ms(
 ) -> Result<f32, SeismicStoreError> {
     let velocity_m_per_s = velocity_at_time_ms(velocity_model, zero_offset_time_ms)?;
     let zero_offset_time_s = zero_offset_time_ms / 1000.0;
-    let offset_term_s = offset_m.abs() / velocity_m_per_s;
-    Ok(
-        ((zero_offset_time_s * zero_offset_time_s) + (offset_term_s * offset_term_s)).sqrt()
-            * 1000.0,
-    )
+    Ok(nmo_input_time_ms_from_precomputed(
+        zero_offset_time_s * zero_offset_time_s,
+        1.0 / (velocity_m_per_s * velocity_m_per_s),
+        offset_m * offset_m,
+    ))
+}
+
+fn nmo_input_time_ms_from_precomputed(
+    sample_time_sq_s: f32,
+    inverse_velocity_sq: f32,
+    offset_sq: f32,
+) -> f32 {
+    (sample_time_sq_s + (offset_sq * inverse_velocity_sq)).sqrt() * 1000.0
 }
 
 pub(crate) fn velocity_at_time_ms(
@@ -608,6 +685,55 @@ mod tests {
             trace_local_pipeline: None,
             operations: vec![GatherProcessingOperation::NmoCorrection {
                 velocity_model: constant_velocity_model(velocity_m_per_s),
+                interpolation: GatherInterpolationMode::Linear,
+            }],
+        };
+
+        apply_gather_processing_pipeline(&mut gather, &pipeline).unwrap();
+
+        let expected_index = (zero_offset_time_ms / 4.0).round() as usize;
+        for trace_index in 0..gather.traces {
+            let trace_start = trace_index * gather.samples;
+            let trace = &gather.amplitudes[trace_start..trace_start + gather.samples];
+            let (peak_index, _) = trace
+                .iter()
+                .enumerate()
+                .max_by(|(_, left), (_, right)| {
+                    left.abs()
+                        .partial_cmp(&right.abs())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .expect("trace should not be empty");
+            assert!(peak_index.abs_diff(expected_index) <= 1);
+        }
+    }
+
+    #[test]
+    fn nmo_correction_with_time_velocity_pairs_matches_hyperbola_pick() {
+        let offsets = [-1000.0_f64, 0.0, 1000.0];
+        let mut gather = synthetic_gather(&offsets, 256, 4.0);
+        let zero_offset_time_ms = 500.0_f32;
+        let velocity_model = VelocityFunctionSource::TimeVelocityPairs {
+            times_ms: vec![0.0, 500.0, 1000.0],
+            velocities_m_per_s: vec![1800.0, 2000.0, 2300.0],
+        };
+
+        for (trace_index, offset) in offsets.iter().enumerate() {
+            let event_time_ms =
+                nmo_input_time_ms(zero_offset_time_ms, *offset as f32, &velocity_model).unwrap();
+            let sample_index = (event_time_ms / 4.0).round() as usize;
+            gather.amplitudes[trace_index * gather.samples + sample_index] = 1.0;
+        }
+
+        let pipeline = GatherProcessingPipeline {
+            schema_version: 1,
+            revision: 1,
+            preset_id: None,
+            name: None,
+            description: None,
+            trace_local_pipeline: None,
+            operations: vec![GatherProcessingOperation::NmoCorrection {
+                velocity_model,
                 interpolation: GatherInterpolationMode::Linear,
             }],
         };

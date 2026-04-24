@@ -9,9 +9,14 @@
   } from "@ophiolite/charts-core";
   import { WellCorrelationController } from "@ophiolite/charts-domain";
   import { WellCorrelationCanvasRenderer } from "@ophiolite/charts-renderer";
-  import type { WellCorrelationProbe, WellCorrelationViewport } from "@ophiolite/charts-data-models";
+  import type {
+    ChartRendererTelemetryEvent,
+    WellCorrelationProbe,
+    WellCorrelationViewport
+  } from "@ophiolite/charts-data-models";
   import ProbePanel from "./ProbePanel.svelte";
   import WellCorrelationAxisOverlay from "./WellCorrelationAxisOverlay.svelte";
+  import { emitRendererStatusForChart } from "./renderer-status";
   import { adaptWellCorrelationPanelInputToModel } from "./well-correlation-public-model";
   import {
     WELL_CORRELATION_CHART_INTERACTION_CAPABILITIES,
@@ -49,6 +54,7 @@
   let {
     chartId,
     panel = null,
+    renderer = undefined,
     viewport = null,
     interactions = undefined,
     loading = false,
@@ -64,7 +70,9 @@
     onViewportChange,
     onProbeChange,
     onInteractionStateChange,
-    onInteractionEvent
+    onInteractionEvent,
+    onRendererStatusChange,
+    onRendererTelemetry
   }: WellCorrelationPanelChartProps = $props();
 
   let controller: WellCorrelationController | null = null;
@@ -77,9 +85,12 @@
   let lastProbeKey = "";
   let lastInteractionKey = "";
   let lastInteractionStateKey = "";
+  let lastRendererStatusKey = "";
+  let lastRendererTelemetryEvent = $state.raw<ChartRendererTelemetryEvent | null>(null);
   let activePointerId: number | null = null;
   let activeDragKind: "pan" | null = null;
   let lastPanPoint = $state.raw<PanDragPoint | null>(null);
+  let rendererErrorMessage = $state<string | null>(null);
   let stageWidthPx = $state(DEFAULT_STAGE_WIDTH);
   let stageElement = $state.raw<HTMLDivElement | null>(null);
   let hostElement = $state.raw<HTMLDivElement | null>(null);
@@ -131,6 +142,54 @@
     }
     return null;
   });
+  $effect(() => {
+    lastRendererStatusKey = emitRendererStatusForChart(
+      "well-correlation-panel",
+      {
+        chartId,
+        renderer: rendererErrorMessage ? { ...(renderer ?? {}), runtimeErrorMessage: rendererErrorMessage } : renderer,
+        telemetryEvent: lastRendererTelemetryEvent
+      },
+      lastRendererStatusKey,
+      onRendererStatusChange
+    );
+  });
+
+  function handleRendererTelemetry(event: ChartRendererTelemetryEvent): void {
+    lastRendererTelemetryEvent = { ...event };
+    if (event.kind === "mount-failed" || event.kind === "frame-failed" || event.kind === "context-lost") {
+      rendererErrorMessage = event.message;
+    } else if (
+      event.kind === "backend-selected" ||
+      event.kind === "fallback-used" ||
+      event.kind === "context-restored"
+    ) {
+      rendererErrorMessage = null;
+    }
+    onRendererTelemetry?.({
+      chartId,
+      event: { ...event }
+    });
+  }
+
+  function restoreRendererTelemetry(phase: ChartRendererTelemetryEvent["phase"], detail: string): void {
+    if (
+      lastRendererTelemetryEvent?.kind !== "mount-failed" &&
+      lastRendererTelemetryEvent?.kind !== "frame-failed" &&
+      lastRendererTelemetryEvent?.kind !== "context-lost"
+    ) {
+      return;
+    }
+    handleRendererTelemetry({
+      kind: "context-restored",
+      phase,
+      backend: lastRendererTelemetryEvent.backend,
+      recoverable: true,
+      message: "Renderer recovered after a transient failure.",
+      detail,
+      timestampMs: performance.now()
+    });
+  }
   let verticalScrollbarState = $derived.by(() => {
     if (!currentPanel || !currentViewport) {
       return null;
@@ -226,6 +285,8 @@
   }
 
   function mountChartHost(element: HTMLDivElement): () => void {
+    rendererErrorMessage = null;
+    lastRendererTelemetryEvent = null;
     const activeController = new WellCorrelationController(new WellCorrelationCanvasRenderer({ axisChrome: "none" }));
     controller = activeController;
     currentPanel = null;
@@ -238,7 +299,29 @@
     callbacksEnabled = false;
     resetDebugState();
 
-    syncController(activeController);
+    try {
+      syncController(activeController);
+      restoreRendererTelemetry(
+        "render",
+        "Well correlation wrapper observed a successful initial sync after a prior renderer failure."
+      );
+    } catch (error) {
+      handleRendererTelemetry({
+        kind: "frame-failed",
+        phase: "render",
+        backend: null,
+        recoverable: true,
+        message: error instanceof Error ? error.message : String(error),
+        detail: "Well correlation wrapper observed a controller initialization sync failure.",
+        timestampMs: performance.now()
+      });
+      console.error("WellCorrelationPanelChart initialization failed during initial sync.", error);
+      if (controller === activeController) {
+        controller = null;
+      }
+      activeController.dispose();
+      return () => {};
+    }
 
     const unsubscribeStateChange = activeController.onStateChange((state) => {
       currentPanel = state.panel;
@@ -297,6 +380,9 @@
         }
       }
     });
+    const unsubscribeRendererTelemetry = activeController.onRendererTelemetry((event) => {
+      handleRendererTelemetry(event);
+    });
 
     const onPointerDown = (event: PointerEvent) => handlePointerDown(event);
     const onPointerMove = (event: PointerEvent) => handlePointerMove(event);
@@ -325,7 +411,38 @@
       };
     };
 
-    activeController.mount(element);
+    try {
+      activeController.mount(element);
+    } catch (error) {
+      if (!lastRendererTelemetryEvent) {
+        handleRendererTelemetry({
+          kind: "mount-failed",
+          phase: "mount",
+          backend: null,
+          recoverable: false,
+          message: error instanceof Error ? error.message : String(error),
+          detail: "Well correlation wrapper observed a controller initialization failure.",
+          timestampMs: performance.now()
+        });
+      }
+      console.error("WellCorrelationPanelChart initialization failed.", error);
+      unsubscribeRendererTelemetry();
+      unsubscribeInteractionEvent();
+      unsubscribeStateChange();
+      if (controller === activeController) {
+        controller = null;
+      }
+      currentPanel = null;
+      currentProbe = null;
+      currentViewport = null;
+      activeDragKind = null;
+      activePointerId = null;
+      lastPanPoint = null;
+      scrollbarDrag = null;
+      activeController.dispose();
+      debugStartedAtMs = 0;
+      return () => {};
+    }
     element.addEventListener("pointerdown", onPointerDown);
     element.addEventListener("pointermove", onPointerMove);
     element.addEventListener("pointerup", onPointerUp);
@@ -339,6 +456,7 @@
     callbacksEnabled = true;
 
     return () => {
+      unsubscribeRendererTelemetry();
       unsubscribeInteractionEvent();
       unsubscribeStateChange();
       element.removeEventListener("pointerdown", onPointerDown);
@@ -378,7 +496,7 @@
     if (!controller) {
       return;
     }
-    syncController(controller);
+    runControllerSync(controller, "reactive sync");
   });
 
   $effect(() => {
@@ -438,10 +556,23 @@
     try {
       const syncStart = nowMs();
       syncController(activeController);
+      restoreRendererTelemetry(
+        "render",
+        `Well correlation wrapper observed a successful controller sync after a prior failure during ${reason}.`
+      );
       syncCount += 1;
       lastSyncDurationMs = nowMs() - syncStart;
       totalSyncDurationMs += lastSyncDurationMs;
     } catch (error) {
+      handleRendererTelemetry({
+        kind: "frame-failed",
+        phase: "render",
+        backend: null,
+        recoverable: true,
+        message: error instanceof Error ? error.message : String(error),
+        detail: `Well correlation wrapper observed a controller sync failure during ${reason}.`,
+        timestampMs: performance.now()
+      });
       console.error(`WellCorrelationPanelChart sync failed during ${reason}.`, error);
     }
   }
@@ -490,8 +621,8 @@
     }
     activePointerId = event.pointerId;
     element.setPointerCapture(event.pointerId);
-    controller.focus();
-    if (requestedTool === "pan") {
+    const point = pointerPoint(event, element);
+    if (controller.handlePrimaryPointerDown(point.x, point.y, Math.max(1, stageWidthPx), stageHeightPx) === "pan") {
       activeDragKind = "pan";
       lastPanPoint = {
         clientX: event.clientX,
@@ -502,6 +633,9 @@
   }
 
   function handlePointerUp(event: PointerEvent): void {
+    if (controller) {
+      controller.handlePrimaryPointerUp();
+    }
     const element = event.currentTarget;
     if (!(element instanceof HTMLDivElement)) {
       return;
@@ -546,22 +680,8 @@
     if (event.key === "Escape") {
       activeDragKind = null;
       lastPanPoint = null;
-      controller.blur();
-      event.preventDefault();
-      return;
     }
-
-    const state = controller.getState();
-    if (!state.panel || !state.viewport) {
-      return;
-    }
-
-    const step = Math.max(10, (state.viewport.depthEnd - state.viewport.depthStart) * 0.1);
-    if (event.key === "ArrowUp") {
-      controller.panVertical(-step);
-      event.preventDefault();
-    } else if (event.key === "ArrowDown") {
-      controller.panVertical(step);
+    if (controller.handleKeyboardNavigation(event.key)) {
       event.preventDefault();
     }
   }
@@ -581,18 +701,18 @@
       return;
     }
 
-    if (event.ctrlKey || event.metaKey) {
-      const point = pointerPoint(event, element);
-      const panelDepth = controller.getPanelDepthAtViewY(point.y, Math.max(1, stageWidthPx), stageHeightPx);
-      if (panelDepth !== null) {
-        controller.zoomVerticalAround(panelDepth, event.deltaY < 0 ? 1.12 : 0.89);
-        event.preventDefault();
-      }
-      return;
+    const point = pointerPoint(event, element);
+    if (
+      controller.handleWheelAt(
+        point.y,
+        event.deltaY,
+        Math.max(1, stageWidthPx),
+        stageHeightPx,
+        event.ctrlKey || event.metaKey
+      )
+    ) {
+      event.preventDefault();
     }
-
-    controller.panVertical(event.deltaY * 0.35);
-    event.preventDefault();
   }
 
   function handleScrollViewportScroll(): void {
@@ -796,8 +916,10 @@
 
     {#if loading}
       <div class="ophiolite-charts-overlay">{emptyMessage}</div>
-    {:else if errorMessage}
-      <div class="ophiolite-charts-overlay ophiolite-charts-overlay-error">{errorMessage}</div>
+    {:else if errorMessage || rendererErrorMessage}
+      <div class="ophiolite-charts-overlay ophiolite-charts-overlay-error">
+        {errorMessage ?? rendererErrorMessage}
+      </div>
     {:else if !normalizedPanel}
       <div class="ophiolite-charts-overlay">{emptyMessage}</div>
     {/if}
@@ -838,7 +960,7 @@
       </div>
     {/if}
 
-    {#if currentProbe && !loading && !errorMessage && currentPanel}
+    {#if currentProbe && !loading && !errorMessage && !rendererErrorMessage && currentPanel}
       <ProbePanel
         theme="light"
         size="standard"
@@ -848,7 +970,7 @@
       />
     {/if}
 
-    {#if verticalScrollbarState && !loading && !errorMessage && currentPanel}
+    {#if verticalScrollbarState && !loading && !errorMessage && !rendererErrorMessage && currentPanel}
       <div
         class="ophiolite-charts-scrollbar ophiolite-charts-scrollbar-vertical"
         class:ophiolite-charts-scrollbar-active={verticalScrollbarState.zoomed}

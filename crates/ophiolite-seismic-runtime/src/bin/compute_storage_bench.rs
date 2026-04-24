@@ -1,15 +1,19 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use ndarray::{Array2, Array3};
 use ophiolite_seismic_runtime::{
-    CompressionKind, DatasetKind, FrequencyPhaseMode, FrequencyWindowShape, HeaderFieldSpec,
+    CompressionKind, DatasetKind, FrequencyPhaseMode, FrequencyWindowShape, GatherAxisKind,
+    GatherInterpolationMode, GatherPlane, GatherProcessingOperation, GatherProcessingPipeline,
+    GatherRequest, GatherSampleDomain, GatherSelector, GeometryProvenance, HeaderFieldSpec,
     IngestOptions, ProcessingArtifactRole, ProcessingLineage, ProcessingOperation,
-    ProcessingPipeline, ProcessingPipelineSpec, SectionAxis, SourceIdentity, SparseSurveyPolicy,
-    StorageLayout, TbvolReader, TbvolWriter, TileCoord, TileGeometry, VolumeAxes, VolumeMetadata,
-    VolumeStoreReader, VolumeStoreWriter, ZarrVolumeStoreReader, ZarrVolumeStoreWriter,
-    apply_pipeline_to_traces, assemble_section_plane, generate_store_id, load_array,
-    load_occupancy, load_source_volume_with_options, materialize_from_reader_writer, open_store,
-    preflight_segy, preview_section_from_reader, recommended_chunk_shape,
-    recommended_tbvol_tile_shape, write_dense_volume,
+    ProcessingPipeline, ProcessingPipelineSpec, SectionAxis, SeismicLayout, SourceIdentity,
+    SparseSurveyPolicy, StorageLayout, TbgathManifest, TbvolReader, TbvolWriter, TileCoord,
+    TileGeometry, VelocityAutopickParameters, VelocityFunctionSource, VelocityScanRequest,
+    VolumeAxes, VolumeMetadata, VolumeStoreReader, VolumeStoreWriter, ZarrVolumeStoreReader,
+    ZarrVolumeStoreWriter, apply_gather_processing_pipeline, apply_pipeline_to_traces,
+    assemble_section_plane, create_tbgath_store, generate_store_id, load_array, load_occupancy,
+    load_source_volume_with_options, materialize_from_reader_writer, open_store, preflight_segy,
+    preview_section_from_reader, recommended_chunk_shape, recommended_tbvol_tile_shape,
+    velocity_scan, write_dense_volume,
 };
 use serde::Serialize;
 use std::fs::{self, File};
@@ -129,6 +133,16 @@ enum Command {
         #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
         format: OutputFormat,
     },
+    BenchmarkPrestackSynthetic {
+        #[arg(long, default_value_t = 5)]
+        traces: usize,
+        #[arg(long, default_value_t = 256)]
+        samples: usize,
+        #[arg(long, default_value_t = 4.0)]
+        sample_interval_ms: f32,
+        #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -202,17 +216,65 @@ struct StorageBenchmarkResult {
     preview_amplitude_scalar_ms: f64,
     preview_trace_rms_normalize_ms: f64,
     preview_phase_rotation_ms: f64,
+    preview_lowpass_ms: f64,
+    preview_highpass_ms: f64,
     preview_bandpass_ms: f64,
+    preview_envelope_ms: f64,
+    preview_instantaneous_phase_ms: f64,
+    preview_instantaneous_frequency_ms: f64,
+    preview_sweetness_ms: f64,
     preview_bandpass_phase_rotation_ms: f64,
+    preview_analytic_stack_ms: f64,
     preview_pipeline_ms: f64,
     apply_amplitude_scalar_ms: f64,
     apply_trace_rms_normalize_ms: f64,
     apply_phase_rotation_ms: f64,
+    apply_lowpass_ms: f64,
+    apply_highpass_ms: f64,
     apply_bandpass_ms: f64,
+    apply_envelope_ms: f64,
+    apply_instantaneous_phase_ms: f64,
+    apply_instantaneous_frequency_ms: f64,
+    apply_sweetness_ms: f64,
     apply_bandpass_phase_rotation_ms: f64,
+    apply_analytic_stack_ms: f64,
     apply_pipeline_ms: f64,
     pipeline_output_bytes: u64,
     pipeline_output_file_count: u64,
+}
+
+#[derive(Debug, Clone)]
+struct TraceBenchmarkPipelines {
+    amplitude: Vec<ProcessingOperation>,
+    normalize: Vec<ProcessingOperation>,
+    phase_rotation: Vec<ProcessingOperation>,
+    lowpass: Vec<ProcessingOperation>,
+    highpass: Vec<ProcessingOperation>,
+    bandpass: Vec<ProcessingOperation>,
+    envelope: Vec<ProcessingOperation>,
+    instantaneous_phase: Vec<ProcessingOperation>,
+    instantaneous_frequency: Vec<ProcessingOperation>,
+    sweetness: Vec<ProcessingOperation>,
+    bandpass_phase_rotation: Vec<ProcessingOperation>,
+    analytic_stack: Vec<ProcessingOperation>,
+    combined: Vec<ProcessingOperation>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PrestackBenchmarkSummary {
+    traces: usize,
+    samples: usize,
+    sample_interval_ms: f32,
+    timings: PrestackBenchmarkTimings,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct PrestackBenchmarkTimings {
+    semblance_panel_constant_velocity_ms: f64,
+    velocity_autopick_ms: f64,
+    gather_nmo_correction_ms: f64,
+    gather_stretch_mute_ms: f64,
+    gather_offset_mute_ms: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -435,6 +497,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?;
             print_tbvol_tile_sweep_summary(&summary, format)?;
         }
+        Command::BenchmarkPrestackSynthetic {
+            traces,
+            samples,
+            sample_interval_ms,
+            format,
+        } => {
+            let summary = benchmark_prestack_synthetic(traces, samples, sample_interval_ms)?;
+            print_prestack_benchmark_summary(&summary, format)?;
+        }
     }
 
     Ok(())
@@ -644,25 +715,10 @@ fn run_candidate_benchmark(
     fs::create_dir_all(bench_root)?;
     let chunk_shape = candidate_chunk_shape(candidate, dataset.shape, chunk_target_mib);
     let sample_interval_ms = sample_interval_ms(&dataset.axes.sample_axis_ms)?;
+    let pipelines = trace_benchmark_pipelines(sample_interval_ms, scalar_factor);
 
     let mid_inline = dataset.shape[0] / 2;
     let mid_xline = dataset.shape[1] / 2;
-    let amplitude_pipeline = [ProcessingOperation::AmplitudeScalar {
-        factor: scalar_factor,
-    }];
-    let normalize_pipeline = [ProcessingOperation::TraceRmsNormalize];
-    let phase_rotation_pipeline = [benchmark_phase_rotation_operation()];
-    let bandpass_pipeline = [benchmark_bandpass_operation(sample_interval_ms)];
-    let bandpass_phase_rotation_pipeline = [
-        benchmark_bandpass_operation(sample_interval_ms),
-        benchmark_phase_rotation_operation(),
-    ];
-    let combined_pipeline = [
-        ProcessingOperation::AmplitudeScalar {
-            factor: scalar_factor,
-        },
-        ProcessingOperation::TraceRmsNormalize,
-    ];
 
     let result = match candidate {
         StorageCandidate::FlatBinaryControl => {
@@ -680,12 +736,7 @@ fn run_candidate_benchmark(
                 shard_target_mib,
                 mid_inline,
                 mid_xline,
-                &amplitude_pipeline,
-                &normalize_pipeline,
-                &phase_rotation_pipeline,
-                &bandpass_pipeline,
-                &bandpass_phase_rotation_pipeline,
-                &combined_pipeline,
+                &pipelines,
             )?
         }
         StorageCandidate::Tbvol => {
@@ -697,12 +748,7 @@ fn run_candidate_benchmark(
                 chunk_shape,
                 mid_inline,
                 mid_xline,
-                &amplitude_pipeline,
-                &normalize_pipeline,
-                &phase_rotation_pipeline,
-                &bandpass_pipeline,
-                &bandpass_phase_rotation_pipeline,
-                &combined_pipeline,
+                &pipelines,
             )?
         }
         _ => {
@@ -737,12 +783,7 @@ fn run_candidate_benchmark(
                 shard_target_mib,
                 mid_inline,
                 mid_xline,
-                &amplitude_pipeline,
-                &normalize_pipeline,
-                &phase_rotation_pipeline,
-                &bandpass_pipeline,
-                &bandpass_phase_rotation_pipeline,
-                &combined_pipeline,
+                &pipelines,
             )?
         }
     };
@@ -759,12 +800,7 @@ fn benchmark_zarr(
     shard_target_mib: Option<u16>,
     mid_inline: usize,
     mid_xline: usize,
-    amplitude_pipeline: &[ProcessingOperation],
-    normalize_pipeline: &[ProcessingOperation],
-    phase_rotation_pipeline: &[ProcessingOperation],
-    bandpass_pipeline: &[ProcessingOperation],
-    bandpass_phase_rotation_pipeline: &[ProcessingOperation],
-    combined_pipeline: &[ProcessingOperation],
+    pipelines: &TraceBenchmarkPipelines,
 ) -> Result<StorageBenchmarkResult, Box<dyn std::error::Error>> {
     let reader = ZarrVolumeStoreReader::open(input_root)?;
     let started = Instant::now();
@@ -775,151 +811,76 @@ fn benchmark_zarr(
     let _xline_plane = assemble_section_plane(&reader, SectionAxis::Xline, mid_xline)?;
     let xline_section_read_ms = started.elapsed().as_secs_f64() * 1000.0;
 
-    let started = Instant::now();
-    let _ =
-        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, amplitude_pipeline)?;
-    let preview_amplitude_scalar_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let measure_preview =
+        |pipeline: &[ProcessingOperation]| -> Result<f64, Box<dyn std::error::Error>> {
+            let started = Instant::now();
+            let _ =
+                preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, pipeline)?;
+            Ok(started.elapsed().as_secs_f64() * 1000.0)
+        };
 
-    let started = Instant::now();
-    let _ =
-        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, normalize_pipeline)?;
-    let preview_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let preview_amplitude_scalar_ms = measure_preview(&pipelines.amplitude)?;
+    let preview_trace_rms_normalize_ms = measure_preview(&pipelines.normalize)?;
+    let preview_phase_rotation_ms = measure_preview(&pipelines.phase_rotation)?;
+    let preview_lowpass_ms = measure_preview(&pipelines.lowpass)?;
+    let preview_highpass_ms = measure_preview(&pipelines.highpass)?;
+    let preview_bandpass_ms = measure_preview(&pipelines.bandpass)?;
+    let preview_envelope_ms = measure_preview(&pipelines.envelope)?;
+    let preview_instantaneous_phase_ms = measure_preview(&pipelines.instantaneous_phase)?;
+    let preview_instantaneous_frequency_ms = measure_preview(&pipelines.instantaneous_frequency)?;
+    let preview_sweetness_ms = measure_preview(&pipelines.sweetness)?;
+    let preview_bandpass_phase_rotation_ms = measure_preview(&pipelines.bandpass_phase_rotation)?;
+    let preview_analytic_stack_ms = measure_preview(&pipelines.analytic_stack)?;
+    let preview_pipeline_ms = measure_preview(&pipelines.combined)?;
 
-    let started = Instant::now();
-    let _ = preview_section_from_reader(
-        &reader,
-        SectionAxis::Inline,
-        mid_inline,
-        phase_rotation_pipeline,
+    let output_parent = input_root.parent().unwrap_or_else(|| Path::new("."));
+    let has_occupancy = reader_has_occupancy(&reader)?;
+    let mut created_outputs = Vec::new();
+    let mut measure_apply = |label: &str,
+                             pipeline: &[ProcessingOperation]|
+     -> Result<f64, Box<dyn std::error::Error>> {
+        let output_root = output_parent.join(format!("apply-{label}.zarr"));
+        let writer = ZarrVolumeStoreWriter::create(
+            &output_root,
+            derived_output_volume(reader.volume(), input_root, pipeline),
+            chunk_shape,
+            layout.clone(),
+            has_occupancy,
+        )?;
+        let started = Instant::now();
+        materialize_from_reader_writer(&reader, writer, pipeline)?;
+        created_outputs.push(output_root);
+        Ok(started.elapsed().as_secs_f64() * 1000.0)
+    };
+
+    let apply_amplitude_scalar_ms = measure_apply("amplitude", &pipelines.amplitude)?;
+    let apply_trace_rms_normalize_ms = measure_apply("normalize", &pipelines.normalize)?;
+    let apply_phase_rotation_ms = measure_apply("phase-rotation", &pipelines.phase_rotation)?;
+    let apply_lowpass_ms = measure_apply("lowpass", &pipelines.lowpass)?;
+    let apply_highpass_ms = measure_apply("highpass", &pipelines.highpass)?;
+    let apply_bandpass_ms = measure_apply("bandpass", &pipelines.bandpass)?;
+    let apply_envelope_ms = measure_apply("envelope", &pipelines.envelope)?;
+    let apply_instantaneous_phase_ms =
+        measure_apply("instantaneous-phase", &pipelines.instantaneous_phase)?;
+    let apply_instantaneous_frequency_ms = measure_apply(
+        "instantaneous-frequency",
+        &pipelines.instantaneous_frequency,
     )?;
-    let preview_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let started = Instant::now();
-    let _ =
-        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, bandpass_pipeline)?;
-    let preview_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let started = Instant::now();
-    let _ = preview_section_from_reader(
-        &reader,
-        SectionAxis::Inline,
-        mid_inline,
-        bandpass_phase_rotation_pipeline,
+    let apply_sweetness_ms = measure_apply("sweetness", &pipelines.sweetness)?;
+    let apply_bandpass_phase_rotation_ms = measure_apply(
+        "bandpass-phase-rotation",
+        &pipelines.bandpass_phase_rotation,
     )?;
-    let preview_bandpass_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let started = Instant::now();
-    let _ =
-        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, combined_pipeline)?;
-    let preview_pipeline_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let amplitude_output = input_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("apply-amplitude.zarr");
-    let amplitude_writer = ZarrVolumeStoreWriter::create(
-        &amplitude_output,
-        derived_output_volume(reader.volume(), input_root, amplitude_pipeline),
-        chunk_shape,
-        layout.clone(),
-        reader_has_occupancy(&reader)?,
-    )?;
-    let started = Instant::now();
-    materialize_from_reader_writer(&reader, amplitude_writer, amplitude_pipeline)?;
-    let apply_amplitude_scalar_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let normalize_output = input_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("apply-normalize.zarr");
-    let normalize_writer = ZarrVolumeStoreWriter::create(
-        &normalize_output,
-        derived_output_volume(reader.volume(), input_root, normalize_pipeline),
-        chunk_shape,
-        layout.clone(),
-        reader_has_occupancy(&reader)?,
-    )?;
-    let started = Instant::now();
-    materialize_from_reader_writer(&reader, normalize_writer, normalize_pipeline)?;
-    let apply_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let phase_rotation_output = input_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("apply-phase-rotation.zarr");
-    let phase_rotation_writer = ZarrVolumeStoreWriter::create(
-        &phase_rotation_output,
-        derived_output_volume(reader.volume(), input_root, phase_rotation_pipeline),
-        chunk_shape,
-        layout.clone(),
-        reader_has_occupancy(&reader)?,
-    )?;
-    let started = Instant::now();
-    materialize_from_reader_writer(&reader, phase_rotation_writer, phase_rotation_pipeline)?;
-    let apply_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let bandpass_output = input_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("apply-bandpass.zarr");
-    let bandpass_writer = ZarrVolumeStoreWriter::create(
-        &bandpass_output,
-        derived_output_volume(reader.volume(), input_root, bandpass_pipeline),
-        chunk_shape,
-        layout.clone(),
-        reader_has_occupancy(&reader)?,
-    )?;
-    let started = Instant::now();
-    materialize_from_reader_writer(&reader, bandpass_writer, bandpass_pipeline)?;
-    let apply_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let bandpass_phase_rotation_output = input_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("apply-bandpass-phase-rotation.zarr");
-    let bandpass_phase_rotation_writer = ZarrVolumeStoreWriter::create(
-        &bandpass_phase_rotation_output,
-        derived_output_volume(
-            reader.volume(),
-            input_root,
-            bandpass_phase_rotation_pipeline,
-        ),
-        chunk_shape,
-        layout.clone(),
-        reader_has_occupancy(&reader)?,
-    )?;
-    let started = Instant::now();
-    materialize_from_reader_writer(
-        &reader,
-        bandpass_phase_rotation_writer,
-        bandpass_phase_rotation_pipeline,
-    )?;
-    let apply_bandpass_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let pipeline_output = input_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("apply-pipeline.zarr");
-    let pipeline_writer = ZarrVolumeStoreWriter::create(
-        &pipeline_output,
-        derived_output_volume(reader.volume(), input_root, combined_pipeline),
-        chunk_shape,
-        layout.clone(),
-        reader_has_occupancy(&reader)?,
-    )?;
-    let started = Instant::now();
-    materialize_from_reader_writer(&reader, pipeline_writer, combined_pipeline)?;
-    let apply_pipeline_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let apply_analytic_stack_ms = measure_apply("analytic-stack", &pipelines.analytic_stack)?;
+    let apply_pipeline_ms = measure_apply("pipeline", &pipelines.combined)?;
+    let pipeline_output = output_parent.join("apply-pipeline.zarr");
 
     let (input_store_bytes, input_file_count) = directory_metrics(input_root)?;
     let (pipeline_output_bytes, pipeline_output_file_count) = directory_metrics(&pipeline_output)?;
 
-    let _ = fs::remove_dir_all(amplitude_output);
-    let _ = fs::remove_dir_all(normalize_output);
-    let _ = fs::remove_dir_all(phase_rotation_output);
-    let _ = fs::remove_dir_all(bandpass_output);
-    let _ = fs::remove_dir_all(bandpass_phase_rotation_output);
-    let _ = fs::remove_dir_all(&pipeline_output);
+    for output in created_outputs {
+        let _ = fs::remove_dir_all(output);
+    }
 
     Ok(StorageBenchmarkResult {
         candidate,
@@ -934,14 +895,28 @@ fn benchmark_zarr(
         preview_amplitude_scalar_ms,
         preview_trace_rms_normalize_ms,
         preview_phase_rotation_ms,
+        preview_lowpass_ms,
+        preview_highpass_ms,
         preview_bandpass_ms,
+        preview_envelope_ms,
+        preview_instantaneous_phase_ms,
+        preview_instantaneous_frequency_ms,
+        preview_sweetness_ms,
         preview_bandpass_phase_rotation_ms,
+        preview_analytic_stack_ms,
         preview_pipeline_ms,
         apply_amplitude_scalar_ms,
         apply_trace_rms_normalize_ms,
         apply_phase_rotation_ms,
+        apply_lowpass_ms,
+        apply_highpass_ms,
         apply_bandpass_ms,
+        apply_envelope_ms,
+        apply_instantaneous_phase_ms,
+        apply_instantaneous_frequency_ms,
+        apply_sweetness_ms,
         apply_bandpass_phase_rotation_ms,
+        apply_analytic_stack_ms,
         apply_pipeline_ms,
         pipeline_output_bytes,
         pipeline_output_file_count,
@@ -954,12 +929,7 @@ fn benchmark_tbvol(
     chunk_shape: [usize; 3],
     mid_inline: usize,
     mid_xline: usize,
-    amplitude_pipeline: &[ProcessingOperation],
-    normalize_pipeline: &[ProcessingOperation],
-    phase_rotation_pipeline: &[ProcessingOperation],
-    bandpass_pipeline: &[ProcessingOperation],
-    bandpass_phase_rotation_pipeline: &[ProcessingOperation],
-    combined_pipeline: &[ProcessingOperation],
+    pipelines: &TraceBenchmarkPipelines,
 ) -> Result<StorageBenchmarkResult, Box<dyn std::error::Error>> {
     let reader = TbvolReader::open(input_root)?;
 
@@ -971,145 +941,75 @@ fn benchmark_tbvol(
     let _xline_plane = assemble_section_plane(&reader, SectionAxis::Xline, mid_xline)?;
     let xline_section_read_ms = started.elapsed().as_secs_f64() * 1000.0;
 
-    let started = Instant::now();
-    let _ =
-        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, amplitude_pipeline)?;
-    let preview_amplitude_scalar_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let measure_preview =
+        |pipeline: &[ProcessingOperation]| -> Result<f64, Box<dyn std::error::Error>> {
+            let started = Instant::now();
+            let _ =
+                preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, pipeline)?;
+            Ok(started.elapsed().as_secs_f64() * 1000.0)
+        };
 
-    let started = Instant::now();
-    let _ =
-        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, normalize_pipeline)?;
-    let preview_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let preview_amplitude_scalar_ms = measure_preview(&pipelines.amplitude)?;
+    let preview_trace_rms_normalize_ms = measure_preview(&pipelines.normalize)?;
+    let preview_phase_rotation_ms = measure_preview(&pipelines.phase_rotation)?;
+    let preview_lowpass_ms = measure_preview(&pipelines.lowpass)?;
+    let preview_highpass_ms = measure_preview(&pipelines.highpass)?;
+    let preview_bandpass_ms = measure_preview(&pipelines.bandpass)?;
+    let preview_envelope_ms = measure_preview(&pipelines.envelope)?;
+    let preview_instantaneous_phase_ms = measure_preview(&pipelines.instantaneous_phase)?;
+    let preview_instantaneous_frequency_ms = measure_preview(&pipelines.instantaneous_frequency)?;
+    let preview_sweetness_ms = measure_preview(&pipelines.sweetness)?;
+    let preview_bandpass_phase_rotation_ms = measure_preview(&pipelines.bandpass_phase_rotation)?;
+    let preview_analytic_stack_ms = measure_preview(&pipelines.analytic_stack)?;
+    let preview_pipeline_ms = measure_preview(&pipelines.combined)?;
 
-    let started = Instant::now();
-    let _ = preview_section_from_reader(
-        &reader,
-        SectionAxis::Inline,
-        mid_inline,
-        phase_rotation_pipeline,
+    let output_parent = input_root.parent().unwrap_or_else(|| Path::new("."));
+    let has_occupancy = reader_has_occupancy(&reader)?;
+    let mut created_outputs = Vec::new();
+    let mut measure_apply = |label: &str,
+                             pipeline: &[ProcessingOperation]|
+     -> Result<f64, Box<dyn std::error::Error>> {
+        let output_root = output_parent.join(format!("apply-{label}.tbvol"));
+        let writer = TbvolWriter::create(
+            &output_root,
+            derived_output_volume(reader.volume(), input_root, pipeline),
+            chunk_shape,
+            has_occupancy,
+        )?;
+        let started = Instant::now();
+        materialize_from_reader_writer(&reader, writer, pipeline)?;
+        created_outputs.push(output_root);
+        Ok(started.elapsed().as_secs_f64() * 1000.0)
+    };
+
+    let apply_amplitude_scalar_ms = measure_apply("amplitude", &pipelines.amplitude)?;
+    let apply_trace_rms_normalize_ms = measure_apply("normalize", &pipelines.normalize)?;
+    let apply_phase_rotation_ms = measure_apply("phase-rotation", &pipelines.phase_rotation)?;
+    let apply_lowpass_ms = measure_apply("lowpass", &pipelines.lowpass)?;
+    let apply_highpass_ms = measure_apply("highpass", &pipelines.highpass)?;
+    let apply_bandpass_ms = measure_apply("bandpass", &pipelines.bandpass)?;
+    let apply_envelope_ms = measure_apply("envelope", &pipelines.envelope)?;
+    let apply_instantaneous_phase_ms =
+        measure_apply("instantaneous-phase", &pipelines.instantaneous_phase)?;
+    let apply_instantaneous_frequency_ms = measure_apply(
+        "instantaneous-frequency",
+        &pipelines.instantaneous_frequency,
     )?;
-    let preview_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let started = Instant::now();
-    let _ =
-        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, bandpass_pipeline)?;
-    let preview_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let started = Instant::now();
-    let _ = preview_section_from_reader(
-        &reader,
-        SectionAxis::Inline,
-        mid_inline,
-        bandpass_phase_rotation_pipeline,
+    let apply_sweetness_ms = measure_apply("sweetness", &pipelines.sweetness)?;
+    let apply_bandpass_phase_rotation_ms = measure_apply(
+        "bandpass-phase-rotation",
+        &pipelines.bandpass_phase_rotation,
     )?;
-    let preview_bandpass_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let started = Instant::now();
-    let _ =
-        preview_section_from_reader(&reader, SectionAxis::Inline, mid_inline, combined_pipeline)?;
-    let preview_pipeline_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let amplitude_output = input_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("apply-amplitude.tbvol");
-    let amplitude_writer = TbvolWriter::create(
-        &amplitude_output,
-        derived_output_volume(reader.volume(), input_root, amplitude_pipeline),
-        chunk_shape,
-        reader_has_occupancy(&reader)?,
-    )?;
-    let started = Instant::now();
-    materialize_from_reader_writer(&reader, amplitude_writer, amplitude_pipeline)?;
-    let apply_amplitude_scalar_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let normalize_output = input_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("apply-normalize.tbvol");
-    let normalize_writer = TbvolWriter::create(
-        &normalize_output,
-        derived_output_volume(reader.volume(), input_root, normalize_pipeline),
-        chunk_shape,
-        reader_has_occupancy(&reader)?,
-    )?;
-    let started = Instant::now();
-    materialize_from_reader_writer(&reader, normalize_writer, normalize_pipeline)?;
-    let apply_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let phase_rotation_output = input_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("apply-phase-rotation.tbvol");
-    let phase_rotation_writer = TbvolWriter::create(
-        &phase_rotation_output,
-        derived_output_volume(reader.volume(), input_root, phase_rotation_pipeline),
-        chunk_shape,
-        reader_has_occupancy(&reader)?,
-    )?;
-    let started = Instant::now();
-    materialize_from_reader_writer(&reader, phase_rotation_writer, phase_rotation_pipeline)?;
-    let apply_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let bandpass_output = input_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("apply-bandpass.tbvol");
-    let bandpass_writer = TbvolWriter::create(
-        &bandpass_output,
-        derived_output_volume(reader.volume(), input_root, bandpass_pipeline),
-        chunk_shape,
-        reader_has_occupancy(&reader)?,
-    )?;
-    let started = Instant::now();
-    materialize_from_reader_writer(&reader, bandpass_writer, bandpass_pipeline)?;
-    let apply_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let bandpass_phase_rotation_output = input_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("apply-bandpass-phase-rotation.tbvol");
-    let bandpass_phase_rotation_writer = TbvolWriter::create(
-        &bandpass_phase_rotation_output,
-        derived_output_volume(
-            reader.volume(),
-            input_root,
-            bandpass_phase_rotation_pipeline,
-        ),
-        chunk_shape,
-        reader_has_occupancy(&reader)?,
-    )?;
-    let started = Instant::now();
-    materialize_from_reader_writer(
-        &reader,
-        bandpass_phase_rotation_writer,
-        bandpass_phase_rotation_pipeline,
-    )?;
-    let apply_bandpass_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let pipeline_output = input_root
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("apply-pipeline.tbvol");
-    let pipeline_writer = TbvolWriter::create(
-        &pipeline_output,
-        derived_output_volume(reader.volume(), input_root, combined_pipeline),
-        chunk_shape,
-        reader_has_occupancy(&reader)?,
-    )?;
-    let started = Instant::now();
-    materialize_from_reader_writer(&reader, pipeline_writer, combined_pipeline)?;
-    let apply_pipeline_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let apply_analytic_stack_ms = measure_apply("analytic-stack", &pipelines.analytic_stack)?;
+    let apply_pipeline_ms = measure_apply("pipeline", &pipelines.combined)?;
+    let pipeline_output = output_parent.join("apply-pipeline.tbvol");
 
     let (input_store_bytes, input_file_count) = directory_metrics(input_root)?;
     let (pipeline_output_bytes, pipeline_output_file_count) = directory_metrics(&pipeline_output)?;
 
-    let _ = fs::remove_dir_all(amplitude_output);
-    let _ = fs::remove_dir_all(normalize_output);
-    let _ = fs::remove_dir_all(phase_rotation_output);
-    let _ = fs::remove_dir_all(bandpass_output);
-    let _ = fs::remove_dir_all(bandpass_phase_rotation_output);
-    let _ = fs::remove_dir_all(&pipeline_output);
+    for output in created_outputs {
+        let _ = fs::remove_dir_all(output);
+    }
 
     Ok(StorageBenchmarkResult {
         candidate,
@@ -1124,14 +1024,28 @@ fn benchmark_tbvol(
         preview_amplitude_scalar_ms,
         preview_trace_rms_normalize_ms,
         preview_phase_rotation_ms,
+        preview_lowpass_ms,
+        preview_highpass_ms,
         preview_bandpass_ms,
+        preview_envelope_ms,
+        preview_instantaneous_phase_ms,
+        preview_instantaneous_frequency_ms,
+        preview_sweetness_ms,
         preview_bandpass_phase_rotation_ms,
+        preview_analytic_stack_ms,
         preview_pipeline_ms,
         apply_amplitude_scalar_ms,
         apply_trace_rms_normalize_ms,
         apply_phase_rotation_ms,
+        apply_lowpass_ms,
+        apply_highpass_ms,
         apply_bandpass_ms,
+        apply_envelope_ms,
+        apply_instantaneous_phase_ms,
+        apply_instantaneous_frequency_ms,
+        apply_sweetness_ms,
         apply_bandpass_phase_rotation_ms,
+        apply_analytic_stack_ms,
         apply_pipeline_ms,
         pipeline_output_bytes,
         pipeline_output_file_count,
@@ -1292,12 +1206,7 @@ fn benchmark_flat(
     shard_target_mib: Option<u16>,
     mid_inline: usize,
     mid_xline: usize,
-    amplitude_pipeline: &[ProcessingOperation],
-    normalize_pipeline: &[ProcessingOperation],
-    phase_rotation_pipeline: &[ProcessingOperation],
-    bandpass_pipeline: &[ProcessingOperation],
-    bandpass_phase_rotation_pipeline: &[ProcessingOperation],
-    combined_pipeline: &[ProcessingOperation],
+    pipelines: &TraceBenchmarkPipelines,
 ) -> Result<StorageBenchmarkResult, Box<dyn std::error::Error>> {
     let started = Instant::now();
     let _ = store.read_inline_section(mid_inline)?;
@@ -1307,122 +1216,76 @@ fn benchmark_flat(
     let _ = store.read_xline_section(mid_xline)?;
     let xline_section_read_ms = started.elapsed().as_secs_f64() * 1000.0;
 
-    let started = Instant::now();
-    let mut plane = store.read_inline_section(mid_inline)?;
-    apply_pipeline_to_traces(
-        &mut plane,
-        store.shape[1],
-        store.shape[2],
-        store.sample_interval_ms,
-        store.occupancy_row(mid_inline).as_deref(),
-        amplitude_pipeline,
+    let measure_preview =
+        |pipeline: &[ProcessingOperation]| -> Result<f64, Box<dyn std::error::Error>> {
+            let started = Instant::now();
+            let mut plane = store.read_inline_section(mid_inline)?;
+            let occupancy = store.occupancy_row(mid_inline);
+            apply_pipeline_to_traces(
+                &mut plane,
+                store.shape[1],
+                store.shape[2],
+                store.sample_interval_ms,
+                occupancy.as_deref(),
+                pipeline,
+            )?;
+            Ok(started.elapsed().as_secs_f64() * 1000.0)
+        };
+
+    let preview_amplitude_scalar_ms = measure_preview(&pipelines.amplitude)?;
+    let preview_trace_rms_normalize_ms = measure_preview(&pipelines.normalize)?;
+    let preview_phase_rotation_ms = measure_preview(&pipelines.phase_rotation)?;
+    let preview_lowpass_ms = measure_preview(&pipelines.lowpass)?;
+    let preview_highpass_ms = measure_preview(&pipelines.highpass)?;
+    let preview_bandpass_ms = measure_preview(&pipelines.bandpass)?;
+    let preview_envelope_ms = measure_preview(&pipelines.envelope)?;
+    let preview_instantaneous_phase_ms = measure_preview(&pipelines.instantaneous_phase)?;
+    let preview_instantaneous_frequency_ms = measure_preview(&pipelines.instantaneous_frequency)?;
+    let preview_sweetness_ms = measure_preview(&pipelines.sweetness)?;
+    let preview_bandpass_phase_rotation_ms = measure_preview(&pipelines.bandpass_phase_rotation)?;
+    let preview_analytic_stack_ms = measure_preview(&pipelines.analytic_stack)?;
+    let preview_pipeline_ms = measure_preview(&pipelines.combined)?;
+
+    let mut created_outputs = Vec::new();
+    let mut measure_apply = |label: &str,
+                             pipeline: &[ProcessingOperation]|
+     -> Result<f64, Box<dyn std::error::Error>> {
+        let output_path = store.root.join(format!("apply-{label}.bin"));
+        let started = Instant::now();
+        store.materialize(&output_path, chunk_shape, pipeline)?;
+        created_outputs.push(output_path);
+        Ok(started.elapsed().as_secs_f64() * 1000.0)
+    };
+
+    let apply_amplitude_scalar_ms = measure_apply("amplitude", &pipelines.amplitude)?;
+    let apply_trace_rms_normalize_ms = measure_apply("normalize", &pipelines.normalize)?;
+    let apply_phase_rotation_ms = measure_apply("phase-rotation", &pipelines.phase_rotation)?;
+    let apply_lowpass_ms = measure_apply("lowpass", &pipelines.lowpass)?;
+    let apply_highpass_ms = measure_apply("highpass", &pipelines.highpass)?;
+    let apply_bandpass_ms = measure_apply("bandpass", &pipelines.bandpass)?;
+    let apply_envelope_ms = measure_apply("envelope", &pipelines.envelope)?;
+    let apply_instantaneous_phase_ms =
+        measure_apply("instantaneous-phase", &pipelines.instantaneous_phase)?;
+    let apply_instantaneous_frequency_ms = measure_apply(
+        "instantaneous-frequency",
+        &pipelines.instantaneous_frequency,
     )?;
-    let preview_amplitude_scalar_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let started = Instant::now();
-    let mut plane = store.read_inline_section(mid_inline)?;
-    apply_pipeline_to_traces(
-        &mut plane,
-        store.shape[1],
-        store.shape[2],
-        store.sample_interval_ms,
-        store.occupancy_row(mid_inline).as_deref(),
-        normalize_pipeline,
+    let apply_sweetness_ms = measure_apply("sweetness", &pipelines.sweetness)?;
+    let apply_bandpass_phase_rotation_ms = measure_apply(
+        "bandpass-phase-rotation",
+        &pipelines.bandpass_phase_rotation,
     )?;
-    let preview_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let started = Instant::now();
-    let mut plane = store.read_inline_section(mid_inline)?;
-    apply_pipeline_to_traces(
-        &mut plane,
-        store.shape[1],
-        store.shape[2],
-        store.sample_interval_ms,
-        store.occupancy_row(mid_inline).as_deref(),
-        phase_rotation_pipeline,
-    )?;
-    let preview_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let started = Instant::now();
-    let mut plane = store.read_inline_section(mid_inline)?;
-    apply_pipeline_to_traces(
-        &mut plane,
-        store.shape[1],
-        store.shape[2],
-        store.sample_interval_ms,
-        store.occupancy_row(mid_inline).as_deref(),
-        bandpass_pipeline,
-    )?;
-    let preview_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let started = Instant::now();
-    let mut plane = store.read_inline_section(mid_inline)?;
-    apply_pipeline_to_traces(
-        &mut plane,
-        store.shape[1],
-        store.shape[2],
-        store.sample_interval_ms,
-        store.occupancy_row(mid_inline).as_deref(),
-        bandpass_phase_rotation_pipeline,
-    )?;
-    let preview_bandpass_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let started = Instant::now();
-    let mut plane = store.read_inline_section(mid_inline)?;
-    apply_pipeline_to_traces(
-        &mut plane,
-        store.shape[1],
-        store.shape[2],
-        store.sample_interval_ms,
-        store.occupancy_row(mid_inline).as_deref(),
-        combined_pipeline,
-    )?;
-    let preview_pipeline_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let amplitude_output = store.root.join("apply-amplitude.bin");
-    let started = Instant::now();
-    store.materialize(&amplitude_output, chunk_shape, amplitude_pipeline)?;
-    let apply_amplitude_scalar_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let normalize_output = store.root.join("apply-normalize.bin");
-    let started = Instant::now();
-    store.materialize(&normalize_output, chunk_shape, normalize_pipeline)?;
-    let apply_trace_rms_normalize_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let phase_rotation_output = store.root.join("apply-phase-rotation.bin");
-    let started = Instant::now();
-    store.materialize(&phase_rotation_output, chunk_shape, phase_rotation_pipeline)?;
-    let apply_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let bandpass_output = store.root.join("apply-bandpass.bin");
-    let started = Instant::now();
-    store.materialize(&bandpass_output, chunk_shape, bandpass_pipeline)?;
-    let apply_bandpass_ms = started.elapsed().as_secs_f64() * 1000.0;
-
-    let bandpass_phase_rotation_output = store.root.join("apply-bandpass-phase-rotation.bin");
-    let started = Instant::now();
-    store.materialize(
-        &bandpass_phase_rotation_output,
-        chunk_shape,
-        bandpass_phase_rotation_pipeline,
-    )?;
-    let apply_bandpass_phase_rotation_ms = started.elapsed().as_secs_f64() * 1000.0;
-
+    let apply_analytic_stack_ms = measure_apply("analytic-stack", &pipelines.analytic_stack)?;
+    let apply_pipeline_ms = measure_apply("pipeline", &pipelines.combined)?;
     let pipeline_output = store.root.join("apply-pipeline.bin");
-    let started = Instant::now();
-    store.materialize(&pipeline_output, chunk_shape, combined_pipeline)?;
-    let apply_pipeline_ms = started.elapsed().as_secs_f64() * 1000.0;
 
     let input_store_bytes = fs::metadata(&store.data_path)?.len();
     let input_file_count = if store.occupancy.is_some() { 3 } else { 2 };
     let pipeline_output_bytes = fs::metadata(&pipeline_output)?.len();
 
-    let _ = fs::remove_file(amplitude_output);
-    let _ = fs::remove_file(normalize_output);
-    let _ = fs::remove_file(phase_rotation_output);
-    let _ = fs::remove_file(bandpass_output);
-    let _ = fs::remove_file(bandpass_phase_rotation_output);
-    let _ = fs::remove_file(&pipeline_output);
+    for output in created_outputs {
+        let _ = fs::remove_file(output);
+    }
 
     Ok(StorageBenchmarkResult {
         candidate,
@@ -1437,14 +1300,28 @@ fn benchmark_flat(
         preview_amplitude_scalar_ms,
         preview_trace_rms_normalize_ms,
         preview_phase_rotation_ms,
+        preview_lowpass_ms,
+        preview_highpass_ms,
         preview_bandpass_ms,
+        preview_envelope_ms,
+        preview_instantaneous_phase_ms,
+        preview_instantaneous_frequency_ms,
+        preview_sweetness_ms,
         preview_bandpass_phase_rotation_ms,
+        preview_analytic_stack_ms,
         preview_pipeline_ms,
         apply_amplitude_scalar_ms,
         apply_trace_rms_normalize_ms,
         apply_phase_rotation_ms,
+        apply_lowpass_ms,
+        apply_highpass_ms,
         apply_bandpass_ms,
+        apply_envelope_ms,
+        apply_instantaneous_phase_ms,
+        apply_instantaneous_frequency_ms,
+        apply_sweetness_ms,
         apply_bandpass_phase_rotation_ms,
+        apply_analytic_stack_ms,
         apply_pipeline_ms,
         pipeline_output_bytes,
         pipeline_output_file_count: 1,
@@ -1886,10 +1763,26 @@ fn print_benchmark_summary(
                     "  preview_phase_rotation_ms: {:.3}",
                     result.preview_phase_rotation_ms
                 );
+                println!("  preview_lowpass_ms: {:.3}", result.preview_lowpass_ms);
+                println!("  preview_highpass_ms: {:.3}", result.preview_highpass_ms);
                 println!("  preview_bandpass_ms: {:.3}", result.preview_bandpass_ms);
+                println!("  preview_envelope_ms: {:.3}", result.preview_envelope_ms);
+                println!(
+                    "  preview_instantaneous_phase_ms: {:.3}",
+                    result.preview_instantaneous_phase_ms
+                );
+                println!(
+                    "  preview_instantaneous_frequency_ms: {:.3}",
+                    result.preview_instantaneous_frequency_ms
+                );
+                println!("  preview_sweetness_ms: {:.3}", result.preview_sweetness_ms);
                 println!(
                     "  preview_bandpass_phase_rotation_ms: {:.3}",
                     result.preview_bandpass_phase_rotation_ms
+                );
+                println!(
+                    "  preview_analytic_stack_ms: {:.3}",
+                    result.preview_analytic_stack_ms
                 );
                 println!("  preview_pipeline_ms: {:.3}", result.preview_pipeline_ms);
                 println!(
@@ -1904,10 +1797,26 @@ fn print_benchmark_summary(
                     "  apply_phase_rotation_ms: {:.3}",
                     result.apply_phase_rotation_ms
                 );
+                println!("  apply_lowpass_ms: {:.3}", result.apply_lowpass_ms);
+                println!("  apply_highpass_ms: {:.3}", result.apply_highpass_ms);
                 println!("  apply_bandpass_ms: {:.3}", result.apply_bandpass_ms);
+                println!("  apply_envelope_ms: {:.3}", result.apply_envelope_ms);
+                println!(
+                    "  apply_instantaneous_phase_ms: {:.3}",
+                    result.apply_instantaneous_phase_ms
+                );
+                println!(
+                    "  apply_instantaneous_frequency_ms: {:.3}",
+                    result.apply_instantaneous_frequency_ms
+                );
+                println!("  apply_sweetness_ms: {:.3}", result.apply_sweetness_ms);
                 println!(
                     "  apply_bandpass_phase_rotation_ms: {:.3}",
                     result.apply_bandpass_phase_rotation_ms
+                );
+                println!(
+                    "  apply_analytic_stack_ms: {:.3}",
+                    result.apply_analytic_stack_ms
                 );
                 println!("  apply_pipeline_ms: {:.3}", result.apply_pipeline_ms);
                 println!("  pipeline_output_bytes: {}", result.pipeline_output_bytes);
@@ -1916,6 +1825,42 @@ fn print_benchmark_summary(
                     result.pipeline_output_file_count
                 );
             }
+        }
+    }
+    Ok(())
+}
+
+fn print_prestack_benchmark_summary(
+    summary: &PrestackBenchmarkSummary,
+    format: OutputFormat,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match format {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(summary)?),
+        OutputFormat::Text => {
+            println!("Prestack benchmark summary");
+            println!("- traces: {}", summary.traces);
+            println!("- samples: {}", summary.samples);
+            println!("- sample_interval_ms: {:.3}", summary.sample_interval_ms);
+            println!(
+                "- semblance_panel_constant_velocity_ms: {:.3}",
+                summary.timings.semblance_panel_constant_velocity_ms
+            );
+            println!(
+                "- velocity_autopick_ms: {:.3}",
+                summary.timings.velocity_autopick_ms
+            );
+            println!(
+                "- gather_nmo_correction_ms: {:.3}",
+                summary.timings.gather_nmo_correction_ms
+            );
+            println!(
+                "- gather_stretch_mute_ms: {:.3}",
+                summary.timings.gather_stretch_mute_ms
+            );
+            println!(
+                "- gather_offset_mute_ms: {:.3}",
+                summary.timings.gather_offset_mute_ms
+            );
         }
     }
     Ok(())
@@ -2169,6 +2114,282 @@ fn benchmark_phase_rotation_operation() -> ProcessingOperation {
     ProcessingOperation::PhaseRotation {
         angle_degrees: 35.0,
     }
+}
+
+fn benchmark_lowpass_operation(sample_interval_ms: f32) -> ProcessingOperation {
+    let nyquist_hz = 500.0 / sample_interval_ms.max(f32::EPSILON);
+    let f4_hz = (nyquist_hz * 0.22).max(8.0).min(nyquist_hz);
+    let f3_hz = (f4_hz * 0.75).max(4.0).min(f4_hz);
+    ProcessingOperation::LowpassFilter {
+        f3_hz,
+        f4_hz,
+        phase: FrequencyPhaseMode::Zero,
+        window: FrequencyWindowShape::CosineTaper,
+    }
+}
+
+fn benchmark_highpass_operation(sample_interval_ms: f32) -> ProcessingOperation {
+    let nyquist_hz = 500.0 / sample_interval_ms.max(f32::EPSILON);
+    let f1_hz = (nyquist_hz * 0.04).max(2.0);
+    let f2_hz = (nyquist_hz * 0.08).max(f1_hz + 1.0).min(nyquist_hz);
+    ProcessingOperation::HighpassFilter {
+        f1_hz,
+        f2_hz,
+        phase: FrequencyPhaseMode::Zero,
+        window: FrequencyWindowShape::CosineTaper,
+    }
+}
+
+fn trace_benchmark_pipelines(
+    sample_interval_ms: f32,
+    scalar_factor: f32,
+) -> TraceBenchmarkPipelines {
+    TraceBenchmarkPipelines {
+        amplitude: vec![ProcessingOperation::AmplitudeScalar {
+            factor: scalar_factor,
+        }],
+        normalize: vec![ProcessingOperation::TraceRmsNormalize],
+        phase_rotation: vec![benchmark_phase_rotation_operation()],
+        lowpass: vec![benchmark_lowpass_operation(sample_interval_ms)],
+        highpass: vec![benchmark_highpass_operation(sample_interval_ms)],
+        bandpass: vec![benchmark_bandpass_operation(sample_interval_ms)],
+        envelope: vec![ProcessingOperation::Envelope],
+        instantaneous_phase: vec![ProcessingOperation::InstantaneousPhase],
+        instantaneous_frequency: vec![ProcessingOperation::InstantaneousFrequency],
+        sweetness: vec![ProcessingOperation::Sweetness],
+        bandpass_phase_rotation: vec![
+            benchmark_bandpass_operation(sample_interval_ms),
+            benchmark_phase_rotation_operation(),
+        ],
+        analytic_stack: vec![
+            ProcessingOperation::TraceRmsNormalize,
+            ProcessingOperation::Envelope,
+            ProcessingOperation::InstantaneousPhase,
+            ProcessingOperation::InstantaneousFrequency,
+            ProcessingOperation::Sweetness,
+        ],
+        combined: vec![
+            ProcessingOperation::AmplitudeScalar {
+                factor: scalar_factor,
+            },
+            ProcessingOperation::TraceRmsNormalize,
+        ],
+    }
+}
+
+fn benchmark_prestack_synthetic(
+    traces: usize,
+    samples: usize,
+    sample_interval_ms: f32,
+) -> Result<PrestackBenchmarkSummary, Box<dyn std::error::Error>> {
+    let gather = synthetic_prestack_gather(traces, samples, sample_interval_ms);
+    let bench_root = create_bench_root("prestack-synthetic")?;
+    let store_root = bench_root.join("prestack-bench.tbgath");
+    let manifest = synthetic_prestack_manifest(traces, samples, sample_interval_ms);
+    create_tbgath_store(&store_root, manifest, &gather.amplitudes)?;
+    let store_path = store_root.display().to_string();
+    let dataset_id = ophiolite_seismic::DatasetId("prestack-bench.tbgath".to_string());
+    let constant_velocity = VelocityFunctionSource::ConstantVelocity {
+        velocity_m_per_s: 2000.0,
+    };
+
+    let started = Instant::now();
+    velocity_scan(VelocityScanRequest {
+        schema_version: 1,
+        store_path: store_path.clone(),
+        gather: GatherRequest {
+            dataset_id: dataset_id.clone(),
+            selector: GatherSelector::Ordinal { index: 0 },
+        },
+        trace_local_pipeline: None,
+        min_velocity_m_per_s: 1500.0,
+        max_velocity_m_per_s: 2500.0,
+        velocity_step_m_per_s: 250.0,
+        autopick: None,
+    })?;
+    let semblance_panel_constant_velocity_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let started = Instant::now();
+    velocity_scan(VelocityScanRequest {
+        schema_version: 1,
+        store_path,
+        gather: GatherRequest {
+            dataset_id,
+            selector: GatherSelector::Ordinal { index: 0 },
+        },
+        trace_local_pipeline: None,
+        min_velocity_m_per_s: 1500.0,
+        max_velocity_m_per_s: 2500.0,
+        velocity_step_m_per_s: 250.0,
+        autopick: Some(VelocityAutopickParameters {
+            sample_stride: 2,
+            min_time_ms: Some(200.0),
+            max_time_ms: Some(900.0),
+            min_semblance: 0.0,
+            smoothing_samples: 3,
+        }),
+    })?;
+    let velocity_autopick_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let nmo_pipeline = gather_processing_pipeline(vec![GatherProcessingOperation::NmoCorrection {
+        velocity_model: constant_velocity.clone(),
+        interpolation: GatherInterpolationMode::Linear,
+    }]);
+    let stretch_pipeline =
+        gather_processing_pipeline(vec![GatherProcessingOperation::StretchMute {
+            velocity_model: constant_velocity.clone(),
+            max_stretch_ratio: 0.25,
+        }]);
+    let offset_pipeline = gather_processing_pipeline(vec![GatherProcessingOperation::OffsetMute {
+        min_offset: Some(-600.0),
+        max_offset: Some(600.0),
+    }]);
+
+    let started = Instant::now();
+    let mut nmo_gather = gather.clone();
+    apply_gather_processing_pipeline(&mut nmo_gather, &nmo_pipeline)?;
+    let gather_nmo_correction_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let started = Instant::now();
+    let mut stretch_gather = gather.clone();
+    apply_gather_processing_pipeline(&mut stretch_gather, &stretch_pipeline)?;
+    let gather_stretch_mute_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let started = Instant::now();
+    let mut offset_gather = gather;
+    apply_gather_processing_pipeline(&mut offset_gather, &offset_pipeline)?;
+    let gather_offset_mute_ms = started.elapsed().as_secs_f64() * 1000.0;
+
+    let _ = fs::remove_dir_all(&bench_root);
+
+    Ok(PrestackBenchmarkSummary {
+        traces,
+        samples,
+        sample_interval_ms,
+        timings: PrestackBenchmarkTimings {
+            semblance_panel_constant_velocity_ms,
+            velocity_autopick_ms,
+            gather_nmo_correction_ms,
+            gather_stretch_mute_ms,
+            gather_offset_mute_ms,
+        },
+    })
+}
+
+fn gather_processing_pipeline(
+    operations: Vec<GatherProcessingOperation>,
+) -> GatherProcessingPipeline {
+    GatherProcessingPipeline {
+        schema_version: 1,
+        revision: 1,
+        preset_id: None,
+        name: None,
+        description: None,
+        trace_local_pipeline: None,
+        operations,
+    }
+}
+
+fn synthetic_prestack_gather(
+    traces: usize,
+    samples: usize,
+    sample_interval_ms: f32,
+) -> GatherPlane {
+    let offsets = synthetic_prestack_offsets(traces);
+    let mut gather = GatherPlane {
+        label: "prestack-bench".to_string(),
+        gather_axis_kind: GatherAxisKind::Offset,
+        sample_domain: GatherSampleDomain::Time,
+        traces: offsets.len(),
+        samples,
+        horizontal_axis: offsets.clone(),
+        sample_axis_ms: (0..samples)
+            .map(|index| index as f32 * sample_interval_ms)
+            .collect(),
+        amplitudes: vec![0.0; offsets.len() * samples],
+    };
+    let true_velocity = 2000.0_f32;
+    let zero_offset_time_ms = 600.0_f32;
+    for (trace_index, offset) in offsets.iter().copied().enumerate() {
+        let event_time_ms = (((zero_offset_time_ms / 1000.0).powi(2)
+            + ((offset as f32 / true_velocity).powi(2)))
+        .sqrt())
+            * 1000.0;
+        let sample_index = (event_time_ms / sample_interval_ms).round() as usize;
+        if sample_index < samples {
+            gather.amplitudes[trace_index * samples + sample_index] = 1.0;
+        }
+    }
+    gather
+}
+
+fn synthetic_prestack_manifest(
+    traces: usize,
+    samples: usize,
+    sample_interval_ms: f32,
+) -> TbgathManifest {
+    let offsets = synthetic_prestack_offsets(traces);
+    TbgathManifest::new(
+        VolumeMetadata {
+            kind: DatasetKind::Source,
+            store_id: generate_store_id(),
+            source: SourceIdentity {
+                source_path: PathBuf::from("synthetic://prestack-bench"),
+                file_size: (traces * samples * std::mem::size_of::<f32>()) as u64,
+                trace_count: traces as u64,
+                samples_per_trace: samples,
+                sample_interval_us: (sample_interval_ms * 1000.0) as u16,
+                sample_format_code: 5,
+                sample_data_fidelity: ophiolite_seismic_runtime::segy_sample_data_fidelity(5),
+                endianness: "big".to_string(),
+                revision_raw: 0,
+                fixed_length_trace_flag_raw: 1,
+                extended_textual_headers: 0,
+                geometry: GeometryProvenance {
+                    inline_field: HeaderFieldSpec {
+                        name: "INLINE_SYNTHETIC".to_string(),
+                        start_byte: 189,
+                        value_type: "i32".to_string(),
+                    },
+                    crossline_field: HeaderFieldSpec {
+                        name: "CROSSLINE_SYNTHETIC".to_string(),
+                        start_byte: 193,
+                        value_type: "i32".to_string(),
+                    },
+                    third_axis_field: Some(HeaderFieldSpec {
+                        name: "OFFSET_SYNTHETIC".to_string(),
+                        start_byte: 37,
+                        value_type: "i32".to_string(),
+                    }),
+                },
+                regularization: None,
+            },
+            shape: [1, 1, samples],
+            axes: VolumeAxes::from_time_axis(
+                vec![1000.0],
+                vec![2000.0],
+                (0..samples)
+                    .map(|value| value as f32 * sample_interval_ms)
+                    .collect(),
+            ),
+            coordinate_reference_binding: None,
+            spatial: None,
+            created_by: "compute-storage-bench".to_string(),
+            processing_lineage: None,
+            segy_export: None,
+        },
+        SeismicLayout::PreStack3DOffset,
+        GatherAxisKind::Offset,
+        offsets,
+    )
+}
+
+fn synthetic_prestack_offsets(traces: usize) -> Vec<f64> {
+    let trace_count = traces.max(3);
+    let center = (trace_count.saturating_sub(1) as f64) / 2.0;
+    (0..trace_count)
+        .map(|index| (index as f64 - center) * 500.0)
+        .collect()
 }
 
 fn write_f32_le(writer: &mut File, values: &[f32]) -> Result<(), Box<dyn std::error::Error>> {

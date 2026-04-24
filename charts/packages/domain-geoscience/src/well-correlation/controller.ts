@@ -21,10 +21,13 @@ import {
   type NormalizedWellPanelModel
 } from "@ophiolite/charts-core";
 import type {
+  ChartInteractionStyle,
+  ChartRendererTelemetryEvent,
   CorrelationMarkerLink,
   InteractionCapabilities,
   InteractionEvent,
   InteractionTarget,
+  InteractionTrigger,
   LassoPoint,
   LassoSelectionResult,
   PrimaryInteractionMode,
@@ -37,14 +40,61 @@ import type {
 import type { WellCorrelationRendererAdapter, WellCorrelationViewState } from "@ophiolite/charts-renderer";
 
 const DEFAULT_MARKER_COLOR = "#cc4d4d";
+const WELL_CORRELATION_INTERACTION_STYLE: ChartInteractionStyle = {
+  id: "well-panel-navigation",
+  label: "Well Panel Navigation",
+  manipulators: ["viewport-navigation", "crosshair-probe", "top-edit", "lasso-selection"],
+  bindings: [
+    {
+      trigger: "pointer-primary",
+      primaryMode: "panZoom",
+      command: "viewport.pan"
+    },
+    {
+      trigger: "pointer-primary",
+      primaryMode: "topEdit",
+      command: "topEdit.begin"
+    },
+    {
+      trigger: "pointer-primary",
+      primaryMode: "lassoSelect",
+      command: "lasso.begin"
+    },
+    {
+      trigger: "wheel",
+      command: "viewport.pan"
+    },
+    {
+      trigger: "keyboard",
+      key: "ArrowUp",
+      command: "viewport.panUp"
+    },
+    {
+      trigger: "keyboard",
+      key: "ArrowDown",
+      command: "viewport.panDown"
+    },
+    {
+      trigger: "keyboard",
+      key: "Escape",
+      command: "session.cancel"
+    }
+  ]
+};
 
 export class WellCorrelationController {
   private container: HTMLElement | null = null;
   private readonly renderer: WellCorrelationRendererAdapter;
   private layoutCache: WellCorrelationLayoutCache | null = null;
-  readonly interactions = new InteractionManager(WELL_CORRELATION_INTERACTION_CAPABILITIES, "cursor", ["crosshair"]);
+  readonly interactions = new InteractionManager(
+    WELL_CORRELATION_INTERACTION_CAPABILITIES,
+    "cursor",
+    ["crosshair"],
+    WELL_CORRELATION_INTERACTION_STYLE
+  );
   private readonly listeners = new Set<(state: WellCorrelationViewState) => void>();
   private readonly interactionEventListeners = new Set<(event: InteractionEvent) => void>();
+  private readonly rendererTelemetryListeners = new Set<(event: ChartRendererTelemetryEvent) => void>();
   private state: WellCorrelationViewState = {
     panel: null,
     viewport: null,
@@ -59,6 +109,9 @@ export class WellCorrelationController {
 
   constructor(renderer: WellCorrelationRendererAdapter) {
     this.renderer = renderer;
+    this.renderer.setTelemetryListener((event) => {
+      this.emitRendererTelemetry(event);
+    });
     this.interactions.on((event) => {
       this.state.interactions = this.interactions.getState();
       this.render();
@@ -193,6 +246,87 @@ export class WellCorrelationController {
     this.handlePointerMove(x, y, width, height);
   }
 
+  handlePrimaryPointerDown(x: number, y: number, width: number, height: number): "pan" | "session" | null {
+    this.focus();
+    switch (this.resolveTriggerCommand("pointer-primary")) {
+      case "viewport.pan":
+        return this.state.viewport ? "pan" : null;
+      case "topEdit.begin":
+        this.beginTopEditAt(x, y, width, height);
+        return this.interactions.getState().session ? "session" : null;
+      case "lasso.begin":
+        this.beginLassoAt(x, y);
+        return this.interactions.getState().session ? "session" : null;
+      default:
+        return null;
+    }
+  }
+
+  handlePrimaryPointerUp(): void {
+    const session = this.interactions.getState().session;
+    if (!session) {
+      return;
+    }
+    if (session.kind === "topEdit" && this.state.panel && this.state.previewTop) {
+      this.state.panel = applyTopPreview(this.state.panel, this.state.previewTop);
+      this.recomputeCorrelationLines();
+      this.state.previewCorrelationLines = null;
+      this.state.previewTop = null;
+      this.interactions.commitSession();
+      this.render();
+      return;
+    }
+    if (session.kind === "lasso") {
+      this.interactions.commitSession();
+      this.render();
+    }
+  }
+
+  handleKeyboardNavigation(key: string): boolean {
+    if (!this.state.viewport) {
+      return false;
+    }
+
+    const step = Math.max(10, (this.state.viewport.depthEnd - this.state.viewport.depthStart) * 0.1);
+    switch (this.resolveTriggerCommand("keyboard", key)) {
+      case "viewport.panUp":
+        this.panVertical(-step);
+        return true;
+      case "viewport.panDown":
+        this.panVertical(step);
+        return true;
+      case "session.cancel":
+        this.cancelPreviewIfNeeded();
+        this.interactions.cancelSession();
+        this.render();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  handleWheelAt(
+    y: number,
+    deltaY: number,
+    width: number,
+    height: number,
+    zoomAroundPointer: boolean
+  ): boolean {
+    if (this.resolveTriggerCommand("wheel") !== "viewport.pan") {
+      return false;
+    }
+    if (zoomAroundPointer) {
+      const panelDepth = this.getPanelDepthAtViewY(y, width, height);
+      if (panelDepth === null) {
+        return false;
+      }
+      this.zoomVerticalAround(panelDepth, deltaY < 0 ? 1.12 : 0.89);
+      return true;
+    }
+    this.panVertical(deltaY * 0.35);
+    return true;
+  }
+
   handlePointerMove(x: number, y: number, width: number, height: number): void {
     if (!this.state.panel || !this.state.viewport) {
       return;
@@ -247,70 +381,15 @@ export class WellCorrelationController {
   }
 
   handlePointerDown(x: number, y: number, width: number, height: number): void {
-    this.focus();
-    if (!this.state.panel || !this.state.viewport) {
-      return;
-    }
-    const layoutCache = this.getLayoutCache(this.state.panel, width, height);
-    const interactionState = this.interactions.getState();
-    if (interactionState.primaryMode === "topEdit") {
-      const target = hitTestTopLine(layoutCache, this.state.viewport, x, y);
-      if (!target || !target.wellId || !target.entityId) {
-        return;
-      }
-      const preview = buildTopPreview(layoutCache, this.state.viewport, target.wellId, target.entityId, y);
-      if (!preview) {
-        return;
-      }
-      this.state.previewTop = preview;
-      this.state.previewCorrelationLines = deriveCorrelationLines(applyTopPreview(this.state.panel, preview));
-      this.interactions.beginSession({
-        kind: "topEdit",
-        target,
-        originalNativeDepth: preview.nativeDepth,
-        previewNativeDepth: preview.nativeDepth,
-        previewPanelDepth: preview.panelDepth
-      });
-      this.render();
-      return;
-    }
-    if (interactionState.primaryMode === "lassoSelect") {
-      this.interactions.beginSession({
-        kind: "lasso",
-        points: [{ x, y }],
-        selection: null
-      });
-      this.render();
-    }
+    this.handlePrimaryPointerDown(x, y, width, height);
   }
 
   handlePointerUp(): void {
-    const session = this.interactions.getState().session;
-    if (!session) {
-      return;
-    }
-    if (session.kind === "topEdit" && this.state.panel && this.state.previewTop) {
-      this.state.panel = applyTopPreview(this.state.panel, this.state.previewTop);
-      this.recomputeCorrelationLines();
-      this.state.previewCorrelationLines = null;
-      this.state.previewTop = null;
-      this.interactions.commitSession();
-      this.render();
-      return;
-    }
-    if (session.kind === "lasso") {
-      this.interactions.commitSession();
-      this.render();
-    }
+    this.handlePrimaryPointerUp();
   }
 
   handleKeyDown(key: string): void {
-    if (key !== "Escape") {
-      return;
-    }
-    this.cancelPreviewIfNeeded();
-    this.interactions.cancelSession();
-    this.render();
+    this.handleKeyboardNavigation(key);
   }
 
   getPanelDepthAtViewY(y: number, width: number, height: number): number | null {
@@ -394,7 +473,15 @@ export class WellCorrelationController {
     };
   }
 
+  onRendererTelemetry(listener: (event: ChartRendererTelemetryEvent) => void): () => void {
+    this.rendererTelemetryListeners.add(listener);
+    return () => {
+      this.rendererTelemetryListeners.delete(listener);
+    };
+  }
+
   dispose(): void {
+    this.renderer.setTelemetryListener(null);
     this.renderer.dispose();
     this.container = null;
     this.layoutCache = null;
@@ -407,6 +494,43 @@ export class WellCorrelationController {
   private cancelPreviewIfNeeded(): void {
     this.state.previewCorrelationLines = null;
     this.state.previewTop = null;
+  }
+
+  private beginTopEditAt(x: number, y: number, width: number, height: number): void {
+    if (!this.state.panel || !this.state.viewport) {
+      return;
+    }
+    const layoutCache = this.getLayoutCache(this.state.panel, width, height);
+    const target = hitTestTopLine(layoutCache, this.state.viewport, x, y);
+    if (!target || !target.wellId || !target.entityId) {
+      return;
+    }
+    const preview = buildTopPreview(layoutCache, this.state.viewport, target.wellId, target.entityId, y);
+    if (!preview) {
+      return;
+    }
+    this.state.previewTop = preview;
+    this.state.previewCorrelationLines = deriveCorrelationLines(applyTopPreview(this.state.panel, preview));
+    this.interactions.beginSession({
+      kind: "topEdit",
+      target,
+      originalNativeDepth: preview.nativeDepth,
+      previewNativeDepth: preview.nativeDepth,
+      previewPanelDepth: preview.panelDepth
+    });
+    this.render();
+  }
+
+  private beginLassoAt(x: number, y: number): void {
+    if (!this.state.panel || !this.state.viewport) {
+      return;
+    }
+    this.interactions.beginSession({
+      kind: "lasso",
+      points: [{ x, y }],
+      selection: null
+    });
+    this.render();
   }
 
   private getLayoutCache(
@@ -426,14 +550,42 @@ export class WellCorrelationController {
     return this.layoutCache;
   }
 
+  private resolveTriggerCommand(type: InteractionTrigger["type"], key?: string) {
+    return this.interactions.resolveTriggerCommand({
+      type,
+      primaryMode: this.interactions.getState().primaryMode,
+      modifiers: this.interactions.getState().modifiers,
+      key
+    })?.command ?? null;
+  }
+
   private render(): void {
     if (!this.container) {
       return;
     }
     const state = this.getState();
-    this.renderer.render({ state });
+    try {
+      this.renderer.render({ state });
+    } catch (error) {
+      this.emitRendererTelemetry({
+        kind: "frame-failed",
+        phase: "render",
+        backend: null,
+        recoverable: true,
+        message: error instanceof Error ? error.message : String(error),
+        detail: "Well correlation controller observed a renderer frame failure.",
+        timestampMs: nowMs()
+      });
+    }
     for (const listener of this.listeners) {
       listener(state);
+    }
+  }
+
+  private emitRendererTelemetry(event: ChartRendererTelemetryEvent): void {
+    const clonedEvent = { ...event };
+    for (const listener of this.rendererTelemetryListeners) {
+      listener(clonedEvent);
     }
   }
 }
@@ -1025,4 +1177,8 @@ function cloneInteractionEvent(event: InteractionEvent): InteractionEvent {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function nowMs(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
 }

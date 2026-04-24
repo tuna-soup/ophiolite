@@ -1,4 +1,10 @@
 pub mod contracts;
+pub use ophiolite_capabilities as capabilities;
+
+pub use ophiolite_operators::{
+    ProcessingPlannerCostClass, ProcessingPlannerHintSummary as ProcessingPlannerHints,
+    ProcessingPlannerParallelEfficiencyClass, ProcessingPlannerPartitioningHint,
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -658,9 +664,7 @@ pub use contracts::{
     ProcessingJobState, ProcessingJobStatus, ProcessingJobWaitReason,
     ProcessingLayoutCompatibility, ProcessingLineageSummary, ProcessingOperation,
     ProcessingOperatorDependencyProfile, ProcessingOperatorScope, ProcessingPipeline,
-    ProcessingPipelineFamily, ProcessingPipelineSpec, ProcessingPlannerCostClass,
-    ProcessingPlannerHints, ProcessingPlannerParallelEfficiencyClass,
-    ProcessingPlannerPartitioningHint, ProcessingPreset, ProcessingRuntimeEvent,
+    ProcessingPipelineFamily, ProcessingPipelineSpec, ProcessingPreset, ProcessingRuntimeEvent,
     ProcessingRuntimeEventDetails, ProcessingRuntimeEventKind, ProcessingRuntimeState,
     ProcessingSampleDependency, ProcessingSchedulerReason, ProcessingSpatialDependency,
     ProjectedPoint2, ProjectedPoint2Dto, ProjectedPolygon2, ProjectedPolygon2Dto, ProjectedVector2,
@@ -704,8 +708,15 @@ pub use contracts::{
     WellTimeDepthAssumptionInterval, WellTimeDepthAssumptionKind, WellTimeDepthAuthoredModel1D,
     WellTimeDepthModel1D, WellTimeDepthObservationSample, WellTimeDepthSourceBinding,
     WellboreAnchorKind, WellboreAnchorReference, WellboreGeometry, gather_operator_planner_hints,
+    operator_capability_record_for_entry, operator_capability_registry_for_catalog,
     operator_catalog_for_trace_data, post_stack_neighborhood_operator_planner_hints,
     subvolume_operator_planner_hints, trace_local_operator_planner_hints,
+};
+
+pub use capabilities::{
+    CapabilityAvailability, CapabilityContractSet, CapabilityDetail, CapabilityDocumentation,
+    CapabilityIsolation, CapabilityKind, CapabilityLoadPolicy, CapabilityRecord,
+    CapabilityRegistry, CapabilitySource, CapabilityStability, OperatorCapabilityDetail,
 };
 
 #[cfg(test)]

@@ -8,11 +8,18 @@
     resolveProbePanelPresentation,
     resolveSeismicPresentationProfile
   } from "@ophiolite/charts-core";
-  import type { SectionHorizonOverlay, SectionScalarOverlay, SectionWellOverlay } from "@ophiolite/charts-data-models";
+  import { getChartDefinition } from "@ophiolite/charts-data-models";
+  import type {
+    ChartRendererTelemetryEvent,
+    SectionHorizonOverlay,
+    SectionScalarOverlay,
+    SectionWellOverlay
+  } from "@ophiolite/charts-data-models";
   import { SeismicViewerController } from "@ophiolite/charts-domain";
   import { MockCanvasRenderer, PLOT_MARGIN, getPlotRect } from "@ophiolite/charts-renderer";
   import ProbePanel from "./ProbePanel.svelte";
   import SeismicAxisOverlay from "./SeismicAxisOverlay.svelte";
+  import { emitRendererStatusForChart } from "./renderer-status";
   import { resolveSeismicStageSize, scaleSeismicStageSize } from "./seismic-stage";
   import {
     decodeSectionView,
@@ -56,12 +63,15 @@
 
   const seismicPresentation = resolveSeismicPresentationProfile("standard");
   const seismicOverlayFont = formatSeismicCssFont(seismicPresentation.typography.overlay);
+  const chartDefinition = getChartDefinition("seismic-section");
 
   let {
     chartId,
     viewId,
     section = null,
     secondarySection = null,
+    dataSource = null,
+    renderer = undefined,
     sectionScalarOverlays = EMPTY_SECTION_SCALAR_OVERLAYS,
     sectionHorizons = EMPTY_SECTION_HORIZONS,
     sectionWellOverlays = EMPTY_SECTION_WELL_OVERLAYS,
@@ -90,6 +100,9 @@
     onInteractionChange,
     onInteractionStateChange,
     onInteractionEvent,
+    onDataSourceStateChange,
+    onRendererStatusChange,
+    onRendererTelemetry,
     onSplitPositionChange
   }: SeismicSectionChartProps = $props();
 
@@ -101,17 +114,21 @@
   let lastSectionScalarOverlays: readonly SectionScalarOverlay[] = EMPTY_SECTION_SCALAR_OVERLAYS;
   let lastSectionHorizons: readonly SectionHorizonOverlay[] = EMPTY_SECTION_HORIZONS;
   let lastSectionWellOverlays: readonly SectionWellOverlay[] = EMPTY_SECTION_WELL_OVERLAYS;
+  let lastDataSource = $state.raw<typeof dataSource>(null);
   let lastResetToken: string | number | null = null;
   let lastViewportKey = "";
   let lastProbeKey = "";
   let lastInteractionKey = "";
   let lastInteractionStateKey = "";
+  let lastRendererStatusKey = "";
+  let lastRendererTelemetryEvent = $state.raw<ChartRendererTelemetryEvent | null>(null);
   let ignoredExternalViewportKey: string | null = null;
   let activePointerId: number | null = null;
   let activeDragKind: "pan" | "zoomRect" | null = null;
   let lastPanPoint: { x: number; y: number } | null = null;
   let splitDragPointerId: number | null = null;
   let scrollbarDrag = $state.raw<ScrollbarDragState | null>(null);
+  let rendererErrorMessage = $state<string | null>(null);
   let shellElement: HTMLDivElement | null = null;
   let lastRequestedTool = resolveRequestedTool();
   let effectiveTool = $state(lastRequestedTool);
@@ -140,6 +157,7 @@
       !section ||
       loading ||
       errorMessage ||
+      rendererErrorMessage ||
       !decodedSectionPayload ||
       isArbitrarySeismicSection(decodedSectionPayload)
     ) {
@@ -160,7 +178,7 @@
       : ""
   );
   let analysisRequestContext = $derived.by(() => {
-    if (!analysis?.enabled || !analysis.onRequest || !decodedSectionPayload || loading || errorMessage) {
+    if (!analysis?.enabled || !analysis.onRequest || !decodedSectionPayload || loading || errorMessage || rendererErrorMessage) {
       return null;
     }
 
@@ -236,7 +254,20 @@
   });
 
   function attachChartHost(element: HTMLDivElement): () => void {
-    const activeController = new SeismicViewerController(new MockCanvasRenderer({ axisChrome: "none" }));
+    rendererErrorMessage = null;
+    lastRendererTelemetryEvent = null;
+    const activeController = new SeismicViewerController(new MockCanvasRenderer({ axisChrome: "none" }), {
+      chartId,
+      viewId,
+      dataSource,
+      onDataSourceStateChange: (state) => {
+        onDataSourceStateChange?.({
+          chartId,
+          viewId,
+          state
+        });
+      }
+    });
     controller = activeController;
     currentProbe = null;
 
@@ -302,6 +333,9 @@
         event
       });
     });
+    const unsubscribeRendererTelemetry = activeController.onRendererTelemetry((event) => {
+      handleRendererTelemetry(event);
+    });
 
     const resizeObserver = new ResizeObserver(() => {
       syncController(activeController);
@@ -334,7 +368,33 @@
       handleContextMenu(event);
     };
 
-    activeController.mount(element);
+    try {
+      activeController.mount(element);
+    } catch (error) {
+      if (!lastRendererTelemetryEvent) {
+        handleRendererTelemetry({
+          kind: "mount-failed",
+          phase: "mount",
+          backend: null,
+          recoverable: false,
+          message: error instanceof Error ? error.message : String(error),
+          detail: "Seismic section wrapper observed a controller initialization failure.",
+          timestampMs: performance.now()
+        });
+      }
+      console.error("SeismicSectionChart initialization failed.", error);
+      unsubscribeRendererTelemetry();
+      unsubscribeInteractionEvent();
+      unsubscribeStateChange();
+      resizeObserver.disconnect();
+      if (controller === activeController) {
+        controller = null;
+      }
+      currentProbe = null;
+      currentViewport = null;
+      activeController.dispose();
+      return () => {};
+    }
     resizeObserver.observe(element);
     element.addEventListener("pointerdown", onPointerDown);
     element.addEventListener("pointermove", onPointerMove);
@@ -347,10 +407,25 @@
     element.addEventListener("contextmenu", onContextMenu);
 
     $effect(() => {
-      syncController(activeController);
+      try {
+        syncController(activeController);
+        restoreRendererTelemetry("render");
+      } catch (error) {
+        handleRendererTelemetry({
+          kind: "frame-failed",
+          phase: "render",
+          backend: null,
+          recoverable: true,
+          message: error instanceof Error ? error.message : String(error),
+          detail: "Seismic section wrapper observed a controller sync failure.",
+          timestampMs: performance.now()
+        });
+        console.error("SeismicSectionChart sync failed.", error);
+      }
     });
 
     return () => {
+      unsubscribeRendererTelemetry();
       unsubscribeInteractionEvent();
       unsubscribeStateChange();
       resizeObserver.disconnect();
@@ -404,6 +479,7 @@
   }
 
   function syncController(activeController: SeismicViewerController, forceReset = false): void {
+    emitRendererStatus();
     const requestedTool = resolveRequestedTool();
     if (requestedTool !== lastRequestedTool) {
       lastRequestedTool = requestedTool;
@@ -429,6 +505,22 @@
     );
 
     lastResetToken = resetToken;
+
+    if (dataSource !== lastDataSource) {
+      lastDataSource = dataSource;
+      activeController.setDataSource(dataSource ?? null);
+    }
+    activeController.setDataSourceStateListener(
+      onDataSourceStateChange
+        ? (state) => {
+            onDataSourceStateChange({
+              chartId,
+              viewId,
+              state
+            });
+          }
+        : null
+    );
 
     if (section && (sectionChanged || forceReset)) {
       const previousViewport = activeController.getState().viewport;
@@ -481,6 +573,57 @@
     }
 
     applyTool(activeController, effectiveTool);
+  }
+
+  function emitRendererStatus(): void {
+    lastRendererStatusKey = emitRendererStatusForChart(
+      chartDefinition.id,
+      {
+        chartId,
+        viewId,
+        renderer: rendererErrorMessage ? { ...(renderer ?? {}), runtimeErrorMessage: rendererErrorMessage } : renderer,
+        telemetryEvent: lastRendererTelemetryEvent
+      },
+      lastRendererStatusKey,
+      onRendererStatusChange
+    );
+  }
+
+  function handleRendererTelemetry(event: ChartRendererTelemetryEvent): void {
+    lastRendererTelemetryEvent = { ...event };
+    if (event.kind === "mount-failed" || event.kind === "frame-failed" || event.kind === "context-lost") {
+      rendererErrorMessage = event.message;
+    } else if (
+      event.kind === "backend-selected" ||
+      event.kind === "fallback-used" ||
+      event.kind === "context-restored"
+    ) {
+      rendererErrorMessage = null;
+    }
+    onRendererTelemetry?.({
+      chartId,
+      viewId,
+      event: { ...event }
+    });
+  }
+
+  function restoreRendererTelemetry(phase: ChartRendererTelemetryEvent["phase"]): void {
+    if (
+      lastRendererTelemetryEvent?.kind !== "mount-failed" &&
+      lastRendererTelemetryEvent?.kind !== "frame-failed" &&
+      lastRendererTelemetryEvent?.kind !== "context-lost"
+    ) {
+      return;
+    }
+    handleRendererTelemetry({
+      kind: "context-restored",
+      phase,
+      backend: lastRendererTelemetryEvent.backend,
+      recoverable: true,
+      message: "Renderer recovered after a transient failure.",
+      detail: "Seismic section wrapper observed a successful controller sync after a prior renderer failure.",
+      timestampMs: performance.now()
+    });
   }
 
   function applyTool(activeController: SeismicViewerController, tool: "pointer" | "crosshair" | "pan"): void {
@@ -1130,8 +1273,10 @@
       />
       {#if loading}
         <div class="ophiolite-charts-overlay">{loadingMessage}</div>
-      {:else if errorMessage}
-        <div class="ophiolite-charts-overlay ophiolite-charts-overlay-error">{errorMessage}</div>
+      {:else if errorMessage || rendererErrorMessage}
+        <div class="ophiolite-charts-overlay ophiolite-charts-overlay-error">
+          {errorMessage ?? rendererErrorMessage}
+        </div>
       {:else if !section}
         <div class="ophiolite-charts-overlay">{emptyMessage}</div>
       {/if}
@@ -1303,7 +1448,7 @@
           </div>
         </div>
       {/if}
-      {#if currentProbe && !loading && !errorMessage && section}
+      {#if currentProbe && !loading && !errorMessage && !rendererErrorMessage && section}
         <ProbePanel
           theme="light"
           size="standard"
@@ -1328,7 +1473,7 @@
           <div class="ophiolite-charts-split-divider-handle"></div>
         </div>
       {/if}
-      {#if scrollbarState && !loading && !errorMessage && section}
+      {#if scrollbarState && !loading && !errorMessage && !rendererErrorMessage && section}
         <div
           class="ophiolite-charts-scrollbar ophiolite-charts-scrollbar-horizontal"
           class:ophiolite-charts-scrollbar-active={scrollbarState.horizontalZoomed}

@@ -119,9 +119,13 @@ use crate::import_manager::{
 use crate::preview_session::PreviewSessionState;
 use crate::processing::{JobRecord, ProcessingState};
 use crate::processing_authoring::{
-    PersistProcessingSessionPipelinesRequest, ResolveProcessingRunOutputRequest,
-    ResolveProcessingRunOutputResponse, persist_processing_session_pipelines,
-    resolve_processing_run_output,
+    ApplyProcessingAuthoringSessionActionRequest, PersistProcessingSessionPipelinesRequest,
+    ProcessingAuthoringSessionResponse,
+    ResolveProcessingAuthoringPaletteRequest, ResolveProcessingAuthoringPaletteResponse,
+    ResolveProcessingRunOutputRequest, ResolveProcessingRunOutputResponse,
+    SaveProcessingAuthoringSessionRequest, apply_processing_authoring_session_action,
+    persist_processing_session_pipelines, resolve_processing_authoring_palette,
+    resolve_processing_run_output, save_processing_authoring_session,
 };
 use crate::processing_cache::ProcessingCacheState;
 use crate::project_settings::{
@@ -4061,11 +4065,42 @@ fn default_post_stack_neighborhood_processing_store_path_command(
 }
 
 #[tauri::command]
+fn resolve_processing_authoring_palette_command(
+    security: State<SecurityState>,
+    request: ResolveProcessingAuthoringPaletteRequest,
+) -> Result<ResolveProcessingAuthoringPaletteResponse, String> {
+    let store_path = resolve_optional_store_path_argument(&security, request.store_path)?;
+    let secondary_store_paths =
+        resolve_store_path_list_argument(&security, &request.secondary_store_paths)?;
+    resolve_processing_authoring_palette(ResolveProcessingAuthoringPaletteRequest {
+        store_path,
+        secondary_store_paths,
+        ..request
+    })
+}
+
+#[tauri::command]
 fn persist_processing_session_pipelines_command(
     workspace: State<WorkspaceState>,
     request: PersistProcessingSessionPipelinesRequest,
 ) -> Result<UpsertDatasetEntryResponse, String> {
     persist_processing_session_pipelines(&workspace, request)
+}
+
+#[tauri::command]
+fn apply_processing_authoring_session_action_command(
+    workspace: State<WorkspaceState>,
+    request: ApplyProcessingAuthoringSessionActionRequest,
+) -> Result<ProcessingAuthoringSessionResponse, String> {
+    apply_processing_authoring_session_action(&workspace, request)
+}
+
+#[tauri::command]
+fn save_processing_authoring_session_command(
+    workspace: State<WorkspaceState>,
+    request: SaveProcessingAuthoringSessionRequest,
+) -> Result<ProcessingAuthoringSessionResponse, String> {
+    save_processing_authoring_session(&workspace, request)
 }
 
 #[tauri::command]
@@ -11595,6 +11630,9 @@ pub fn run() {
             load_workspace_state_command,
             upsert_dataset_entry_command,
             persist_processing_session_pipelines_command,
+            resolve_processing_authoring_palette_command,
+            apply_processing_authoring_session_action_command,
+            save_processing_authoring_session_command,
             remove_dataset_entry_command,
             set_active_dataset_entry_command,
             save_workspace_session_command,

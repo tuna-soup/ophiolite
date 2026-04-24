@@ -1,0 +1,76 @@
+{
+  "$schema": "../../manifests/schemas/ophiolite-charts-module.schema.json",
+  "kind": "ophioliteChartsModule",
+  "id": "@ophiolite/charts",
+  "displayName": "Ophiolite Charts",
+  "layer": "wrapper",
+  "supportTier": "public-launch",
+  "description": "Default documented Svelte wrapper surface for launch chart families, public model types, and explicit adapter entrypoints.",
+  "entrypoints": [
+    {
+      "subpath": ".",
+      "tier": "public-launch",
+      "description": "Launch chart wrappers and public model types."
+    },
+    {
+      "subpath": "./adapters/ophiolite",
+      "tier": "public-adapter",
+      "description": "Explicit Ophiolite DTO adaptation into neutral public chart models."
+    },
+    {
+      "subpath": "./types",
+      "tier": "public-launch",
+      "description": "Public wrapper and handle types."
+    },
+    {
+      "subpath": "./preview",
+      "tier": "preview",
+      "description": "Opt-in preview chart families with narrower guarantees."
+    },
+    {
+      "subpath": "./extras",
+      "tier": "preview",
+      "description": "Adjacent preview widgets and inspectors."
+    },
+    {
+      "subpath": "./contracts",
+      "tier": "internal",
+      "description": "Internal compatibility surface kept off the default public path."
+    }
+  ],
+  "dependsOn": [
+    {
+      "id": "@ophiolite/charts-data-models",
+      "role": "runtime"
+    },
+    {
+      "id": "@ophiolite/charts-domain",
+      "role": "runtime"
+    },
+    {
+      "id": "@ophiolite/charts-renderer",
+      "role": "runtime"
+    },
+    {
+      "id": "@ophiolite/contracts",
+      "role": "adapter-runtime",
+      "optional": true
+    },
+    {
+      "id": "svelte",
+      "role": "peer"
+    }
+  ],
+  "testPolicy": {
+    "requiredSuites": ["typecheck", "public-entrypoints", "visual-docs"],
+    "releaseBlocking": true
+  },
+  "consumerGuarantees": {
+    "traceboostApproved": true,
+    "externalConsumerApproved": true
+  },
+  "notes": [
+    "Teach this package first in public docs.",
+    "Use the adapter subpath only when source data begins as Ophiolite contract DTOs."
+  ]
+}

@@ -15,7 +15,7 @@ The current design is:
 - Svelte 5
 - Vite
 - Bun
-- generated `@traceboost/seis-contracts`
+- generated `@traceboost/seis-contracts` compatibility package
 - external `@ophiolite/charts`
 - Tauri 2 desktop shell under `src-tauri`
 
@@ -26,7 +26,7 @@ The current design is:
   - runtime-store output path
   - existing runtime-store path
 - backend responses:
-  - JSON payloads typed from `@traceboost/seis-contracts`
+  - JSON payloads typed from the TraceBoost compatibility package `@traceboost/seis-contracts`
 - rendered data:
   - section views returned by `traceboost-app` / `seis-runtime`
 
@@ -36,7 +36,7 @@ The current design is:
 - desktop shell crate: `apps/traceboost-demo/src-tauri`
 - demo backend and CLI surface: `traceboost/app/traceboost-app`
 - demo runtime and IO: `traceboost/runtime`, `traceboost/io`
-- demo contracts: `traceboost/contracts`
+- demo compatibility contracts: `traceboost/contracts`
 
 The old standalone `TraceBoost` repo is no longer part of the build path.
 
@@ -51,7 +51,7 @@ The old standalone `TraceBoost` repo is no longer part of the build path.
   - Vite dev endpoints in browser mode
   - Tauri commands in desktop mode
 - embedded Ophiolite Charts section rendering
-- typechecked/generated contract consumption
+- typechecked/generated contract consumption through the compatibility package
 
 ## Development
 
@@ -95,6 +95,11 @@ In browser dev mode, Vite exposes app-oriented endpoints that shell out to `trac
 - `/api/section`
 
 ## Boundary Rule
+
+`@traceboost/seis-contracts` is a TraceBoost compatibility surface for the
+demo/app boundary. It is not the canonical platform-owned frontend contract
+layer, and it should not be treated as part of the `ophiolite-sdk` public
+facade.
 
 This demo may import only the approved public Ophiolite packages:
 

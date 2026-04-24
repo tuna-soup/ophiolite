@@ -12,7 +12,11 @@ use crate::metadata::VolumeMetadata;
 
 use super::tbvol::{TbvolReader, TbvolWriter};
 use super::tile_geometry::{TileCoord, TileGeometry};
-use super::volume_store::{OccupancyTile, TileBuffer, VolumeStoreReader, VolumeStoreWriter};
+use super::volume_store::{
+    OccupancyTile, PostStackStoreEnvelope, TileBuffer, VolumeStoreReader, VolumeStoreWriter,
+    compare_exact_poststack_store_envelopes, normalize_poststack_volume_metadata,
+    validate_poststack_store_envelope,
+};
 
 const MANIFEST_FILE: &str = "manifest.json";
 const AMPLITUDE_INDEX_FILE: &str = "amplitude.index.bin";
@@ -47,6 +51,30 @@ pub struct TbvolcAmplitudeEncoding {
     pub lossless: bool,
 }
 
+impl TbvolcAmplitudeEncoding {
+    pub fn canonical_lossless_lz4() -> Self {
+        Self::default()
+    }
+
+    pub fn compatibility_label(&self) -> String {
+        let filters = if self.filters.is_empty() {
+            "none".to_string()
+        } else {
+            self.filters.join("+")
+        };
+        match self.compression_level {
+            Some(level) => format!(
+                "{}:{}:{}:level={level}:lossless={}",
+                self.codec, self.compressor, filters, self.lossless
+            ),
+            None => format!(
+                "{}:{}:{}:lossless={}",
+                self.codec, self.compressor, filters, self.lossless
+            ),
+        }
+    }
+}
+
 impl Default for TbvolcAmplitudeEncoding {
     fn default() -> Self {
         Self {
@@ -76,11 +104,12 @@ pub struct TbvolcManifest {
 
 impl TbvolcManifest {
     pub fn new(
-        volume: VolumeMetadata,
+        mut volume: VolumeMetadata,
         tile_shape: [usize; 3],
         has_occupancy: bool,
         amplitude_encoding: TbvolcAmplitudeEncoding,
     ) -> Self {
+        normalize_poststack_volume_metadata(&mut volume);
         let geometry = TileGeometry::new(volume.shape, tile_shape);
         Self {
             format: "tbvolc".to_string(),
@@ -100,12 +129,28 @@ impl TbvolcManifest {
     pub fn tile_geometry(&self) -> TileGeometry {
         TileGeometry::new(self.volume.shape, self.tile_shape)
     }
+
+    pub(crate) fn envelope(&self) -> PostStackStoreEnvelope {
+        PostStackStoreEnvelope {
+            format: self.format.clone(),
+            version: self.version,
+            volume: self.volume.clone(),
+            tile_shape: self.tile_shape,
+            tile_grid_shape: self.tile_grid_shape,
+            sample_type: self.sample_type.clone(),
+            endianness: self.endianness.clone(),
+            has_occupancy: self.has_occupancy,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TbvolcTileIndexEntry {
     offset: u64,
     length: u32,
+    // v1 contract: these record the effective logical edge span for validation and
+    // diagnostics only. The compressed payload still expands to the full padded tile
+    // shape implied by `tile_shape`.
     stored_ci: u16,
     stored_cx: u16,
     reserved: u32,
@@ -152,13 +197,28 @@ impl TbvolcTileIndexEntry {
 pub(crate) fn load_tbvolc_manifest(
     manifest_path: &Path,
 ) -> Result<TbvolcManifest, SeismicStoreError> {
-    let bytes = fs::read(manifest_path)?;
-    let mut manifest = serde_json::from_slice::<TbvolcManifest>(&bytes)?;
-    if crate::metadata::normalize_source_identity(&mut manifest.volume.source) {
+    let (manifest, changed) = inspect_tbvolc_manifest(manifest_path)?;
+    if changed {
         fs::write(manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
     }
-    validate_manifest(&manifest)?;
     Ok(manifest)
+}
+
+pub(crate) fn inspect_tbvolc_manifest(
+    manifest_path: &Path,
+) -> Result<(TbvolcManifest, bool), SeismicStoreError> {
+    let bytes = fs::read(manifest_path)?;
+    let mut manifest = serde_json::from_slice::<TbvolcManifest>(&bytes)?;
+    let mut changed = false;
+    if manifest.version == 0 {
+        manifest.version = 1;
+        changed = true;
+    }
+    if normalize_poststack_volume_metadata(&mut manifest.volume) {
+        changed = true;
+    }
+    validate_manifest(&manifest)?;
+    Ok((manifest, changed))
 }
 
 pub fn suggested_tbvolc_archive_path(tbvol_root: impl AsRef<Path>) -> PathBuf {
@@ -196,42 +256,19 @@ pub fn describe_tbvol_archive_sibling(
         });
     }
 
-    let archive_manifest = load_tbvolc_manifest(&archive_root.join(MANIFEST_FILE))?;
+    let (archive_manifest, _) = inspect_tbvolc_manifest(&archive_root.join(MANIFEST_FILE))?;
     let archive_bytes = directory_size_bytes(&archive_root)?;
-    let mut warnings = Vec::new();
-    if archive_manifest.volume.store_id != working_manifest.volume.store_id {
+    let compatibility = compare_exact_poststack_store_envelopes(
+        &working_manifest.envelope(),
+        &archive_manifest.envelope(),
+    )?;
+    let mut warnings = compatibility.warnings;
+    if archive_manifest.amplitude_encoding != TbvolcAmplitudeEncoding::canonical_lossless_lz4() {
         warnings.push(format!(
-            "store_id mismatch: working={}, archive={}",
-            working_manifest.volume.store_id, archive_manifest.volume.store_id
+            "archive amplitude encoding mismatch: expected {}, archive={}",
+            TbvolcAmplitudeEncoding::canonical_lossless_lz4().compatibility_label(),
+            archive_manifest.amplitude_encoding.compatibility_label()
         ));
-    }
-    if archive_manifest.volume.shape != working_manifest.volume.shape {
-        warnings.push(format!(
-            "shape mismatch: working={:?}, archive={:?}",
-            working_manifest.volume.shape, archive_manifest.volume.shape
-        ));
-    }
-    if archive_manifest.tile_shape != working_manifest.tile_shape {
-        warnings.push(format!(
-            "tile shape mismatch: working={:?}, archive={:?}",
-            working_manifest.tile_shape, archive_manifest.tile_shape
-        ));
-    }
-    if archive_manifest.has_occupancy != working_manifest.has_occupancy {
-        warnings.push(format!(
-            "occupancy flag mismatch: working={}, archive={}",
-            working_manifest.has_occupancy, archive_manifest.has_occupancy
-        ));
-    }
-    if serde_json::to_vec(&archive_manifest.volume.axes)?
-        != serde_json::to_vec(&working_manifest.volume.axes)?
-    {
-        warnings.push("volume axes mismatch between working store and archive".to_string());
-    }
-    if serde_json::to_vec(&archive_manifest.volume.source)?
-        != serde_json::to_vec(&working_manifest.volume.source)?
-    {
-        warnings.push("source identity mismatch between working store and archive".to_string());
     }
 
     Ok(TbvolArchiveSiblingStatus {
@@ -325,6 +362,7 @@ impl VolumeStoreReader for TbvolcReader {
         let start = entry.offset as usize;
         let end = start + entry.length as usize;
         let compressed = &self.amplitude_map[start..end];
+        // v1 tbvolc payloads always decode to the full padded tile length.
         let shuffled = block::decompress(compressed, self.geometry.amplitude_tile_bytes() as usize)
             .map_err(|error| {
                 SeismicStoreError::Message(format!("tbvolc lz4 decompress failed: {error}"))
@@ -382,7 +420,7 @@ impl TbvolcWriter {
             volume,
             tile_shape,
             has_occupancy,
-            TbvolcAmplitudeEncoding::default(),
+            TbvolcAmplitudeEncoding::canonical_lossless_lz4(),
         );
         validate_manifest(&manifest)?;
         let geometry = manifest.tile_geometry();
@@ -617,50 +655,49 @@ fn directory_size_bytes(root: &Path) -> Result<u64, SeismicStoreError> {
 }
 
 fn validate_manifest(manifest: &TbvolcManifest) -> Result<(), SeismicStoreError> {
-    if manifest.format != "tbvolc" {
+    validate_poststack_store_envelope(&manifest.envelope(), "tbvolc")?;
+    let geometry = manifest.tile_geometry();
+    if manifest.amplitude_tile_sample_count != geometry.amplitude_tile_len() {
         return Err(SeismicStoreError::Message(format!(
-            "unsupported tbvolc format marker: {}",
-            manifest.format
+            "tbvolc amplitude tile sample count mismatch: expected {}, found {}",
+            geometry.amplitude_tile_len(),
+            manifest.amplitude_tile_sample_count
         )));
     }
-    if manifest.endianness != "little" {
+    if manifest.tile_count != geometry.tile_count() {
         return Err(SeismicStoreError::Message(format!(
-            "unsupported tbvolc endianness: {}",
-            manifest.endianness
+            "tbvolc tile count mismatch: expected {}, found {}",
+            geometry.tile_count(),
+            manifest.tile_count
         )));
     }
-    if manifest.sample_type != "f32" {
-        return Err(SeismicStoreError::Message(format!(
-            "unsupported tbvolc sample type: {}",
-            manifest.sample_type
-        )));
-    }
-    if manifest.tile_shape[2] != manifest.volume.shape[2] {
-        return Err(SeismicStoreError::Message(
-            "tbvolc tiles must span the full sample axis".to_string(),
-        ));
-    }
-    if !manifest.amplitude_encoding.lossless {
+    validate_tbvolc_amplitude_encoding(&manifest.amplitude_encoding)
+}
+
+fn validate_tbvolc_amplitude_encoding(
+    encoding: &TbvolcAmplitudeEncoding,
+) -> Result<(), SeismicStoreError> {
+    if !encoding.lossless {
         return Err(SeismicStoreError::Message(
             "tbvolc only supports lossless amplitude encoding".to_string(),
         ));
     }
-    if manifest.amplitude_encoding.codec != "native" {
+    if encoding.codec != "native" {
         return Err(SeismicStoreError::Message(format!(
             "unsupported tbvolc codec family: {}",
-            manifest.amplitude_encoding.codec
+            encoding.codec
         )));
     }
-    if manifest.amplitude_encoding.compressor != "lz4" {
+    if encoding.compressor != "lz4" {
         return Err(SeismicStoreError::Message(format!(
             "unsupported tbvolc compressor: {}",
-            manifest.amplitude_encoding.compressor
+            encoding.compressor
         )));
     }
-    if manifest.amplitude_encoding.filters.as_slice() != ["bitshuffle_g8"] {
+    if encoding.filters.as_slice() != ["bitshuffle_g8"] {
         return Err(SeismicStoreError::Message(format!(
             "unsupported tbvolc filters: {:?}",
-            manifest.amplitude_encoding.filters
+            encoding.filters
         )));
     }
     Ok(())
@@ -679,13 +716,24 @@ fn validate_index_bounds(
         )));
     }
     let tile_grid_shape = geometry.tile_grid_shape();
+    let mut previous_end = 0_u64;
     for (linear, entry) in index.iter().enumerate() {
+        if entry.length == 0 {
+            return Err(SeismicStoreError::Message(format!(
+                "tbvolc tile payload length must be non-zero at linear tile index {linear}"
+            )));
+        }
         let end = entry
             .offset
             .checked_add(entry.length as u64)
             .ok_or_else(|| {
                 SeismicStoreError::Message("tbvolc tile payload overflow".to_string())
             })?;
+        if entry.offset < previous_end {
+            return Err(SeismicStoreError::Message(format!(
+                "tbvolc tile payload overlaps or is out of order at linear tile index {linear}"
+            )));
+        }
         if end > amplitude_len {
             return Err(SeismicStoreError::Message(format!(
                 "tbvolc tile payload exceeds amplitude file: end {end}, file {amplitude_len}"
@@ -700,7 +748,7 @@ fn validate_index_bounds(
             || usize::from(entry.stored_cx) != effective[1]
         {
             return Err(SeismicStoreError::Message(format!(
-                "tbvolc stored tile span mismatch at ({}, {}): expected [{}, {}], found [{}, {}]",
+                "tbvolc stored tile span mismatch at ({}, {}): expected [{}, {}], found [{}, {}]. v1 requires full padded tile payloads with effective spans recorded only for validation",
                 tile.tile_i,
                 tile.tile_x,
                 effective[0],
@@ -709,6 +757,7 @@ fn validate_index_bounds(
                 entry.stored_cx
             )));
         }
+        previous_end = end;
     }
     Ok(())
 }
@@ -846,6 +895,8 @@ fn write_all_at(file: &File, mut bytes: &[u8], mut offset: u64) -> std::io::Resu
 mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use ophiolite_seismic::TimeDepthDomain;
 
     use crate::SectionAxis;
     use crate::metadata::{
@@ -1029,6 +1080,273 @@ mod tests {
         assert_eq!(present.exact_compatible, Some(true));
         assert!(present.warnings.is_empty());
         assert!(present.archive_fraction_of_working_store.unwrap() > 0.0);
+
+        let _ = fs::remove_dir_all(&source_root);
+        let _ = fs::remove_dir_all(&compressed_root);
+    }
+
+    #[test]
+    fn load_tbvolc_manifest_backfills_legacy_metadata() {
+        let root = unique_test_root("tbvolc-legacy-metadata", "tbvolc");
+        fs::create_dir_all(&root).expect("root dir");
+        let manifest_path = root.join(MANIFEST_FILE);
+        let manifest = serde_json::json!({
+            "format": "tbvolc",
+            "version": 0,
+            "volume": {
+                "kind": "Source",
+                "store_id": "",
+                "source": {
+                    "source_path": "synthetic://tbvolc-test",
+                    "file_size": 0,
+                    "trace_count": 12,
+                    "samples_per_trace": 2,
+                    "sample_interval_us": 2000,
+                    "sample_format_code": 5,
+                    "geometry": {
+                        "inline_field": {
+                            "name": "INLINE",
+                            "start_byte": 189,
+                            "value_type": "I32"
+                        },
+                        "crossline_field": {
+                            "name": "XLINE",
+                            "start_byte": 193,
+                            "value_type": "I32"
+                        },
+                        "third_axis_field": null
+                    },
+                    "regularization": null
+                },
+                "shape": [3, 4, 2],
+                "axes": {
+                    "ilines": [0.0, 1.0, 2.0],
+                    "xlines": [0.0, 1.0, 2.0, 3.0],
+                    "sample_axis_ms": [0.0, 2.0]
+                },
+                "created_by": "legacy-runtime"
+            },
+            "tile_shape": [3, 4, 2],
+            "tile_grid_shape": [1, 1],
+            "sample_type": "f32",
+            "endianness": "little",
+            "has_occupancy": false,
+            "amplitude_encoding": {
+                "codec": "native",
+                "compressor": "lz4",
+                "filters": ["bitshuffle_g8"],
+                "compression_level": null,
+                "lossless": true
+            },
+            "amplitude_tile_sample_count": 24,
+            "tile_count": 1
+        });
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("write manifest");
+
+        let parsed = load_tbvolc_manifest(&manifest_path).expect("load manifest");
+        assert_eq!(parsed.version, 1);
+        assert!(!parsed.volume.store_id.trim().is_empty());
+        assert_eq!(parsed.volume.axes.sample_axis_domain, TimeDepthDomain::Time);
+        assert_eq!(parsed.volume.axes.sample_axis_unit, "ms");
+
+        let rewritten: TbvolcManifest =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("read rewritten manifest"))
+                .expect("parse rewritten manifest");
+        assert_eq!(rewritten.version, 1);
+        assert!(!rewritten.volume.store_id.trim().is_empty());
+        assert_eq!(
+            rewritten.volume.axes.sample_axis_domain,
+            TimeDepthDomain::Time
+        );
+        assert_eq!(rewritten.volume.axes.sample_axis_unit, "ms");
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn load_tbvolc_manifest_rejects_unsupported_encoding() {
+        let root = unique_test_root("tbvolc-invalid-encoding", "tbvolc");
+        fs::create_dir_all(&root).expect("root dir");
+        let manifest_path = root.join(MANIFEST_FILE);
+        let manifest = serde_json::json!({
+            "format": "tbvolc",
+            "version": 1,
+            "volume": {
+                "kind": "Source",
+                "store_id": generate_store_id(),
+                "source": {
+                    "source_path": "synthetic://tbvolc-test",
+                    "file_size": 0,
+                    "trace_count": 12,
+                    "samples_per_trace": 2,
+                    "sample_interval_us": 2000,
+                    "sample_format_code": 5,
+                    "sample_data_fidelity": crate::metadata::segy_sample_data_fidelity(5),
+                    "endianness": "big",
+                    "revision_raw": 0,
+                    "fixed_length_trace_flag_raw": 1,
+                    "extended_textual_headers": 0,
+                    "geometry": {
+                        "inline_field": {
+                            "name": "INLINE",
+                            "start_byte": 189,
+                            "value_type": "I32"
+                        },
+                        "crossline_field": {
+                            "name": "XLINE",
+                            "start_byte": 193,
+                            "value_type": "I32"
+                        },
+                        "third_axis_field": null
+                    },
+                    "regularization": null
+                },
+                "shape": [3, 4, 2],
+                "axes": {
+                    "ilines": [0.0, 1.0, 2.0],
+                    "xlines": [0.0, 1.0, 2.0, 3.0],
+                    "sample_axis_domain": "time",
+                    "sample_axis_unit": "ms",
+                    "sample_axis_ms": [0.0, 2.0]
+                },
+                "created_by": "tbvolc-test"
+            },
+            "tile_shape": [3, 4, 2],
+            "tile_grid_shape": [1, 1],
+            "sample_type": "f32",
+            "endianness": "little",
+            "has_occupancy": false,
+            "amplitude_encoding": {
+                "codec": "native",
+                "compressor": "zstd",
+                "filters": ["bitshuffle_g8"],
+                "compression_level": null,
+                "lossless": true
+            },
+            "amplitude_tile_sample_count": 24,
+            "tile_count": 1
+        });
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("write manifest");
+
+        let error = load_tbvolc_manifest(&manifest_path).expect_err("manifest should be rejected");
+        assert!(
+            error.to_string().contains("unsupported tbvolc"),
+            "unexpected error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn tbvolc_index_spans_are_validation_metadata_for_padded_tiles() {
+        let source_root = unique_test_root("tbvolc-span-contract-source", "tbvol");
+        let compressed_root = suggested_tbvolc_archive_path(&source_root);
+        let volume = test_volume_metadata([3, 4, 5]);
+        let tile_shape = [2, 2, 5];
+        let geometry = TileGeometry::new(volume.shape, tile_shape);
+        let writer = TbvolWriter::create(&source_root, volume, tile_shape, false).unwrap();
+
+        for tile in geometry.iter_tiles() {
+            let mut amplitudes = vec![0.0_f32; geometry.amplitude_tile_len()];
+            let origin = geometry.tile_origin(tile);
+            let effective = geometry.effective_tile_shape(tile);
+            for local_i in 0..effective[0] {
+                for local_x in 0..effective[1] {
+                    let trace_start = ((local_i * tile_shape[1]) + local_x) * tile_shape[2];
+                    for sample in 0..effective[2] {
+                        amplitudes[trace_start + sample] =
+                            amplitude_value(origin[0] + local_i, origin[1] + local_x, sample);
+                    }
+                }
+            }
+            writer.write_tile(tile, &amplitudes).unwrap();
+        }
+        writer.finalize().unwrap();
+        transcode_tbvol_to_tbvolc(&source_root, &compressed_root).unwrap();
+
+        let index_path = compressed_root.join(AMPLITUDE_INDEX_FILE);
+        let mut index = fs::read(&index_path).unwrap();
+        let tile_grid_shape = geometry.tile_grid_shape();
+        let edge_tile = TileCoord {
+            tile_i: tile_grid_shape[0] - 1,
+            tile_x: tile_grid_shape[1] - 1,
+        };
+        let linear = geometry.tile_linear_index(edge_tile);
+        let span_offset = linear * INDEX_ENTRY_BYTES + 12;
+        index[span_offset..span_offset + 2].copy_from_slice(&(tile_shape[0] as u16).to_le_bytes());
+        index[span_offset + 2..span_offset + 4]
+            .copy_from_slice(&(tile_shape[1] as u16).to_le_bytes());
+        fs::write(&index_path, index).unwrap();
+
+        let error = TbvolcReader::open(&compressed_root)
+            .err()
+            .expect("index spans should be validated");
+        assert!(
+            error
+                .to_string()
+                .contains("v1 requires full padded tile payloads"),
+            "unexpected error: {error}"
+        );
+
+        let _ = fs::remove_dir_all(&source_root);
+        let _ = fs::remove_dir_all(&compressed_root);
+    }
+
+    #[test]
+    fn describe_tbvol_archive_sibling_reports_manifest_mismatch() {
+        let source_root = unique_test_root("tbvol-archive-mismatch-source", "tbvol");
+        let compressed_root = suggested_tbvolc_archive_path(&source_root);
+        let volume = test_volume_metadata([3, 4, 5]);
+        let tile_shape = [2, 2, 5];
+        let geometry = TileGeometry::new(volume.shape, tile_shape);
+        let writer = TbvolWriter::create(&source_root, volume.clone(), tile_shape, false).unwrap();
+
+        for tile in geometry.iter_tiles() {
+            let origin = geometry.tile_origin(tile);
+            let effective = geometry.effective_tile_shape(tile);
+            let mut amplitudes = vec![0.0_f32; geometry.amplitude_tile_len()];
+            for local_i in 0..effective[0] {
+                for local_x in 0..effective[1] {
+                    let dst = (local_i * tile_shape[1]) + local_x;
+                    let trace_start = dst * tile_shape[2];
+                    for sample in 0..effective[2] {
+                        amplitudes[trace_start + sample] =
+                            amplitude_value(origin[0] + local_i, origin[1] + local_x, sample);
+                    }
+                }
+            }
+            writer.write_tile(tile, &amplitudes).unwrap();
+        }
+        writer.finalize().unwrap();
+
+        transcode_tbvol_to_tbvolc(&source_root, &compressed_root).unwrap();
+        let manifest_path = compressed_root.join(MANIFEST_FILE);
+        let mut manifest: TbvolcManifest =
+            serde_json::from_slice(&fs::read(&manifest_path).expect("read manifest"))
+                .expect("parse manifest");
+        manifest.volume.store_id = "mismatched-store-id".to_string();
+        fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("rewrite manifest");
+
+        let status = describe_tbvol_archive_sibling(&source_root).unwrap();
+        assert_eq!(status.exact_compatible, Some(false));
+        assert!(
+            status
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("store_id mismatch"))
+        );
 
         let _ = fs::remove_dir_all(&source_root);
         let _ = fs::remove_dir_all(&compressed_root);

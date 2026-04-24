@@ -25,6 +25,7 @@ import type {
   RockPhysicsCrossplotRenderFrame,
   RockPhysicsCrossplotRendererAdapter
 } from "../adapter";
+import { createRendererTelemetryEvent, type RendererTelemetryListener } from "../../telemetry";
 
 interface PaletteSwatch {
   label: string;
@@ -88,6 +89,11 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
   private uploadedModel: RockPhysicsCrossplotModel | null = null;
   private currentColors: Uint8Array | null = null;
   private currentSymbols: Float32Array | null = null;
+  private telemetryListener: RendererTelemetryListener | null = null;
+
+  setTelemetryListener(listener: RendererTelemetryListener | null): void {
+    this.telemetryListener = listener;
+  }
 
   mount(container: HTMLElement): void {
     this.host = document.createElement("div");
@@ -120,18 +126,53 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
         });
       } catch (error) {
         console.warn("RockPhysicsCrossplot: WebGL2 context creation failed, falling back to 2D canvas.", error);
+        this.emitTelemetry({
+          kind: "fallback-used",
+          phase: "probe",
+          backend: "canvas-2d",
+          previousBackend: "webgl",
+          recoverable: true,
+          message: "Rock physics renderer fell back to canvas after WebGL2 context creation failed.",
+          detail: error instanceof Error ? error.message : String(error)
+        });
         this.gl = null;
       }
     }
     this.overlayContext = this.overlayCanvas.getContext("2d");
+    if (!this.overlayContext) {
+      this.emitTelemetry({
+        kind: "mount-failed",
+        phase: "mount",
+        backend: this.gl ? "webgl" : "canvas-2d",
+        recoverable: false,
+        message: "Rock physics renderer could not acquire an overlay 2D canvas context."
+      });
+      throw new Error("PointCloudSpikeRenderer could not acquire an overlay 2D canvas context.");
+    }
     if (this.gl) {
       try {
         this.program = createProgram(this.gl, VERTEX_SHADER_SOURCE, FRAGMENT_SHADER_SOURCE);
         this.positionBuffer = createBuffer(this.gl);
         this.colorBuffer = createBuffer(this.gl);
         this.symbolBuffer = createBuffer(this.gl);
+        this.emitTelemetry({
+          kind: "backend-selected",
+          phase: "mount",
+          backend: "webgl",
+          recoverable: true,
+          message: "Rock physics renderer selected the WebGL backend."
+        });
       } catch (error) {
         console.warn("RockPhysicsCrossplot: WebGL program initialization failed, falling back to 2D canvas.", error);
+        this.emitTelemetry({
+          kind: "fallback-used",
+          phase: "mount",
+          backend: "canvas-2d",
+          previousBackend: "webgl",
+          recoverable: true,
+          message: "Rock physics renderer fell back to canvas after WebGL program initialization failed.",
+          detail: error instanceof Error ? error.message : String(error)
+        });
         this.program = null;
         this.positionBuffer = null;
         this.colorBuffer = null;
@@ -141,6 +182,23 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
     }
     if (!this.gl) {
       this.pointContext = this.glCanvas.getContext("2d");
+      if (!this.pointContext) {
+        this.emitTelemetry({
+          kind: "mount-failed",
+          phase: "mount",
+          backend: "canvas-2d",
+          recoverable: false,
+          message: "Rock physics renderer could not acquire a 2D canvas context."
+        });
+        throw new Error("PointCloudSpikeRenderer could not acquire a 2D canvas context.");
+      }
+      this.emitTelemetry({
+        kind: "backend-selected",
+        phase: "mount",
+        backend: "canvas-2d",
+        recoverable: true,
+        message: "Rock physics renderer selected the canvas-2d backend."
+      });
     }
 
     this.resizeObserver = new ResizeObserver(() => {
@@ -152,10 +210,22 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
   }
 
   render(input: RockPhysicsCrossplotRenderFrame | RockPhysicsCrossplotModel): void {
-    const state = normalizeRenderState(input);
-    this.currentState = state;
-    this.uploadModelIfNeeded(state.model);
-    this.draw();
+    try {
+      const state = normalizeRenderState(input);
+      this.currentState = state;
+      this.uploadModelIfNeeded(state.model);
+      this.draw();
+    } catch (error) {
+      this.emitTelemetry({
+        kind: "frame-failed",
+        phase: "render",
+        backend: this.gl ? "webgl" : "canvas-2d",
+        recoverable: !this.gl,
+        message: error instanceof Error ? error.message : String(error),
+        detail: "Rock physics renderer failed while drawing a frame."
+      });
+      throw error;
+    }
   }
 
   dispose(): void {
@@ -337,6 +407,15 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
         }
       } catch (error) {
         console.warn("RockPhysicsCrossplot: WebGL draw failed, falling back to 2D canvas.", error);
+        this.emitTelemetry({
+          kind: "fallback-used",
+          phase: "render",
+          backend: "canvas-2d",
+          previousBackend: "webgl",
+          recoverable: true,
+          message: "Rock physics renderer fell back to canvas after a WebGL draw failure.",
+          detail: error instanceof Error ? error.message : String(error)
+        });
         this.gl = null;
         this.program = null;
         this.positionBuffer = null;
@@ -348,6 +427,15 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
           this.pointContext.scale(dpr, dpr);
           this.pointContext.clearRect(0, 0, width, height);
           drawPointsCanvas(this.pointContext, model, viewport, plotRect, this.currentColors, this.currentSymbols);
+        } else {
+          this.emitTelemetry({
+            kind: "mount-failed",
+            phase: "render",
+            backend: "canvas-2d",
+            recoverable: false,
+            message: "Rock physics renderer could not recover to a 2D canvas after WebGL draw failure."
+          });
+          throw new Error("PointCloudSpikeRenderer could not recover to a 2D canvas context.");
         }
       }
     } else if (this.pointContext) {
@@ -375,6 +463,10 @@ export class PointCloudSpikeRenderer implements RockPhysicsCrossplotRendererAdap
       throw new Error(`Uniform ${name} was not found.`);
     }
     return location;
+  }
+
+  private emitTelemetry(event: Parameters<typeof createRendererTelemetryEvent>[0]): void {
+    this.telemetryListener?.(createRendererTelemetryEvent(event));
   }
 }
 

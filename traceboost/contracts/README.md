@@ -1,6 +1,7 @@
 # contracts
 
-`traceboost/contracts` is the shared schema layer for the TraceBoost demo support stack inside the Ophiolite repo.
+`traceboost/contracts` is the shared compatibility-schema layer for the
+TraceBoost demo support stack inside the Ophiolite repo.
 
 These contracts are demo-facing compatibility surfaces. They describe what the TraceBoost demo needs to move across its own runtime, app-shell, and frontend boundaries, while canonical reusable subsurface meaning remains owned by Ophiolite.
 
@@ -14,9 +15,9 @@ These contracts are demo-facing compatibility surfaces. They describe what the T
 - `serde` for JSON serialization
 - `schemars` for JSON Schema export
 - `ts-rs` for generated TypeScript types
-- generated frontend package at `ts/seis-contracts`
+- generated TraceBoost compatibility package at `ts/seis-contracts`
 
-The contracts layer defines the typed payloads that cross:
+The contracts layer defines the typed compatibility payloads that cross:
 
 - runtime <-> app/backend
 - app/backend <-> Tauri frontend
@@ -36,7 +37,10 @@ Current architectural direction:
   - `seis-contracts-views::{section, gather}`
   - `seis-contracts-operations::{datasets, import_ops, processing_ops, workspace, resolve}`
   - `seis-contracts-interop::*` as a compatibility re-export of `seis-contracts-operations`
-- the owning Rust source for app/workflow operations now lives in `seis-contracts-operations`; `seis-contracts-interop` remains only to avoid a breaking rename across downstream consumers
+- the owning Rust source for app/workflow operations now lives in `seis-contracts-operations`; `seis-contracts-interop` remains only to avoid a breaking rename across downstream consumers and is not part of the `ophiolite-sdk` public facade
+- the canonical platform-owned TS distribution stays under
+  `contracts/ts/ophiolite-contracts`; `ts/seis-contracts` remains a
+  TraceBoost-facing compatibility distribution for the demo/app boundary
 - packed frontend section transport is now explicit in `../apps/traceboost-demo/src/lib/transport/packed-sections.ts` instead of living only as bridge-local helpers
 
 ## Implemented

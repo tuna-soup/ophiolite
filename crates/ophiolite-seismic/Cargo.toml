@@ -6,6 +6,7 @@ license.workspace = true
 publish = true
 
 [dependencies]
+ophiolite-capabilities = { path = "../ophiolite-capabilities" }
 ophiolite-operators = { path = "../ophiolite-operators" }
 schemars = { workspace = true }
 serde = { workspace = true }

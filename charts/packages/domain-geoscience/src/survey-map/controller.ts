@@ -11,7 +11,10 @@ import {
 } from "@ophiolite/charts-core";
 import { InteractionManager } from "@ophiolite/charts-core";
 import type {
+  ChartInteractionStyle,
+  ChartRendererTelemetryEvent,
   InteractionCapabilities,
+  InteractionTrigger,
   InteractionEvent,
   SurveyMapModel,
   SurveyMapPoint,
@@ -25,14 +28,61 @@ const SURVEY_MAP_INTERACTION_CAPABILITIES: InteractionCapabilities = {
   primaryModes: ["cursor", "panZoom"],
   modifiers: []
 };
+const SURVEY_MAP_INTERACTION_STYLE: ChartInteractionStyle = {
+  id: "survey-map-navigation",
+  label: "Survey Map Navigation",
+  manipulators: ["viewport-navigation"],
+  bindings: [
+    {
+      trigger: "pointer-primary",
+      primaryMode: "panZoom",
+      command: "viewport.pan"
+    },
+    {
+      trigger: "pointer-primary",
+      primaryMode: "cursor",
+      command: "selection.primary"
+    },
+    {
+      trigger: "wheel",
+      command: "viewport.zoomAtCursor"
+    },
+    {
+      trigger: "keyboard",
+      key: "ArrowLeft",
+      command: "viewport.panLeft"
+    },
+    {
+      trigger: "keyboard",
+      key: "ArrowRight",
+      command: "viewport.panRight"
+    },
+    {
+      trigger: "keyboard",
+      key: "ArrowUp",
+      command: "viewport.panUp"
+    },
+    {
+      trigger: "keyboard",
+      key: "ArrowDown",
+      command: "viewport.panDown"
+    }
+  ]
+};
 const SURVEY_MAP_FIT_PADDING = 0.08;
 
 export class SurveyMapController {
   private container: HTMLElement | null = null;
   private readonly renderer: SurveyMapRendererAdapter;
-  readonly interactions = new InteractionManager(SURVEY_MAP_INTERACTION_CAPABILITIES, "cursor");
+  readonly interactions = new InteractionManager(
+    SURVEY_MAP_INTERACTION_CAPABILITIES,
+    "cursor",
+    [],
+    SURVEY_MAP_INTERACTION_STYLE
+  );
   private readonly listeners = new Set<(state: SurveyMapViewState) => void>();
   private readonly interactionEventListeners = new Set<(event: InteractionEvent) => void>();
+  private readonly rendererTelemetryListeners = new Set<(event: ChartRendererTelemetryEvent) => void>();
   private state: SurveyMapViewState = {
     map: null,
     viewport: null,
@@ -44,6 +94,9 @@ export class SurveyMapController {
 
   constructor(renderer: SurveyMapRendererAdapter) {
     this.renderer = renderer;
+    this.renderer.setTelemetryListener((event) => {
+      this.emitRendererTelemetry(event);
+    });
     this.interactions.on((event) => {
       this.state.interactions = this.interactions.getState();
       this.render();
@@ -131,6 +184,67 @@ export class SurveyMapController {
     this.interactions.setPrimaryMode(mode);
   }
 
+  handlePrimaryPointerDown(): "pan" | "select" | null {
+    this.focus();
+    const command = this.resolveTriggerCommand("pointer-primary");
+    if (command === "viewport.pan" && this.state.viewport) {
+      return "pan";
+    }
+    if (command === "selection.primary" && this.state.map && this.state.viewport) {
+      return "select";
+    }
+    return null;
+  }
+
+  handlePrimaryPointerUp(x: number, y: number, width: number, height: number, dragged: boolean): void {
+    if (dragged) {
+      return;
+    }
+    if (this.resolveTriggerCommand("pointer-primary") !== "selection.primary") {
+      return;
+    }
+    this.selectAt(x, y, width, height);
+    this.updatePointer(x, y, width, height);
+  }
+
+  handleKeyboardNavigation(key: string): boolean {
+    if (!this.state.viewport) {
+      return false;
+    }
+
+    const spanX = this.state.viewport.xMax - this.state.viewport.xMin;
+    const spanY = this.state.viewport.yMax - this.state.viewport.yMin;
+    const stepX = spanX * 0.08;
+    const stepY = spanY * 0.08;
+
+    switch (this.resolveTriggerCommand("keyboard", key)) {
+      case "viewport.panLeft":
+        this.pan(-stepX, 0);
+        return true;
+      case "viewport.panRight":
+        this.pan(stepX, 0);
+        return true;
+      case "viewport.panUp":
+        this.pan(0, stepY);
+        return true;
+      case "viewport.panDown":
+        this.pan(0, -stepY);
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  handleWheelAt(x: number, y: number, width: number, height: number, deltaY: number): boolean {
+    if (!this.state.viewport || this.resolveTriggerCommand("wheel") !== "viewport.zoomAtCursor") {
+      return false;
+    }
+    const plotRect = getSurveyMapPlotRect(width, height);
+    const world = screenToWorld(x, y, this.state.viewport, plotRect);
+    this.zoomAround(world.x, world.y, deltaY < 0 ? 1.12 : 0.9);
+    return true;
+  }
+
   updatePointer(x: number, y: number, width: number, height: number): void {
     if (!this.state.map || !this.state.viewport) {
       return;
@@ -186,7 +300,15 @@ export class SurveyMapController {
     };
   }
 
+  onRendererTelemetry(listener: (event: ChartRendererTelemetryEvent) => void): () => void {
+    this.rendererTelemetryListeners.add(listener);
+    return () => {
+      this.rendererTelemetryListeners.delete(listener);
+    };
+  }
+
   dispose(): void {
+    this.renderer.setTelemetryListener(null);
     this.renderer.dispose();
     this.container = null;
   }
@@ -197,10 +319,38 @@ export class SurveyMapController {
     }
 
     const state = this.getState();
-    this.renderer.render({ state });
+    try {
+      this.renderer.render({ state });
+    } catch (error) {
+      this.emitRendererTelemetry({
+        kind: "frame-failed",
+        phase: "render",
+        backend: null,
+        recoverable: true,
+        message: error instanceof Error ? error.message : String(error),
+        detail: "Survey map controller observed a renderer frame failure.",
+        timestampMs: nowMs()
+      });
+    }
     for (const listener of this.listeners) {
       listener(state);
     }
+  }
+
+  private emitRendererTelemetry(event: ChartRendererTelemetryEvent): void {
+    const clonedEvent = cloneRendererTelemetryEvent(event);
+    for (const listener of this.rendererTelemetryListeners) {
+      listener(clonedEvent);
+    }
+  }
+
+  private resolveTriggerCommand(type: InteractionTrigger["type"], key?: string) {
+    return this.interactions.resolveTriggerCommand({
+      type,
+      primaryMode: this.interactions.getState().primaryMode,
+      modifiers: this.interactions.getState().modifiers,
+      key
+    })?.command ?? null;
   }
 }
 
@@ -391,6 +541,14 @@ function cloneInteractionEvent(event: InteractionEvent): InteractionEvent {
   return JSON.parse(JSON.stringify(event)) as InteractionEvent;
 }
 
+function cloneRendererTelemetryEvent(event: ChartRendererTelemetryEvent): ChartRendererTelemetryEvent {
+  return { ...event };
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function nowMs(): number {
+  return typeof performance !== "undefined" ? performance.now() : Date.now();
 }

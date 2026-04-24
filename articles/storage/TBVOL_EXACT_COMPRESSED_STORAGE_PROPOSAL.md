@@ -168,8 +168,12 @@ reserved_u32
 This supports:
 
 - direct seek to one tile payload
-- edge tiles with logical shapes smaller than the padded tile shape
+- recording the effective logical edge span for validation and diagnostics
 - future metadata expansion without redoing the file structure immediately
+
+For `tbvolc` v1, these span fields do not mean the payload itself is clipped.
+They are metadata about the effective edge coverage of a payload that still
+expands to the full padded tile shape implied by `tile_shape`.
 
 ### Payload policy
 
@@ -177,7 +181,12 @@ For v1:
 
 - amplitude tiles are compressed independently
 - tile payload order matches tile-grid iteration order
+- every compressed amplitude payload expands to the full padded tile shape
+- `stored_ci` and `stored_cx` are validation metadata, not variable payload-shape semantics
 - occupancy remains raw if present
+
+This is intentional. `tbvolc` v1 is a compressed serialization of padded `tbvol`
+tiles, not a distinct logical-tile payload format.
 
 Keeping occupancy raw in v1 avoids introducing compression work where the space win is likely minor.
 

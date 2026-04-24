@@ -25,8 +25,9 @@ use crate::execution::{
 };
 use crate::metadata::ProcessingLineage;
 use crate::prestack_store::open_prestack_store;
-use crate::storage::tbvol::load_tbvol_manifest;
-use crate::storage::tbvolc::load_tbvolc_manifest;
+use crate::storage::tbvol::inspect_tbvol_manifest;
+use crate::storage::tbvolc::inspect_tbvolc_manifest;
+use crate::storage::volume_store::PostStackStoreEnvelope;
 
 pub const CURRENT_RUNTIME_SEMANTICS_VERSION: &str = "ophiolite-runtime-semantics:v2";
 pub const CURRENT_STORE_WRITER_SEMANTICS_VERSION: &str = "ophiolite-store-writer-semantics:v2";
@@ -226,6 +227,20 @@ pub fn source_semantic_identity_from_store_path(
     store_path: &str,
     layout: SeismicLayout,
 ) -> Result<SourceSemanticIdentity, String> {
+    Ok(load_source_semantic_identity_from_store_path(store_path, layout)?.identity)
+}
+
+pub fn source_semantic_identity_with_status_from_store_path(
+    store_path: &str,
+    layout: SeismicLayout,
+) -> Result<LoadedSourceSemanticIdentity, String> {
+    load_source_semantic_identity_from_store_path(store_path, layout)
+}
+
+fn load_source_semantic_identity_from_store_path(
+    store_path: &str,
+    layout: SeismicLayout,
+) -> Result<LoadedSourceSemanticIdentity, String> {
     let extension = Path::new(store_path)
         .extension()
         .and_then(|value| value.to_str())
@@ -233,89 +248,88 @@ pub fn source_semantic_identity_from_store_path(
         .to_ascii_lowercase();
     if matches!(layout, SeismicLayout::PreStack3DOffset) || extension == "tbgath" {
         let handle = open_prestack_store(store_path).map_err(|error| error.to_string())?;
-        return Ok(SourceSemanticIdentity {
-            schema_version: 1,
-            store_id: handle.manifest.volume.store_id.clone(),
-            store_format: StoreFormatIdentity {
+        return Ok(LoadedSourceSemanticIdentity {
+            identity: SourceSemanticIdentity {
                 schema_version: 1,
-                store_kind: handle.manifest.format.clone(),
-                store_format_version: format!(
-                    "{}@{}",
-                    handle.manifest.format, handle.manifest.version
-                ),
+                store_id: handle.manifest.volume.store_id.clone(),
+                store_format: StoreFormatIdentity {
+                    schema_version: 1,
+                    store_kind: handle.manifest.format.clone(),
+                    store_format_version: format!(
+                        "{}@{}",
+                        handle.manifest.format, handle.manifest.version
+                    ),
+                },
+                layout: handle.manifest.layout,
+                shape: Some(handle.manifest.volume.shape),
+                chunk_shape: None,
+                sample_type: Some(handle.manifest.sample_type.clone()),
+                endianness: Some(handle.manifest.endianness.clone()),
+                parent_artifact_key: handle
+                    .manifest
+                    .volume
+                    .processing_lineage
+                    .as_ref()
+                    .and_then(|lineage| lineage.artifact_key.as_ref())
+                    .map(|artifact_key| artifact_key.cache_key.clone()),
             },
-            layout: handle.manifest.layout,
-            shape: Some(handle.manifest.volume.shape),
-            chunk_shape: None,
-            sample_type: Some(handle.manifest.sample_type.clone()),
-            endianness: Some(handle.manifest.endianness.clone()),
-            parent_artifact_key: handle
-                .manifest
-                .volume
-                .processing_lineage
-                .as_ref()
-                .and_then(|lineage| lineage.artifact_key.as_ref())
-                .map(|artifact_key| artifact_key.cache_key.clone()),
+            status: CanonicalIdentityStatus::Canonical,
         });
     }
 
     if extension == "tbvolc" {
-        let manifest = load_tbvolc_manifest(&Path::new(store_path).join("manifest.json"))
-            .map_err(|error| error.to_string())?;
-        return Ok(SourceSemanticIdentity {
-            schema_version: 1,
-            store_id: manifest.volume.store_id.clone(),
-            store_format: StoreFormatIdentity {
-                schema_version: 1,
-                store_kind: manifest.format.clone(),
-                store_format_version: format!("{}@{}", manifest.format, manifest.version),
+        let (manifest, normalized_legacy) =
+            inspect_tbvolc_manifest(&Path::new(store_path).join("manifest.json"))
+                .map_err(|error| error.to_string())?;
+        return Ok(LoadedSourceSemanticIdentity {
+            identity: source_semantic_identity_from_poststack_store_envelope(
+                manifest.envelope(),
+                layout,
+            ),
+            status: if normalized_legacy {
+                CanonicalIdentityStatus::NormalizedLegacyReadable
+            } else {
+                CanonicalIdentityStatus::Canonical
             },
-            layout,
-            shape: Some(manifest.volume.shape),
-            chunk_shape: Some(manifest.tile_shape),
-            sample_type: Some(manifest.sample_type.clone()),
-            endianness: Some(manifest.endianness.clone()),
-            parent_artifact_key: manifest
-                .volume
-                .processing_lineage
-                .as_ref()
-                .and_then(|lineage| lineage.artifact_key.as_ref())
-                .map(|artifact_key| artifact_key.cache_key.clone()),
         });
     }
 
-    let manifest = load_tbvol_manifest(&Path::new(store_path).join("manifest.json"))
-        .map_err(|error| error.to_string())?;
-    Ok(SourceSemanticIdentity {
-        schema_version: 1,
-        store_id: manifest.volume.store_id.clone(),
-        store_format: StoreFormatIdentity {
-            schema_version: 1,
-            store_kind: manifest.format.clone(),
-            store_format_version: format!("{}@{}", manifest.format, manifest.version),
+    let (manifest, normalized_legacy) =
+        inspect_tbvol_manifest(&Path::new(store_path).join("manifest.json"))
+            .map_err(|error| error.to_string())?;
+    Ok(LoadedSourceSemanticIdentity {
+        identity: source_semantic_identity_from_poststack_store_envelope(
+            manifest.envelope(),
+            layout,
+        ),
+        status: if normalized_legacy {
+            CanonicalIdentityStatus::NormalizedLegacyReadable
+        } else {
+            CanonicalIdentityStatus::Canonical
         },
-        layout,
-        shape: Some(manifest.volume.shape),
-        chunk_shape: Some(manifest.tile_shape),
-        sample_type: Some(manifest.sample_type.clone()),
-        endianness: Some(manifest.endianness.clone()),
-        parent_artifact_key: manifest
-            .volume
-            .processing_lineage
-            .as_ref()
-            .and_then(|lineage| lineage.artifact_key.as_ref())
-            .map(|artifact_key| artifact_key.cache_key.clone()),
     })
 }
 
-pub fn source_semantic_identity_with_status_from_store_path(
-    store_path: &str,
+fn source_semantic_identity_from_poststack_store_envelope(
+    envelope: PostStackStoreEnvelope,
     layout: SeismicLayout,
-) -> Result<LoadedSourceSemanticIdentity, String> {
-    Ok(LoadedSourceSemanticIdentity {
-        identity: source_semantic_identity_from_store_path(store_path, layout)?,
-        status: CanonicalIdentityStatus::Canonical,
-    })
+) -> SourceSemanticIdentity {
+    let parent_artifact_key = envelope.parent_artifact_key();
+    SourceSemanticIdentity {
+        schema_version: 1,
+        store_id: envelope.volume.store_id.clone(),
+        store_format: StoreFormatIdentity {
+            schema_version: 1,
+            store_kind: envelope.format.clone(),
+            store_format_version: envelope.store_format_version(),
+        },
+        layout,
+        shape: Some(envelope.volume.shape),
+        chunk_shape: Some(envelope.tile_shape),
+        sample_type: Some(envelope.sample_type),
+        endianness: Some(envelope.endianness),
+        parent_artifact_key,
+    }
 }
 
 pub fn source_semantic_identity_or_degraded(
@@ -1011,5 +1025,299 @@ fn operator_seed_for_gather_operation(
         operator_id: operation.operator_id().to_string(),
         compatibility: operation.compatibility(),
         dependency_profile: operation.dependency_profile(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use tempfile::TempDir;
+
+    use crate::metadata::{
+        DatasetKind, GeometryProvenance, HeaderFieldSpec, SourceIdentity, VolumeAxes,
+        VolumeMetadata,
+    };
+    use crate::storage::tbvol::TbvolWriter;
+    use crate::storage::tbvolc::transcode_tbvol_to_tbvolc;
+    use crate::storage::tile_geometry::TileCoord;
+    use crate::storage::volume_store::VolumeStoreWriter;
+    use crate::{SeismicLayout, generate_store_id};
+    use ophiolite_seismic::TimeDepthDomain;
+
+    use super::{
+        CanonicalIdentityStatus, source_semantic_identity_from_store_path,
+        source_semantic_identity_with_status_from_store_path,
+    };
+
+    #[test]
+    fn source_identity_uses_poststack_store_envelope_for_tbvol_and_tbvolc() {
+        let temp = TempDir::new().expect("tempdir");
+        let tbvol_root = temp.path().join("synthetic.tbvol");
+        let tbvolc_root = temp.path().join("synthetic.tbvolc");
+        let mut volume = test_volume_metadata([2, 2, 4]);
+        volume.store_id = "identity-store-id".to_string();
+
+        let writer =
+            TbvolWriter::create(&tbvol_root, volume.clone(), [2, 2, 4], false).expect("writer");
+        writer
+            .write_tile(
+                TileCoord {
+                    tile_i: 0,
+                    tile_x: 0,
+                },
+                &[0.0_f32; 16],
+            )
+            .expect("write tile");
+        writer.finalize().expect("finalize writer");
+
+        transcode_tbvol_to_tbvolc(&tbvol_root, &tbvolc_root).expect("transcode");
+
+        let tbvol_identity = source_semantic_identity_from_store_path(
+            &tbvol_root.to_string_lossy(),
+            SeismicLayout::PostStack3D,
+        )
+        .expect("tbvol identity");
+        assert_eq!(tbvol_identity.store_id, "identity-store-id");
+        assert_eq!(tbvol_identity.store_format.store_kind, "tbvol");
+        assert_eq!(tbvol_identity.store_format.store_format_version, "tbvol@2");
+        assert_eq!(tbvol_identity.chunk_shape, Some([2, 2, 4]));
+
+        let tbvolc_loaded = source_semantic_identity_with_status_from_store_path(
+            &tbvolc_root.to_string_lossy(),
+            SeismicLayout::PostStack3D,
+        )
+        .expect("tbvolc identity");
+        assert_eq!(tbvolc_loaded.status, CanonicalIdentityStatus::Canonical);
+        assert_eq!(tbvolc_loaded.identity.store_id, "identity-store-id");
+        assert_eq!(tbvolc_loaded.identity.store_format.store_kind, "tbvolc");
+        assert_eq!(
+            tbvolc_loaded.identity.store_format.store_format_version,
+            "tbvolc@1"
+        );
+        assert_eq!(tbvolc_loaded.identity.chunk_shape, Some([2, 2, 4]));
+    }
+
+    #[test]
+    fn legacy_tbvol_identity_is_normalized_legacy_without_rewriting_manifest() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = temp.path().join("legacy.tbvol");
+        std::fs::create_dir_all(&root).expect("root dir");
+        let manifest_path = root.join("manifest.json");
+        let manifest = serde_json::json!({
+            "format": "tbvol",
+            "version": 1,
+            "volume": {
+                "kind": "Source",
+                "source": {
+                    "source_path": "synthetic://legacy-tbvol",
+                    "file_size": 0,
+                    "trace_count": 4,
+                    "samples_per_trace": 2,
+                    "sample_interval_us": 2000,
+                    "sample_format_code": 5,
+                    "geometry": {
+                        "inline_field": {
+                            "name": "INLINE",
+                            "start_byte": 189,
+                            "value_type": "I32"
+                        },
+                        "crossline_field": {
+                            "name": "XLINE",
+                            "start_byte": 193,
+                            "value_type": "I32"
+                        },
+                        "third_axis_field": null
+                    },
+                    "regularization": null
+                },
+                "shape": [2, 2, 2],
+                "axes": {
+                    "ilines": [0.0, 1.0],
+                    "xlines": [0.0, 1.0],
+                    "sample_axis_ms": [0.0, 2.0]
+                },
+                "created_by": "legacy-runtime"
+            },
+            "tile_shape": [2, 2, 2],
+            "tile_grid_shape": [1, 1],
+            "sample_type": "f32",
+            "endianness": "little",
+            "has_occupancy": false,
+            "amplitude_tile_bytes": 32,
+            "occupancy_tile_bytes": null
+        });
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("write manifest");
+
+        let loaded = source_semantic_identity_with_status_from_store_path(
+            &root.to_string_lossy(),
+            SeismicLayout::PostStack3D,
+        )
+        .expect("load identity");
+
+        assert_eq!(
+            loaded.status,
+            CanonicalIdentityStatus::NormalizedLegacyReadable
+        );
+        assert!(!loaded.identity.store_id.trim().is_empty());
+
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest_path).expect("read manifest"))
+                .expect("parse manifest");
+        assert!(persisted["volume"].get("store_id").is_none());
+        assert!(
+            persisted["volume"]["axes"]
+                .get("sample_axis_domain")
+                .is_none()
+        );
+        assert!(
+            persisted["volume"]["axes"]
+                .get("sample_axis_unit")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn legacy_tbvolc_identity_is_normalized_legacy_without_rewriting_manifest() {
+        let temp = TempDir::new().expect("tempdir");
+        let root = temp.path().join("legacy.tbvolc");
+        std::fs::create_dir_all(&root).expect("root dir");
+        let manifest_path = root.join("manifest.json");
+        let manifest = serde_json::json!({
+            "format": "tbvolc",
+            "version": 0,
+            "volume": {
+                "kind": "Source",
+                "source": {
+                    "source_path": "synthetic://legacy-tbvolc",
+                    "file_size": 0,
+                    "trace_count": 4,
+                    "samples_per_trace": 2,
+                    "sample_interval_us": 2000,
+                    "sample_format_code": 5,
+                    "geometry": {
+                        "inline_field": {
+                            "name": "INLINE",
+                            "start_byte": 189,
+                            "value_type": "I32"
+                        },
+                        "crossline_field": {
+                            "name": "XLINE",
+                            "start_byte": 193,
+                            "value_type": "I32"
+                        },
+                        "third_axis_field": null
+                    },
+                    "regularization": null
+                },
+                "shape": [2, 2, 2],
+                "axes": {
+                    "ilines": [0.0, 1.0],
+                    "xlines": [0.0, 1.0],
+                    "sample_axis_ms": [0.0, 2.0]
+                },
+                "created_by": "legacy-runtime"
+            },
+            "tile_shape": [2, 2, 2],
+            "tile_grid_shape": [1, 1],
+            "sample_type": "f32",
+            "endianness": "little",
+            "has_occupancy": false,
+            "amplitude_encoding": {
+                "codec": "native",
+                "compressor": "lz4",
+                "filters": ["bitshuffle_g8"],
+                "compression_level": null,
+                "lossless": true
+            },
+            "amplitude_tile_sample_count": 8,
+            "tile_count": 1
+        });
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_vec_pretty(&manifest).expect("serialize manifest"),
+        )
+        .expect("write manifest");
+        std::fs::write(root.join("amplitude.index.bin"), vec![0_u8; 20]).expect("write index");
+        std::fs::write(root.join("amplitude.bin"), vec![0_u8; 1]).expect("write amplitude");
+
+        let loaded = source_semantic_identity_with_status_from_store_path(
+            &root.to_string_lossy(),
+            SeismicLayout::PostStack3D,
+        )
+        .expect("load identity");
+
+        assert_eq!(
+            loaded.status,
+            CanonicalIdentityStatus::NormalizedLegacyReadable
+        );
+        assert!(!loaded.identity.store_id.trim().is_empty());
+
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&manifest_path).expect("read manifest"))
+                .expect("parse manifest");
+        assert_eq!(persisted["version"], 0);
+        assert!(persisted["volume"].get("store_id").is_none());
+        assert!(
+            persisted["volume"]["axes"]
+                .get("sample_axis_domain")
+                .is_none()
+        );
+        assert!(
+            persisted["volume"]["axes"]
+                .get("sample_axis_unit")
+                .is_none()
+        );
+    }
+
+    fn test_volume_metadata(shape: [usize; 3]) -> VolumeMetadata {
+        VolumeMetadata {
+            kind: DatasetKind::Source,
+            store_id: generate_store_id(),
+            source: SourceIdentity {
+                source_path: PathBuf::from("synthetic://identity-test"),
+                file_size: 0,
+                trace_count: (shape[0] * shape[1]) as u64,
+                samples_per_trace: shape[2],
+                sample_interval_us: 2000,
+                sample_format_code: 5,
+                sample_data_fidelity: crate::metadata::segy_sample_data_fidelity(5),
+                endianness: "big".to_string(),
+                revision_raw: 0,
+                fixed_length_trace_flag_raw: 1,
+                extended_textual_headers: 0,
+                geometry: GeometryProvenance {
+                    inline_field: HeaderFieldSpec {
+                        name: "INLINE".to_string(),
+                        start_byte: 189,
+                        value_type: "I32".to_string(),
+                    },
+                    crossline_field: HeaderFieldSpec {
+                        name: "XLINE".to_string(),
+                        start_byte: 193,
+                        value_type: "I32".to_string(),
+                    },
+                    third_axis_field: None,
+                },
+                regularization: None,
+            },
+            shape,
+            axes: VolumeAxes::with_vertical_axis(
+                (0..shape[0]).map(|value| value as f64).collect(),
+                (0..shape[1]).map(|value| value as f64).collect(),
+                TimeDepthDomain::Time,
+                "ms".to_string(),
+                (0..shape[2]).map(|value| value as f32 * 2.0).collect(),
+            ),
+            segy_export: None,
+            coordinate_reference_binding: None,
+            spatial: None,
+            created_by: "identity-test".to_string(),
+            processing_lineage: None,
+        }
     }
 }

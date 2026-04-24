@@ -25,6 +25,7 @@ import type {
   ListProcessingRuntimeEventsResponse,
   ListSegyImportRecipesResponse,
   OpenDatasetResponse,
+  OperatorParameterDoc,
   PostStackNeighborhoodProcessingPipeline,
   ProcessingPipelineSpec,
   ProcessingPipelineFamily,
@@ -81,7 +82,6 @@ export { SCHEMA_VERSION };
 import type {
   CheckshotVspObservationSet1D,
   CoordinateReferenceDescriptor,
-  OperatorCatalog,
   ResolvedSurveyMapSourceDto,
   ManualTimeDepthPickSet1D,
   ResolveSectionWellOverlaysResponse,
@@ -98,6 +98,11 @@ import {
   parsePackedSectionTileResponse,
   parsePackedSectionViewResponse
 } from "./transport/packed-sections";
+import {
+  desktopBridgeCommands,
+  desktopCommandMetadata,
+  type DesktopBridgeCommandName
+} from "./generated/desktop-bridge-stubs";
 import type {
   TransportPreviewProcessingResponse,
   TransportResolvedSectionDisplayView,
@@ -158,14 +163,100 @@ export interface FrontendDiagnosticsEventRequest {
   fields?: Record<string, unknown> | null;
 }
 
-export interface PersistProcessingSessionPipelinesRequest {
+export interface ResolveProcessingAuthoringPaletteRequest {
+  schema_version: number;
+  store_path?: string | null;
+  family: ProcessingPipelineFamily;
+  secondary_store_paths?: string[];
+}
+
+export type ProcessingAuthoringInsertable =
+  | {
+      kind: "trace_local_operation";
+      operation: TraceLocalProcessingOperation;
+    }
+  | {
+      kind: "subvolume_crop";
+      crop: SubvolumeCropOperation;
+    };
+
+export interface ProcessingAuthoringPaletteItem {
+  item_id: string;
+  label: string;
+  description: string;
+  short_help: string;
+  help_markdown: string | null;
+  help_url: string | null;
+  keywords: string[];
+  shortcut: string | null;
+  canonical_id: string;
+  canonical_name: string;
+  group: string;
+  group_id: string;
+  provider: string;
+  tags: string[];
+  parameter_docs: readonly OperatorParameterDoc[];
+  alias_label: string | null;
+  source: string;
+  insertable: ProcessingAuthoringInsertable;
+}
+
+export interface ResolveProcessingAuthoringPaletteResponse {
+  schema_version: number;
+  family: ProcessingPipelineFamily;
+  items: ProcessingAuthoringPaletteItem[];
+  source_label: string;
+  source_detail: string;
+  empty_message: string;
+  fallback_reason?: string | null;
+}
+
+export interface SaveProcessingAuthoringSessionRequest {
   schema_version: number;
   entry_id: string;
   session_pipelines: WorkspacePipelineEntry[];
   active_session_pipeline_id?: string | null;
 }
 
-export type PersistProcessingSessionPipelinesResponse = UpsertDatasetEntryResponse;
+export type SaveProcessingAuthoringSessionResponse = ProcessingAuthoringSessionResponse;
+
+export type ProcessingAuthoringSessionAction =
+  | {
+      action: "ensure_family_pipeline";
+      family: ProcessingPipelineFamily;
+    }
+  | {
+      action: "create_pipeline";
+      family: ProcessingPipelineFamily;
+    }
+  | {
+      action: "duplicate_pipeline";
+      pipeline_id?: string | null;
+    }
+  | {
+      action: "activate_pipeline";
+      pipeline_id: string;
+    }
+  | {
+      action: "remove_pipeline";
+      pipeline_id: string;
+    }
+  | {
+      action: "replace_active_from_pipeline_spec";
+      pipeline: ProcessingPipelineSpec;
+    };
+
+export interface ApplyProcessingAuthoringSessionActionRequest {
+  schema_version: number;
+  entry_id: string;
+  action: ProcessingAuthoringSessionAction;
+}
+
+export interface ProcessingAuthoringSessionResponse {
+  schema_version: number;
+  entry: DatasetRegistryEntry;
+  session: WorkspaceSession;
+}
 
 export interface ResolveProcessingRunOutputRequest {
   schema_version: number;
@@ -1462,29 +1553,39 @@ function rememberOutputGrant(path: string, purpose: OutputGrantPurpose, grantId:
 }
 
 const secureTauriArgs = (
-  command: string,
+  command: DesktopBridgeCommandName,
   args: Record<string, unknown>
 ): Promise<Record<string, unknown>> => secureTauriArgsImpl(command, args);
 
-async function invokeTauri<T>(command: string, args: Record<string, unknown>): Promise<T> {
+async function invokeTauri<T>(
+  command: DesktopBridgeCommandName,
+  args: Record<string, unknown>
+): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<T>(command, await secureTauriArgs(command, args));
 }
 
-async function invokeTauriRaw(command: string, args: Record<string, unknown>): Promise<Uint8Array> {
+async function invokeTauriRaw(
+  command: DesktopBridgeCommandName,
+  args: Record<string, unknown>
+): Promise<Uint8Array> {
   const { invoke } = await import("@tauri-apps/api/core");
   const response = await invoke<Uint8Array | ArrayBuffer>(command, await secureTauriArgs(command, args));
   return response instanceof Uint8Array ? response : new Uint8Array(response);
 }
 
+type DesktopGrantedPathCommandName =
+  | typeof desktopBridgeCommands.pickRuntimeStore
+  | typeof desktopBridgeCommands.pickProjectRoot;
+
 async function pickGrantedPath(
-  command: "pick_runtime_store_command" | "pick_project_root_command",
+  command: DesktopGrantedPathCommandName,
   args: Record<string, unknown> = {}
 ): Promise<GrantedPathSelection | null> {
   const { invoke } = await import("@tauri-apps/api/core");
   const selection = await invoke<GrantedPathSelection | null>(command, args);
   if (selection) {
-    if (command === "pick_runtime_store_command") {
+    if (command === desktopBridgeCommands.pickRuntimeStore) {
       rememberStoreHandle(selection);
     } else {
       rememberProjectHandle(selection);
@@ -1498,7 +1599,7 @@ async function pickOutputGrant(
   purpose: OutputGrantPurpose
 ): Promise<OutputPathGrantSelection | null> {
   const { invoke } = await import("@tauri-apps/api/core");
-  const selection = await invoke<OutputPathGrantSelection | null>("pick_output_path_command", {
+  const selection = await invoke<OutputPathGrantSelection | null>(desktopBridgeCommands.pickOutputPath, {
     defaultPath,
     purpose
   });
@@ -1511,7 +1612,7 @@ async function pickOutputGrant(
 async function authorizeManagedStore(path: string): Promise<string | null> {
   const { invoke } = await import("@tauri-apps/api/core");
   try {
-    const selection = await invoke<GrantedPathSelection>("authorize_managed_store_command", { path });
+    const selection = await invoke<GrantedPathSelection>(desktopBridgeCommands.authorizeManagedStore, { path });
     rememberStoreHandle(selection);
     return selection.handleId;
   } catch {
@@ -1530,7 +1631,7 @@ async function takeOutputGrant(path: string, purpose: OutputGrantPurpose): Promi
 
   if (purpose === "runtime_store_output" || purpose === "gather_store_output") {
     const { invoke } = await import("@tauri-apps/api/core");
-    const selection = await invoke<OutputPathGrantSelection>("authorize_managed_output_command", {
+    const selection = await invoke<OutputPathGrantSelection>(desktopBridgeCommands.authorizeManagedOutput, {
       path: normalizedPath,
       purpose
     });
@@ -1686,38 +1787,38 @@ async function secureProcessingPipelineSpec(pipeline: ProcessingPipelineSpec): P
 }
 
 async function secureTauriArgsImpl(
-  command: string,
+  command: DesktopBridgeCommandName,
   args: Record<string, unknown>
 ): Promise<Record<string, unknown>> {
   switch (command) {
-    case "open_dataset_command":
-    case "dataset_operator_catalog_command":
-    case "get_dataset_export_capabilities_command":
-    case "ensure_demo_survey_time_depth_transform_command":
-    case "load_velocity_models_command":
-    case "load_horizon_assets_command":
+    case desktopBridgeCommands.openDataset:
+    case desktopBridgeCommands.datasetOperatorCatalog:
+    case desktopBridgeCommands.getDatasetExportCapabilities:
+    case desktopBridgeCommands.ensureDemoSurveyTimeDepthTransform:
+    case desktopBridgeCommands.loadVelocityModels:
+    case desktopBridgeCommands.loadHorizonAssets:
       return { ...args, storePath: await ensureStoreHandle(String(args.storePath ?? "")) };
-    case "default_processing_store_path_command":
-    case "default_subvolume_processing_store_path_command":
-    case "default_post_stack_neighborhood_processing_store_path_command":
-    case "default_gather_processing_store_path_command":
+    case desktopBridgeCommands.defaultProcessingStorePath:
+    case desktopBridgeCommands.defaultSubvolumeProcessingStorePath:
+    case desktopBridgeCommands.defaultPostStackNeighborhoodProcessingStorePath:
+    case desktopBridgeCommands.defaultGatherProcessingStorePath:
       return { ...args, storePath: await ensureStoreHandle(String(args.storePath ?? "")) };
-    case "export_dataset_segy_command":
+    case desktopBridgeCommands.exportDatasetSegy:
       return {
         ...args,
         storePath: await ensureStoreHandle(String(args.storePath ?? "")),
         outputPath: await takeOutputGrant(String(args.outputPath ?? ""), "segy_export")
       };
-    case "export_dataset_zarr_command":
+    case desktopBridgeCommands.exportDatasetZarr:
       return {
         ...args,
         storePath: await ensureStoreHandle(String(args.storePath ?? "")),
         outputPath: await takeOutputGrant(String(args.outputPath ?? ""), "zarr_export")
       };
-    case "preview_horizon_xyz_import_command":
-    case "import_horizon_xyz_command":
+    case desktopBridgeCommands.previewHorizonXyzImport:
+    case desktopBridgeCommands.importHorizonXyz:
       return { ...args, storePath: await ensureStoreHandle(String(args.storePath ?? "")) };
-    case "commit_horizon_source_import_command": {
+    case desktopBridgeCommands.commitHorizonSourceImport: {
       const request = args.request as Record<string, unknown>;
       return {
         request: {
@@ -1726,18 +1827,18 @@ async function secureTauriArgsImpl(
         }
       };
     }
-    case "load_section_horizons_command":
-    case "load_section_command":
-    case "load_section_binary_command":
-    case "load_section_tile_binary_command":
-    case "load_depth_converted_section_binary_command":
-    case "load_resolved_section_display_binary_command":
-    case "load_gather_command":
+    case desktopBridgeCommands.loadSectionHorizons:
+    case desktopBridgeCommands.loadSection:
+    case desktopBridgeCommands.loadSectionBinary:
+    case desktopBridgeCommands.loadSectionTileBinary:
+    case desktopBridgeCommands.loadDepthConvertedSectionBinary:
+    case desktopBridgeCommands.loadResolvedSectionDisplayBinary:
+    case desktopBridgeCommands.loadGather:
       return { ...args, storePath: await ensureStoreHandle(String(args.storePath ?? "")) };
-    case "describe_velocity_volume_command":
-    case "build_velocity_model_transform_command":
-    case "set_dataset_native_coordinate_reference_command":
-    case "resolve_survey_map_command": {
+    case desktopBridgeCommands.describeVelocityVolume:
+    case desktopBridgeCommands.buildVelocityModelTransform:
+    case desktopBridgeCommands.setDatasetNativeCoordinateReference:
+    case desktopBridgeCommands.resolveSurveyMap: {
       const request = args.request as Record<string, unknown>;
       return {
         request: {
@@ -1746,7 +1847,7 @@ async function secureTauriArgsImpl(
         }
       };
     }
-    case "ingest_velocity_volume_command": {
+    case desktopBridgeCommands.ingestVelocityVolume: {
       const request = args.request as Record<string, unknown>;
       return {
         request: {
@@ -1758,12 +1859,12 @@ async function secureTauriArgsImpl(
         }
       };
     }
-    case "import_dataset_command":
+    case desktopBridgeCommands.importDataset:
       return {
         ...args,
         outputStorePath: await takeOutputGrant(String(args.outputStorePath ?? ""), "runtime_store_output")
       };
-    case "import_segy_with_plan_command": {
+    case desktopBridgeCommands.importSegyWithPlan: {
       const request = structuredClone(args.request as Record<string, unknown>);
       const plan = request.plan as Record<string, unknown>;
       const policy = plan.policy as Record<string, unknown>;
@@ -1773,8 +1874,8 @@ async function secureTauriArgsImpl(
       );
       return { request };
     }
-    case "preview_processing_command":
-    case "preview_processing_binary_command": {
+    case desktopBridgeCommands.previewProcessing:
+    case desktopBridgeCommands.previewProcessingBinary: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
       request.pipeline = await secureTraceLocalPipeline(
@@ -1782,8 +1883,8 @@ async function secureTauriArgsImpl(
       );
       return { request };
     }
-    case "preview_subvolume_processing_command":
-    case "preview_subvolume_processing_binary_command": {
+    case desktopBridgeCommands.previewSubvolumeProcessing:
+    case desktopBridgeCommands.previewSubvolumeProcessingBinary: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
       request.pipeline = await secureSubvolumePipeline(
@@ -1791,8 +1892,8 @@ async function secureTauriArgsImpl(
       );
       return { request };
     }
-    case "preview_post_stack_neighborhood_processing_command":
-    case "preview_post_stack_neighborhood_processing_binary_command": {
+    case desktopBridgeCommands.previewPostStackNeighborhoodProcessing:
+    case desktopBridgeCommands.previewPostStackNeighborhoodProcessingBinary: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
       request.pipeline = await securePostStackNeighborhoodPipeline(
@@ -1800,14 +1901,14 @@ async function secureTauriArgsImpl(
       );
       return { request };
     }
-    case "preview_gather_processing_command":
-    case "run_gather_processing_command": {
+    case desktopBridgeCommands.previewGatherProcessing:
+    case desktopBridgeCommands.runGatherProcessing: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
       request.pipeline = await secureGatherPipeline(
         request.pipeline as { trace_local_pipeline?: unknown | null }
       );
-      if (command === "run_gather_processing_command" && request.output_store_path) {
+      if (command === desktopBridgeCommands.runGatherProcessing && request.output_store_path) {
         request.output_store_path = await takeOutputGrant(
           String(request.output_store_path),
           "gather_store_output"
@@ -1815,13 +1916,13 @@ async function secureTauriArgsImpl(
       }
       return { request };
     }
-    case "amplitude_spectrum_command":
-    case "velocity_scan_command": {
+    case desktopBridgeCommands.amplitudeSpectrum:
+    case desktopBridgeCommands.velocityScan: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
       return { request };
     }
-    case "run_processing_command": {
+    case desktopBridgeCommands.runProcessing: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
       request.pipeline = await secureTraceLocalPipeline(
@@ -1835,7 +1936,7 @@ async function secureTauriArgsImpl(
       }
       return { request };
     }
-    case "submit_trace_local_processing_batch_command": {
+    case desktopBridgeCommands.submitTraceLocalProcessingBatch: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.pipeline = await secureTraceLocalPipeline(
         request.pipeline as { steps: Array<{ operation: unknown }> }
@@ -1857,7 +1958,7 @@ async function secureTauriArgsImpl(
       );
       return { request };
     }
-    case "submit_processing_batch_command": {
+    case desktopBridgeCommands.submitProcessingBatch: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.pipeline = await secureProcessingPipelineSpec(
         request.pipeline as ProcessingPipelineSpec
@@ -1883,7 +1984,7 @@ async function secureTauriArgsImpl(
       );
       return { request };
     }
-    case "run_subvolume_processing_command": {
+    case desktopBridgeCommands.runSubvolumeProcessing: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
       request.pipeline = await secureSubvolumePipeline(
@@ -1897,7 +1998,7 @@ async function secureTauriArgsImpl(
       }
       return { request };
     }
-    case "run_post_stack_neighborhood_processing_command": {
+    case desktopBridgeCommands.runPostStackNeighborhoodProcessing: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.store_path = await ensureStoreHandle(String(request.store_path ?? ""));
       request.pipeline = await securePostStackNeighborhoodPipeline(
@@ -1911,7 +2012,7 @@ async function secureTauriArgsImpl(
       }
       return { request };
     }
-    case "save_workspace_session_command": {
+    case desktopBridgeCommands.saveWorkspaceSession: {
       const request = structuredClone(args.request as Record<string, unknown>);
       if (request.active_store_path) {
         request.active_store_path = await ensureStoreHandle(String(request.active_store_path));
@@ -1926,7 +2027,7 @@ async function secureTauriArgsImpl(
       }
       return { request };
     }
-    case "upsert_dataset_entry_command": {
+    case desktopBridgeCommands.upsertDatasetEntry: {
       const request = structuredClone(args.request as Record<string, unknown>);
       if (request.preferred_store_path) {
         request.preferred_store_path = await ensureStoreHandle(String(request.preferred_store_path));
@@ -1941,46 +2042,46 @@ async function secureTauriArgsImpl(
       }
       return { request };
     }
-    case "load_project_geospatial_settings_command":
-    case "save_project_geospatial_settings_command": {
+    case desktopBridgeCommands.loadProjectGeospatialSettings:
+    case desktopBridgeCommands.saveProjectGeospatialSettings: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.projectRoot = await ensureProjectHandle(String(request.projectRoot ?? ""));
       return { request };
     }
-    case "resolve_project_survey_map_command":
-    case "list_project_well_time_depth_models_command":
-    case "list_project_well_time_depth_inventory_command":
-    case "list_project_well_overlay_inventory_command":
-    case "list_project_survey_horizons_command":
-    case "list_project_well_marker_residual_inventory_command":
-    case "compute_project_well_marker_residual_command":
-    case "set_project_active_well_time_depth_model_command":
-    case "import_project_well_time_depth_model_command":
-    case "import_project_well_time_depth_asset_command":
-    case "commit_project_well_time_depth_import_command":
-    case "compile_project_well_time_depth_authored_model_command":
-    case "read_project_well_time_depth_model_command":
-    case "commit_project_well_sources_command":
-    case "commit_project_well_import_command": {
+    case desktopBridgeCommands.resolveProjectSurveyMap:
+    case desktopBridgeCommands.listProjectWellTimeDepthModels:
+    case desktopBridgeCommands.listProjectWellTimeDepthInventory:
+    case desktopBridgeCommands.listProjectWellOverlayInventory:
+    case desktopBridgeCommands.listProjectSurveyHorizons:
+    case desktopBridgeCommands.listProjectWellMarkerResidualInventory:
+    case desktopBridgeCommands.computeProjectWellMarkerResidual:
+    case desktopBridgeCommands.setProjectActiveWellTimeDepthModel:
+    case desktopBridgeCommands.importProjectWellTimeDepthModel:
+    case desktopBridgeCommands.importProjectWellTimeDepthAsset:
+    case desktopBridgeCommands.commitProjectWellTimeDepthImport:
+    case desktopBridgeCommands.compileProjectWellTimeDepthAuthoredModel:
+    case desktopBridgeCommands.readProjectWellTimeDepthModel:
+    case desktopBridgeCommands.commitProjectWellSources:
+    case desktopBridgeCommands.commitProjectWellImport: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.projectRoot = await ensureProjectHandle(String(request.projectRoot ?? ""));
       return { request };
     }
-    case "analyze_project_well_tie_command":
-    case "accept_project_well_tie_command": {
+    case desktopBridgeCommands.analyzeProjectWellTie:
+    case desktopBridgeCommands.acceptProjectWellTie: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.projectRoot = await ensureProjectHandle(String(request.projectRoot ?? ""));
       request.storePath = await ensureStoreHandle(String(request.storePath ?? ""));
       return { request };
     }
-    case "resolve_project_section_well_overlays_command": {
+    case desktopBridgeCommands.resolveProjectSectionWellOverlays: {
       const request = structuredClone(args.request as Record<string, unknown>);
       request.project_root = await ensureProjectHandle(String(request.project_root ?? ""));
       return { request };
     }
-    case "scan_vendor_project_command":
-    case "plan_vendor_project_import_command":
-    case "commit_vendor_project_import_command": {
+    case desktopBridgeCommands.scanVendorProject:
+    case desktopBridgeCommands.planVendorProjectImport:
+    case desktopBridgeCommands.commitVendorProjectImport: {
       const request = structuredClone(args.request as Record<string, unknown>);
       if (request.project_root) {
         request.project_root = await ensureProjectHandle(String(request.project_root));
@@ -1999,7 +2100,7 @@ export async function pickDesktopRuntimeStore(): Promise<string | null> {
   if (!isTauriEnvironment()) {
     return null;
   }
-  const selection = await pickGrantedPath("pick_runtime_store_command");
+  const selection = await pickGrantedPath(desktopBridgeCommands.pickRuntimeStore);
   return selection?.path ?? null;
 }
 
@@ -2007,7 +2108,7 @@ export async function pickDesktopProjectRoot(title: string): Promise<string | nu
   if (!isTauriEnvironment()) {
     return null;
   }
-  const selection = await pickGrantedPath("pick_project_root_command", { title });
+  const selection = await pickGrantedPath(desktopBridgeCommands.pickProjectRoot, { title });
   return selection?.path ?? null;
 }
 
@@ -2374,7 +2475,7 @@ function resolveEntryStatus(entry: DatasetRegistryEntry): DatasetRegistryStatus 
 
 export async function listImportProviders(): Promise<ImportProviderDescriptor[]> {
   if (isTauriEnvironment()) {
-    const response = await invokeTauri<ListImportProvidersResponse>("list_import_providers_command", {});
+    const response = await invokeTauri<ListImportProvidersResponse>(desktopBridgeCommands.listImportProviders, {});
     return response.providers;
   }
 
@@ -2385,7 +2486,7 @@ export async function beginImportSession(
   request: BeginImportSessionRequest
 ): Promise<ImportSessionEnvelope> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ImportSessionEnvelope>("begin_import_session_command", { request });
+    return invokeTauri<ImportSessionEnvelope>(desktopBridgeCommands.beginImportSession, { request });
   }
 
   throw new Error("Import session orchestration is only available in the desktop runtime right now.");
@@ -2396,7 +2497,7 @@ export async function preflightImport(
   geometryOverride: SegyGeometryOverride | null = null
 ): Promise<SurveyPreflightResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<SurveyPreflightResponse>("preflight_import_command", { inputPath, geometryOverride });
+    return invokeTauri<SurveyPreflightResponse>(desktopBridgeCommands.preflightImport, { inputPath, geometryOverride });
   }
 
   return postJson<SurveyPreflightResponse>("/api/preflight", { inputPath, geometryOverride });
@@ -2409,7 +2510,7 @@ export async function importDataset(
   geometryOverride: SegyGeometryOverride | null = null
 ): Promise<ImportDatasetResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ImportDatasetResponse>("import_dataset_command", {
+    return invokeTauri<ImportDatasetResponse>(desktopBridgeCommands.importDataset, {
       inputPath,
       outputStorePath,
       geometryOverride,
@@ -2427,7 +2528,7 @@ export async function importDataset(
 
 export async function scanSegyImport(inputPath: string): Promise<SegyImportScanResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<SegyImportScanResponse>("scan_segy_import_command", { inputPath });
+    return invokeTauri<SegyImportScanResponse>(desktopBridgeCommands.scanSegyImport, { inputPath });
   }
 
   return postJson<SegyImportScanResponse>("/api/segy-import/scan", { inputPath });
@@ -2441,7 +2542,7 @@ export async function validateSegyImportPlan(
     plan
   };
   if (isTauriEnvironment()) {
-    return invokeTauri<SegyImportValidationResponse>("validate_segy_import_plan_command", {
+    return invokeTauri<SegyImportValidationResponse>(desktopBridgeCommands.validateSegyImportPlan, {
       request
     });
   }
@@ -2459,7 +2560,7 @@ export async function importSegyWithPlan(
     validation_fingerprint: validationFingerprint
   };
   if (isTauriEnvironment()) {
-    return invokeTauri<ImportSegyWithPlanResponse>("import_segy_with_plan_command", { request });
+    return invokeTauri<ImportSegyWithPlanResponse>(desktopBridgeCommands.importSegyWithPlan, { request });
   }
 
   return postJson<ImportSegyWithPlanResponse>("/api/segy-import/import", request);
@@ -2473,7 +2574,7 @@ export async function listSegyImportRecipes(
     source_fingerprint: sourceFingerprint
   };
   if (isTauriEnvironment()) {
-    return invokeTauri<ListSegyImportRecipesResponse>("list_segy_import_recipes_command", {
+    return invokeTauri<ListSegyImportRecipesResponse>(desktopBridgeCommands.listSegyImportRecipes, {
       request
     });
   }
@@ -2489,7 +2590,7 @@ export async function saveSegyImportRecipe(
     recipe
   };
   if (isTauriEnvironment()) {
-    return invokeTauri<SaveSegyImportRecipeResponse>("save_segy_import_recipe_command", {
+    return invokeTauri<SaveSegyImportRecipeResponse>(desktopBridgeCommands.saveSegyImportRecipe, {
       request
     });
   }
@@ -2503,7 +2604,7 @@ export async function deleteSegyImportRecipe(recipeId: string): Promise<boolean>
     recipe_id: recipeId
   };
   if (isTauriEnvironment()) {
-    const response = await invokeTauri<{ deleted: boolean }>("delete_segy_import_recipe_command", {
+    const response = await invokeTauri<{ deleted: boolean }>(desktopBridgeCommands.deleteSegyImportRecipe, {
       request
     });
     return response.deleted;
@@ -2515,7 +2616,7 @@ export async function deleteSegyImportRecipe(recipeId: string): Promise<boolean>
 
 export async function defaultImportStorePath(inputPath: string): Promise<string> {
   if (isTauriEnvironment()) {
-    return invokeTauri<string>("default_import_store_path_command", { inputPath });
+    return invokeTauri<string>(desktopBridgeCommands.defaultImportStorePath, { inputPath });
   }
 
   const normalized = inputPath.trim();
@@ -2528,30 +2629,44 @@ export async function defaultImportStorePath(inputPath: string): Promise<string>
 
 export async function openDataset(storePath: string): Promise<OpenDatasetResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<OpenDatasetResponse>("open_dataset_command", { storePath });
+    return invokeTauri<OpenDatasetResponse>(desktopBridgeCommands.openDataset, { storePath });
   }
 
   return postJson<OpenDatasetResponse>("/api/open", { storePath });
 }
 
-export async function loadDatasetOperatorCatalog(
-  storePath: string
-): Promise<OperatorCatalog> {
+export async function resolveProcessingAuthoringPalette(
+  request: ResolveProcessingAuthoringPaletteRequest
+): Promise<ResolveProcessingAuthoringPaletteResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<OperatorCatalog>("dataset_operator_catalog_command", {
-      storePath
-    });
+    return invokeTauri<ResolveProcessingAuthoringPaletteResponse>(
+      desktopBridgeCommands.resolveProcessingAuthoringPalette,
+      { request }
+    );
   }
 
-  throw new Error("Dataset operator catalog is only available in the desktop runtime right now.");
+  throw new Error("Processing authoring palette resolution is only available in the desktop runtime right now.");
 }
 
-export async function persistProcessingSessionPipelines(
-  request: PersistProcessingSessionPipelinesRequest
-): Promise<PersistProcessingSessionPipelinesResponse> {
+export async function applyProcessingAuthoringSessionAction(
+  request: ApplyProcessingAuthoringSessionActionRequest
+): Promise<ProcessingAuthoringSessionResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<PersistProcessingSessionPipelinesResponse>(
-      "persist_processing_session_pipelines_command",
+    return invokeTauri<ProcessingAuthoringSessionResponse>(
+      desktopBridgeCommands.applyProcessingAuthoringSessionAction,
+      { request }
+    );
+  }
+
+  throw new Error("Processing authoring session actions are only available in the desktop runtime right now.");
+}
+
+export async function saveProcessingAuthoringSession(
+  request: SaveProcessingAuthoringSessionRequest
+): Promise<SaveProcessingAuthoringSessionResponse> {
+  if (isTauriEnvironment()) {
+    return invokeTauri<SaveProcessingAuthoringSessionResponse>(
+      desktopBridgeCommands.saveProcessingAuthoringSession,
       { request }
     );
   }
@@ -2563,7 +2678,7 @@ export async function resolveProcessingRunOutput(
   request: ResolveProcessingRunOutputRequest
 ): Promise<ResolveProcessingRunOutputResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ResolveProcessingRunOutputResponse>("resolve_processing_run_output_command", {
+    return invokeTauri<ResolveProcessingRunOutputResponse>(desktopBridgeCommands.resolveProcessingRunOutput, {
       request
     });
   }
@@ -2577,7 +2692,7 @@ export async function exportDatasetSegy(
   overwriteExisting = false
 ): Promise<ExportSegyResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ExportSegyResponse>("export_dataset_segy_command", {
+    return invokeTauri<ExportSegyResponse>(desktopBridgeCommands.exportDatasetSegy, {
       storePath,
       outputPath,
       overwriteExisting
@@ -2597,7 +2712,7 @@ export async function exportDatasetZarr(
   overwriteExisting = false
 ): Promise<ExportZarrResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ExportZarrResponse>("export_dataset_zarr_command", {
+    return invokeTauri<ExportZarrResponse>(desktopBridgeCommands.exportDatasetZarr, {
       storePath,
       outputPath,
       overwriteExisting
@@ -2615,7 +2730,7 @@ export async function getDatasetExportCapabilities(
   storePath: string
 ): Promise<DatasetExportCapabilitiesResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<DatasetExportCapabilitiesResponse>("get_dataset_export_capabilities_command", {
+    return invokeTauri<DatasetExportCapabilitiesResponse>(desktopBridgeCommands.getDatasetExportCapabilities, {
       storePath
     });
   }
@@ -2629,7 +2744,7 @@ export async function importHorizonXyz(
   options: HorizonImportCoordinateReferenceOptions = {}
 ): Promise<ImportHorizonXyzResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ImportHorizonXyzResponse>("import_horizon_xyz_command", {
+    return invokeTauri<ImportHorizonXyzResponse>(desktopBridgeCommands.importHorizonXyz, {
       storePath,
       inputPaths,
       verticalDomain: options.verticalDomain ?? null,
@@ -2657,7 +2772,7 @@ export async function previewHorizonXyzImport(
   options: HorizonImportCoordinateReferenceOptions = {}
 ): Promise<HorizonImportPreview> {
   if (isTauriEnvironment()) {
-    return invokeTauri<HorizonImportPreview>("preview_horizon_xyz_import_command", {
+    return invokeTauri<HorizonImportPreview>(desktopBridgeCommands.previewHorizonXyzImport, {
       storePath,
       inputPaths,
       verticalDomain: options.verticalDomain ?? null,
@@ -2675,7 +2790,7 @@ export async function previewHorizonSourceImport(
   request: PreviewHorizonSourceImportRequest
 ): Promise<HorizonSourceImportPreview> {
   if (isTauriEnvironment()) {
-    return invokeTauri<HorizonSourceImportPreview>("preview_horizon_source_import_command", {
+    return invokeTauri<HorizonSourceImportPreview>(desktopBridgeCommands.previewHorizonSourceImport, {
       request
     });
   }
@@ -2687,7 +2802,7 @@ export async function inspectHorizonXyzFiles(
   inputPaths: string[]
 ): Promise<HorizonXyzFilePreview[]> {
   if (isTauriEnvironment()) {
-    return invokeTauri<HorizonXyzFilePreview[]>("inspect_horizon_xyz_files_command", {
+    return invokeTauri<HorizonXyzFilePreview[]>(desktopBridgeCommands.inspectHorizonXyzFiles, {
       inputPaths
     });
   }
@@ -2699,7 +2814,7 @@ export async function commitHorizonSourceImport(
   request: CommitHorizonSourceImportRequest
 ): Promise<ImportHorizonXyzResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ImportHorizonXyzResponse>("commit_horizon_source_import_command", {
+    return invokeTauri<ImportHorizonXyzResponse>(desktopBridgeCommands.commitHorizonSourceImport, {
       request
     });
   }
@@ -2714,7 +2829,7 @@ export async function fetchSectionHorizons(
 ): Promise<SectionHorizonOverlayView[]> {
   if (isTauriEnvironment()) {
     const response = await invokeTauri<{ schema_version: number; overlays: SectionHorizonOverlayView[] }>(
-      "load_section_horizons_command",
+      desktopBridgeCommands.loadSectionHorizons,
       {
         storePath,
         axis,
@@ -2737,7 +2852,7 @@ export async function fetchSectionView(
   index: number
 ): Promise<TransportSectionView | SectionView> {
   if (isTauriEnvironment()) {
-    const payload = await invokeTauriRaw("load_section_binary_command", {
+    const payload = await invokeTauriRaw(desktopBridgeCommands.loadSectionBinary, {
       storePath,
       axis,
       index
@@ -2760,7 +2875,7 @@ export async function fetchSectionTileView(
   lod: number
 ): Promise<TransportSectionTileView> {
   if (isTauriEnvironment()) {
-    const payload = await invokeTauriRaw("load_section_tile_binary_command", {
+    const payload = await invokeTauriRaw(desktopBridgeCommands.loadSectionTileBinary, {
       storePath,
       axis,
       index,
@@ -2782,7 +2897,7 @@ export async function fetchDepthConvertedSectionView(
   velocityKind: VelocityQuantityKind
 ): Promise<TransportSectionView | SectionView> {
   if (isTauriEnvironment()) {
-    const payload = await invokeTauriRaw("load_depth_converted_section_binary_command", {
+    const payload = await invokeTauriRaw(desktopBridgeCommands.loadDepthConvertedSectionBinary, {
       storePath,
       axis,
       index,
@@ -2805,7 +2920,7 @@ export async function fetchResolvedSectionDisplay(
   includeVelocityOverlay: boolean
 ): Promise<TransportResolvedSectionDisplayView> {
   if (isTauriEnvironment()) {
-    const payload = await invokeTauriRaw("load_resolved_section_display_binary_command", {
+    const payload = await invokeTauriRaw(desktopBridgeCommands.loadResolvedSectionDisplayBinary, {
       storePath,
       axis,
       index,
@@ -2822,7 +2937,7 @@ export async function fetchResolvedSectionDisplay(
 
 export async function ensureDemoSurveyTimeDepthTransform(storePath: string): Promise<string> {
   if (isTauriEnvironment()) {
-    return invokeTauri<string>("ensure_demo_survey_time_depth_transform_command", { storePath });
+    return invokeTauri<string>(desktopBridgeCommands.ensureDemoSurveyTimeDepthTransform, { storePath });
   }
 
   throw new Error("Synthetic survey 3D time-depth transforms are only available in the desktop runtime right now.");
@@ -2830,7 +2945,7 @@ export async function ensureDemoSurveyTimeDepthTransform(storePath: string): Pro
 
 export async function loadVelocityModels(storePath: string): Promise<SurveyTimeDepthTransform3D[]> {
   if (isTauriEnvironment()) {
-    const response = await invokeTauri<LoadVelocityModelsResponse>("load_velocity_models_command", {
+    const response = await invokeTauri<LoadVelocityModelsResponse>(desktopBridgeCommands.loadVelocityModels, {
       storePath
     });
     return response.models;
@@ -2843,7 +2958,7 @@ export async function describeVelocityVolume(
   request: DescribeVelocityVolumeRequest
 ): Promise<DescribeVelocityVolumeResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<DescribeVelocityVolumeResponse>("describe_velocity_volume_command", {
+    return invokeTauri<DescribeVelocityVolumeResponse>(desktopBridgeCommands.describeVelocityVolume, {
       request
     });
   }
@@ -2855,7 +2970,7 @@ export async function ingestVelocityVolume(
   request: IngestVelocityVolumeRequest
 ): Promise<IngestVelocityVolumeResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<IngestVelocityVolumeResponse>("ingest_velocity_volume_command", {
+    return invokeTauri<IngestVelocityVolumeResponse>(desktopBridgeCommands.ingestVelocityVolume, {
       request
     });
   }
@@ -2865,7 +2980,7 @@ export async function ingestVelocityVolume(
 
 export async function loadHorizonAssets(storePath: string): Promise<ImportedHorizonDescriptor[]> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ImportedHorizonDescriptor[]>("load_horizon_assets_command", {
+    return invokeTauri<ImportedHorizonDescriptor[]>(desktopBridgeCommands.loadHorizonAssets, {
       storePath
     });
   }
@@ -2879,7 +2994,7 @@ export async function importVelocityFunctionsModel(
   velocityKind: VelocityQuantityKind
 ): Promise<ImportVelocityFunctionsModelResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ImportVelocityFunctionsModelResponse>("import_velocity_functions_model_command", {
+    return invokeTauri<ImportVelocityFunctionsModelResponse>(desktopBridgeCommands.importVelocityFunctionsModel, {
       storePath,
       inputPath,
       velocityKind
@@ -2893,7 +3008,7 @@ export async function buildVelocityModelTransform(
   request: BuildSurveyTimeDepthTransformRequest
 ): Promise<SurveyTimeDepthTransform3D> {
   if (isTauriEnvironment()) {
-    return invokeTauri<SurveyTimeDepthTransform3D>("build_velocity_model_transform_command", {
+    return invokeTauri<SurveyTimeDepthTransform3D>(desktopBridgeCommands.buildVelocityModelTransform, {
       request
     });
   }
@@ -2910,7 +3025,7 @@ export async function convertHorizonDomain(
   outputName?: string | null
 ): Promise<ImportedHorizonDescriptor> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ImportedHorizonDescriptor>("convert_horizon_domain_command", {
+    return invokeTauri<ImportedHorizonDescriptor>(desktopBridgeCommands.convertHorizonDomain, {
       storePath,
       sourceHorizonId,
       transformId,
@@ -2927,7 +3042,7 @@ export async function previewProcessing(
   request: PreviewProcessingRequest
 ): Promise<TransportPreviewProcessingResponse> {
   if (isTauriEnvironment()) {
-    const payload = await invokeTauriRaw("preview_processing_binary_command", { request });
+    const payload = await invokeTauriRaw(desktopBridgeCommands.previewProcessingBinary, { request });
     return parsePackedPreviewProcessingResponse(payload);
   }
 
@@ -2938,7 +3053,7 @@ export async function previewSubvolumeProcessing(
   request: PreviewSubvolumeProcessingRequest
 ): Promise<TransportPreviewProcessingResponse> {
   if (isTauriEnvironment()) {
-    const payload = await invokeTauriRaw("preview_subvolume_processing_binary_command", { request });
+    const payload = await invokeTauriRaw(desktopBridgeCommands.previewSubvolumeProcessingBinary, { request });
     return parsePackedPreviewProcessingResponse(payload);
   }
 
@@ -2949,7 +3064,7 @@ export async function previewPostStackNeighborhoodProcessing(
   request: PreviewPostStackNeighborhoodProcessingRequest
 ): Promise<TransportPreviewProcessingResponse> {
   if (isTauriEnvironment()) {
-    const payload = await invokeTauriRaw("preview_post_stack_neighborhood_processing_binary_command", {
+    const payload = await invokeTauriRaw(desktopBridgeCommands.previewPostStackNeighborhoodProcessingBinary, {
       request
     });
     return parsePackedPreviewProcessingResponse(payload);
@@ -2966,14 +3081,14 @@ export async function emitFrontendDiagnosticsEvent(request: FrontendDiagnosticsE
     return;
   }
 
-  await invokeTauri<void>("emit_frontend_diagnostics_event_command", { request });
+  await invokeTauri<void>(desktopBridgeCommands.emitFrontendDiagnosticsEvent, { request });
 }
 
 export async function fetchAmplitudeSpectrum(
   request: AmplitudeSpectrumRequest
 ): Promise<AmplitudeSpectrumResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<AmplitudeSpectrumResponse>("amplitude_spectrum_command", { request });
+    return invokeTauri<AmplitudeSpectrumResponse>(desktopBridgeCommands.amplitudeSpectrum, { request });
   }
 
   return postJson<AmplitudeSpectrumResponse>("/api/processing/spectrum", request as Record<string, unknown>);
@@ -2983,7 +3098,7 @@ export async function runProcessing(
   request: RunProcessingRequest
 ): Promise<RunProcessingResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<RunProcessingResponse>("run_processing_command", { request });
+    return invokeTauri<RunProcessingResponse>(desktopBridgeCommands.runProcessing, { request });
   }
 
   return postJson<RunProcessingResponse>("/api/processing/run", request as Record<string, unknown>);
@@ -2994,7 +3109,7 @@ export async function submitTraceLocalProcessingBatch(
 ): Promise<SubmitTraceLocalProcessingBatchResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<SubmitTraceLocalProcessingBatchResponse>(
-      "submit_trace_local_processing_batch_command",
+      desktopBridgeCommands.submitTraceLocalProcessingBatch,
       { request }
     );
   }
@@ -3006,7 +3121,7 @@ export async function submitProcessingBatch(
   request: SubmitProcessingBatchRequest
 ): Promise<SubmitProcessingBatchResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<SubmitProcessingBatchResponse>("submit_processing_batch_command", { request });
+    return invokeTauri<SubmitProcessingBatchResponse>(desktopBridgeCommands.submitProcessingBatch, { request });
   }
 
   throw new Error("Processing batches are only available in the desktop runtime.");
@@ -3016,7 +3131,7 @@ export async function runSubvolumeProcessing(
   request: RunSubvolumeProcessingRequest
 ): Promise<RunSubvolumeProcessingResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<RunSubvolumeProcessingResponse>("run_subvolume_processing_command", { request });
+    return invokeTauri<RunSubvolumeProcessingResponse>(desktopBridgeCommands.runSubvolumeProcessing, { request });
   }
 
   return postJson<RunSubvolumeProcessingResponse>("/api/processing/subvolume/run", request as Record<string, unknown>);
@@ -3027,7 +3142,7 @@ export async function runPostStackNeighborhoodProcessing(
 ): Promise<RunPostStackNeighborhoodProcessingResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<RunPostStackNeighborhoodProcessingResponse>(
-      "run_post_stack_neighborhood_processing_command",
+      desktopBridgeCommands.runPostStackNeighborhoodProcessing,
       { request }
     );
   }
@@ -3043,7 +3158,7 @@ export async function defaultProcessingStorePath(
   pipeline: TraceLocalProcessingPipeline | RunProcessingRequest["pipeline"]
 ): Promise<string> {
   if (isTauriEnvironment()) {
-    return invokeTauri<string>("default_processing_store_path_command", {
+    return invokeTauri<string>(desktopBridgeCommands.defaultProcessingStorePath, {
       storePath,
       pipeline
     });
@@ -3074,7 +3189,7 @@ export async function defaultSubvolumeProcessingStorePath(
   pipeline: SubvolumeProcessingPipeline
 ): Promise<string> {
   if (isTauriEnvironment()) {
-    return invokeTauri<string>("default_subvolume_processing_store_path_command", {
+    return invokeTauri<string>(desktopBridgeCommands.defaultSubvolumeProcessingStorePath, {
       storePath,
       pipeline
     });
@@ -3106,7 +3221,7 @@ export async function defaultPostStackNeighborhoodProcessingStorePath(
   pipeline: PostStackNeighborhoodProcessingPipeline
 ): Promise<string> {
   if (isTauriEnvironment()) {
-    return invokeTauri<string>("default_post_stack_neighborhood_processing_store_path_command", {
+    return invokeTauri<string>(desktopBridgeCommands.defaultPostStackNeighborhoodProcessingStorePath, {
       storePath,
       pipeline
     });
@@ -3146,7 +3261,7 @@ export async function defaultPostStackNeighborhoodProcessingStorePath(
 
 export async function getProcessingJob(jobId: string): Promise<GetProcessingJobResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<GetProcessingJobResponse>("get_processing_job_command", {
+    return invokeTauri<GetProcessingJobResponse>(desktopBridgeCommands.getProcessingJob, {
       request: { schema_version: SCHEMA_VERSION, job_id: jobId }
     });
   }
@@ -3161,7 +3276,7 @@ export async function getProcessingDebugPlan(
   jobId: string
 ): Promise<GetProcessingDebugPlanResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<GetProcessingDebugPlanResponse>("get_processing_debug_plan_command", {
+    return invokeTauri<GetProcessingDebugPlanResponse>(desktopBridgeCommands.getProcessingDebugPlan, {
       request: { schema_version: SCHEMA_VERSION, job_id: jobId }
     });
   }
@@ -3174,7 +3289,7 @@ export async function getProcessingRuntimeState(
 ): Promise<GetProcessingRuntimeStateResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<GetProcessingRuntimeStateResponse>(
-        "get_processing_runtime_state_command",
+        desktopBridgeCommands.getProcessingRuntimeState,
         {
         request: { schema_version: SCHEMA_VERSION, job_id: jobId }
         }
@@ -3190,7 +3305,7 @@ export async function listProcessingRuntimeEvents(
 ): Promise<ListProcessingRuntimeEventsResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<ListProcessingRuntimeEventsResponse>(
-        "list_processing_runtime_events_command",
+        desktopBridgeCommands.listProcessingRuntimeEvents,
         {
         request: { schema_version: SCHEMA_VERSION, job_id: jobId, after_seq: afterSeq }
         }
@@ -3202,7 +3317,7 @@ export async function listProcessingRuntimeEvents(
 
 export async function cancelProcessingJob(jobId: string): Promise<CancelProcessingJobResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<CancelProcessingJobResponse>("cancel_processing_job_command", {
+    return invokeTauri<CancelProcessingJobResponse>(desktopBridgeCommands.cancelProcessingJob, {
       request: { schema_version: SCHEMA_VERSION, job_id: jobId }
     });
   }
@@ -3215,7 +3330,7 @@ export async function cancelProcessingJob(jobId: string): Promise<CancelProcessi
 
 export async function getProcessingBatch(batchId: string): Promise<GetProcessingBatchResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<GetProcessingBatchResponse>("get_processing_batch_command", {
+    return invokeTauri<GetProcessingBatchResponse>(desktopBridgeCommands.getProcessingBatch, {
       request: { schema_version: SCHEMA_VERSION, batch_id: batchId }
     });
   }
@@ -3227,7 +3342,7 @@ export async function cancelProcessingBatch(
   batchId: string
 ): Promise<CancelProcessingBatchResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<CancelProcessingBatchResponse>("cancel_processing_batch_command", {
+    return invokeTauri<CancelProcessingBatchResponse>(desktopBridgeCommands.cancelProcessingBatch, {
       request: { schema_version: SCHEMA_VERSION, batch_id: batchId }
     });
   }
@@ -3237,7 +3352,7 @@ export async function cancelProcessingBatch(
 
 export async function listPipelinePresets(): Promise<ListPipelinePresetsResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ListPipelinePresetsResponse>("list_pipeline_presets_command", {});
+    return invokeTauri<ListPipelinePresetsResponse>(desktopBridgeCommands.listPipelinePresets, {});
   }
 
   const response = await fetch("/api/processing/presets");
@@ -3248,7 +3363,7 @@ export async function savePipelinePreset(
   preset: ProcessingPreset
 ): Promise<SavePipelinePresetResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<SavePipelinePresetResponse>("save_pipeline_preset_command", {
+    return invokeTauri<SavePipelinePresetResponse>(desktopBridgeCommands.savePipelinePreset, {
       request: { schema_version: SCHEMA_VERSION, preset }
     });
   }
@@ -3262,7 +3377,7 @@ export async function savePipelinePreset(
 export async function deletePipelinePreset(presetId: string): Promise<boolean> {
   if (isTauriEnvironment()) {
     const response = await invokeTauri<{ schema_version: number; deleted: boolean }>(
-        "delete_pipeline_preset_command",
+        desktopBridgeCommands.deletePipelinePreset,
         {
         request: { schema_version: SCHEMA_VERSION, preset_id: presetId }
         }
@@ -3282,7 +3397,7 @@ export async function deletePipelinePreset(presetId: string): Promise<boolean> {
 
 export async function loadWorkspaceState(): Promise<LoadWorkspaceStateResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<LoadWorkspaceStateResponse>("load_workspace_state_command", {});
+    return invokeTauri<LoadWorkspaceStateResponse>(desktopBridgeCommands.loadWorkspaceState, {});
   }
 
   return {
@@ -3296,7 +3411,7 @@ export async function upsertDatasetEntry(
   request: UpsertDatasetEntryRequest
 ): Promise<UpsertDatasetEntryResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<UpsertDatasetEntryResponse>("upsert_dataset_entry_command", { request });
+    return invokeTauri<UpsertDatasetEntryResponse>(desktopBridgeCommands.upsertDatasetEntry, { request });
   }
 
   const entries = loadLocalRegistry();
@@ -3379,7 +3494,7 @@ export async function upsertDatasetEntry(
 
 export async function removeDatasetEntry(entryId: string): Promise<RemoveDatasetEntryResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<RemoveDatasetEntryResponse>("remove_dataset_entry_command", {
+    return invokeTauri<RemoveDatasetEntryResponse>(desktopBridgeCommands.removeDatasetEntry, {
       request: { schema_version: SCHEMA_VERSION, entry_id: entryId }
     });
   }
@@ -3398,7 +3513,7 @@ export async function removeDatasetEntry(entryId: string): Promise<RemoveDataset
 
 export async function setActiveDatasetEntry(entryId: string): Promise<SetActiveDatasetEntryResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<SetActiveDatasetEntryResponse>("set_active_dataset_entry_command", {
+    return invokeTauri<SetActiveDatasetEntryResponse>(desktopBridgeCommands.setActiveDatasetEntry, {
       request: { schema_version: SCHEMA_VERSION, entry_id: entryId }
     });
   }
@@ -3433,7 +3548,7 @@ export async function saveWorkspaceSession(
   request: SaveWorkspaceSessionRequest
 ): Promise<SaveWorkspaceSessionResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<SaveWorkspaceSessionResponse>("save_workspace_session_command", { request });
+    return invokeTauri<SaveWorkspaceSessionResponse>(desktopBridgeCommands.saveWorkspaceSession, { request });
   }
 
   const session: WorkspaceSession = {
@@ -3467,7 +3582,7 @@ export async function loadProjectGeospatialSettings(projectRoot: string): Promis
 
   if (isTauriEnvironment()) {
     const response = await invokeTauri<{ settings: ProjectGeospatialSettings | null }>(
-      "load_project_geospatial_settings_command",
+      desktopBridgeCommands.loadProjectGeospatialSettings,
       {
         request: {
           projectRoot: normalizedProjectRoot
@@ -3492,7 +3607,7 @@ export async function searchCoordinateReferences(
 ): Promise<CoordinateReferenceCatalogEntry[]> {
   if (isTauriEnvironment()) {
     const response = await invokeTauri<{ entries: CoordinateReferenceCatalogEntry[] }>(
-      "search_coordinate_references_command",
+      desktopBridgeCommands.searchCoordinateReferences,
       {
         request: {
           query: request.query ?? null,
@@ -3563,7 +3678,7 @@ export async function resolveCoordinateReference(request: {
   authId?: string | null;
 }): Promise<CoordinateReferenceCatalogEntry> {
   if (isTauriEnvironment()) {
-    return invokeTauri<CoordinateReferenceCatalogEntry>("resolve_coordinate_reference_command", {
+    return invokeTauri<CoordinateReferenceCatalogEntry>(desktopBridgeCommands.resolveCoordinateReference, {
       request
     });
   }
@@ -3587,7 +3702,7 @@ export async function saveProjectGeospatialSettings(
   }
 
   if (isTauriEnvironment()) {
-    return invokeTauri<ProjectGeospatialSettings>("save_project_geospatial_settings_command", {
+    return invokeTauri<ProjectGeospatialSettings>(desktopBridgeCommands.saveProjectGeospatialSettings, {
       request: {
         projectRoot: normalizedProjectRoot,
         displayCoordinateReference,
@@ -3614,7 +3729,7 @@ export async function setDatasetNativeCoordinateReference(
 ): Promise<SetDatasetNativeCoordinateReferenceResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<SetDatasetNativeCoordinateReferenceResponse>(
-      "set_dataset_native_coordinate_reference_command",
+      desktopBridgeCommands.setDatasetNativeCoordinateReference,
       {
         request: {
           storePath: request.store_path,
@@ -3727,7 +3842,7 @@ export async function resolveSurveyMap(
   request: ResolveSurveyMapRequest
 ): Promise<ResolveSurveyMapResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ResolveSurveyMapResponse>("resolve_survey_map_command", { request });
+    return invokeTauri<ResolveSurveyMapResponse>(desktopBridgeCommands.resolveSurveyMap, { request });
   }
 
   throw new Error("Survey map resolution is only available in the desktop runtime.");
@@ -3737,7 +3852,7 @@ export async function resolveProjectSurveyMap(
   request: ResolveProjectSurveyMapRequest
 ): Promise<ResolveProjectSurveyMapResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ResolveProjectSurveyMapResponse>("resolve_project_survey_map_command", {
+    return invokeTauri<ResolveProjectSurveyMapResponse>(desktopBridgeCommands.resolveProjectSurveyMap, {
       request
     });
   }
@@ -3751,7 +3866,7 @@ export async function listProjectWellTimeDepthModels(
 ): Promise<ProjectWellTimeDepthModelDescriptor[]> {
   if (isTauriEnvironment()) {
     return invokeTauri<ProjectWellTimeDepthModelDescriptor[]>(
-      "list_project_well_time_depth_models_command",
+      desktopBridgeCommands.listProjectWellTimeDepthModels,
       {
         request: {
           projectRoot,
@@ -3770,7 +3885,7 @@ export async function listProjectWellTimeDepthInventory(
 ): Promise<ProjectWellTimeDepthInventoryResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<ProjectWellTimeDepthInventoryResponse>(
-      "list_project_well_time_depth_inventory_command",
+      desktopBridgeCommands.listProjectWellTimeDepthInventory,
       {
         request: {
           projectRoot,
@@ -3789,7 +3904,7 @@ export async function setProjectActiveWellTimeDepthModel(
   assetId: string | null
 ): Promise<void> {
   if (isTauriEnvironment()) {
-    await invokeTauri<void>("set_project_active_well_time_depth_model_command", {
+    await invokeTauri<void>(desktopBridgeCommands.setProjectActiveWellTimeDepthModel, {
       request: {
         projectRoot,
         wellboreId,
@@ -3808,7 +3923,7 @@ export async function listProjectWellOverlayInventory(
 ): Promise<ProjectWellOverlayInventoryResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<ProjectWellOverlayInventoryResponse>(
-      "list_project_well_overlay_inventory_command",
+      desktopBridgeCommands.listProjectWellOverlayInventory,
       {
         request: {
           projectRoot,
@@ -3826,7 +3941,7 @@ export async function listProjectSurveyHorizons(
   assetId: string
 ): Promise<ImportedHorizonDescriptor[]> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ImportedHorizonDescriptor[]>("list_project_survey_horizons_command", {
+    return invokeTauri<ImportedHorizonDescriptor[]>(desktopBridgeCommands.listProjectSurveyHorizons, {
       request: {
         projectRoot,
         assetId
@@ -3843,7 +3958,7 @@ export async function listProjectWellMarkerResidualInventory(
 ): Promise<ProjectWellMarkerResidualInventoryResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<ProjectWellMarkerResidualInventoryResponse>(
-      "list_project_well_marker_residual_inventory_command",
+      desktopBridgeCommands.listProjectWellMarkerResidualInventory,
       {
         request: {
           projectRoot,
@@ -3860,7 +3975,7 @@ export async function scanVendorProject(
   request: VendorProjectScanRequest
 ): Promise<VendorProjectScanResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<VendorProjectScanResponse>("scan_vendor_project_command", { request });
+    return invokeTauri<VendorProjectScanResponse>(desktopBridgeCommands.scanVendorProject, { request });
   }
 
   throw new Error("Vendor project scanning is only available in the desktop runtime.");
@@ -3870,7 +3985,7 @@ export async function planVendorProjectImport(
   request: VendorProjectPlanRequest
 ): Promise<VendorProjectPlanResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<VendorProjectPlanResponse>("plan_vendor_project_import_command", { request });
+    return invokeTauri<VendorProjectPlanResponse>(desktopBridgeCommands.planVendorProjectImport, { request });
   }
 
   throw new Error("Vendor project planning is only available in the desktop runtime.");
@@ -3880,7 +3995,7 @@ export async function commitVendorProjectImport(
   request: VendorProjectCommitRequest
 ): Promise<VendorProjectCommitResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<VendorProjectCommitResponse>("commit_vendor_project_import_command", {
+    return invokeTauri<VendorProjectCommitResponse>(desktopBridgeCommands.commitVendorProjectImport, {
       request
     });
   }
@@ -3893,7 +4008,7 @@ export async function importProjectWellTimeDepthAsset(
 ): Promise<ImportProjectWellTimeDepthModelResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<ImportProjectWellTimeDepthModelResponse>(
-      "import_project_well_time_depth_asset_command",
+      desktopBridgeCommands.importProjectWellTimeDepthAsset,
       { request }
     );
   }
@@ -3906,7 +4021,7 @@ export async function previewProjectWellTimeDepthAsset(
 ): Promise<ProjectWellTimeDepthAssetPreview> {
   if (isTauriEnvironment()) {
     return invokeTauri<ProjectWellTimeDepthAssetPreview>(
-      "preview_project_well_time_depth_asset_command",
+      desktopBridgeCommands.previewProjectWellTimeDepthAsset,
       { request }
     );
   }
@@ -3919,7 +4034,7 @@ export async function previewProjectWellTimeDepthImport(
 ): Promise<ProjectWellTimeDepthImportPreview> {
   if (isTauriEnvironment()) {
     return invokeTauri<ProjectWellTimeDepthImportPreview>(
-      "preview_project_well_time_depth_import_command",
+      desktopBridgeCommands.previewProjectWellTimeDepthImport,
       { request }
     );
   }
@@ -3931,7 +4046,7 @@ export async function previewProjectWellSourceImport(
   request: PreviewProjectWellSourceImportRequest
 ): Promise<ProjectWellSourceImportPreview> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ProjectWellSourceImportPreview>("preview_project_well_sources_command", {
+    return invokeTauri<ProjectWellSourceImportPreview>(desktopBridgeCommands.previewProjectWellSources, {
       request
     });
   }
@@ -4001,7 +4116,7 @@ export async function commitProjectWellSourceImport(
 ): Promise<ProjectWellSourceImportCommitResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<ProjectWellSourceImportCommitResponse>(
-      "commit_project_well_sources_command",
+      desktopBridgeCommands.commitProjectWellSources,
       {
         request: {
           ...request,
@@ -4019,7 +4134,7 @@ export async function commitProjectWellTimeDepthImport(
 ): Promise<ImportProjectWellTimeDepthModelResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<ImportProjectWellTimeDepthModelResponse>(
-      "commit_project_well_time_depth_import_command",
+      desktopBridgeCommands.commitProjectWellTimeDepthImport,
       { request }
     );
   }
@@ -4054,7 +4169,7 @@ export async function importProjectWellTimeDepthModel(
 ): Promise<ImportProjectWellTimeDepthModelResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<ImportProjectWellTimeDepthModelResponse>(
-      "import_project_well_time_depth_model_command",
+      desktopBridgeCommands.importProjectWellTimeDepthModel,
       { request }
     );
   }
@@ -4067,7 +4182,7 @@ export async function readProjectWellTimeDepthModel(
   assetId: string
 ): Promise<WellTimeDepthModel1D> {
   if (isTauriEnvironment()) {
-    return invokeTauri<WellTimeDepthModel1D>("read_project_well_time_depth_model_command", {
+    return invokeTauri<WellTimeDepthModel1D>(desktopBridgeCommands.readProjectWellTimeDepthModel, {
       request: {
         projectRoot,
         assetId
@@ -4083,7 +4198,7 @@ export async function compileProjectWellTimeDepthAuthoredModel(
 ): Promise<ImportProjectWellTimeDepthModelResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<ImportProjectWellTimeDepthModelResponse>(
-      "compile_project_well_time_depth_authored_model_command",
+      desktopBridgeCommands.compileProjectWellTimeDepthAuthoredModel,
       { request }
     );
   }
@@ -4095,7 +4210,7 @@ export async function analyzeProjectWellTie(
   request: AnalyzeProjectWellTieRequest
 ): Promise<ProjectWellTieAnalysisResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<ProjectWellTieAnalysisResponse>("analyze_project_well_tie_command", {
+    return invokeTauri<ProjectWellTieAnalysisResponse>(desktopBridgeCommands.analyzeProjectWellTie, {
       request
     });
   }
@@ -4107,7 +4222,7 @@ export async function acceptProjectWellTie(
   request: AcceptProjectWellTieRequest
 ): Promise<AcceptProjectWellTieResponse> {
   if (isTauriEnvironment()) {
-    return invokeTauri<AcceptProjectWellTieResponse>("accept_project_well_tie_command", {
+    return invokeTauri<AcceptProjectWellTieResponse>(desktopBridgeCommands.acceptProjectWellTie, {
       request
     });
   }
@@ -4120,7 +4235,7 @@ export async function computeProjectWellMarkerResidual(
 ): Promise<ComputeProjectWellMarkerResidualResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<ComputeProjectWellMarkerResidualResponse>(
-      "compute_project_well_marker_residual_command",
+      desktopBridgeCommands.computeProjectWellMarkerResidual,
       { request }
     );
   }
@@ -4133,7 +4248,7 @@ export async function resolveProjectSectionWellOverlays(
 ): Promise<ResolveSectionWellOverlaysResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<ResolveSectionWellOverlaysResponse>(
-      "resolve_project_section_well_overlays_command",
+      desktopBridgeCommands.resolveProjectSectionWellOverlays,
       { request }
     );
   }
@@ -4146,7 +4261,7 @@ export async function getDiagnosticsStatus(): Promise<DiagnosticsStatus | null> 
     return null;
   }
 
-  return invokeTauri<DiagnosticsStatus>("get_diagnostics_status_command", {});
+  return invokeTauri<DiagnosticsStatus>(desktopBridgeCommands.getDiagnosticsStatus, {});
 }
 
 export async function setDiagnosticsVerbosity(enabled: boolean): Promise<void> {
@@ -4154,7 +4269,7 @@ export async function setDiagnosticsVerbosity(enabled: boolean): Promise<void> {
     return;
   }
 
-  await invokeTauri<void>("set_diagnostics_verbosity_command", { enabled });
+  await invokeTauri<void>(desktopBridgeCommands.setDiagnosticsVerbosity, { enabled });
 }
 
 export async function runSectionBrowsingBenchmark(
@@ -4162,7 +4277,7 @@ export async function runSectionBrowsingBenchmark(
 ): Promise<RunSectionBrowsingBenchmarkResponse> {
   if (isTauriEnvironment()) {
     return invokeTauri<RunSectionBrowsingBenchmarkResponse>(
-      "run_section_browsing_benchmark_command",
+      desktopBridgeCommands.runSectionBrowsingBenchmark,
       { request }
     );
   }

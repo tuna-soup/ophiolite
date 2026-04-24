@@ -25,7 +25,7 @@ Without one canonical model for semantic/version envelopes, artifact identity, d
 
 ## Decision
 
-`ophiolite` will treat canonical processing identity and debugability as shared architecture, not app-local tooling.
+`ophiolite` treats canonical processing identity and debugability as shared architecture, not app-local tooling.
 
 The durable rules are:
 
@@ -99,6 +99,18 @@ This gives `ophiolite` a defensible answer to:
 - generated TS/schema artifacts become part of the canonical processing surface rather than a thin compatibility afterthought
 - compatibility policy becomes explicit and fail-closed for canonical reuse/package acceptance
 
+## Implementation Status
+
+This ADR's core ownership rule is now reflected more clearly in the surrounding
+surface boundaries:
+
+- canonical contracts remain rooted in shared Rust and generated TS artifacts
+- TraceBoost desktop command stubs are now generated from an app-local command
+  manifest instead of acting as a second semantic contract layer
+- the public SDK facade excludes adapter-local compatibility shims, which makes
+  it less likely that app-local transport or compatibility layers will be
+  mistaken for canonical processing surface area
+
 ### Explicit non-goals
 
 - no promise that every legacy cache artifact can be reused canonically forever
@@ -136,6 +148,12 @@ The key boundaries are:
 - TraceBoost and other clients
   - render canonical generated contracts
   - do not reconstruct canonical processing/debug meaning locally
+
+The current desktop-shell implication is:
+
+- app-local command names and transport details may evolve behind generated
+  bridge stubs
+- those stubs are wrappers over canonical contracts, not replacements for them
 
 ## Success Criteria
 

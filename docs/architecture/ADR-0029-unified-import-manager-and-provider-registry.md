@@ -91,6 +91,12 @@ The first registry lives in `apps/traceboost-demo/src-tauri`.
 It is intentionally app-local in phase one. Shared extraction should wait until multiple providers
 actually fit the same abstraction cleanly.
 
+The current app-local registry now uses shared capability vocabulary from
+`crates/ophiolite-capabilities` for discovery and separate lifecycle state for
+validation and activation. That keeps provider discovery, activation readiness,
+and provider implementation ownership distinct even before any shared-crate
+extraction.
+
 Expected provider families include:
 
 - `seismic_volume`
@@ -264,6 +270,22 @@ Recommended outcomes:
 - some existing commands may temporarily remain as compatibility adapters while the new manager
   takes ownership of orchestration
 
+## Implementation Status
+
+The first hardening slice is now live:
+
+- an app-local `ImportProviderRegistry` exists in `apps/traceboost-demo/src-tauri`
+- import-provider discovery is represented through shared capability records
+- validation and activation are now explicit lifecycle steps instead of being
+  implied by discovery
+- TraceBoost desktop command ownership is declared in
+  `apps/traceboost-demo/desktop-command-boundary.json`
+- the frontend bridge consumes generated desktop bridge stubs so the import
+  command table is no longer maintained through handwritten string literals
+
+What remains under this ADR is broader frontend convergence and additional
+provider-family adoption, not the initial discovery/activation boundary itself.
+
 ## Implementation Order
 
 1. Introduce an app-local import provider registry and shared import session envelope in
@@ -278,6 +300,12 @@ Recommended outcomes:
 6. Extend recipe/session recovery beyond SEG-Y once the shared shell is stable.
 7. Extract only the proven shared parts into broader Ophiolite crates after at least two or three
    providers demonstrate a stable common abstraction.
+
+The current state is:
+
+- step 1 is complete
+- the registry/lifecycle portion of step 4 is complete
+- steps 2, 3, 5, 6, and 7 remain follow-on work
 
 ## Non-goals
 

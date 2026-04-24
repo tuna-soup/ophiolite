@@ -1,0 +1,33 @@
+{
+  "$schema": "../../manifests/schemas/ophiolite-charts-module.schema.json",
+  "kind": "ophioliteChartsModule",
+  "id": "@ophiolite/charts-core",
+  "displayName": "Ophiolite Charts Core",
+  "layer": "core",
+  "supportTier": "internal",
+  "description": "Shared presentation, layout, geometry, and chart-native core logic used by domain and renderer layers.",
+  "entrypoints": [
+    {
+      "subpath": ".",
+      "tier": "internal",
+      "description": "Internal core helpers and presentation models."
+    }
+  ],
+  "dependsOn": [
+    {
+      "id": "@ophiolite/charts-data-models",
+      "role": "runtime"
+    }
+  ],
+  "testPolicy": {
+    "requiredSuites": ["typecheck", "presentation-math", "layout-fixtures"],
+    "releaseBlocking": true
+  },
+  "consumerGuarantees": {
+    "traceboostApproved": false,
+    "externalConsumerApproved": false
+  },
+  "notes": [
+    "Keep reusable chart logic here rather than in wrapper-local implementations."
+  ]
+}

@@ -6,6 +6,7 @@ license.workspace = true
 publish = true
 
 [dependencies]
+ophiolite-capabilities = { path = "../ophiolite-capabilities" }
 ophiolite-operators = { path = "../ophiolite-operators" }
 ophiolite-seismic = { path = "../ophiolite-seismic" }
 ophiolite-seismic-runtime = { path = "../ophiolite-seismic-runtime" }
@@ -13,5 +14,4 @@ ophiolite-seismic-execution = { path = "../ophiolite-seismic-execution" }
 seis-contracts-core = { path = "../../traceboost/contracts/seis-contracts-core" }
 seis-contracts-views = { path = "../../traceboost/contracts/seis-contracts-views" }
 seis-contracts-operations = { path = "../../traceboost/contracts/seis-contracts-operations" }
-seis-contracts-interop = { path = "../../traceboost/contracts/seis-contracts-interop" }
 seis-runtime = { path = "../../traceboost/runtime" }

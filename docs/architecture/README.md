@@ -53,12 +53,18 @@ Current properties:
 - the processing authority, thin-client migration, and contract-distribution consolidation direction are defined in `ADR-0032-processing-authority-and-thin-client-migration.md`
 - the public SDK core versus adapter/application boundary is defined in `ADR-0033-public-sdk-core-and-adapter-boundaries.md`
 - canonical processing identity, debug, and compatibility semantics are defined in `ADR-0034-canonical-processing-identity-debug-and-compatibility-surface.md`
+- the machine-readable workspace boundary manifest and shared capability-registry direction are defined in `ADR-0035-boundary-manifest-and-capability-registry.md`
+- the `tbvolc` v1 padded-payload storage contract is defined in `ADR-0036-tbvolc-v1-padded-payload-contract.md`
 - the current-to-target authority breakdown for processing concerns is tracked in `processing-authority-matrix.md`
 - the active implementation plan for canonical processing integration hardening is tracked in `processing-canonical-integration-plan-2026-04.md`
 - the current public-core candidate, blocked, and internal package split is tracked in `public-sdk-package-matrix.md`
 - the current public-core versioning and support expectations are tracked in `public-sdk-support-policy.md`
 - the explicit readable/reusable/rewritable/reject policy for processing lineage and caches is tracked in `processing-lineage-cache-compatibility-policy.md`
 - the narrow public-core facade crate is `crates/ophiolite-sdk`, while the root `ophiolite` crate remains an internal compatibility facade
+- the shared capability vocabulary crate is `crates/ophiolite-capabilities`, and the initial boundary metadata source of truth now lives under `workspace.metadata.ophiolite.boundaries` in the root `Cargo.toml`
+- TraceBoost desktop remains an app-local command boundary over shared/runtime behavior rather than a public platform control surface
+- compatibility packages and re-export paths remain valid, but they are explicitly not equivalent to canonical platform ownership
+- the TraceBoost desktop command table is now described by `apps/traceboost-demo/desktop-command-boundary.json` and validated by `scripts/validate-traceboost-command-boundary.mjs`
 
 ## Layered Architecture
 
@@ -81,6 +87,14 @@ Current properties:
 ```
 
 This separation is intentional: the SDK owns well-domain semantics, DTOs own transfer shapes, and storage formats remain replaceable implementation details.
+
+The current stack split is also intentional:
+
+- `ophiolite` owns canonical contracts, runtime semantics, public control surfaces, and shared capability vocabulary
+- Ophiolite Charts owns reusable embedder-facing chart behavior
+- TraceBoost owns first-party workflow composition, desktop shell transport, session UX, and app-local capability activation
+
+That means the TraceBoost desktop/Tauri command boundary is an internal application seam. It may carry canonical contracts, but its command names and transport details are not part of the public Ophiolite API promise.
 
 ## Asset And Compute Taxonomy
 

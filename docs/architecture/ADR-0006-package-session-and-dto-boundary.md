@@ -68,8 +68,13 @@ Depth-range reads are first-class alongside row-window reads. They resolve again
 For regular-step depth logs, the backend may derive row bounds directly from package metadata before falling back to reading the full index column.
 When first curve/sample materialization is required, it should be built directly from the current lazy session metadata and cached parquet descriptors rather than reopening the package through the eager SDK path.
 
-DTO evolution should remain additive where possible. Formal compatibility guarantees can harden later once the Tauri contract stops moving quickly.
+DTO evolution should remain additive where possible. Formal compatibility guarantees can harden later once the desktop command boundary stabilizes further.
 Public command error kinds should remain small and caller-actionable rather than implementation-shaped.
+
+Where package-session commands are exposed through the TraceBoost desktop shell,
+their command names belong to the app-local command-boundary manifest and
+generated bridge stubs. That transport layer remains separate from the DTO and
+session semantics defined in this ADR.
 
 ## Why
 
@@ -103,7 +108,7 @@ For the current desktop MVP:
 - there is no automatic session expiry yet
 - shared sessions may outlive a window
 
-This keeps lifecycle rules simple while the Tauri contract is still being defined.
+This keeps lifecycle rules simple while the desktop command boundary is still evolving.
 
 Session invariants for the current model:
 
@@ -146,6 +151,7 @@ This ADR does not imply:
 - raw LAS write-back support
 - full undo/redo support
 - a final stable Tauri command surface
+- public promotion of app-local desktop command names into canonical platform API
 - collaborative or multi-user editing semantics
 - duplicate or forked live-session semantics
 - a hard `tauri` dependency in this repo yet

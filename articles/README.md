@@ -69,3 +69,10 @@ The interactive section browsing harness note now matches the current repo state
   - Part I explains why `tbvol` replaced the earlier runtime-store candidates for active compute.
   - Part II documents the later exact-lossless compression study and what it implies for `tbvol` as a processing and storage substrate.
   - The proposal article turns those findings into a concrete product shape for an optional exact compressed storage tier.
+
+## Study Hygiene
+
+- New research or external-repo study work should extend these notes rather than restating them.
+- Before writing a new performance or storage note, check whether the topic is already covered here or in `docs/architecture/`.
+- Existing chunking, tiling, cache, trace-local batch scheduling, and storage-benchmark notes should be treated as prior art unless new evidence directly contradicts them.
+- For the current external repo study prompts, use `docs/research/external-repo-study-prompts-2026-04.md` as the coordination entrypoint and avoid reopening decisions already captured in this folder without a concrete reason.

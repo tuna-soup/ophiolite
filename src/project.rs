@@ -63,13 +63,14 @@ use ophiolite_operators::{
 };
 use ophiolite_package::open_package;
 use ophiolite_seismic::{
-    CheckshotVspObservationSet1D, CoordinateReferenceDescriptor, DatasetSummary,
-    DepthReferenceKind, ManualTimeDepthPickSet1D, ProjectedPoint2, ResolvedTrajectoryGeometry,
-    ResolvedTrajectoryStation, SectionAxis, SeismicAssetFamily, SeismicTraceDataDescriptor,
-    TimeDepthTransformSourceKind, TrajectoryValueOrigin, TravelTimeReference, VolumeDescriptor,
-    WellTieAnalysis1D, WellTieCurve1D, WellTieLogCurveSource, WellTieLogSelection1D,
-    WellTieObservationSet1D, WellTieSectionWindow, WellTieTrace1D, WellTieVelocitySourceKind,
-    WellTieWavelet, WellTimeDepthAuthoredModel1D, WellTimeDepthModel1D, WellboreGeometry,
+    CapabilityRegistry, CheckshotVspObservationSet1D, CoordinateReferenceDescriptor,
+    DatasetSummary, DepthReferenceKind, ManualTimeDepthPickSet1D, ProjectedPoint2,
+    ResolvedTrajectoryGeometry, ResolvedTrajectoryStation, SectionAxis, SeismicAssetFamily,
+    SeismicTraceDataDescriptor, TimeDepthTransformSourceKind, TrajectoryValueOrigin,
+    TravelTimeReference, VolumeDescriptor, WellTieAnalysis1D, WellTieCurve1D,
+    WellTieLogCurveSource, WellTieLogSelection1D, WellTieObservationSet1D, WellTieSectionWindow,
+    WellTieTrace1D, WellTieVelocitySourceKind, WellTieWavelet, WellTimeDepthAuthoredModel1D,
+    WellTimeDepthModel1D, WellboreGeometry, operator_capability_registry_for_catalog,
     operator_catalog_for_trace_data,
 };
 use ophiolite_seismic_runtime::{
@@ -5010,6 +5011,16 @@ impl OphioliteProject {
             &compute_catalog,
             &manifest_index,
         ))
+    }
+
+    pub fn list_seismic_operator_capability_registry(
+        &self,
+        asset_id: &AssetId,
+    ) -> Result<CapabilityRegistry> {
+        let asset = self.asset_by_id(asset_id)?;
+        require_asset_kind(&asset, AssetKind::SeismicTraceData)?;
+        let metadata = read_seismic_asset_metadata(Path::new(&asset.package_path))?;
+        Ok(project_seismic_operator_capability_registry(&metadata))
     }
 
     pub fn preview_trace_local_processing(
@@ -12162,79 +12173,111 @@ fn seismic_asset_extent(metadata: &SeismicAssetMetadata) -> AssetExtent {
     }
 }
 
+fn project_seismic_request_contract_id(family: OperatorFamily) -> &'static str {
+    match family {
+        OperatorFamily::TraceLocalProcessing => {
+            PROJECT_RUN_TRACE_LOCAL_PROCESSING_REQUEST_CONTRACT_ID
+        }
+        OperatorFamily::PostStackNeighborhoodProcessing => {
+            PROJECT_RUN_POST_STACK_NEIGHBORHOOD_PROCESSING_REQUEST_CONTRACT_ID
+        }
+        OperatorFamily::SubvolumeProcessing => PROJECT_RUN_SUBVOLUME_PROCESSING_REQUEST_CONTRACT_ID,
+        OperatorFamily::GatherProcessing => PROJECT_RUN_GATHER_PROCESSING_REQUEST_CONTRACT_ID,
+        OperatorFamily::SeismicAnalysis => PROJECT_VELOCITY_SCAN_REQUEST_CONTRACT_ID,
+        OperatorFamily::LogCompute
+        | OperatorFamily::TrajectoryCompute
+        | OperatorFamily::TopSetCompute
+        | OperatorFamily::WellMarkerCompute
+        | OperatorFamily::PressureCompute
+        | OperatorFamily::DrillingCompute => {
+            unreachable!("project seismic catalog overlays only apply to seismic operator families")
+        }
+    }
+}
+
+fn project_seismic_response_contract_id(family: OperatorFamily) -> &'static str {
+    match family {
+        OperatorFamily::SeismicAnalysis => PROJECT_VELOCITY_SCAN_RESPONSE_CONTRACT_ID,
+        OperatorFamily::TraceLocalProcessing
+        | OperatorFamily::PostStackNeighborhoodProcessing
+        | OperatorFamily::SubvolumeProcessing
+        | OperatorFamily::GatherProcessing => PROJECT_RUN_SEISMIC_ASSET_RESPONSE_CONTRACT_ID,
+        OperatorFamily::LogCompute
+        | OperatorFamily::TrajectoryCompute
+        | OperatorFamily::TopSetCompute
+        | OperatorFamily::WellMarkerCompute
+        | OperatorFamily::PressureCompute
+        | OperatorFamily::DrillingCompute => {
+            unreachable!("project seismic catalog overlays only apply to seismic operator families")
+        }
+    }
+}
+
+fn apply_project_seismic_detail_overlay(entry: &mut OperatorCatalogEntry) {
+    match &mut entry.detail {
+        OperatorDetail::TraceLocalProcessing(detail) => {
+            detail.preview_contract = project_compute_contract_ref(
+                PROJECT_PREVIEW_TRACE_LOCAL_PROCESSING_REQUEST_CONTRACT_ID,
+            );
+        }
+        OperatorDetail::PostStackNeighborhoodProcessing(detail) => {
+            detail.preview_contract = project_compute_contract_ref(
+                PROJECT_PREVIEW_POST_STACK_NEIGHBORHOOD_PROCESSING_REQUEST_CONTRACT_ID,
+            );
+        }
+        OperatorDetail::SubvolumeProcessing(detail) => {
+            detail.preview_contract = project_compute_contract_ref(
+                PROJECT_PREVIEW_SUBVOLUME_PROCESSING_REQUEST_CONTRACT_ID,
+            );
+        }
+        OperatorDetail::GatherProcessing(detail) => {
+            detail.preview_contract =
+                project_compute_contract_ref(PROJECT_PREVIEW_GATHER_PROCESSING_REQUEST_CONTRACT_ID);
+        }
+        OperatorDetail::SeismicAnalysis(_)
+        | OperatorDetail::LogCompute(_)
+        | OperatorDetail::TrajectoryCompute(_)
+        | OperatorDetail::TopSetCompute(_)
+        | OperatorDetail::WellMarkerCompute(_)
+        | OperatorDetail::PressureCompute(_)
+        | OperatorDetail::DrillingCompute(_) => {}
+    }
+}
+
+fn apply_project_seismic_availability_overlay(
+    entry: &mut OperatorCatalogEntry,
+    metadata: &SeismicAssetMetadata,
+) {
+    if entry.family == OperatorFamily::TraceLocalProcessing
+        && matches!(metadata.store, SeismicStoreManifest::Prestack(_))
+    {
+        entry.availability = OperatorAvailability::Unavailable {
+            reasons: vec![
+                "standalone trace-local project workflows currently target volume-backed seismic assets only; use gather or analysis workflows for prestack assets".to_string(),
+            ],
+        };
+    }
+}
+
 fn project_seismic_operator_catalog(metadata: &SeismicAssetMetadata) -> OperatorCatalog {
     let mut catalog = operator_catalog_for_trace_data(&metadata.trace_data_descriptor);
     for entry in &mut catalog.operators {
-        match entry.family {
-            OperatorFamily::TraceLocalProcessing => {
-                entry.request_contract = project_compute_contract_ref(
-                    PROJECT_RUN_TRACE_LOCAL_PROCESSING_REQUEST_CONTRACT_ID,
-                );
-                entry.response_contract =
-                    project_compute_contract_ref(PROJECT_RUN_SEISMIC_ASSET_RESPONSE_CONTRACT_ID);
-                if let OperatorDetail::TraceLocalProcessing(detail) = &mut entry.detail {
-                    detail.preview_contract = project_compute_contract_ref(
-                        PROJECT_PREVIEW_TRACE_LOCAL_PROCESSING_REQUEST_CONTRACT_ID,
-                    );
-                }
-                if matches!(metadata.store, SeismicStoreManifest::Prestack(_)) {
-                    entry.availability = OperatorAvailability::Unavailable {
-                        reasons: vec![
-                            "standalone trace-local project workflows currently target volume-backed seismic assets only; use gather or analysis workflows for prestack assets".to_string(),
-                        ],
-                    };
-                }
-            }
-            OperatorFamily::PostStackNeighborhoodProcessing => {
-                entry.request_contract = project_compute_contract_ref(
-                    PROJECT_RUN_POST_STACK_NEIGHBORHOOD_PROCESSING_REQUEST_CONTRACT_ID,
-                );
-                entry.response_contract =
-                    project_compute_contract_ref(PROJECT_RUN_SEISMIC_ASSET_RESPONSE_CONTRACT_ID);
-                if let OperatorDetail::PostStackNeighborhoodProcessing(detail) = &mut entry.detail {
-                    detail.preview_contract = project_compute_contract_ref(
-                        PROJECT_PREVIEW_POST_STACK_NEIGHBORHOOD_PROCESSING_REQUEST_CONTRACT_ID,
-                    );
-                }
-            }
-            OperatorFamily::SubvolumeProcessing => {
-                entry.request_contract = project_compute_contract_ref(
-                    PROJECT_RUN_SUBVOLUME_PROCESSING_REQUEST_CONTRACT_ID,
-                );
-                entry.response_contract =
-                    project_compute_contract_ref(PROJECT_RUN_SEISMIC_ASSET_RESPONSE_CONTRACT_ID);
-                if let OperatorDetail::SubvolumeProcessing(detail) = &mut entry.detail {
-                    detail.preview_contract = project_compute_contract_ref(
-                        PROJECT_PREVIEW_SUBVOLUME_PROCESSING_REQUEST_CONTRACT_ID,
-                    );
-                }
-            }
-            OperatorFamily::GatherProcessing => {
-                entry.request_contract =
-                    project_compute_contract_ref(PROJECT_RUN_GATHER_PROCESSING_REQUEST_CONTRACT_ID);
-                entry.response_contract =
-                    project_compute_contract_ref(PROJECT_RUN_SEISMIC_ASSET_RESPONSE_CONTRACT_ID);
-                if let OperatorDetail::GatherProcessing(detail) = &mut entry.detail {
-                    detail.preview_contract = project_compute_contract_ref(
-                        PROJECT_PREVIEW_GATHER_PROCESSING_REQUEST_CONTRACT_ID,
-                    );
-                }
-            }
-            OperatorFamily::SeismicAnalysis => {
-                entry.request_contract =
-                    project_compute_contract_ref(PROJECT_VELOCITY_SCAN_REQUEST_CONTRACT_ID);
-                entry.response_contract =
-                    project_compute_contract_ref(PROJECT_VELOCITY_SCAN_RESPONSE_CONTRACT_ID);
-            }
-            OperatorFamily::LogCompute
-            | OperatorFamily::TrajectoryCompute
-            | OperatorFamily::TopSetCompute
-            | OperatorFamily::WellMarkerCompute
-            | OperatorFamily::PressureCompute
-            | OperatorFamily::DrillingCompute => {}
-        }
+        entry.request_contract =
+            project_compute_contract_ref(project_seismic_request_contract_id(entry.family.clone()));
+        entry.response_contract = project_compute_contract_ref(
+            project_seismic_response_contract_id(entry.family.clone()),
+        );
+        apply_project_seismic_detail_overlay(entry);
+        apply_project_seismic_availability_overlay(entry, metadata);
     }
     catalog
+}
+
+fn project_seismic_operator_capability_registry(
+    metadata: &SeismicAssetMetadata,
+) -> CapabilityRegistry {
+    let catalog = project_seismic_operator_catalog(metadata);
+    operator_capability_registry_for_catalog(&catalog)
 }
 
 fn project_section_request(
@@ -17045,10 +17088,17 @@ def double_curve(request):
             PROJECT_RUN_TRACE_LOCAL_PROCESSING_REQUEST_CONTRACT_ID
         );
         match &trace_local.detail {
-            OperatorDetail::TraceLocalProcessing(detail) => assert_eq!(
-                detail.preview_contract.contract_id,
-                PROJECT_PREVIEW_TRACE_LOCAL_PROCESSING_REQUEST_CONTRACT_ID
-            ),
+            OperatorDetail::TraceLocalProcessing(detail) => {
+                assert_eq!(
+                    detail.preview_contract.contract_id,
+                    PROJECT_PREVIEW_TRACE_LOCAL_PROCESSING_REQUEST_CONTRACT_ID
+                );
+                assert_eq!(
+                    detail.planner_hint_summary.preferred_partitioning,
+                    ophiolite_operators::ProcessingPlannerPartitioningHint::TileGroup
+                );
+                assert!(detail.capabilities.checkpoint_supported);
+            }
             other => panic!("unexpected trace-local detail: {other:?}"),
         }
         assert!(
@@ -17080,6 +17130,137 @@ def double_curve(request):
         );
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn list_seismic_operator_capability_registry_preserves_project_contracts() {
+        let root = temp_project_root(
+            "list_seismic_operator_capability_registry_preserves_project_contracts",
+        );
+        fs::create_dir_all(&root).unwrap();
+
+        let project = OphioliteProject::create(&root).unwrap();
+        let metadata = test_seismic_asset_metadata("F3 Survey");
+        let asset = register_test_seismic_asset(&project, &root, &metadata);
+
+        let registry = project
+            .list_seismic_operator_capability_registry(&asset.id)
+            .unwrap();
+        let trace_local = registry.get("amplitude_scalar").unwrap();
+
+        assert_eq!(
+            trace_local.source,
+            ophiolite_seismic::CapabilitySource::BuiltIn
+        );
+        assert_eq!(
+            trace_local.load_policy,
+            ophiolite_seismic::CapabilityLoadPolicy::Never
+        );
+        assert_eq!(
+            trace_local.isolation,
+            ophiolite_seismic::CapabilityIsolation::InProcess
+        );
+        assert_eq!(
+            trace_local.contracts.request.as_deref(),
+            Some("ophiolite.project.compute.v1#project_run_trace_local_processing_request")
+        );
+        assert_eq!(
+            trace_local.contracts.response.as_deref(),
+            Some("ophiolite.project.compute.v1#project_run_seismic_asset_result")
+        );
+        match &trace_local.detail {
+            ophiolite_seismic::CapabilityDetail::Operator(detail) => {
+                assert_eq!(detail.family_id, "trace_local_processing");
+                assert_eq!(detail.subject_kind, "seismic_trace_data");
+                assert_eq!(detail.execution_kind, "job");
+                assert_eq!(detail.output_lifecycle, "derived_asset");
+                assert!(detail.deterministic);
+            }
+            other => panic!("unexpected capability detail: {other:?}"),
+        }
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn project_seismic_operator_capability_registry_preserves_prestack_availability_overlay() {
+        let registry = project_seismic_operator_capability_registry(
+            &test_prestack_seismic_asset_metadata("F3 Prestack"),
+        );
+        let trace_local = registry.get("amplitude_scalar").unwrap();
+
+        assert_eq!(
+            trace_local.availability,
+            ophiolite_seismic::CapabilityAvailability::Unavailable {
+                reasons: vec![
+                    "standalone trace-local project workflows currently target volume-backed seismic assets only; use gather or analysis workflows for prestack assets".to_string(),
+                ],
+            }
+        );
+    }
+
+    fn register_test_seismic_asset(
+        project: &OphioliteProject,
+        root: &Path,
+        metadata: &SeismicAssetMetadata,
+    ) -> AssetRecord {
+        let binding = AssetBindingInput {
+            well_name: "Survey Anchor".to_string(),
+            wellbore_name: "Survey Anchor".to_string(),
+            uwi: None,
+            api: None,
+            operator_aliases: Vec::new(),
+        };
+        let resolution = project.ensure_well_binding(&binding).unwrap();
+        let collection = project
+            .resolve_or_create_collection(
+                &resolution.wellbore_id,
+                AssetKind::SeismicTraceData,
+                &metadata.descriptor.label,
+            )
+            .unwrap();
+        let storage_asset_id = AssetId(unique_id("asset"));
+        let package_rel_path = PathBuf::from("assets")
+            .join(AssetKind::SeismicTraceData.asset_dir_name())
+            .join(format!("{}.ophiolite-asset", storage_asset_id.0));
+        let package_root = root.join(&package_rel_path);
+        fs::create_dir_all(&package_root).unwrap();
+        fs::write(
+            package_root.join("metadata.json"),
+            serde_json::to_vec_pretty(metadata).unwrap(),
+        )
+        .unwrap();
+        let manifest = seismic_asset_manifest(
+            &package_root,
+            metadata,
+            &resolution.well_id,
+            &resolution.wellbore_id,
+            &collection.id,
+            &collection.logical_asset_id,
+            &storage_asset_id,
+            AssetKind::SeismicTraceData,
+            WellIdentifierSet {
+                primary_name: Some("Survey Anchor".to_string()),
+                uwi: None,
+                api: None,
+                operator_aliases: Vec::new(),
+            },
+            None,
+        )
+        .unwrap();
+        let asset = AssetRecord {
+            id: storage_asset_id,
+            logical_asset_id: collection.logical_asset_id.clone(),
+            collection_id: collection.id.clone(),
+            well_id: resolution.well_id.clone(),
+            wellbore_id: resolution.wellbore_id.clone(),
+            asset_kind: AssetKind::SeismicTraceData,
+            status: AssetStatus::Bound,
+            package_path: package_root.to_string_lossy().into_owned(),
+            manifest,
+        };
+        project.insert_asset(&asset, &package_rel_path).unwrap();
+        asset
     }
 
     fn test_seismic_asset_metadata(label: &str) -> SeismicAssetMetadata {
@@ -17206,6 +17387,42 @@ def double_curve(request):
             descriptor,
             store: SeismicStoreManifest::Volume(TbvolManifest::new(volume, [2, 2, 2], false)),
         }
+    }
+
+    fn test_prestack_seismic_asset_metadata(label: &str) -> SeismicAssetMetadata {
+        let mut metadata = test_seismic_asset_metadata(label);
+        metadata.family = SeismicAssetFamily::TraceSet;
+        metadata.trace_data_descriptor.stacking_state =
+            ophiolite_seismic::SeismicStackingState::PreStack;
+        metadata.trace_data_descriptor.organization =
+            ophiolite_seismic::SeismicOrganization::GatherCollection;
+        metadata.trace_data_descriptor.layout = ophiolite_seismic::SeismicLayout::PreStack3DOffset;
+        metadata.trace_data_descriptor.gather_axis_kind =
+            Some(ophiolite_seismic::SeismicGatherAxisKind::Offset);
+        metadata.descriptor.geometry.compare_family = "prestack_3d_offset".to_string();
+        metadata.descriptor.geometry.summary.layout =
+            Some(ophiolite_seismic::SeismicLayout::PreStack3DOffset);
+        metadata.descriptor.geometry.summary.gather_axis_kind =
+            Some(ophiolite_seismic::GatherAxisKind::Offset);
+        metadata.descriptor.geometry.summary.gather_axis = Some(AxisSummaryF32 {
+            count: 3,
+            first: 0.0,
+            last: 1000.0,
+            step: Some(500.0),
+            regular: true,
+            units: Some("m".to_string()),
+        });
+        let volume = match &metadata.store {
+            SeismicStoreManifest::Volume(manifest) => manifest.volume.clone(),
+            SeismicStoreManifest::Prestack(_) => unreachable!("test fixture starts from tbvol"),
+        };
+        metadata.store = SeismicStoreManifest::Prestack(TbgathManifest::new(
+            volume,
+            ophiolite_seismic::SeismicLayout::PreStack3DOffset,
+            ophiolite_seismic::GatherAxisKind::Offset,
+            vec![0.0, 500.0, 1000.0],
+        ));
+        metadata
     }
 
     fn temp_project_root(test_name: &str) -> PathBuf {

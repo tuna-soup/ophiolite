@@ -7,10 +7,12 @@
     resolveSeismicPresentationProfile
   } from "@ophiolite/charts-core";
   import { gatherToSectionPayload } from "@ophiolite/charts-data-models";
+  import type { ChartRendererTelemetryEvent } from "@ophiolite/charts-data-models";
   import { SeismicViewerController } from "@ophiolite/charts-domain";
   import { MockCanvasRenderer, PLOT_MARGIN, getPlotRect } from "@ophiolite/charts-renderer";
   import ProbePanel from "./ProbePanel.svelte";
   import SeismicAxisOverlay from "./SeismicAxisOverlay.svelte";
+  import { emitRendererStatusForChart } from "./renderer-status";
   import { resolveSeismicStageSize, scaleSeismicStageSize } from "./seismic-stage";
   import {
     decodeGatherView,
@@ -42,6 +44,7 @@
     chartId,
     viewId,
     gather = null,
+    renderer = undefined,
     viewport = null,
     displayTransform = undefined,
     interactions = undefined,
@@ -61,7 +64,9 @@
     onProbeChange,
     onInteractionChange,
     onInteractionStateChange,
-    onInteractionEvent
+    onInteractionEvent,
+    onRendererStatusChange,
+    onRendererTelemetry
   }: SeismicGatherChartProps = $props();
 
   let controller: SeismicViewerController | null = null;
@@ -73,9 +78,12 @@
   let lastProbeKey = "";
   let lastInteractionKey = "";
   let lastInteractionStateKey = "";
+  let lastRendererStatusKey = "";
+  let lastRendererTelemetryEvent = $state.raw<ChartRendererTelemetryEvent | null>(null);
   let activePointerId: number | null = null;
   let activeDragKind: "pan" | "zoomRect" | null = null;
   let lastPanPoint: { x: number; y: number } | null = null;
+  let rendererErrorMessage = $state<string | null>(null);
   let scrollbarDrag = $state.raw<ScrollbarDragState | null>(null);
   let hostElement = $state.raw<HTMLDivElement | null>(null);
   let lastRequestedTool = resolveRequestedTool();
@@ -114,6 +122,41 @@
     }
     return null;
   });
+  $effect(() => {
+    lastRendererStatusKey = emitRendererStatusForChart(
+      "seismic-gather",
+      {
+        chartId,
+        viewId,
+        renderer: rendererErrorMessage ? { ...(renderer ?? {}), runtimeErrorMessage: rendererErrorMessage } : renderer,
+        telemetryEvent: lastRendererTelemetryEvent
+      },
+      lastRendererStatusKey,
+      onRendererStatusChange
+    );
+  });
+
+  function handleRendererTelemetry(event: ChartRendererTelemetryEvent): void {
+    lastRendererTelemetryEvent = { ...event };
+    if (
+      event.kind === "mount-failed" ||
+      event.kind === "frame-failed" ||
+      event.kind === "context-lost"
+    ) {
+      rendererErrorMessage = event.message;
+    } else if (
+      event.kind === "backend-selected" ||
+      event.kind === "fallback-used" ||
+      event.kind === "context-restored"
+    ) {
+      rendererErrorMessage = null;
+    }
+    onRendererTelemetry?.({
+      chartId,
+      viewId,
+      event: { ...event }
+    });
+  }
   let probeHorizontalLabel = $derived(horizontalLabel(decodedGatherModel?.gatherAxisKind ?? null));
   let scrollbarState = $derived.by(() => {
     if (!decodedGatherModel || !currentViewport) {
@@ -138,6 +181,8 @@
   });
 
   function attachChartHost(element: HTMLDivElement): () => void {
+    rendererErrorMessage = null;
+    lastRendererTelemetryEvent = null;
     const activeController = new SeismicViewerController(new MockCanvasRenderer({ axisChrome: "none" }));
     controller = activeController;
     currentProbe = null;
@@ -205,6 +250,9 @@
         event
       });
     });
+    const unsubscribeRendererTelemetry = activeController.onRendererTelemetry((event) => {
+      handleRendererTelemetry(event);
+    });
 
     const resizeObserver = new ResizeObserver(() => {
       syncController(activeController);
@@ -220,7 +268,33 @@
     const onKeyDown = (event: KeyboardEvent) => handleKeyDown(event);
     const onContextMenu = (event: MouseEvent) => handleContextMenu(event);
 
-    activeController.mount(element);
+    try {
+      activeController.mount(element);
+    } catch (error) {
+      if (!lastRendererTelemetryEvent) {
+        handleRendererTelemetry({
+          kind: "mount-failed",
+          phase: "mount",
+          backend: null,
+          recoverable: false,
+          message: error instanceof Error ? error.message : String(error),
+          detail: "Seismic gather wrapper observed a controller initialization failure.",
+          timestampMs: performance.now()
+        });
+      }
+      console.error("SeismicGatherChart initialization failed.", error);
+      unsubscribeRendererTelemetry();
+      unsubscribeInteractionEvent();
+      unsubscribeStateChange();
+      resizeObserver.disconnect();
+      if (controller === activeController) {
+        controller = null;
+      }
+      currentProbe = null;
+      currentViewport = null;
+      activeController.dispose();
+      return () => {};
+    }
     resizeObserver.observe(element);
     element.addEventListener("pointerdown", onPointerDown);
     element.addEventListener("pointermove", onPointerMove);
@@ -233,10 +307,24 @@
     element.addEventListener("contextmenu", onContextMenu);
 
     $effect(() => {
-      syncController(activeController);
+      try {
+        syncController(activeController);
+      } catch (error) {
+        handleRendererTelemetry({
+          kind: "frame-failed",
+          phase: "render",
+          backend: null,
+          recoverable: true,
+          message: error instanceof Error ? error.message : String(error),
+          detail: "Seismic gather wrapper observed a controller sync failure.",
+          timestampMs: performance.now()
+        });
+        console.error("SeismicGatherChart sync failed.", error);
+      }
     });
 
     return () => {
+      unsubscribeRendererTelemetry();
       unsubscribeInteractionEvent();
       unsubscribeStateChange();
       resizeObserver.disconnect();
@@ -818,8 +906,10 @@
       />
       {#if loading}
         <div class="ophiolite-charts-overlay">{emptyMessage}</div>
-      {:else if errorMessage}
-        <div class="ophiolite-charts-overlay ophiolite-charts-overlay-error">{errorMessage}</div>
+      {:else if errorMessage || rendererErrorMessage}
+        <div class="ophiolite-charts-overlay ophiolite-charts-overlay-error">
+          {errorMessage ?? rendererErrorMessage}
+        </div>
       {:else if !gather}
         <div class="ophiolite-charts-overlay">{emptyMessage}</div>
       {/if}
@@ -858,7 +948,7 @@
           </div>
         </div>
       {/if}
-      {#if currentProbe && !loading && !errorMessage && gather}
+      {#if currentProbe && !loading && !errorMessage && !rendererErrorMessage && gather}
         <ProbePanel
           theme="light"
           size="standard"
@@ -867,7 +957,7 @@
           rows={gatherProbeRows()}
         />
       {/if}
-      {#if scrollbarState && !loading && !errorMessage && gather}
+      {#if scrollbarState && !loading && !errorMessage && !rendererErrorMessage && gather}
         <div
           class="ophiolite-charts-scrollbar ophiolite-charts-scrollbar-horizontal"
           class:ophiolite-charts-scrollbar-active={scrollbarState.horizontalZoomed}

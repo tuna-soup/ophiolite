@@ -814,7 +814,30 @@ fn available_system_memory_bytes() -> Option<u64> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, target_vendor = "apple"))]
+fn available_system_memory_bytes() -> Option<u64> {
+    fn sysctl_u64(name: &str) -> Option<u64> {
+        let c_name = CString::new(name).ok()?;
+        let mut value: u64 = 0;
+        let mut size = std::mem::size_of::<u64>();
+        let rc = unsafe {
+            libc::sysctlbyname(
+                c_name.as_ptr(),
+                &mut value as *mut u64 as *mut libc::c_void,
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if rc == 0 { Some(value) } else { None }
+    }
+
+    let page_size = sysctl_u64("hw.pagesize")?;
+    let free_pages = sysctl_u64("vm.page_free_count")?;
+    Some(page_size.saturating_mul(free_pages))
+}
+
+#[cfg(all(unix, not(target_vendor = "apple")))]
 fn available_system_memory_bytes() -> Option<u64> {
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
     let available_pages = unsafe { libc::sysconf(libc::_SC_AVPHYS_PAGES) };

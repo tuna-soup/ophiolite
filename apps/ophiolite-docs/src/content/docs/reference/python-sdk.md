@@ -11,6 +11,8 @@ The Python SDK is the main intended builder surface for Ophiolite.
 
 It is designed to expose Ophiolite nouns such as `Project` and to keep lower-level transport, platform-admin, and operator-authoring details in explicit advanced namespaces instead of mirroring internal Rust modules directly.
 
+It is also narrower than the full repo. The Python SDK is a platform surface, not a mirror of TraceBoost desktop commands or app-local workflow orchestration.
+
 ## Stable public vocabulary
 
 The top-level package should teach durable subsurface and workflow language first:
@@ -44,6 +46,12 @@ Advanced namespaces:
 - `ophiolite_sdk.operators`
 - `ophiolite_sdk.platform`
 - `ophiolite_sdk.interop`
+
+The rule for those advanced namespaces is:
+
+- `analysis`, `avo`, `operators`, and `platform` remain platform-owned expert surfaces
+- `interop` is an explicit compatibility and transport lane, not the primary teaching surface
+- app-local TraceBoost transport names should not be copied into the Python SDK as public API
 
 ## Operator exposure
 
@@ -105,6 +113,21 @@ This keeps built-in workflow composition and external operator authoring visible
 - use `ophiolite_sdk.operators` for Python operator authoring helpers
 - use `ophiolite_sdk.platform` for platform/admin introspection such as the operation catalog
 - use `ophiolite_sdk.interop` for raw typed transport models and compatibility-facing shapes
+
+## Public versus compatibility lanes
+
+Teach the Python SDK in this order:
+
+- domain-first object graph and typed workflow helpers first
+- explicit advanced platform namespaces second
+- compatibility lanes only when the workflow genuinely needs them
+
+The current compatibility lanes are:
+
+- `ophiolite_sdk.interop` for raw transport-shaped models
+- `TraceBoostApp` and `SeismicDataset` for intentionally loose-store workflows outside project ownership
+
+Those are valid surfaces, but they are not the main public promise. They should stay clearly separated from the domain-first `ophiolite_sdk` story.
 
 ## Object-first workflow shape
 
@@ -217,6 +240,8 @@ If the workflow is intentionally outside project ownership, `TraceBoostApp` and 
 ## Relationship to the CLI
 
 The Python SDK and CLI should expose the same platform meanings. The SDK is the preferred builder surface. The CLI remains useful for scripting, CI, and operational tasks.
+
+Neither surface should be treated as a wrapper over TraceBoost desktop commands. All three may reach the same Rust-owned behavior, but the desktop command boundary remains app-local.
 
 ## Deprecations
 

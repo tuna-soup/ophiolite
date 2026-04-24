@@ -1,4 +1,6 @@
 export * from "./seismic/adapter";
+export * from "./capabilities";
+export * from "./telemetry";
 export * from "./seismic/mock/MockCanvasRenderer";
 export * from "./seismic/mock/sectionTransforms";
 export * from "./seismic/mock/wiggleGeometry";

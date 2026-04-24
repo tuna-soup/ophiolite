@@ -5,13 +5,13 @@ use memmap2::{Mmap, MmapMut, MmapOptions};
 use serde::{Deserialize, Serialize};
 
 use crate::error::SeismicStoreError;
-use crate::metadata::{
-    VolumeMetadata, generate_store_id, normalize_source_identity, normalize_volume_axes,
-    validate_vertical_axis,
-};
+use crate::metadata::VolumeMetadata;
 
 use super::tile_geometry::{TileCoord, TileGeometry};
-use super::volume_store::{OccupancyTile, TileBuffer, VolumeStoreReader, VolumeStoreWriter};
+use super::volume_store::{
+    OccupancyTile, PostStackStoreEnvelope, TileBuffer, VolumeStoreReader, VolumeStoreWriter,
+    normalize_poststack_volume_metadata, validate_poststack_store_envelope,
+};
 
 const MANIFEST_FILE: &str = "manifest.json";
 const AMPLITUDE_FILE: &str = "amplitude.bin";
@@ -36,9 +36,7 @@ pub struct TbvolManifest {
 
 impl TbvolManifest {
     pub fn new(mut volume: VolumeMetadata, tile_shape: [usize; 3], has_occupancy: bool) -> Self {
-        if volume.store_id.trim().is_empty() {
-            volume.store_id = generate_store_id();
-        }
+        normalize_poststack_volume_metadata(&mut volume);
         let geometry = TileGeometry::new(volume.shape, tile_shape);
         Self {
             format: "tbvol".to_string(),
@@ -57,11 +55,34 @@ impl TbvolManifest {
     pub fn tile_geometry(&self) -> TileGeometry {
         TileGeometry::new(self.volume.shape, self.tile_shape)
     }
+
+    pub(crate) fn envelope(&self) -> PostStackStoreEnvelope {
+        PostStackStoreEnvelope {
+            format: self.format.clone(),
+            version: self.version,
+            volume: self.volume.clone(),
+            tile_shape: self.tile_shape,
+            tile_grid_shape: self.tile_grid_shape,
+            sample_type: self.sample_type.clone(),
+            endianness: self.endianness.clone(),
+            has_occupancy: self.has_occupancy,
+        }
+    }
 }
 
 pub(crate) fn load_tbvol_manifest(
     manifest_path: &Path,
 ) -> Result<TbvolManifest, SeismicStoreError> {
+    let (manifest, changed) = inspect_tbvol_manifest(manifest_path)?;
+    if changed {
+        fs::write(manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
+    }
+    Ok(manifest)
+}
+
+pub(crate) fn inspect_tbvol_manifest(
+    manifest_path: &Path,
+) -> Result<(TbvolManifest, bool), SeismicStoreError> {
     let bytes = fs::read(manifest_path)?;
     let mut manifest: TbvolManifest = serde_json::from_slice(&bytes)?;
     let mut changed = false;
@@ -69,20 +90,10 @@ pub(crate) fn load_tbvol_manifest(
         manifest.version = 2;
         changed = true;
     }
-    if manifest.volume.store_id.trim().is_empty() {
-        manifest.volume.store_id = generate_store_id();
+    if normalize_poststack_volume_metadata(&mut manifest.volume) {
         changed = true;
     }
-    if normalize_source_identity(&mut manifest.volume.source) {
-        changed = true;
-    }
-    if normalize_volume_axes(&mut manifest.volume.axes) {
-        changed = true;
-    }
-    if changed {
-        fs::write(manifest_path, serde_json::to_vec_pretty(&manifest)?)?;
-    }
-    Ok(manifest)
+    Ok((manifest, changed))
 }
 
 pub fn recommended_default_tbvol_tile_target_mib(shape: [usize; 3]) -> u16 {
@@ -205,10 +216,8 @@ impl VolumeStoreReader for TbvolReader {
     }
 
     fn read_tile<'a>(&'a self, tile: TileCoord) -> Result<TileBuffer<'a>, SeismicStoreError> {
-        let offset = self.geometry.amplitude_offset(tile) as usize;
-        let end = offset + self.geometry.amplitude_tile_bytes() as usize;
-        let bytes = &self.amplitude_map[offset..end];
-        Ok(TileBuffer::Borrowed(bytes_as_f32_slice(bytes)?))
+        let bytes = &self.amplitude_map[self.geometry.amplitude_byte_range(tile)];
+        Ok(TileBuffer::borrowed(bytes_as_f32_slice(bytes)?))
     }
 
     fn read_tile_occupancy<'a>(
@@ -218,9 +227,9 @@ impl VolumeStoreReader for TbvolReader {
         let Some(map) = &self.occupancy_map else {
             return Ok(None);
         };
-        let offset = self.geometry.occupancy_offset(tile) as usize;
-        let end = offset + self.geometry.occupancy_tile_bytes() as usize;
-        Ok(Some(OccupancyTile::Borrowed(&map[offset..end])))
+        Ok(Some(OccupancyTile::borrowed(
+            &map[self.geometry.occupancy_byte_range(tile)],
+        )))
     }
 }
 
@@ -380,35 +389,28 @@ impl VolumeStoreWriter for TbvolWriter {
 }
 
 fn validate_manifest(manifest: &TbvolManifest) -> Result<(), SeismicStoreError> {
-    if manifest.format != "tbvol" {
+    validate_poststack_store_envelope(&manifest.envelope(), "tbvol")?;
+    let geometry = manifest.tile_geometry();
+    if manifest.amplitude_tile_bytes != geometry.amplitude_tile_bytes() {
         return Err(SeismicStoreError::Message(format!(
-            "unsupported tbvol format marker: {}",
-            manifest.format
+            "tbvol amplitude tile bytes mismatch: expected {}, found {}",
+            geometry.amplitude_tile_bytes(),
+            manifest.amplitude_tile_bytes
         )));
     }
-    if manifest.endianness != "little" {
+    if manifest.occupancy_tile_bytes
+        != manifest
+            .has_occupancy
+            .then(|| geometry.occupancy_tile_bytes())
+    {
         return Err(SeismicStoreError::Message(format!(
-            "unsupported tbvol endianness: {}",
-            manifest.endianness
+            "tbvol occupancy tile bytes mismatch: expected {:?}, found {:?}",
+            manifest
+                .has_occupancy
+                .then(|| geometry.occupancy_tile_bytes()),
+            manifest.occupancy_tile_bytes
         )));
     }
-    if manifest.sample_type != "f32" {
-        return Err(SeismicStoreError::Message(format!(
-            "unsupported tbvol sample type: {}",
-            manifest.sample_type
-        )));
-    }
-    if manifest.tile_shape[2] != manifest.volume.shape[2] {
-        return Err(SeismicStoreError::Message(
-            "tbvol tiles must span the full sample axis".to_string(),
-        ));
-    }
-    validate_vertical_axis(
-        &manifest.volume.axes.sample_axis_ms,
-        manifest.volume.shape[2],
-        "sample axis",
-    )
-    .map_err(SeismicStoreError::Message)?;
     Ok(())
 }
 
@@ -490,25 +492,29 @@ mod tests {
         let volume = test_volume_metadata([3, 4, 2]);
         let tile_shape = [2, 2, 2];
         let geometry = TileGeometry::new(volume.shape, tile_shape);
+        let layout = geometry.trace_major_layout();
         let writer = TbvolWriter::create(&root, volume.clone(), tile_shape, true).unwrap();
 
         for tile in geometry.iter_tiles() {
-            let origin = geometry.tile_origin(tile);
-            let effective = geometry.effective_tile_shape(tile);
+            let extent = geometry.tile_extent(tile);
             let mut amplitudes = vec![0.0_f32; geometry.amplitude_tile_len()];
             let mut occupancy = vec![0_u8; geometry.occupancy_tile_len()];
-            for local_i in 0..effective[0] {
-                for local_x in 0..effective[1] {
-                    let dst = (local_i * tile_shape[1]) + local_x;
-                    occupancy[dst] = if origin[0] + local_i == 1 && origin[1] + local_x == 2 {
-                        0
-                    } else {
-                        1
-                    };
-                    let trace_start = dst * tile_shape[2];
-                    for sample in 0..effective[2] {
-                        amplitudes[trace_start + sample] =
-                            amplitude_value(origin[0] + local_i, origin[1] + local_x, sample);
+            for local_i in 0..extent.trace_shape[0] {
+                for local_x in 0..extent.trace_shape[1] {
+                    let dst = layout.occupancy_index(local_i, local_x);
+                    occupancy[dst] =
+                        if extent.origin[0] + local_i == 1 && extent.origin[1] + local_x == 2 {
+                            0
+                        } else {
+                            1
+                        };
+                    let trace_start = layout.amplitude_trace_offset(local_i, local_x);
+                    for sample in 0..extent.samples {
+                        amplitudes[trace_start + sample] = amplitude_value(
+                            extent.origin[0] + local_i,
+                            extent.origin[1] + local_x,
+                            sample,
+                        );
                     }
                 }
             }
@@ -555,7 +561,7 @@ mod tests {
     fn test_volume_metadata(shape: [usize; 3]) -> VolumeMetadata {
         VolumeMetadata {
             kind: DatasetKind::Source,
-            store_id: generate_store_id(),
+            store_id: crate::metadata::generate_store_id(),
             source: SourceIdentity {
                 source_path: PathBuf::from("synthetic://tbvol-test"),
                 file_size: 0,

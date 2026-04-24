@@ -2,6 +2,14 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use ophiolite_operators::{
+    GatherProcessingCapabilities, PostStackNeighborhoodProcessingCapabilities,
+    ProcessingDependencyProfileSummary, ProcessingPlannerCostClass, ProcessingPlannerHintSummary,
+    ProcessingPlannerParallelEfficiencyClass, ProcessingPlannerPartitioningHint,
+    ProcessingSampleDependencyKind, ProcessingSpatialDependencyKind, SeismicAnalysisCapabilities,
+    SubvolumeProcessingCapabilities, TraceLocalProcessingCapabilities,
+};
+
 use crate::{SectionAxis, SeismicLayout};
 
 use super::{
@@ -189,6 +197,126 @@ pub struct ProcessingOperatorDependencyProfile {
     pub same_section_ephemeral_reuse_safe: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraceLocalProcessingCatalogMetadata {
+    pub operation_id: &'static str,
+    pub scope: ProcessingOperatorScope,
+    pub compatibility: ProcessingLayoutCompatibility,
+    pub dependency_profile_summary: ProcessingDependencyProfileSummary,
+    pub planner_hint_summary: ProcessingPlannerHintSummary,
+    pub capabilities: TraceLocalProcessingCapabilities,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PostStackNeighborhoodProcessingCatalogMetadata {
+    pub operation_id: &'static str,
+    pub scope: ProcessingOperatorScope,
+    pub compatibility: ProcessingLayoutCompatibility,
+    pub dependency_profile_summary: ProcessingDependencyProfileSummary,
+    pub planner_hint_summary: ProcessingPlannerHintSummary,
+    pub capabilities: PostStackNeighborhoodProcessingCapabilities,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GatherProcessingCatalogMetadata {
+    pub operation_id: &'static str,
+    pub scope: ProcessingOperatorScope,
+    pub compatibility: ProcessingLayoutCompatibility,
+    pub dependency_profile_summary: ProcessingDependencyProfileSummary,
+    pub planner_hint_summary: ProcessingPlannerHintSummary,
+    pub capabilities: GatherProcessingCapabilities,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubvolumeProcessingCatalogMetadata {
+    pub terminal_operation_id: &'static str,
+    pub compatibility: ProcessingLayoutCompatibility,
+    pub dependency_profile_summary: ProcessingDependencyProfileSummary,
+    pub planner_hint_summary: ProcessingPlannerHintSummary,
+    pub capabilities: SubvolumeProcessingCapabilities,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SeismicAnalysisCatalogMetadata {
+    pub analysis_kind: &'static str,
+    pub compatibility: ProcessingLayoutCompatibility,
+    pub output_kind: &'static str,
+    pub dependency_profile_summary: ProcessingDependencyProfileSummary,
+    pub planner_hint_summary: ProcessingPlannerHintSummary,
+    pub capabilities: SeismicAnalysisCapabilities,
+}
+
+fn planner_hint_summary(
+    preferred_partitioning: ProcessingPlannerPartitioningHint,
+    requires_full_volume: bool,
+    checkpoint_safe: bool,
+    memory_cost_class: ProcessingPlannerCostClass,
+    cpu_cost_class: ProcessingPlannerCostClass,
+    io_cost_class: ProcessingPlannerCostClass,
+    parallel_efficiency_class: ProcessingPlannerParallelEfficiencyClass,
+) -> ProcessingPlannerHintSummary {
+    ProcessingPlannerHintSummary {
+        preferred_partitioning,
+        requires_full_volume,
+        checkpoint_safe,
+        memory_cost_class,
+        cpu_cost_class,
+        io_cost_class,
+        parallel_efficiency_class,
+    }
+}
+
+fn dependency_profile_summary(
+    dependency_profile: ProcessingOperatorDependencyProfile,
+) -> ProcessingDependencyProfileSummary {
+    let (sample_dependency, sample_window_ms_hint) =
+        processing_sample_dependency_summary(dependency_profile.sample_dependency);
+    ProcessingDependencyProfileSummary {
+        deterministic: dependency_profile.deterministic,
+        sample_dependency,
+        sample_window_ms_hint,
+        spatial_dependency: processing_spatial_dependency_summary(
+            dependency_profile.spatial_dependency,
+        ),
+        inline_radius: dependency_profile.inline_radius,
+        crossline_radius: dependency_profile.crossline_radius,
+        same_section_ephemeral_reuse_safe: dependency_profile.same_section_ephemeral_reuse_safe,
+    }
+}
+
+fn processing_sample_dependency_summary(
+    dependency: ProcessingSampleDependency,
+) -> (ProcessingSampleDependencyKind, Option<f32>) {
+    match dependency {
+        ProcessingSampleDependency::Pointwise => (ProcessingSampleDependencyKind::Pointwise, None),
+        ProcessingSampleDependency::BoundedWindow { window_ms_hint } => (
+            ProcessingSampleDependencyKind::BoundedWindow,
+            Some(window_ms_hint),
+        ),
+        ProcessingSampleDependency::WholeTrace => {
+            (ProcessingSampleDependencyKind::WholeTrace, None)
+        }
+    }
+}
+
+fn processing_spatial_dependency_summary(
+    dependency: ProcessingSpatialDependency,
+) -> ProcessingSpatialDependencyKind {
+    match dependency {
+        ProcessingSpatialDependency::SingleTrace => ProcessingSpatialDependencyKind::SingleTrace,
+        ProcessingSpatialDependency::SectionNeighborhood => {
+            ProcessingSpatialDependencyKind::SectionNeighborhood
+        }
+        ProcessingSpatialDependency::GatherNeighborhood => {
+            ProcessingSpatialDependencyKind::GatherNeighborhood
+        }
+        ProcessingSpatialDependency::ExternalVolumePointwise => {
+            ProcessingSpatialDependencyKind::ExternalVolumePointwise
+        }
+        ProcessingSpatialDependency::Global => ProcessingSpatialDependencyKind::Global,
+    }
+}
+
 impl TraceLocalProcessingOperation {
     pub fn operator_id(&self) -> &'static str {
         match self {
@@ -291,6 +419,75 @@ impl TraceLocalProcessingOperation {
                 inline_radius: 0,
                 crossline_radius: 0,
                 same_section_ephemeral_reuse_safe: true,
+            },
+        }
+    }
+
+    pub fn catalog_metadata(&self) -> TraceLocalProcessingCatalogMetadata {
+        let dependency_profile = self.dependency_profile();
+        let planner_hint_summary = match self {
+            Self::AmplitudeScalar { .. } => planner_hint_summary(
+                ProcessingPlannerPartitioningHint::TileGroup,
+                false,
+                true,
+                ProcessingPlannerCostClass::Low,
+                ProcessingPlannerCostClass::Low,
+                ProcessingPlannerCostClass::Low,
+                ProcessingPlannerParallelEfficiencyClass::High,
+            ),
+            Self::TraceRmsNormalize | Self::PhaseRotation { .. } => planner_hint_summary(
+                ProcessingPlannerPartitioningHint::TileGroup,
+                false,
+                true,
+                ProcessingPlannerCostClass::Medium,
+                ProcessingPlannerCostClass::Medium,
+                ProcessingPlannerCostClass::Low,
+                ProcessingPlannerParallelEfficiencyClass::High,
+            ),
+            Self::AgcRms { .. } => planner_hint_summary(
+                ProcessingPlannerPartitioningHint::TileGroup,
+                false,
+                true,
+                ProcessingPlannerCostClass::Medium,
+                ProcessingPlannerCostClass::Medium,
+                ProcessingPlannerCostClass::Low,
+                ProcessingPlannerParallelEfficiencyClass::High,
+            ),
+            Self::Envelope
+            | Self::InstantaneousPhase
+            | Self::InstantaneousFrequency
+            | Self::Sweetness
+            | Self::LowpassFilter { .. }
+            | Self::HighpassFilter { .. }
+            | Self::BandpassFilter { .. } => planner_hint_summary(
+                ProcessingPlannerPartitioningHint::TileGroup,
+                false,
+                true,
+                ProcessingPlannerCostClass::Medium,
+                ProcessingPlannerCostClass::High,
+                ProcessingPlannerCostClass::Low,
+                ProcessingPlannerParallelEfficiencyClass::Medium,
+            ),
+            Self::VolumeArithmetic { .. } => planner_hint_summary(
+                ProcessingPlannerPartitioningHint::TileGroup,
+                false,
+                true,
+                ProcessingPlannerCostClass::Medium,
+                ProcessingPlannerCostClass::Medium,
+                ProcessingPlannerCostClass::Medium,
+                ProcessingPlannerParallelEfficiencyClass::High,
+            ),
+        };
+
+        TraceLocalProcessingCatalogMetadata {
+            operation_id: self.operator_id(),
+            scope: self.scope(),
+            compatibility: self.compatibility(),
+            dependency_profile_summary: dependency_profile_summary(dependency_profile),
+            planner_hint_summary,
+            capabilities: TraceLocalProcessingCapabilities {
+                checkpoint_supported: true,
+                secondary_volume_input_supported: matches!(self, Self::VolumeArithmetic { .. }),
             },
         }
     }
@@ -413,6 +610,27 @@ impl SubvolumeCropOperation {
             same_section_ephemeral_reuse_safe: false,
         }
     }
+
+    pub fn catalog_metadata(&self) -> SubvolumeProcessingCatalogMetadata {
+        SubvolumeProcessingCatalogMetadata {
+            terminal_operation_id: "crop",
+            compatibility: self.compatibility(),
+            dependency_profile_summary: dependency_profile_summary(self.dependency_profile()),
+            planner_hint_summary: planner_hint_summary(
+                ProcessingPlannerPartitioningHint::FullVolume,
+                true,
+                true,
+                ProcessingPlannerCostClass::Low,
+                ProcessingPlannerCostClass::Low,
+                ProcessingPlannerCostClass::Medium,
+                ProcessingPlannerParallelEfficiencyClass::High,
+            ),
+            capabilities: SubvolumeProcessingCapabilities {
+                trace_local_prefix_supported: true,
+                terminal_only: true,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -510,6 +728,27 @@ impl PostStackNeighborhoodProcessingOperation {
             },
         }
     }
+
+    pub fn catalog_metadata(&self) -> PostStackNeighborhoodProcessingCatalogMetadata {
+        PostStackNeighborhoodProcessingCatalogMetadata {
+            operation_id: self.operator_id(),
+            scope: self.scope(),
+            compatibility: self.compatibility(),
+            dependency_profile_summary: dependency_profile_summary(self.dependency_profile()),
+            planner_hint_summary: planner_hint_summary(
+                ProcessingPlannerPartitioningHint::TileGroup,
+                false,
+                true,
+                ProcessingPlannerCostClass::High,
+                ProcessingPlannerCostClass::High,
+                ProcessingPlannerCostClass::High,
+                ProcessingPlannerParallelEfficiencyClass::Low,
+            ),
+            capabilities: PostStackNeighborhoodProcessingCapabilities {
+                trace_local_prefix_supported: true,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, TS)]
@@ -594,6 +833,70 @@ impl GatherProcessingOperation {
                 }
             }
         }
+    }
+
+    pub fn catalog_metadata(&self) -> GatherProcessingCatalogMetadata {
+        let planner_hint_summary = match self {
+            Self::OffsetMute { .. } => planner_hint_summary(
+                ProcessingPlannerPartitioningHint::GatherGroup,
+                false,
+                true,
+                ProcessingPlannerCostClass::Low,
+                ProcessingPlannerCostClass::Low,
+                ProcessingPlannerCostClass::Low,
+                ProcessingPlannerParallelEfficiencyClass::Medium,
+            ),
+            Self::NmoCorrection { .. } | Self::StretchMute { .. } => planner_hint_summary(
+                ProcessingPlannerPartitioningHint::GatherGroup,
+                false,
+                true,
+                ProcessingPlannerCostClass::Medium,
+                ProcessingPlannerCostClass::High,
+                ProcessingPlannerCostClass::Medium,
+                ProcessingPlannerParallelEfficiencyClass::Medium,
+            ),
+        };
+
+        GatherProcessingCatalogMetadata {
+            operation_id: self.operator_id(),
+            scope: self.scope(),
+            compatibility: self.compatibility(),
+            dependency_profile_summary: dependency_profile_summary(self.dependency_profile()),
+            planner_hint_summary,
+            capabilities: GatherProcessingCapabilities {
+                trace_local_prefix_supported: true,
+            },
+        }
+    }
+}
+
+pub fn velocity_scan_catalog_metadata() -> SeismicAnalysisCatalogMetadata {
+    SeismicAnalysisCatalogMetadata {
+        analysis_kind: "velocity_scan",
+        compatibility: ProcessingLayoutCompatibility::PreStackOffsetOnly,
+        output_kind: "semblance_panel",
+        dependency_profile_summary: ProcessingDependencyProfileSummary {
+            deterministic: true,
+            sample_dependency: ProcessingSampleDependencyKind::WholeTrace,
+            sample_window_ms_hint: None,
+            spatial_dependency: ProcessingSpatialDependencyKind::GatherNeighborhood,
+            inline_radius: 0,
+            crossline_radius: 0,
+            same_section_ephemeral_reuse_safe: false,
+        },
+        planner_hint_summary: planner_hint_summary(
+            ProcessingPlannerPartitioningHint::GatherGroup,
+            false,
+            false,
+            ProcessingPlannerCostClass::Medium,
+            ProcessingPlannerCostClass::High,
+            ProcessingPlannerCostClass::Medium,
+            ProcessingPlannerParallelEfficiencyClass::Medium,
+        ),
+        capabilities: SeismicAnalysisCapabilities {
+            preview_supported: false,
+            autopick_output_supported: true,
+        },
     }
 }
 

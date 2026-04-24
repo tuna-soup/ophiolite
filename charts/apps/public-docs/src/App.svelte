@@ -6,359 +6,151 @@
     SeismicGatherChart,
     SeismicSectionChart,
     SurveyMapChart,
-    WellCorrelationPanelChart,
-    type RockPhysicsCrossplotData,
-    type SeismicGatherData,
-    type SeismicSectionData,
-    type SurveyMapData,
-    type WellCorrelationPanelData
+    WellCorrelationPanelChart
   } from "@ophiolite/charts";
-
-  const launchFamilies = [
-    {
-      id: "seismic-section",
-      title: "Seismic Section",
-      summary: "2D seismic sections with viewport control, overlays, and interpretation-grade interaction."
-    },
-    {
-      id: "seismic-gather",
-      title: "Prestack Gather",
-      summary: "Gather-native seismic displays without forcing consumers through a generic series DSL."
-    },
-    {
-      id: "survey-map",
-      title: "Survey Map",
-      summary: "Plan-view charts for survey outlines, scalar grids, well locations, and trajectories."
-    },
-    {
-      id: "rock-physics",
-      title: "Rock Physics Crossplot",
-      summary: "Template-scoped crossplots for petrophysical and rock-physics interpretation."
-    },
-    {
-      id: "well-panel",
-      title: "Well Correlation Panel",
-      summary: "Track-oriented well panels for multi-well comparison and correlation workflows."
-    }
-  ] as const;
-
-  const exampleCatalog = [
-    {
-      family: "Seismic Section",
-      simple: "docs/examples/seismic-section-simple.md",
-      production: "docs/examples/seismic-section-production.md"
-    },
-    {
-      family: "Prestack Gather",
-      simple: "docs/examples/seismic-gather-simple.md",
-      production: "docs/examples/seismic-gather-production.md"
-    },
-    {
-      family: "Survey Map",
-      simple: "docs/examples/survey-map-simple.md",
-      production: "docs/examples/survey-map-production.md"
-    },
-    {
-      family: "Rock Physics Crossplot",
-      simple: "docs/examples/rock-physics-crossplot-simple.md",
-      production: "docs/examples/rock-physics-crossplot-production.md"
-    },
-    {
-      family: "Well Correlation Panel",
-      simple: "docs/examples/well-correlation-panel-simple.md",
-      production: "docs/examples/well-correlation-panel-production.md"
-    }
-  ] as const;
-
-  const previewFamilies = [
-    "Volume Interpretation",
-    "AVO Response",
-    "AVO Intercept-Gradient Crossplot",
-    "AVO Chi Projection Histogram"
-  ] as const;
-
-  const section: SeismicSectionData = {
-    axis: "inline",
-    coordinate: {
-      index: 111,
-      value: 111
-    },
-    horizontalAxis: Float64Array.from([875, 876, 877, 878, 879, 880]),
-    sampleAxis: Float32Array.from([0, 4, 8, 12, 16, 20]),
-    amplitudes: Float32Array.from([
-      0.18, -0.05, 0.34, 0.26, -0.16, 0.09,
-      0.1, 0.02, -0.14, 0.42, 0.16, -0.22,
-      -0.22, 0.18, 0.12, -0.08, 0.28, 0.05,
-      0.03, 0.32, 0.2, -0.14, 0.08, -0.18,
-      -0.15, 0.04, 0.24, 0.31, -0.1, 0.14,
-      0.06, -0.11, 0.19, 0.27, 0.12, -0.06
-    ]),
-    dimensions: {
-      traces: 6,
-      samples: 6
-    },
-    units: {
-      horizontal: "xline",
-      sample: "ms",
-      amplitude: "arb"
-    },
-    presentation: {
-      title: "Inline 111",
-      sampleAxisLabel: "Time"
-    }
-  };
-
-  const gather: SeismicGatherData = {
-    label: "Gather 042",
-    gatherAxisKind: "offset",
-    sampleDomain: "time",
-    horizontalAxis: Float64Array.from([250, 500, 750, 1000, 1250, 1500]),
-    sampleAxis: Float32Array.from([0, 4, 8, 12, 16, 20]),
-    amplitudes: Float32Array.from([
-      0.08, 0.16, 0.24, 0.18, 0.1, 0.02,
-      -0.04, 0.12, 0.3, 0.44, 0.36, 0.18,
-      -0.14, 0.05, 0.22, 0.38, 0.28, 0.12,
-      -0.18, -0.04, 0.16, 0.31, 0.22, 0.08,
-      -0.22, -0.08, 0.1, 0.24, 0.2, 0.06,
-      -0.16, -0.02, 0.08, 0.17, 0.12, 0.02
-    ]),
-    dimensions: {
-      traces: 6,
-      samples: 6
-    },
-    units: {
-      horizontal: "m",
-      sample: "ms",
-      amplitude: "arb"
-    },
-    displayDefaults: {
-      gain: 1.4
-    }
-  };
-
-  const surveyMap: SurveyMapData = {
-    name: "North Survey",
-    xLabel: "Easting",
-    yLabel: "Northing",
-    coordinateUnit: "m",
-    background: "#f4f2ee",
-    areas: [
-      {
-        name: "North Survey",
-        points: [
-          { x: 120, y: 160 },
-          { x: 2060, y: 180 },
-          { x: 2120, y: 1540 },
-          { x: 180, y: 1620 }
-        ],
-        stroke: "rgba(39, 79, 68, 0.9)",
-        fill: "rgba(39, 79, 68, 0.08)"
-      }
-    ],
-    wells: [
-      {
-        name: "Well A",
-        position: { x: 420, y: 480 },
-        trajectory: [
-          { x: 420, y: 480 },
-          { x: 520, y: 620 },
-          { x: 610, y: 760 }
-        ],
-        color: "#0e7490"
-      },
-      {
-        name: "Well B",
-        position: { x: 1240, y: 760 },
-        trajectory: [
-          { x: 1240, y: 760 },
-          { x: 1320, y: 860 },
-          { x: 1400, y: 980 }
-        ],
-        color: "#9a3412"
-      },
-      {
-        name: "Well C",
-        position: { x: 1680, y: 1180 },
-        trajectory: [
-          { x: 1680, y: 1180 },
-          { x: 1750, y: 1280 },
-          { x: 1820, y: 1390 }
-        ],
-        color: "#4d7c0f"
-      }
-    ]
-  };
-
-  const rockPhysics: RockPhysicsCrossplotData = {
-    templateId: "vp-vs-vs-ai",
-    title: "Vp/Vs vs AI",
-    subtitle: "Small public model example",
-    groups: [
-      { name: "Well A", color: "#0f766e" },
-      { name: "Well B", color: "#b45309", symbol: "diamond" }
-    ],
-    points: [
-      { x: 5850, y: 1.62, group: "Well A", depthM: 2410 },
-      { x: 6120, y: 1.68, group: "Well A", depthM: 2422 },
-      { x: 6490, y: 1.74, group: "Well A", depthM: 2436 },
-      { x: 6820, y: 1.81, group: "Well B", depthM: 2448 },
-      { x: 7180, y: 1.89, group: "Well B", depthM: 2462 },
-      { x: 7560, y: 1.96, group: "Well B", depthM: 2474 }
-    ]
-  };
-
-  const wellPanel: WellCorrelationPanelData = {
-    name: "Well Correlation",
-    depthDomain: {
-      start: 1500,
-      end: 1620,
-      unit: "m",
-      label: "MD"
-    },
-    background: "#faf7f2",
-    wells: [
-      {
-        name: "Well A",
-        depthDatum: "md",
-        curves: [
-          {
-            name: "GR",
-            color: "#1f2937",
-            values: Float32Array.from([72, 86, 102, 118, 94, 88, 76]),
-            depths: Float32Array.from([1500, 1520, 1540, 1560, 1580, 1600, 1620]),
-            unit: "API",
-            axis: {
-              min: 0,
-              max: 180,
-              label: "GR",
-              unit: "API"
-            }
-          }
-        ],
-        tops: [
-          {
-            name: "Reservoir Top",
-            depth: 1540,
-            color: "#b45309",
-            source: "picked"
-          }
-        ]
-      },
-      {
-        name: "Well B",
-        depthDatum: "md",
-        curves: [
-          {
-            name: "GR",
-            color: "#334155",
-            values: Float32Array.from([64, 78, 92, 108, 116, 104, 90]),
-            depths: Float32Array.from([1500, 1520, 1540, 1560, 1580, 1600, 1620]),
-            unit: "API",
-            axis: {
-              min: 0,
-              max: 180,
-              label: "GR",
-              unit: "API"
-            }
-          }
-        ],
-        tops: [
-          {
-            name: "Reservoir Top",
-            depth: 1546,
-            color: "#b45309",
-            source: "picked"
-          }
-        ]
-      }
-    ]
-  };
-
-  const sectionExample = `import { SeismicSectionChart, type SeismicSectionData } from "@ophiolite/charts";
-
-const section: SeismicSectionData = {
-  axis: "inline",
-  coordinate: { index: 111, value: 111 },
-  horizontalAxis: Float64Array.from([875, 876, 877, 878]),
-  sampleAxis: Float32Array.from([0, 4, 8, 12]),
-  amplitudes: Float32Array.from([
-    0.2, -0.1, 0.4, 0.3,
-    0.1, 0.0, -0.2, 0.5,
-    -0.3, 0.2, 0.1, -0.1,
-    0.0, 0.4, 0.2, -0.2
-  ]),
-  dimensions: { traces: 4, samples: 4 }
-};`;
-
-  const adapterExample = `import { adaptOphioliteSectionViewToSeismicSectionData } from "@ophiolite/charts/adapters/ophiolite";
-
-const section = adaptOphioliteSectionViewToSeismicSectionData(sectionView);`;
+  import { gather, rockPhysics, section, surveyMap, wellPanel } from "./lib/demo-data";
+  import {
+    adapterExample,
+    docsCatalog,
+    exampleCatalog,
+    launchFamilies,
+    manifestSnippet,
+    navigation,
+    packageManifestCatalog,
+    sectionExample,
+    startHereSteps,
+    supportTiers,
+    surfaceCatalog,
+    traceboostFlow
+  } from "./lib/site-data";
 </script>
 
 <svelte:head>
   <title>Ophiolite Charts Docs</title>
   <meta
     name="description"
-    content="Public docs surface for Ophiolite Charts, a Svelte-first SDK for specialized subsurface chart components."
+    content="Public docs surface for Ophiolite Charts, the embeddable chart SDK inside Ophiolite."
   />
 </svelte:head>
 
 <div class="docs-shell">
-  <header class="hero" data-testid="hero">
+  <header class="topbar">
+    <p class="brand">Ophiolite Charts</p>
+    <nav aria-label="Primary">
+      {#each navigation as item (item.href)}
+        <a href={item.href}>{item.label}</a>
+      {/each}
+    </nav>
+  </header>
+
+  <section class="hero" data-testid="hero">
     <div class="hero-copy">
-      <p class="eyebrow">Ophiolite Charts</p>
-      <h1>Svelte-first charts for subsurface applications.</h1>
+      <p class="eyebrow">Embeddable Subsurface SDK</p>
+      <h1>Teach charts first. Keep adapters explicit. Treat TraceBoost as a reference consumer.</h1>
       <p class="summary">
-        Specialized chart components for seismic, survey-map, rock-physics, and well-panel
-        workflows. Public models stay domain-specific and readable. Ophiolite transport adapters
-        remain explicit.
+        Ophiolite Charts is the embeddable visualization SDK inside Ophiolite. The default docs
+        path starts with <code>@ophiolite/charts</code>, adds adapters only when the source data
+        begins as Ophiolite DTOs, and keeps preview and internal surfaces clearly labeled.
       </p>
       <div class="hero-actions">
-        <a href="#getting-started">Getting Started</a>
-        <a href="#examples">Examples</a>
-        <a href="#families">Chart Families</a>
+        <a href="#start-here">Start Here</a>
+        <a href="#recipes">Recipes</a>
+        <a href="#manifests">Module Manifests</a>
       </div>
     </div>
     <div class="hero-note">
-      <p>Public boundary</p>
+      <p class="eyebrow">Boundary Snapshot</p>
       <ul>
-        <li>`@ophiolite/charts` for launch surfaces</li>
-        <li>`@ophiolite/charts/adapters/ophiolite` for DTO adaptation</li>
-        <li>No Ophiolite transport fields in the default API story</li>
+        <li><code>@ophiolite/charts</code> is the launch surface.</li>
+        <li><code>@ophiolite/charts/adapters/ophiolite</code> is explicit integration glue.</li>
+        <li><code>@ophiolite/charts/preview</code> stays opt-in.</li>
+        <li>Lower-level packages remain implementation layers.</li>
       </ul>
+      <div class="callout">
+        <p class="callout-label">Validator</p>
+        <code>bun scripts/validate-module-manifests.ts</code>
+      </div>
     </div>
-  </header>
+  </section>
 
   <main class="content">
-    <section id="getting-started" class="panel" data-testid="getting-started">
+    <section id="start-here" class="panel" data-testid="getting-started">
       <div class="section-heading">
-        <p class="eyebrow">Getting Started</p>
-        <h2>One package for the default path</h2>
+        <p class="eyebrow">Start Here</p>
+        <h2>The default path is wrapper first, adapters second, TraceBoost third.</h2>
       </div>
-      <div class="copy-grid">
-        <div>
-          <p>
-            Start with `@ophiolite/charts` and the neutral public model types. The launch API is
-            chart-family specific on purpose. It should feel like a subsurface SDK, not like a
-            generic chart config DSL.
-          </p>
-          <pre><code>{sectionExample}</code></pre>
+      <div class="start-grid">
+        <div class="step-grid">
+          {#each startHereSteps as step (step.title)}
+            <article class="step-card">
+              <h3>{step.title}</h3>
+              <p>{step.summary}</p>
+            </article>
+          {/each}
         </div>
-        <div>
-          <p>
-            If your source data begins as an Ophiolite DTO, keep that concern explicit. The adapter
-            should emit the same neutral public model that a non-Ophiolite consumer could author by
-            hand.
-          </p>
-          <pre><code>{adapterExample}</code></pre>
+        <div class="code-stack">
+          <article class="code-card">
+            <h3>Root package first</h3>
+            <pre><code>{sectionExample}</code></pre>
+          </article>
+          <article class="code-card">
+            <h3>Adapters only when needed</h3>
+            <pre><code>{adapterExample}</code></pre>
+          </article>
         </div>
       </div>
     </section>
 
-    <section id="examples" class="panel" data-testid="examples">
+    <section id="support-tiers" class="panel">
       <div class="section-heading">
-        <p class="eyebrow">Canonical Examples</p>
-        <h2>Every launch family ships with simple and production docs</h2>
+        <p class="eyebrow">Support Tiers</p>
+        <h2>Small vocabulary, explicit boundaries.</h2>
+      </div>
+      <div class="tier-grid">
+        {#each supportTiers as item (item.tier)}
+          <article class="tier-card">
+            <div class="tier-header">
+              <h3>{item.tier}</h3>
+              <p class="tier-stats">{item.packageCount} packages, {item.entrypointCount} entrypoints</p>
+            </div>
+            <p>{item.summary}</p>
+            <p class="tier-examples">{item.examples}</p>
+            {#if item.packages.length > 0}
+              <p class="tier-packages">{item.packages.join(", ")}</p>
+            {/if}
+          </article>
+        {/each}
+      </div>
+      <div class="surface-table" role="table" aria-label="Documented package surfaces">
+        <div class="surface-row surface-head" role="row">
+          <span role="columnheader">Surface</span>
+          <span role="columnheader">Tier</span>
+          <span role="columnheader">Role</span>
+        </div>
+        {#each surfaceCatalog as surface (surface.surface)}
+          <div class="surface-row" role="row">
+            <span role="cell"><code>{surface.surface}</code></span>
+            <span role="cell"><span class="badge">{surface.tier}</span></span>
+            <span role="cell">{surface.role}</span>
+          </div>
+        {/each}
+      </div>
+    </section>
+
+    <section id="recipes" class="panel" data-testid="examples">
+      <div class="section-heading">
+        <p class="eyebrow">Docs Map</p>
+        <h2>Start Here, Recipes, then family examples.</h2>
+      </div>
+      <div class="docs-grid">
+        {#each docsCatalog as item (item.path)}
+          <article class="docs-card">
+            <p class="docs-group">{item.group}</p>
+            <h3>{item.title}</h3>
+            <p>{item.summary}</p>
+            <p class="docs-path"><code>{item.path}</code></p>
+          </article>
+        {/each}
       </div>
       <div class="example-matrix">
         {#each exampleCatalog as item (item.family)}
@@ -374,7 +166,7 @@ const section = adaptOphioliteSectionViewToSeismicSectionData(sectionView);`;
     <section class="panel" data-testid="seismic-showcase">
       <div class="section-heading">
         <p class="eyebrow">Launch Surface</p>
-        <h2>Live examples using neutral public data models</h2>
+        <h2>Live examples built from neutral public data models.</h2>
       </div>
       <div class="showcase-grid">
         <div class="showcase-card">
@@ -393,7 +185,7 @@ const section = adaptOphioliteSectionViewToSeismicSectionData(sectionView);`;
     <section id="families" class="panel" data-testid="families">
       <div class="section-heading">
         <p class="eyebrow">Launch Families</p>
-        <h2>Focused chart families, not a generic chart kitchen sink</h2>
+        <h2>Focused chart families instead of a generic chart kitchen sink.</h2>
       </div>
       <div class="family-grid">
         {#each launchFamilies as family (family.id)}
@@ -407,8 +199,8 @@ const section = adaptOphioliteSectionViewToSeismicSectionData(sectionView);`;
 
     <section class="panel" data-testid="family-previews">
       <div class="section-heading">
-        <p class="eyebrow">Family Previews</p>
-        <h2>Launch families beyond seismic</h2>
+        <p class="eyebrow">Launch Preview</p>
+        <h2>Other launch families stay in the same public-first story.</h2>
       </div>
       <div class="launch-preview-grid">
         <div class="mini-card">
@@ -426,20 +218,60 @@ const section = adaptOphioliteSectionViewToSeismicSectionData(sectionView);`;
       </div>
     </section>
 
-    <section class="panel" data-testid="preview-surface">
+    <section id="traceboost" class="panel">
       <div class="section-heading">
-        <p class="eyebrow">Preview</p>
-        <h2>Preview families move behind explicit subpaths</h2>
+        <p class="eyebrow">TraceBoost</p>
+        <h2>The first-party app is a reference consumer, not the SDK boundary.</h2>
       </div>
-      <p class="preview-copy">
-        Preview charts such as volume interpretation and AVO stay available, but they should not
-        widen the default product promise. Consume them from `@ophiolite/charts/preview`.
+      <div class="traceboost-grid">
+        <div>
+          <p>
+            The intended consumption model is: TraceBoost owns workflow and transport, while
+            charts owns chart-native rendering, viewport behavior, and wrapper APIs.
+          </p>
+          <p>
+            That is why the docs teach <code>@ophiolite/charts</code> first and only point to
+            TraceBoost after the public surfaces are already clear.
+          </p>
+        </div>
+        <pre class="flow-card"><code>{traceboostFlow}</code></pre>
+      </div>
+    </section>
+
+    <section id="manifests" class="panel">
+      <div class="section-heading">
+        <p class="eyebrow">Module Manifests</p>
+        <h2>Small package manifests make support tiers and public intent visible.</h2>
+      </div>
+      <p class="manifest-summary">
+        The validator emits a normalized catalog at
+        <code>manifests/generated/module-catalog.json</code> and a docs-facing TypeScript mirror at
+        <code>apps/public-docs/src/lib/generated/manifest-catalog.ts</code>.
       </p>
-      <ul class="preview-list">
-        {#each previewFamilies as family (family)}
-          <li>{family}</li>
-        {/each}
-      </ul>
+      <div class="manifest-grid">
+        <article class="code-card">
+          <h3>Manifest shape</h3>
+          <pre><code>{manifestSnippet}</code></pre>
+        </article>
+        <article class="manifest-card">
+          <h3>Package catalog</h3>
+          <div class="manifest-list">
+            {#each packageManifestCatalog as item (item.packageName)}
+              <div class="manifest-item">
+                <div>
+                  <p class="manifest-name">{item.packageName}</p>
+                  <p class="manifest-path"><code>{item.manifestPath}</code></p>
+                  <p class="manifest-description">{item.description}</p>
+                </div>
+                <div class="manifest-meta">
+                  <span class="badge">{item.tier}</span>
+                  <span class="meta-chip">{item.layer}</span>
+                </div>
+              </div>
+            {/each}
+          </div>
+        </article>
+      </div>
     </section>
   </main>
 </div>
@@ -448,9 +280,9 @@ const section = adaptOphioliteSectionViewToSeismicSectionData(sectionView);`;
   :global(body) {
     margin: 0;
     background:
-      radial-gradient(circle at top left, rgba(204, 230, 221, 0.7), transparent 35%),
-      linear-gradient(180deg, #f6f4ee 0%, #efe8d8 100%);
-    color: #16332d;
+      radial-gradient(circle at top left, rgba(202, 223, 217, 0.72), transparent 34%),
+      linear-gradient(180deg, #f7f4ed 0%, #eee6d6 100%);
+    color: #15322d;
     font-family: "Aptos", "Segoe UI", sans-serif;
   }
 
@@ -461,22 +293,67 @@ const section = adaptOphioliteSectionViewToSeismicSectionData(sectionView);`;
 
   .docs-shell {
     min-height: 100vh;
-    padding: 32px;
+    padding: 24px;
+  }
+
+  .topbar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 16px 24px;
+    align-items: center;
+    max-width: 1380px;
+    margin: 0 auto 22px;
+    padding: 16px 22px;
+    border: 1px solid rgba(21, 50, 45, 0.1);
+    border-radius: 22px;
+    background: rgba(255, 251, 243, 0.75);
+    box-shadow: 0 16px 40px rgba(53, 73, 54, 0.06);
+    backdrop-filter: blur(10px);
+  }
+
+  .topbar nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .topbar a,
+  .hero-actions a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 14px;
+    border-radius: 999px;
+    color: inherit;
+    text-decoration: none;
+  }
+
+  .topbar a {
+    background: rgba(21, 50, 45, 0.06);
+  }
+
+  .brand {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
   }
 
   .hero {
     display: grid;
     gap: 24px;
-    grid-template-columns: minmax(0, 1.8fr) minmax(280px, 0.9fr);
+    grid-template-columns: minmax(0, 1.8fr) minmax(280px, 0.95fr);
     align-items: start;
-    margin: 0 auto 28px;
     max-width: 1380px;
+    margin: 0 auto 28px;
   }
 
   .hero-copy,
   .hero-note,
   .panel {
-    border: 1px solid rgba(22, 51, 45, 0.12);
+    border: 1px solid rgba(21, 50, 45, 0.12);
     border-radius: 28px;
     background: rgba(255, 252, 246, 0.88);
     box-shadow: 0 20px 48px rgba(53, 73, 54, 0.08);
@@ -502,23 +379,35 @@ const section = adaptOphioliteSectionViewToSeismicSectionData(sectionView);`;
   h1,
   h2,
   h3,
-  p {
+  p,
+  ul {
     margin: 0;
   }
 
   h1 {
     max-width: 12ch;
-    font-size: clamp(2.7rem, 6vw, 5.1rem);
+    font-size: clamp(2.6rem, 5.8vw, 5rem);
     line-height: 0.95;
     letter-spacing: -0.05em;
   }
 
+  h2 {
+    font-size: clamp(1.8rem, 3vw, 2.6rem);
+    line-height: 1;
+    letter-spacing: -0.04em;
+  }
+
+  h3 {
+    font-size: 1.08rem;
+    line-height: 1.2;
+  }
+
   .summary {
-    max-width: 58ch;
+    max-width: 60ch;
     margin-top: 18px;
-    color: rgba(22, 51, 45, 0.86);
-    font-size: 1.05rem;
-    line-height: 1.6;
+    color: rgba(21, 50, 45, 0.86);
+    font-size: 1.04rem;
+    line-height: 1.65;
   }
 
   .hero-actions {
@@ -529,27 +418,32 @@ const section = adaptOphioliteSectionViewToSeismicSectionData(sectionView);`;
   }
 
   .hero-actions a {
-    padding: 12px 18px;
-    border-radius: 999px;
-    background: #16332d;
-    color: #f7f3eb;
-    text-decoration: none;
+    background: #21483f;
+    color: #fff7ea;
     font-weight: 600;
   }
 
-  .hero-note p {
-    font-size: 0.95rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-  }
-
   .hero-note ul {
-    margin: 16px 0 0;
     padding-left: 18px;
     display: grid;
     gap: 10px;
-    line-height: 1.5;
+    color: rgba(21, 50, 45, 0.84);
+    line-height: 1.55;
+  }
+
+  .callout {
+    margin-top: 18px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: rgba(143, 76, 23, 0.08);
+  }
+
+  .callout-label {
+    margin-bottom: 8px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
   }
 
   .content {
@@ -560,105 +454,234 @@ const section = adaptOphioliteSectionViewToSeismicSectionData(sectionView);`;
   }
 
   .panel {
-    padding: 28px 30px;
+    padding: 30px;
   }
 
   .section-heading {
-    margin-bottom: 18px;
-  }
-
-  .section-heading h2 {
-    font-size: clamp(1.7rem, 3vw, 2.4rem);
-    line-height: 1.05;
-  }
-
-  .copy-grid,
-  .showcase-grid,
-  .launch-preview-grid,
-  .example-matrix {
     display: grid;
-    gap: 18px;
+    gap: 8px;
+    margin-bottom: 22px;
   }
 
-  .copy-grid {
+  .start-grid,
+  .traceboost-grid,
+  .manifest-grid {
+    display: grid;
+    gap: 20px;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .copy-grid p,
-  .preview-copy,
-  .family-card p,
-  .showcase-card p,
-  .example-card p {
-    color: rgba(22, 51, 45, 0.82);
-    line-height: 1.6;
+  .step-grid,
+  .code-stack,
+  .tier-grid,
+  .docs-grid,
+  .example-matrix,
+  .family-grid,
+  .launch-preview-grid {
+    display: grid;
+    gap: 16px;
+  }
+
+  .step-grid,
+  .docs-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .tier-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-bottom: 18px;
+  }
+
+  .family-grid,
+  .launch-preview-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .example-matrix {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    margin-top: 18px;
+  }
+
+  .showcase-grid {
+    display: grid;
+    gap: 18px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .step-card,
+  .code-card,
+  .tier-card,
+  .docs-card,
+  .example-card,
+  .family-card,
+  .showcase-card,
+  .mini-card,
+  .manifest-card {
+    padding: 18px;
+    border: 1px solid rgba(21, 50, 45, 0.1);
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.68);
+  }
+
+  .step-card,
+  .tier-card,
+  .docs-card,
+  .family-card,
+  .mini-card {
+    display: grid;
+    gap: 10px;
+  }
+
+  .docs-group {
+    color: #8f4c17;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .docs-path,
+  .tier-examples,
+  .manifest-path {
+    color: rgba(21, 50, 45, 0.72);
+  }
+
+  .tier-stats,
+  .manifest-summary,
+  .manifest-description,
+  .tier-packages {
+    color: rgba(21, 50, 45, 0.78);
   }
 
   pre {
     overflow: auto;
-    margin-top: 16px;
-    padding: 18px;
-    border-radius: 22px;
-    background: #1b2926;
-    color: #edf4ea;
-    font-size: 0.88rem;
-    line-height: 1.55;
-  }
-
-  .example-matrix,
-  .family-grid,
-  .launch-preview-grid {
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  }
-
-  .showcase-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .showcase-card,
-  .mini-card,
-  .example-card {
+    margin-top: 12px;
     padding: 16px;
-    border-radius: 24px;
-    background: rgba(240, 235, 225, 0.72);
+    border-radius: 18px;
+    background: #112520;
+    color: #edf4ef;
+    font-size: 0.88rem;
+    line-height: 1.5;
   }
 
-  .family-card {
-    padding: 20px;
-    border-radius: 24px;
-    background:
-      linear-gradient(160deg, rgba(255, 249, 240, 0.95), rgba(240, 235, 225, 0.9)),
-      linear-gradient(120deg, rgba(182, 141, 76, 0.12), rgba(13, 88, 74, 0.08));
-    border: 1px solid rgba(22, 51, 45, 0.08);
+  .surface-table {
+    border: 1px solid rgba(21, 50, 45, 0.1);
+    border-radius: 22px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.62);
   }
 
-  .family-card h3,
-  .mini-card h3,
-  .showcase-card h3,
-  .example-card h3 {
-    margin-bottom: 10px;
-    font-size: 1.05rem;
-  }
-
-  .preview-copy {
-    max-width: 70ch;
-  }
-
-  .preview-list {
-    margin: 16px 0 0;
-    padding-left: 18px;
+  .surface-row {
     display: grid;
-    gap: 8px;
+    gap: 12px;
+    grid-template-columns: minmax(0, 1.2fr) 170px minmax(0, 1.5fr);
+    align-items: center;
+    padding: 14px 18px;
+    border-top: 1px solid rgba(21, 50, 45, 0.08);
   }
 
-  @media (max-width: 960px) {
-    .docs-shell {
-      padding: 18px;
-    }
+  .surface-row:first-child {
+    border-top: 0;
+  }
 
+  .surface-head {
+    background: rgba(21, 50, 45, 0.06);
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .badge,
+  .meta-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 10px;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+  }
+
+  .badge {
+    background: rgba(143, 76, 23, 0.12);
+    color: #7d420f;
+  }
+
+  .meta-chip {
+    background: rgba(21, 50, 45, 0.08);
+    color: #21483f;
+  }
+
+  .traceboost-grid {
+    align-items: start;
+  }
+
+  .flow-card {
+    margin: 0;
+  }
+
+  .manifest-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  .manifest-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: start;
+    padding-top: 12px;
+    border-top: 1px solid rgba(21, 50, 45, 0.08);
+  }
+
+  .manifest-item:first-child {
+    padding-top: 0;
+    border-top: 0;
+  }
+
+  .manifest-name {
+    font-weight: 700;
+  }
+
+  .manifest-description {
+    margin-top: 8px;
+  }
+
+  .manifest-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+
+  @media (max-width: 1120px) {
     .hero,
-    .copy-grid,
+    .start-grid,
+    .traceboost-grid,
+    .manifest-grid,
     .showcase-grid {
       grid-template-columns: 1fr;
+    }
+
+    .tier-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .example-matrix {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 840px) {
+    .docs-shell {
+      padding: 16px;
+    }
+
+    .hero-copy,
+    .hero-note,
+    .panel {
+      border-radius: 22px;
     }
 
     .hero-copy,
@@ -667,8 +690,18 @@ const section = adaptOphioliteSectionViewToSeismicSectionData(sectionView);`;
       padding: 22px;
     }
 
-    h1 {
-      max-width: none;
+    .step-grid,
+    .docs-grid,
+    .family-grid,
+    .launch-preview-grid,
+    .tier-grid,
+    .example-matrix {
+      grid-template-columns: 1fr;
+    }
+
+    .surface-row {
+      grid-template-columns: 1fr;
+      align-items: start;
     }
   }
 </style>

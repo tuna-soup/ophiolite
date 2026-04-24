@@ -23,13 +23,13 @@ The rule is simple:
 | --- | --- | --- | --- | --- | --- |
 | Operator catalog vocabulary | `crates/ophiolite-operators` | none of consequence | `crates/ophiolite-operators` | Canonical | Keep as vocabulary-only crate |
 | Structured compute operator definitions | `ophiolite-compute` and project wrapping | none of consequence | `ophiolite-compute` and project wrapping | Canonical | Keep family-owned |
-| Seismic operator definitions, docs, parameter docs, availability rules | `crates/ophiolite-seismic/src/contracts/operator_catalog.rs` | frontend fallback operator definitions in `apps/traceboost-demo/src/lib/processing-model.svelte.ts` | `crates/ophiolite-seismic` | Mixed | Finish backend catalog parity, then delete frontend fallback ownership |
+| Seismic operator definitions, docs, parameter docs, availability rules | `crates/ophiolite-seismic/src/contracts/operator_catalog.rs` | app-local backend palette aliases in `apps/traceboost-demo/src-tauri/src/processing_authoring.rs` | `crates/ophiolite-seismic` | Canonical + Derived | Frontend now consumes backend palette items; remaining aliases stay app-local until or unless a second consumer appears |
 | Project-level operator discovery | `OphioliteProject::list_operator_catalog(...)` | frontend filtering/presentation logic | `OphioliteProject` plus family-owned availability logic | Canonical | Frontend may still filter for view concerns only |
 | Shared processing pipeline contracts | shared Rust contracts plus generated TS | frontend helper aliases and local interface mirrors | shared Rust contracts plus generated TS | Mixed | Keep helpers derived, remove local mirrored DTO ownership |
-| Processing authoring rules: create, duplicate, remove, normalize, preset compatibility, checkpoint legality | frontend `ProcessingModel` | workspace generic upsert path stores blobs without semantic ownership | backend processing authoring boundary | Mixed | Move rules into app-local Rust authoring module first |
-| Workspace persistence of session pipelines | `WorkspaceState` storage | frontend builds and mutates canonical pipeline blobs directly | backend authoring boundary calling `WorkspaceState` | Mixed | Storage stays in workspace layer, semantic ownership moves out of frontend |
+| Processing authoring rules: create, duplicate, remove, normalize, preset compatibility, checkpoint legality | `apps/traceboost-demo/src-tauri/src/processing_authoring.rs` | frontend `ProcessingModel` still owns UI-only editing state | backend processing authoring boundary | Canonical + Derived | Backend now owns palette/session lifecycle; keep frontend focused on editing/view state |
+| Workspace persistence of session pipelines | backend authoring boundary calling `WorkspaceState` | frontend still stages in-memory edits before save | backend authoring boundary calling `WorkspaceState` | Canonical + Derived | Storage stays in workspace layer, but semantic ownership now sits in the authoring boundary |
 | Processing preset persistence and normalization | `apps/traceboost-demo/src-tauri/src/processing.rs` | frontend also manipulates preset-linked pipeline state | backend authoring boundary plus preset storage | Mixed | Backend should own preset-to-pipeline normalization rules |
-| Output-path/signature derivation | frontend `processing-model.svelte.ts` plus backend defaults | multiple helper functions | backend authoring boundary | Mixed | Frontend should request resolved output naming, not define it |
+| Output-path/signature derivation | frontend `processing-model.svelte.ts` plus backend defaults | multiple helper functions | backend authoring boundary | Mixed | Default output resolution is backend-owned; frontend still carries some local signature/debounce helpers |
 | Execution-plan semantics | `crates/ophiolite-seismic-runtime` | none intended | `crates/ophiolite-seismic-runtime` | Canonical | Keep family-specific linear planning |
 | Job and batch orchestration | `crates/ophiolite-seismic-execution` | frontend polling and state display | `crates/ophiolite-seismic-execution` | Canonical | Frontend may observe status, not redefine orchestration |
 | Execution policy resolution | `crates/ophiolite-seismic-execution` | frontend user selections | `crates/ophiolite-seismic-execution` | Canonical | UI supplies intent, service resolves policy |
@@ -42,7 +42,7 @@ The rule is simple:
 
 These are the highest-priority ownership violations to address first.
 
-### 1. Frontend fallback operator definitions
+### 1. Backend palette alias cleanup
 
 Current file:
 
@@ -50,14 +50,14 @@ Current file:
 
 Problem:
 
-- labels, aliases, docs, search terms, and creation defaults are still partially frontend-owned
+- labels, aliases, docs, search terms, and creation defaults are now backend-owned, but some app-local aliasing still exists in the TraceBoost desktop boundary
 
 Target:
 
 - backend catalog owns operator meaning
 - frontend consumes catalog entries and only adds display formatting where necessary
 
-### 2. Frontend-owned processing authoring semantics
+### 2. Remaining frontend-owned processing editing semantics
 
 Current files:
 
@@ -66,7 +66,8 @@ Current files:
 
 Problem:
 
-- the frontend still owns canonical session-pipeline lifecycle and mutation rules
+- the frontend no longer owns canonical session-pipeline lifecycle
+- the frontend still owns direct editing helpers and preview/run-local state that should keep shrinking
 
 Target:
 
@@ -82,8 +83,7 @@ Current files:
 
 Problem:
 
-- processing session pipelines are persisted through a broad generic workspace update path
-- that path is the storage boundary, but it should not be the semantic owner of processing authoring
+- processing session pipelines now save through the authoring boundary, but the generic workspace layer still remains the storage sink underneath it
 
 Target:
 

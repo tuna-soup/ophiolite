@@ -12,6 +12,65 @@ export type ChartInteractionTool =
 export type ChartInteractionToggle = "crosshair";
 export type PrimaryInteractionMode = "cursor" | "panZoom" | "zoomRect" | "topEdit" | "lassoSelect";
 export type SecondaryInteractionModifier = "crosshair";
+export type ChartInteractionTriggerType = "pointer-primary" | "pointer-secondary" | "pointer-move" | "wheel" | "keyboard";
+export type ChartInteractionManipulatorId =
+  | "viewport-navigation"
+  | "crosshair-probe"
+  | "lasso-selection"
+  | "top-edit"
+  | "interpretation-seed";
+export type ChartInteractionStyleId =
+  | "seismic-navigation"
+  | "survey-map-navigation"
+  | "well-panel-navigation"
+  | "volume-interpretation";
+export type ChartInteractionCommandId =
+  | "viewport.pan"
+  | "viewport.panLeft"
+  | "viewport.panRight"
+  | "viewport.panUp"
+  | "viewport.panDown"
+  | "viewport.zoomAtCursor"
+  | "selection.primary"
+  | "probe.crosshair"
+  | "topEdit.begin"
+  | "lasso.begin"
+  | "session.cancel";
+
+export interface ChartInteractionBinding {
+  trigger: ChartInteractionTriggerType;
+  primaryMode?: PrimaryInteractionMode;
+  modifier?: SecondaryInteractionModifier;
+  key?: string;
+  command: ChartInteractionCommandId;
+}
+
+export interface ChartInteractionCommand {
+  type:
+    | "setPrimaryMode"
+    | "toggleModifier"
+    | "beginSession"
+    | "updateSession"
+    | "commitSession"
+    | "cancelSession"
+    | "semanticAction";
+  command: ChartInteractionCommandId;
+  payload?: Record<string, unknown>;
+}
+
+export interface ChartInteractionStyle {
+  id: ChartInteractionStyleId;
+  label: string;
+  manipulators: readonly ChartInteractionManipulatorId[];
+  bindings: readonly ChartInteractionBinding[];
+}
+
+export interface InteractionTrigger {
+  type: ChartInteractionTriggerType;
+  primaryMode: PrimaryInteractionMode;
+  modifiers: readonly SecondaryInteractionModifier[];
+  key?: string;
+}
 
 export interface ChartInteractionCapabilities<
   TTool extends string = ChartInteractionTool,
@@ -149,3 +208,19 @@ export type InteractionEvent =
   | { type: "zoomRectPreview"; session: ZoomRectSession }
   | { type: "zoomRectCommit"; session: ZoomRectSession }
   | { type: "zoomRectCancel"; session: ZoomRectSession };
+
+export function matchesInteractionBinding(binding: ChartInteractionBinding, trigger: InteractionTrigger): boolean {
+  if (binding.trigger !== trigger.type) {
+    return false;
+  }
+  if (binding.primaryMode && binding.primaryMode !== trigger.primaryMode) {
+    return false;
+  }
+  if (binding.modifier && !trigger.modifiers.includes(binding.modifier)) {
+    return false;
+  }
+  if (binding.key && binding.key !== trigger.key) {
+    return false;
+  }
+  return true;
+}

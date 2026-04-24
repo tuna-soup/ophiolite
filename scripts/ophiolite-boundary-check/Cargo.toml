@@ -1,0 +1,10 @@
+[package]
+name = "ophiolite-boundary-check"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+cargo_metadata = "0.19"
+serde = { workspace = true }
+toml = "0.8"

@@ -1,7 +1,7 @@
 use std::collections::{BTreeSet, HashMap, hash_map::DefaultHasher};
 use std::hash::Hasher;
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::SeismicStoreError;
@@ -2811,13 +2811,15 @@ struct SpectralWorkspace {
     analytic_hilbert: Vec<f32>,
     derivative_real: Vec<f32>,
     derivative_hilbert: Vec<f32>,
+    inverse_scale: f32,
+    response_cache: HashMap<SpectralResponseCacheKey, Arc<[Complex32]>>,
 }
 
 impl SpectralWorkspace {
     fn new(samples: usize) -> Self {
-        let mut planner = RealFftPlanner::<f32>::new();
-        let forward = planner.plan_fft_forward(samples);
-        let inverse = planner.plan_fft_inverse(samples);
+        let plans = cached_fft_plans(samples);
+        let forward = plans.forward;
+        let inverse = plans.inverse;
         let input = forward.make_input_vec();
         let output = inverse.make_output_vec();
         let spectrum = forward.make_output_vec();
@@ -2830,6 +2832,8 @@ impl SpectralWorkspace {
             analytic_hilbert: vec![0.0; samples],
             derivative_real: vec![0.0; samples],
             derivative_hilbert: vec![0.0; samples],
+            inverse_scale: 1.0 / samples.max(1) as f32,
+            response_cache: HashMap::new(),
         }
     }
 
@@ -2844,45 +2848,20 @@ impl SpectralWorkspace {
         phase: FrequencyPhaseMode,
         window: FrequencyWindowShape,
     ) -> Result<(), SeismicStoreError> {
-        if trace.len() != self.input.len() {
-            return Err(SeismicStoreError::Message(format!(
-                "bandpass workspace length mismatch: expected {}, found {}",
-                self.input.len(),
-                trace.len()
-            )));
-        }
-
-        self.input.copy_from_slice(trace);
-        remove_trace_mean(&mut self.input);
-
-        self.forward
-            .process(&mut self.input, &mut self.spectrum)
-            .map_err(|error| {
-                SeismicStoreError::Message(format!("bandpass forward FFT failed: {error}"))
-            })?;
-        apply_bandpass_response(
-            &mut self.spectrum,
-            trace.len(),
-            sample_interval_ms,
-            f1_hz,
-            f2_hz,
-            f3_hz,
-            f4_hz,
-            phase,
-            window,
-        )?;
-        self.inverse
-            .process(&mut self.spectrum, &mut self.output)
-            .map_err(|error| {
-                SeismicStoreError::Message(format!("bandpass inverse FFT failed: {error}"))
-            })?;
-
-        let inverse_scale = 1.0 / trace.len().max(1) as f32;
-        for (sample, value) in trace.iter_mut().zip(self.output.iter()) {
-            *sample = *value * inverse_scale;
-        }
-
-        Ok(())
+        self.apply_cached_spectral_response(
+            trace,
+            SpectralResponseCacheKey::Bandpass {
+                sample_interval_ms_bits: sample_interval_ms.to_bits(),
+                f1_hz_bits: f1_hz.to_bits(),
+                f2_hz_bits: f2_hz.to_bits(),
+                f3_hz_bits: f3_hz.to_bits(),
+                f4_hz_bits: f4_hz.to_bits(),
+                phase_code: encode_frequency_phase_mode(phase),
+                window_code: encode_frequency_window_shape(window),
+            },
+            true,
+            "bandpass",
+        )
     }
 
     fn apply_lowpass(
@@ -2894,43 +2873,18 @@ impl SpectralWorkspace {
         phase: FrequencyPhaseMode,
         window: FrequencyWindowShape,
     ) -> Result<(), SeismicStoreError> {
-        if trace.len() != self.input.len() {
-            return Err(SeismicStoreError::Message(format!(
-                "lowpass workspace length mismatch: expected {}, found {}",
-                self.input.len(),
-                trace.len()
-            )));
-        }
-
-        self.input.copy_from_slice(trace);
-        remove_trace_mean(&mut self.input);
-
-        self.forward
-            .process(&mut self.input, &mut self.spectrum)
-            .map_err(|error| {
-                SeismicStoreError::Message(format!("lowpass forward FFT failed: {error}"))
-            })?;
-        apply_lowpass_response(
-            &mut self.spectrum,
-            trace.len(),
-            sample_interval_ms,
-            f3_hz,
-            f4_hz,
-            phase,
-            window,
-        )?;
-        self.inverse
-            .process(&mut self.spectrum, &mut self.output)
-            .map_err(|error| {
-                SeismicStoreError::Message(format!("lowpass inverse FFT failed: {error}"))
-            })?;
-
-        let inverse_scale = 1.0 / trace.len().max(1) as f32;
-        for (sample, value) in trace.iter_mut().zip(self.output.iter()) {
-            *sample = *value * inverse_scale;
-        }
-
-        Ok(())
+        self.apply_cached_spectral_response(
+            trace,
+            SpectralResponseCacheKey::Lowpass {
+                sample_interval_ms_bits: sample_interval_ms.to_bits(),
+                f3_hz_bits: f3_hz.to_bits(),
+                f4_hz_bits: f4_hz.to_bits(),
+                phase_code: encode_frequency_phase_mode(phase),
+                window_code: encode_frequency_window_shape(window),
+            },
+            true,
+            "lowpass",
+        )
     }
 
     fn apply_highpass(
@@ -2942,43 +2896,18 @@ impl SpectralWorkspace {
         phase: FrequencyPhaseMode,
         window: FrequencyWindowShape,
     ) -> Result<(), SeismicStoreError> {
-        if trace.len() != self.input.len() {
-            return Err(SeismicStoreError::Message(format!(
-                "highpass workspace length mismatch: expected {}, found {}",
-                self.input.len(),
-                trace.len()
-            )));
-        }
-
-        self.input.copy_from_slice(trace);
-        remove_trace_mean(&mut self.input);
-
-        self.forward
-            .process(&mut self.input, &mut self.spectrum)
-            .map_err(|error| {
-                SeismicStoreError::Message(format!("highpass forward FFT failed: {error}"))
-            })?;
-        apply_highpass_response(
-            &mut self.spectrum,
-            trace.len(),
-            sample_interval_ms,
-            f1_hz,
-            f2_hz,
-            phase,
-            window,
-        )?;
-        self.inverse
-            .process(&mut self.spectrum, &mut self.output)
-            .map_err(|error| {
-                SeismicStoreError::Message(format!("highpass inverse FFT failed: {error}"))
-            })?;
-
-        let inverse_scale = 1.0 / trace.len().max(1) as f32;
-        for (sample, value) in trace.iter_mut().zip(self.output.iter()) {
-            *sample = *value * inverse_scale;
-        }
-
-        Ok(())
+        self.apply_cached_spectral_response(
+            trace,
+            SpectralResponseCacheKey::Highpass {
+                sample_interval_ms_bits: sample_interval_ms.to_bits(),
+                f1_hz_bits: f1_hz.to_bits(),
+                f2_hz_bits: f2_hz.to_bits(),
+                phase_code: encode_frequency_phase_mode(phase),
+                window_code: encode_frequency_window_shape(window),
+            },
+            true,
+            "highpass",
+        )
     }
 
     fn apply_phase_rotation(
@@ -2986,33 +2915,14 @@ impl SpectralWorkspace {
         trace: &mut [f32],
         angle_degrees: f32,
     ) -> Result<(), SeismicStoreError> {
-        if trace.len() != self.input.len() {
-            return Err(SeismicStoreError::Message(format!(
-                "phase rotation workspace length mismatch: expected {}, found {}",
-                self.input.len(),
-                trace.len()
-            )));
-        }
-
-        self.input.copy_from_slice(trace);
-        self.forward
-            .process(&mut self.input, &mut self.spectrum)
-            .map_err(|error| {
-                SeismicStoreError::Message(format!("phase rotation forward FFT failed: {error}"))
-            })?;
-        apply_phase_rotation_response(&mut self.spectrum, trace.len(), angle_degrees)?;
-        self.inverse
-            .process(&mut self.spectrum, &mut self.output)
-            .map_err(|error| {
-                SeismicStoreError::Message(format!("phase rotation inverse FFT failed: {error}"))
-            })?;
-
-        let inverse_scale = 1.0 / trace.len().max(1) as f32;
-        for (sample, value) in trace.iter_mut().zip(self.output.iter()) {
-            *sample = *value * inverse_scale;
-        }
-
-        Ok(())
+        self.apply_cached_spectral_response(
+            trace,
+            SpectralResponseCacheKey::PhaseRotation {
+                angle_degrees_bits: angle_degrees.to_bits(),
+            },
+            false,
+            "phase rotation",
+        )
     }
 
     fn apply_envelope(&mut self, trace: &mut [f32]) -> Result<(), SeismicStoreError> {
@@ -3086,6 +2996,30 @@ impl SpectralWorkspace {
         trace: &[f32],
         label: &str,
     ) -> Result<(), SeismicStoreError> {
+        self.validate_trace_len(trace, label)?;
+        self.forward_transform(trace, false, label)?;
+        let response = self.cached_response_mask(SpectralResponseCacheKey::Hilbert);
+        apply_cached_response(&mut self.spectrum, response.as_ref());
+        self.inverse_transform(label)
+    }
+
+    fn apply_cached_spectral_response(
+        &mut self,
+        trace: &mut [f32],
+        key: SpectralResponseCacheKey,
+        remove_mean_first: bool,
+        label: &str,
+    ) -> Result<(), SeismicStoreError> {
+        self.validate_trace_len(trace, label)?;
+        self.forward_transform(trace, remove_mean_first, label)?;
+        let response = self.cached_response_mask(key);
+        apply_cached_response(&mut self.spectrum, response.as_ref());
+        self.inverse_transform(label)?;
+        trace.copy_from_slice(&self.output[..trace.len()]);
+        Ok(())
+    }
+
+    fn validate_trace_len(&self, trace: &[f32], label: &str) -> Result<(), SeismicStoreError> {
         if trace.len() != self.input.len() {
             return Err(SeismicStoreError::Message(format!(
                 "{label} workspace length mismatch: expected {}, found {}",
@@ -3093,25 +3027,45 @@ impl SpectralWorkspace {
                 trace.len()
             )));
         }
+        Ok(())
+    }
 
+    fn forward_transform(
+        &mut self,
+        trace: &[f32],
+        remove_mean_first: bool,
+        label: &str,
+    ) -> Result<(), SeismicStoreError> {
         self.input.copy_from_slice(trace);
+        if remove_mean_first {
+            remove_trace_mean(&mut self.input);
+        }
         self.forward
             .process(&mut self.input, &mut self.spectrum)
             .map_err(|error| {
                 SeismicStoreError::Message(format!("{label} forward FFT failed: {error}"))
-            })?;
-        apply_hilbert_response(&mut self.spectrum, trace.len());
+            })
+    }
+
+    fn inverse_transform(&mut self, label: &str) -> Result<(), SeismicStoreError> {
         self.inverse
             .process(&mut self.spectrum, &mut self.output)
             .map_err(|error| {
                 SeismicStoreError::Message(format!("{label} inverse FFT failed: {error}"))
             })?;
-
-        let inverse_scale = 1.0 / trace.len().max(1) as f32;
-        for value in &mut self.output[..trace.len()] {
-            *value *= inverse_scale;
+        for value in &mut self.output {
+            *value *= self.inverse_scale;
         }
         Ok(())
+    }
+
+    fn cached_response_mask(&mut self, key: SpectralResponseCacheKey) -> Arc<[Complex32]> {
+        self.response_cache
+            .entry(key)
+            .or_insert_with(|| {
+                build_spectral_response_mask(key, self.input.len(), self.spectrum.len()).into()
+            })
+            .clone()
     }
 }
 
@@ -3123,8 +3077,7 @@ struct SpectrumWorkspace {
 
 impl SpectrumWorkspace {
     fn new(samples: usize) -> Self {
-        let mut planner = RealFftPlanner::<f32>::new();
-        let forward = planner.plan_fft_forward(samples);
+        let forward = cached_fft_plans(samples).forward;
         let input = forward.make_input_vec();
         let spectrum = forward.make_output_vec();
         Self {
@@ -3162,6 +3115,61 @@ impl SpectrumWorkspace {
     }
 }
 
+#[derive(Clone)]
+struct CachedFftPlans {
+    forward: Arc<dyn RealToComplex<f32>>,
+    inverse: Arc<dyn ComplexToReal<f32>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum SpectralResponseCacheKey {
+    Bandpass {
+        sample_interval_ms_bits: u32,
+        f1_hz_bits: u32,
+        f2_hz_bits: u32,
+        f3_hz_bits: u32,
+        f4_hz_bits: u32,
+        phase_code: u8,
+        window_code: u8,
+    },
+    Lowpass {
+        sample_interval_ms_bits: u32,
+        f3_hz_bits: u32,
+        f4_hz_bits: u32,
+        phase_code: u8,
+        window_code: u8,
+    },
+    Highpass {
+        sample_interval_ms_bits: u32,
+        f1_hz_bits: u32,
+        f2_hz_bits: u32,
+        phase_code: u8,
+        window_code: u8,
+    },
+    PhaseRotation {
+        angle_degrees_bits: u32,
+    },
+    Hilbert,
+}
+
+fn cached_fft_plans(samples: usize) -> CachedFftPlans {
+    static CACHE: OnceLock<Mutex<HashMap<usize, CachedFftPlans>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = cache
+        .lock()
+        .expect("FFT plan cache lock should not be poisoned");
+    cache
+        .entry(samples)
+        .or_insert_with(|| {
+            let mut planner = RealFftPlanner::<f32>::new();
+            CachedFftPlans {
+                forward: planner.plan_fft_forward(samples),
+                inverse: planner.plan_fft_inverse(samples),
+            }
+        })
+        .clone()
+}
+
 fn sample_interval_ms_from_axis(sample_axis_ms: &[f32]) -> Result<f32, SeismicStoreError> {
     if sample_axis_ms.len() < 2 {
         return Err(SeismicStoreError::Message(
@@ -3187,6 +3195,111 @@ fn remove_trace_mean(trace: &mut [f32]) {
     let mean = trace.iter().sum::<f32>() / trace.len() as f32;
     for sample in trace.iter_mut() {
         *sample -= mean;
+    }
+}
+
+fn encode_frequency_phase_mode(phase: FrequencyPhaseMode) -> u8 {
+    match phase {
+        FrequencyPhaseMode::Zero => 0,
+    }
+}
+
+fn decode_frequency_phase_mode(code: u8) -> FrequencyPhaseMode {
+    match code {
+        0 => FrequencyPhaseMode::Zero,
+        _ => panic!("unsupported frequency phase mode code: {code}"),
+    }
+}
+
+fn encode_frequency_window_shape(window: FrequencyWindowShape) -> u8 {
+    match window {
+        FrequencyWindowShape::CosineTaper => 0,
+    }
+}
+
+fn decode_frequency_window_shape(code: u8) -> FrequencyWindowShape {
+    match code {
+        0 => FrequencyWindowShape::CosineTaper,
+        _ => panic!("unsupported frequency window shape code: {code}"),
+    }
+}
+
+fn build_spectral_response_mask(
+    key: SpectralResponseCacheKey,
+    samples: usize,
+    spectrum_len: usize,
+) -> Vec<Complex32> {
+    let mut response = vec![Complex32::new(1.0, 0.0); spectrum_len];
+    match key {
+        SpectralResponseCacheKey::Bandpass {
+            sample_interval_ms_bits,
+            f1_hz_bits,
+            f2_hz_bits,
+            f3_hz_bits,
+            f4_hz_bits,
+            phase_code,
+            window_code,
+        } => apply_bandpass_response(
+            &mut response,
+            samples,
+            f32::from_bits(sample_interval_ms_bits),
+            f32::from_bits(f1_hz_bits),
+            f32::from_bits(f2_hz_bits),
+            f32::from_bits(f3_hz_bits),
+            f32::from_bits(f4_hz_bits),
+            decode_frequency_phase_mode(phase_code),
+            decode_frequency_window_shape(window_code),
+        )
+        .expect("cached bandpass response should be valid"),
+        SpectralResponseCacheKey::Lowpass {
+            sample_interval_ms_bits,
+            f3_hz_bits,
+            f4_hz_bits,
+            phase_code,
+            window_code,
+        } => apply_lowpass_response(
+            &mut response,
+            samples,
+            f32::from_bits(sample_interval_ms_bits),
+            f32::from_bits(f3_hz_bits),
+            f32::from_bits(f4_hz_bits),
+            decode_frequency_phase_mode(phase_code),
+            decode_frequency_window_shape(window_code),
+        )
+        .expect("cached lowpass response should be valid"),
+        SpectralResponseCacheKey::Highpass {
+            sample_interval_ms_bits,
+            f1_hz_bits,
+            f2_hz_bits,
+            phase_code,
+            window_code,
+        } => apply_highpass_response(
+            &mut response,
+            samples,
+            f32::from_bits(sample_interval_ms_bits),
+            f32::from_bits(f1_hz_bits),
+            f32::from_bits(f2_hz_bits),
+            decode_frequency_phase_mode(phase_code),
+            decode_frequency_window_shape(window_code),
+        )
+        .expect("cached highpass response should be valid"),
+        SpectralResponseCacheKey::PhaseRotation { angle_degrees_bits } => {
+            apply_phase_rotation_response(
+                &mut response,
+                samples,
+                f32::from_bits(angle_degrees_bits),
+            )
+            .expect("cached phase rotation response should be valid")
+        }
+        SpectralResponseCacheKey::Hilbert => apply_hilbert_response(&mut response, samples),
+    }
+    response
+}
+
+fn apply_cached_response(spectrum: &mut [Complex32], response: &[Complex32]) {
+    debug_assert_eq!(spectrum.len(), response.len());
+    for (value, factor) in spectrum.iter_mut().zip(response.iter()) {
+        *value *= *factor;
     }
 }
 

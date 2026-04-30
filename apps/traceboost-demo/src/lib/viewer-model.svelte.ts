@@ -32,7 +32,6 @@ import type {
   SegyHeaderValueType,
   SegyImportPlan,
   SectionAxis,
-  SectionHorizonOverlayView,
   SectionTimeDepthDiagnostics,
   SectionView,
   SurveyTimeDepthTransform3D,
@@ -82,11 +81,17 @@ import type {
   ProjectWellTimeDepthObservationDescriptor,
   ProcessingAuthoringSessionResponse,
   TransportResolvedSectionDisplayView,
-  TransportSectionScalarOverlayView,
   TransportSectionTileView,
   TransportSectionView,
   TransportWindowedSectionView
 } from "./bridge";
+import {
+  adaptSectionHorizonOverlays,
+  adaptSectionScalarOverlays,
+  adaptTransportWindowedSectionToChartData,
+  createDecodeStats,
+  type DecodeStats
+} from "./section-adapter";
 import {
   acceptProjectWellTie,
   analyzeProjectWellTie,
@@ -209,6 +214,18 @@ interface SectionTileStats {
   prefetchErrors: number;
   evictions: number;
   cachedBytes: number;
+}
+
+export interface SectionTileAdaptationMetrics {
+  source: "viewport_fetch";
+  fetchMs: number;
+  adaptMs: number;
+  totalMs: number;
+  transportPayloadBytes: number;
+  chartPayloadBytes: number;
+  decode: DecodeStats;
+  traceStep: number;
+  sampleStep: number;
 }
 
 export interface ViewerActivity {
@@ -581,122 +598,6 @@ function tileViewToWindowedSection(
       lod: tile.lod
     }
   };
-}
-
-function decodeF32Le(bytes: Array<number> | Uint8Array | null | undefined): Float32Array {
-  if (!bytes) {
-    return new Float32Array(0);
-  }
-  const source = bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes);
-  if (source.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) {
-    throw new Error(`Expected f32 little-endian bytes, found ${source.byteLength} bytes.`);
-  }
-  return new Float32Array(source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength));
-}
-
-function decodeF64Le(bytes: Array<number> | Uint8Array | null | undefined): Float64Array {
-  if (!bytes) {
-    return new Float64Array(0);
-  }
-  const source = bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes);
-  if (source.byteLength % Float64Array.BYTES_PER_ELEMENT !== 0) {
-    throw new Error(`Expected f64 little-endian bytes, found ${source.byteLength} bytes.`);
-  }
-  return new Float64Array(source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength));
-}
-
-function adaptTransportWindowedSectionToChartData(section: TransportWindowedSectionView): SeismicSectionData {
-  return {
-    axis: section.axis,
-    coordinate: {
-      index: section.coordinate.index,
-      value: section.coordinate.value
-    },
-    horizontalAxis: decodeF64Le(section.horizontal_axis_f64le),
-    inlineAxis: section.inline_axis_f64le ? decodeF64Le(section.inline_axis_f64le) : undefined,
-    xlineAxis: section.xline_axis_f64le ? decodeF64Le(section.xline_axis_f64le) : undefined,
-    sampleAxis: decodeF32Le(section.sample_axis_f32le),
-    amplitudes: decodeF32Le(section.amplitudes_f32le),
-    dimensions: {
-      traces: section.traces,
-      samples: section.samples
-    },
-    units: section.units
-      ? {
-          horizontal: section.units.horizontal ?? undefined,
-          sample: section.units.sample ?? undefined,
-          amplitude: section.units.amplitude ?? undefined
-        }
-      : undefined,
-    metadata: section.metadata
-      ? {
-          storeId: section.metadata.store_id ?? undefined,
-          derivedFrom: section.metadata.derived_from ?? undefined,
-          notes: section.metadata.notes
-        }
-      : undefined,
-    logicalDimensions: section.logical_dimensions
-      ? {
-          traces: section.logical_dimensions.traces,
-          samples: section.logical_dimensions.samples
-        }
-      : undefined,
-    window: section.window
-      ? {
-          traceStart: section.window.trace_start,
-          traceEnd: section.window.trace_end,
-          sampleStart: section.window.sample_start,
-          sampleEnd: section.window.sample_end,
-          lod: section.window.lod ?? undefined
-        }
-      : undefined,
-    displayDefaults: section.display_defaults
-      ? {
-          gain: section.display_defaults.gain,
-          clipMin: section.display_defaults.clip_min ?? undefined,
-          clipMax: section.display_defaults.clip_max ?? undefined,
-          renderMode: section.display_defaults.render_mode === "wiggle" ? "wiggle" : "heatmap",
-          colormap:
-            section.display_defaults.colormap === "red_white_blue" ? "red-white-blue" : "grayscale",
-          polarity: section.display_defaults.polarity === "reversed" ? "reversed" : "normal"
-        }
-      : undefined
-  };
-}
-
-function adaptSectionHorizonOverlays(
-  overlays: SectionHorizonOverlayView[]
-): ChartSectionHorizonOverlay[] {
-  return overlays.map((overlay) => ({
-    id: overlay.id,
-    name: overlay.name ?? undefined,
-    color: overlay.style.color,
-    lineWidth: overlay.style.line_width ?? undefined,
-    lineStyle: overlay.style.line_style,
-    opacity: overlay.style.opacity ?? undefined,
-    samples: overlay.samples.map((sample) => ({
-      traceIndex: sample.trace_index,
-      sampleIndex: sample.sample_index,
-      sampleValue: sample.sample_value ?? undefined
-    }))
-  }));
-}
-
-function adaptSectionScalarOverlays(
-  overlays: TransportSectionScalarOverlayView[],
-  opacityOverride?: number
-): ChartSectionScalarOverlay[] {
-  return overlays.map((overlay) => ({
-    id: overlay.id,
-    name: overlay.name ?? undefined,
-    width: overlay.width,
-    height: overlay.height,
-    values: decodeF32Le(overlay.values_f32le),
-    colorMap: overlay.color_map,
-    opacity: opacityOverride ?? overlay.opacity,
-    valueRange: overlay.value_range,
-    units: overlay.units ?? undefined
-  }));
 }
 
 function adaptSectionWellOverlays(
@@ -1136,10 +1037,14 @@ function entryStorePath(entry: DatasetRegistryEntry | null): string {
   return entry?.last_dataset?.store_path ?? entry?.imported_store_path ?? entry?.preferred_store_path ?? "";
 }
 
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 function cloneSessionPipelines(
   entries: WorkspacePipelineEntry[] | null | undefined
 ): WorkspacePipelineEntry[] | null {
-  return entries ? structuredClone(entries) : null;
+  return entries ? cloneJson(entries) : null;
 }
 
 function datasetCompareFamily(dataset: DatasetSummary | null): string | null {
@@ -1333,6 +1238,7 @@ export class ViewerModel {
     cachedBytes: 0
   });
   lastSectionTileDataSourceState = $state.raw<SeismicSectionDataSourceStatePayload["state"] | null>(null);
+  lastSectionTileAdaptationMetrics = $state.raw<SectionTileAdaptationMetrics | null>(null);
   lastChartRendererStatus = $state.raw<SeismicSectionRendererStatusPayload["status"] | null>(null);
   lastChartRendererTelemetry = $state.raw<SeismicSectionRendererTelemetryPayload["event"] | null>(null);
 
@@ -1647,6 +1553,16 @@ export class ViewerModel {
 
   get sectionTileStatsSnapshot(): SectionTileStats {
     return { ...this.sectionTileStats };
+  }
+
+  get sectionTileAdaptationMetricsSnapshot(): SectionTileAdaptationMetrics | null {
+    const metrics = this.lastSectionTileAdaptationMetrics;
+    return metrics
+      ? {
+          ...metrics,
+          decode: { ...metrics.decode }
+        }
+      : null;
   }
 
   get sectionChartDataSource(): SeismicSectionDataSource | null {
@@ -4934,19 +4850,43 @@ export class ViewerModel {
         request.sampleRange,
         request.lod
       );
+      const fetchEndedMs = nowMs();
       const windowed = tileViewToWindowedSection(tile, logical);
-      const chartSection = adaptTransportWindowedSectionToChartData(windowed);
-      const elapsedMs = nowMs() - fetchStartedMs;
+      const transportPayloadBytes = estimateSectionPayloadBytes(windowed);
+      const decodeStats = createDecodeStats();
+      const adaptStartedMs = nowMs();
+      const chartSection = adaptTransportWindowedSectionToChartData(windowed, { stats: decodeStats });
+      const adaptEndedMs = nowMs();
+      const chartPayloadBytes = estimateChartSectionPayloadBytes(chartSection);
+      const metrics: SectionTileAdaptationMetrics = {
+        source: "viewport_fetch",
+        fetchMs: fetchEndedMs - fetchStartedMs,
+        adaptMs: adaptEndedMs - adaptStartedMs,
+        totalMs: adaptEndedMs - fetchStartedMs,
+        transportPayloadBytes,
+        chartPayloadBytes,
+        decode: { ...decodeStats },
+        traceStep: tile.trace_step,
+        sampleStep: tile.sample_step
+      };
+      this.lastSectionTileAdaptationMetrics = metrics;
       this.#emitSectionTileDiagnostics(
         "info",
         "Loaded section tile for the active viewport.",
         request,
         {
           source: "viewport_fetch",
-          elapsedMs,
-          payloadBytes: estimateChartSectionPayloadBytes(chartSection),
-          traceStep: tile.trace_step,
-          sampleStep: tile.sample_step
+          elapsedMs: metrics.totalMs,
+          fetchMs: metrics.fetchMs,
+          adaptMs: metrics.adaptMs,
+          transportPayloadBytes: metrics.transportPayloadBytes,
+          chartPayloadBytes: metrics.chartPayloadBytes,
+          copiedBytes: metrics.decode.copiedBytes,
+          viewedBytes: metrics.decode.viewedBytes,
+          copiedBuffers: metrics.decode.copiedBuffers,
+          viewedBuffers: metrics.decode.viewedBuffers,
+          traceStep: metrics.traceStep,
+          sampleStep: metrics.sampleStep
         },
         {
           sectionIndex,
@@ -5544,6 +5484,7 @@ export class ViewerModel {
         "error",
         errorMessage(error, "Unknown import error")
       );
+      throw error;
     }
   };
 
@@ -5589,7 +5530,7 @@ export class ViewerModel {
 
     try {
       let response: ImportSegyWithPlanResponse;
-      let currentPlan = structuredClone(plan);
+      let currentPlan = cloneJson(plan);
       currentPlan.input_path = inputPath;
       currentPlan.policy.output_store_path = outputStorePath;
       let currentValidationFingerprint = validationFingerprint;
@@ -5729,6 +5670,7 @@ export class ViewerModel {
         "error",
         errorMessage(error, "Unknown SEG-Y import error")
       );
+      throw error;
     }
   };
 

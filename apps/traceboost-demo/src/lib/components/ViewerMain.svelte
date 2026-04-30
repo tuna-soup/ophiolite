@@ -80,6 +80,7 @@
   const geometryRecovery = $derived(viewerModel.importGeometryRecovery);
   const datasetExportDialog = $derived(viewerModel.datasetExportDialog);
   const tileStats = $derived(viewerModel.sectionTileStatsSnapshot);
+  const tileAdaptationMetrics = $derived(viewerModel.sectionTileAdaptationMetricsSnapshot);
   const splitReady = $derived(
     viewerModel.compareSplitEnabled &&
       !!processingModel.displaySection &&
@@ -508,6 +509,16 @@
     return `${mib >= 10 ? mib.toFixed(1) : mib.toFixed(2)} MiB`;
   }
 
+  function formatMs(milliseconds: number): string {
+    if (milliseconds < 1) {
+      return `${milliseconds.toFixed(3)} ms`;
+    }
+    if (milliseconds < 10) {
+      return `${milliseconds.toFixed(2)} ms`;
+    }
+    return `${milliseconds.toFixed(1)} ms`;
+  }
+
   function formatPercent(value: number | null): string {
     return value === null ? "n/a" : `${Math.round(value * 100)}%`;
   }
@@ -773,6 +784,26 @@
         <div>
           <dt>Fetch</dt>
           <dd>{tileStats.fetches} viewport · {tileStats.prefetchRequests} prefetch</dd>
+        </div>
+        <div>
+          <dt>Adapt</dt>
+          <dd>
+            {#if tileAdaptationMetrics}
+              {formatMs(tileAdaptationMetrics.adaptMs)} · copied {formatMiB(tileAdaptationMetrics.decode.copiedBytes)}
+            {:else}
+              pending
+            {/if}
+          </dd>
+        </div>
+        <div>
+          <dt>Views</dt>
+          <dd>
+            {#if tileAdaptationMetrics}
+              {formatMiB(tileAdaptationMetrics.decode.viewedBytes)} · {tileAdaptationMetrics.decode.viewedBuffers} buffers
+            {:else}
+              pending
+            {/if}
+          </dd>
         </div>
         <div>
           <dt>Renderer</dt>

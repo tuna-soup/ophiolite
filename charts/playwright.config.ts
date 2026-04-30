@@ -12,10 +12,18 @@ export default defineConfig({
     colorScheme: "light",
     deviceScaleFactor: 1
   },
-  webServer: {
-    command: "bun --filter @ophiolite/charts-docs dev -- --host 127.0.0.1 --port 4173",
-    port: 4173,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120000
-  }
+  webServer: [
+    {
+      command: "bun --filter @ophiolite/charts-docs dev -- --host 127.0.0.1 --port 4173",
+      port: 4173,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120000
+    },
+    {
+      command: "bun run dev:svelte -- --host 127.0.0.1 --port 4174",
+      port: 4174,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120000
+    }
+  ]
 });

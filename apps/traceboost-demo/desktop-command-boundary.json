@@ -31,7 +31,7 @@
     },
     {
       "id": "security_and_path_grants",
-      "pattern": "^(pick_runtime_store_command|pick_project_root_command|pick_output_path_command|authorize_managed_store_command|authorize_managed_output_command)$",
+      "pattern": "^(pick_runtime_store_command|pick_project_root_command|pick_output_path_command|authorize_managed_store_command|authorize_runtime_store_command|authorize_managed_output_command)$",
       "owner": "desktop.security",
       "notes": "Path picking and handle/grant authorization stay in the desktop shell."
     },

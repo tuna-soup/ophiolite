@@ -1,0 +1,30 @@
+{
+  "status": "local exploratory baseline",
+  "generatedAt": "2026-04-30T12:24:24.025Z",
+  "benchmark": "tbvolc-transcode-smoke",
+  "cases": [
+    {
+      "name": "poseidon-roi",
+      "sourcePath": "/Users/sc/Downloads/SubsurfaceData/poseidon/far_stack_roi_inline0_xline128_sample128_v3.tbvol",
+      "sourceBytes": 67190784,
+      "archivePath": "/tmp/poseidon-v3.tbvolc",
+      "archiveBytes": 62029824,
+      "encodeSeconds": 0.812010667,
+      "decodeSeconds": 0.236441959,
+      "roundTripPath": "/tmp/poseidon-v3-roundtrip.tbvol",
+      "amplitudeByteExact": true,
+      "occupancyByteExact": true
+    },
+    {
+      "name": "f3-small-DATR12I-021",
+      "sourcePath": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/seismic/tbvol/DATR12I-021.tbvol",
+      "sourceBytes": 31690752,
+      "archivePath": "/tmp/DATR12I-021.tbvolc",
+      "archiveBytes": 28463104,
+      "encodeSeconds": 0.114756625,
+      "decodeSeconds": null,
+      "amplitudeByteExact": null,
+      "occupancyByteExact": null
+    }
+  ]
+}

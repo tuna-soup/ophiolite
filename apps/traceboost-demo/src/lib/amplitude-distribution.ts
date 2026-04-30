@@ -1,6 +1,7 @@
 import type { SeismicSectionAnalysisSelection } from "@ophiolite/charts";
 import type { SectionView } from "@traceboost/seis-contracts";
 import type { TransportSectionView } from "./bridge";
+import { decodeF32Le } from "./section-adapter";
 
 export type DisplaySectionView = SectionView | TransportSectionView;
 
@@ -19,19 +20,6 @@ export interface AmplitudeDistributionResult {
   standardDeviation: number;
   median: number;
   rms: number;
-}
-
-function decodeF32Le(bytes: Array<number> | Uint8Array | null | undefined): Float32Array {
-  if (!bytes) {
-    return new Float32Array(0);
-  }
-
-  const source = bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes);
-  if (source.byteLength % Float32Array.BYTES_PER_ELEMENT !== 0) {
-    throw new Error(`Expected f32 little-endian bytes, found ${source.byteLength} bytes.`);
-  }
-
-  return new Float32Array(source.buffer.slice(source.byteOffset, source.byteOffset + source.byteLength));
 }
 
 export function buildAmplitudeDistribution(

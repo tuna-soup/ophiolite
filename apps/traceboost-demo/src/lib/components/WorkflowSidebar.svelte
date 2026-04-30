@@ -310,6 +310,11 @@
                 </button>
               </div>
             {/each}
+            {#if viewerModel.loading && viewerModel.busyLabel}
+              <p class="tree-status">{viewerModel.busyLabel}...</p>
+            {/if}
+          {:else if viewerModel.loading && viewerModel.busyLabel}
+            <p class="tree-status">{viewerModel.busyLabel}...</p>
           {:else}
             <p class="tree-empty">No seismic volumes loaded.</p>
           {/if}

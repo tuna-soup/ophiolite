@@ -300,7 +300,8 @@ export function prepareWiggleInstances(
   viewport: SectionViewport,
   displayTransform: DisplayTransform,
   plotRect: PlotRect,
-  canvasWidth: number
+  canvasWidth: number,
+  options: { visibleAmplitudeMaxAbs?: number } = {}
 ): PreparedWiggleInstances {
   const visibleTraceCount = Math.max(1, viewport.traceEnd - viewport.traceStart);
   const maxReadableTraces = Math.max(1, Math.floor(plotRect.width / 6));
@@ -318,14 +319,16 @@ export function prepareWiggleInstances(
   }
   const coordMin = Math.min(...visibleCoords);
   const coordMax = Math.max(...visibleCoords);
-  const globalScale = visibleAmplitudeScale(
-    section,
-    viewport.traceStart,
-    viewport.traceEnd,
-    viewport.sampleStart,
-    viewport.sampleEnd,
-    displayTransform.gain
-  );
+  const amplitudeMaxAbs =
+    options.visibleAmplitudeMaxAbs ??
+    visibleAmplitudeMaxAbs(
+      section,
+      viewport.traceStart,
+      viewport.traceEnd,
+      viewport.sampleStart,
+      viewport.sampleEnd
+    );
+  const globalScale = Math.max(amplitudeMaxAbs * Math.abs(displayTransform.gain), 1e-6);
 
   const baselineClipX: number[] = [];
   const amplitudeScaleClip: number[] = [];
@@ -400,13 +403,12 @@ export function buildOverlaySpatialIndex(
   return { points };
 }
 
-function visibleAmplitudeScale(
+export function visibleAmplitudeMaxAbs(
   section: SectionPayload,
   traceStart: number,
   traceEnd: number,
   sampleStart: number,
-  sampleEnd: number,
-  gain: number
+  sampleEnd: number
 ): number {
   let maxAbs = 0;
   for (let trace = traceStart; trace < traceEnd; trace += 1) {
@@ -415,10 +417,10 @@ function visibleAmplitudeScale(
       if (amplitude === null) {
         continue;
       }
-      maxAbs = Math.max(maxAbs, Math.abs(amplitude * gain));
+      maxAbs = Math.max(maxAbs, Math.abs(amplitude));
     }
   }
-  return Math.max(maxAbs, 1e-6);
+  return maxAbs;
 }
 
 function buildTraceIndices(traceStart: number, traceEnd: number, traceStride: number): number[] {

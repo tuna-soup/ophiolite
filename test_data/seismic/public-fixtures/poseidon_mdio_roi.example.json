@@ -1,0 +1,73 @@
+{
+  "schema_version": "public-seismic-fixture-manifest/v0",
+  "id": "poseidon-mdio-roi-example",
+  "status": "example-placeholder",
+  "source": {
+    "kind": "public-s3",
+    "uri": "s3://tgs-opendata-poseidon/",
+    "description": "Placeholder manifest for a future Poseidon public data MDIO region of interest.",
+    "access_notes": [
+      "Example only. Confirm exact object path, access terms, and requester behavior before enabling fetches."
+    ]
+  },
+  "license_note": "Example placeholder. Consult the upstream Poseidon/TGS Open Data terms before use.",
+  "adapter_hint": {
+    "format": "mdio",
+    "reader": "mdio",
+    "notes": "Adapter hint only; no authoritative fixture payload has been selected."
+  },
+  "fetch_policy": {
+    "default": "offline",
+    "requires_opt_in": true,
+    "env_var": "OPHIOLITE_FETCH_PUBLIC_SEISMIC_FIXTURES",
+    "cache_key": "poseidon-mdio-roi-example",
+    "network_notes": "Do not fetch during default tests. A future harness should require explicit opt-in."
+  },
+  "subset": {
+    "intent": "small-preview",
+    "spatial": {
+      "inline_range": [0, 0],
+      "crossline_range": [0, 0]
+    },
+    "samples": {
+      "start": 0,
+      "count": 0
+    },
+    "max_payload_bytes": 104857600,
+    "notes": "Placeholder ROI. Replace ranges only after choosing a reviewed, bounded source object."
+  },
+  "expected": {
+    "canonical_preview": {
+      "kind": "cube",
+      "dimensions": {
+        "inline": null,
+        "crossline": null,
+        "samples": null
+      },
+      "coordinate_reference": "source-native",
+      "amplitude": {
+        "unit": "unknown",
+        "normalization": "none"
+      },
+      "authoritative": false
+    },
+    "warnings": {
+      "authoritative": false,
+      "items": [
+        "placeholder: expected warnings are intentionally not selected"
+      ]
+    },
+    "blockers": {
+      "authoritative": false,
+      "items": []
+    }
+  },
+  "checksums": {
+    "payload_sha256": null,
+    "metadata_snapshot_sha256": null
+  },
+  "snapshots": {
+    "metadata": null,
+    "canonical_preview": null
+  }
+}

@@ -12,6 +12,7 @@
     "dev": "vite",
     "build": "vite build",
     "test": "bun test",
+    "bench:packed-section": "bun run ./scripts/bench-packed-section-adaptation.ts",
     "typecheck": "bun run generate:desktop-bridge-stubs && bun run check:ophiolite-boundary && svelte-check --tsconfig ./tsconfig.json",
     "tauri:dev": "bun run typecheck && bun run ./scripts/tauri-dev.mjs",
     "tauri:build": "tauri build"

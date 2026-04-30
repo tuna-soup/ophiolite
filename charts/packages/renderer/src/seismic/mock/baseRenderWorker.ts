@@ -8,7 +8,13 @@ import {
   type SectionViewport
 } from "@ophiolite/charts-data-models";
 import { scaleRasterRect } from "../../internal/rasterSurface";
-import { prepareHeatmapData, prepareWiggleInstances, type PreparedHeatmapData, type PreparedWiggleInstances } from "./renderModel";
+import {
+  prepareHeatmapData,
+  prepareWiggleInstances,
+  visibleAmplitudeMaxAbs,
+  type PreparedHeatmapData,
+  type PreparedWiggleInstances
+} from "./renderModel";
 import type { WorkerIncomingMessage, WorkerOutgoingMessage, WorkerOverlayPayload, WorkerSectionPayload } from "./workerProtocol";
 
 interface WorkerGlResources {
@@ -51,6 +57,7 @@ let plotRect = { x: 68, y: 72, width: 1, height: 1 };
 let pixelPlotRect = scaleRasterRect(plotRect, pixelRatio);
 let preparedHeatmap: PreparedHeatmapData | null = null;
 let preparedWiggles: PreparedWiggleInstances | null = null;
+let wiggleScaleCache = new Map<string, number>();
 let dirty: DirtyFlags = {
   dataChanged: false,
   viewportChanged: false,
@@ -118,6 +125,7 @@ function handleMessage(message: WorkerIncomingMessage): void {
       break;
     case "setSection":
       section = reconstructSection(message.section);
+      wiggleScaleCache = new Map<string, number>();
       markDirty({ dataChanged: true, viewportChanged: true, styleChanged: true });
       break;
     case "setViewport":
@@ -190,7 +198,9 @@ function renderFrame(): void {
     drawHeatmap(gl, resources, section, viewport, displayTransform, preparedHeatmap, overlay);
   } else {
     if (dirty.dataChanged || dirty.viewportChanged || dirty.styleChanged || dirty.sizeChanged || !preparedWiggles) {
-      preparedWiggles = prepareWiggleInstances(section, viewport, displayTransform, pixelPlotRect, pixelWidth);
+      preparedWiggles = prepareWiggleInstances(section, viewport, displayTransform, pixelPlotRect, pixelWidth, {
+        visibleAmplitudeMaxAbs: cachedVisibleWiggleAmplitudeMaxAbs(section, viewport)
+      });
       uploadWiggleInstances(gl, resources.wiggleInstanceBuffer, preparedWiggles);
       resources.traceInstanceCount = preparedWiggles.traceIndices.length;
     }
@@ -231,6 +241,24 @@ function reconstructOverlay(payload: WorkerOverlayPayload | null): OverlayPayloa
     values: new Uint8Array(payload.valuesBuffer),
     opacity: payload.opacity
   };
+}
+
+function cachedVisibleWiggleAmplitudeMaxAbs(seismicSection: SectionPayload, seismicViewport: SectionViewport): number {
+  const key = `${seismicViewport.traceStart}:${seismicViewport.traceEnd}:${seismicViewport.sampleStart}:${seismicViewport.sampleEnd}`;
+  const cached = wiggleScaleCache.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const value = visibleAmplitudeMaxAbs(
+    seismicSection,
+    seismicViewport.traceStart,
+    seismicViewport.traceEnd,
+    seismicViewport.sampleStart,
+    seismicViewport.sampleEnd
+  );
+  wiggleScaleCache.set(key, value);
+  return value;
 }
 
 function uploadWiggleInstances(glContext: WebGL2RenderingContext, buffer: WebGLBuffer, prepared: PreparedWiggleInstances): void {

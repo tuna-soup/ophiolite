@@ -1,0 +1,72 @@
+{
+  "schema_version": "public-seismic-fixture-manifest/v0",
+  "id": "f3-segy-smoke-example",
+  "status": "example-placeholder",
+  "source": {
+    "kind": "portal",
+    "uri": "https://www.nlog.nl/en/data",
+    "description": "Placeholder manifest for a future F3 Netherlands SEG-Y smoke fixture.",
+    "access_notes": [
+      "Example only. Confirm exact survey product, download flow, license, and bounded subset before enabling fetches."
+    ]
+  },
+  "license_note": "Example placeholder. Consult upstream NLOG terms and the selected product metadata before use.",
+  "adapter_hint": {
+    "format": "segy",
+    "reader": "segy",
+    "notes": "Adapter hint only; no authoritative fixture payload has been selected."
+  },
+  "fetch_policy": {
+    "default": "offline",
+    "requires_opt_in": true,
+    "env_var": "OPHIOLITE_FETCH_PUBLIC_SEISMIC_FIXTURES",
+    "cache_key": "f3-segy-smoke-example",
+    "network_notes": "Do not fetch during default tests. A future harness should require explicit opt-in."
+  },
+  "subset": {
+    "intent": "smoke-test",
+    "spatial": {
+      "inline_range": [0, 0],
+      "crossline_range": [0, 0]
+    },
+    "samples": {
+      "start": 0,
+      "count": 0
+    },
+    "max_payload_bytes": 52428800,
+    "notes": "Placeholder smoke subset. Replace with reviewed line/trace/sample bounds after source selection."
+  },
+  "expected": {
+    "canonical_preview": {
+      "kind": "section",
+      "dimensions": {
+        "traces": null,
+        "samples": null
+      },
+      "coordinate_reference": "source-native",
+      "amplitude": {
+        "unit": "unknown",
+        "normalization": "none"
+      },
+      "authoritative": false
+    },
+    "warnings": {
+      "authoritative": false,
+      "items": [
+        "placeholder: expected warnings are intentionally not selected"
+      ]
+    },
+    "blockers": {
+      "authoritative": false,
+      "items": []
+    }
+  },
+  "checksums": {
+    "payload_sha256": null,
+    "metadata_snapshot_sha256": null
+  },
+  "snapshots": {
+    "metadata": null,
+    "canonical_preview": null
+  }
+}

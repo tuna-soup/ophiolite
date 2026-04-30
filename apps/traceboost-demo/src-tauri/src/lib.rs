@@ -120,12 +120,12 @@ use crate::preview_session::PreviewSessionState;
 use crate::processing::{JobRecord, ProcessingState};
 use crate::processing_authoring::{
     ApplyProcessingAuthoringSessionActionRequest, PersistProcessingSessionPipelinesRequest,
-    ProcessingAuthoringSessionResponse,
-    ResolveProcessingAuthoringPaletteRequest, ResolveProcessingAuthoringPaletteResponse,
-    ResolveProcessingRunOutputRequest, ResolveProcessingRunOutputResponse,
-    SaveProcessingAuthoringSessionRequest, apply_processing_authoring_session_action,
-    persist_processing_session_pipelines, resolve_processing_authoring_palette,
-    resolve_processing_run_output, save_processing_authoring_session,
+    ProcessingAuthoringSessionResponse, ResolveProcessingAuthoringPaletteRequest,
+    ResolveProcessingAuthoringPaletteResponse, ResolveProcessingRunOutputRequest,
+    ResolveProcessingRunOutputResponse, SaveProcessingAuthoringSessionRequest,
+    apply_processing_authoring_session_action, persist_processing_session_pipelines,
+    resolve_processing_authoring_palette, resolve_processing_run_output,
+    save_processing_authoring_session,
 };
 use crate::processing_cache::ProcessingCacheState;
 use crate::project_settings::{
@@ -345,6 +345,14 @@ fn authorize_managed_store_command(
 ) -> Result<GrantedPathSelection, String> {
     let app_paths = AppPaths::resolve(&app)?;
     security.authorize_managed_store(&app_paths, Path::new(&path))
+}
+
+#[tauri::command]
+fn authorize_runtime_store_command(
+    security: State<SecurityState>,
+    path: String,
+) -> Result<GrantedPathSelection, String> {
+    security.authorize_runtime_store(Path::new(&path))
 }
 
 #[tauri::command]
@@ -4473,10 +4481,10 @@ fn validate_segy_import_plan_command(
 }
 
 #[tauri::command]
-fn import_segy_with_plan_command(
+async fn import_segy_with_plan_command(
     app: AppHandle,
-    diagnostics: State<DiagnosticsState>,
-    security: State<SecurityState>,
+    diagnostics: State<'_, DiagnosticsState>,
+    security: State<'_, SecurityState>,
     mut request: ImportSegyWithPlanRequest,
 ) -> Result<ImportSegyWithPlanResponse, String> {
     request.plan.policy.output_store_path = consume_output_path_argument(
@@ -4504,7 +4512,13 @@ fn import_segy_with_plan_command(
         Some(build_fields([("stage", json_value("read_input"))])),
     );
 
-    let result = workflow_service().import_segy_with_plan(request);
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        workflow_service()
+            .import_segy_with_plan(request)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?;
     match result {
         Ok(response) => {
             diagnostics.complete(
@@ -4535,10 +4549,10 @@ fn import_segy_with_plan_command(
 }
 
 #[tauri::command]
-fn import_dataset_command(
+async fn import_dataset_command(
     app: AppHandle,
-    diagnostics: State<DiagnosticsState>,
-    security: State<SecurityState>,
+    diagnostics: State<'_, DiagnosticsState>,
+    security: State<'_, SecurityState>,
     input_path: String,
     output_store_path: String,
     geometry_override: Option<seis_contracts_operations::SegyGeometryOverride>,
@@ -4577,13 +4591,20 @@ fn import_dataset_command(
         Some(build_fields([("stage", json_value("read_input"))])),
     );
 
-    let result = workflow_service().import_dataset(ImportDatasetRequest {
+    let request = ImportDatasetRequest {
         schema_version: IPC_SCHEMA_VERSION,
         input_path,
         output_store_path,
         geometry_override,
         overwrite_existing,
-    });
+    };
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        workflow_service()
+            .import_dataset(request)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?;
 
     match result {
         Ok(response) => {
@@ -11567,6 +11588,7 @@ pub fn run() {
             pick_project_root_command,
             pick_output_path_command,
             authorize_managed_store_command,
+            authorize_runtime_store_command,
             authorize_managed_output_command,
             preflight_import_command,
             scan_segy_import_command,

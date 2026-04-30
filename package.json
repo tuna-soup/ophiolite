@@ -19,10 +19,14 @@
     "charts:playground": "bun run --cwd ./charts dev:svelte",
     "charts:build": "bun run --cwd ./charts build",
     "charts:typecheck": "bun run --cwd ./charts typecheck",
+    "charts:bench:texture-upload": "bun run --cwd ./charts bench:texture-upload",
+    "charts:bench:wiggle-geometry": "bun run --cwd ./charts bench:wiggle-geometry",
     "traceboost:doctor": "bun run --cwd ./apps/traceboost-demo doctor",
     "traceboost:dev": "bun run --cwd ./apps/traceboost-demo dev",
     "traceboost:typecheck": "bun run --cwd ./apps/traceboost-demo typecheck",
     "traceboost:build": "bun run --cwd ./apps/traceboost-demo build",
+    "traceboost:bench:packed-section": "bun run --cwd ./apps/traceboost-demo bench:packed-section",
+    "bench:render-storage-baseline": "node ./scripts/validation/capture_render_storage_baseline.mjs",
     "traceboost:contracts:generate": "cargo run -p traceboost-contracts-export",
     "traceboost:contracts:check": "cargo run -p traceboost-contracts-export -- --check"
   }

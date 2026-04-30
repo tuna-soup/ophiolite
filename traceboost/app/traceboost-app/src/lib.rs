@@ -1,3 +1,8 @@
+pub mod workflow_recipe;
+pub mod workflow_report;
+pub mod workflow_report_render;
+pub mod workflow_runner;
+
 use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet},

@@ -404,6 +404,16 @@
   />
 </div>
 
+{#if viewerModel.loading && viewerModel.busyLabel}
+  <div class="workspace-status-bar" role="status" aria-live="polite">
+    <span class="status-dot"></span>
+    <strong>{viewerModel.busyLabel}</strong>
+    {#if viewerModel.inputPath || viewerModel.activeStorePath}
+      <span>{viewerModel.inputPath || viewerModel.activeStorePath}</span>
+    {/if}
+  </div>
+{/if}
+
 {#if startupSetupRequired}
   <div class="startup-setup-backdrop" role="presentation">
     <div class="startup-setup-panel" role="dialog" aria-modal="true" aria-label="Initial project setup required">
@@ -451,6 +461,41 @@
     filter: blur(8px);
     pointer-events: none;
     user-select: none;
+  }
+
+  .workspace-status-bar {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    z-index: 64;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    border: 1px solid var(--accent-border);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--surface-bg) 96%, white 4%);
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+    color: #1f2933;
+    font-size: 13px;
+  }
+
+  .workspace-status-bar span:last-child {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #627386;
+  }
+
+  .status-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--accent-text);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-text) 18%, transparent);
   }
 
   .startup-setup-backdrop {

@@ -1,0 +1,376 @@
+{
+  "schema_version": 1,
+  "recipe_id": "traceboost.post_stack_agc.placeholder.v1",
+  "name": "TraceBoost post-stack AGC RMS placeholder workflow",
+  "description": "Placeholder golden workflow for a technical buyer or developer-evaluator. Uses local fixture paths that must be configured before execution. Validates engineering workflow behavior only; it does not claim interpretation correctness.",
+  "dataset_inputs": [
+    {
+      "dataset_id": "post_stack_fixture",
+      "name": "Local F3-style or small post-stack SEG-Y fixture",
+      "source": "${LOCAL_FIXTURE_ROOT}/post_stack/f3_style_small.sgy",
+      "metadata": {
+        "placeholder": true,
+        "requires_local_configuration": true,
+        "dataset_kind": "post_stack_segy",
+        "accepted_fixture_options": [
+          "F3-style SEG-Y post-stack fixture",
+          "existing small post-stack fixture"
+        ],
+        "notes": "Replace source with a local SEG-Y fixture path before execution."
+      }
+    }
+  ],
+  "steps": [
+    {
+      "step_id": "preflight_post_stack_fixture",
+      "name": "Preflight configured post-stack fixture",
+      "step_kind": "preflight",
+      "operation": "traceboost.preflight.segy_post_stack",
+      "dataset_refs": [
+        "post_stack_fixture"
+      ],
+      "request": {
+        "placeholder": true,
+        "requires_local_configuration": true,
+        "input_path": "${LOCAL_FIXTURE_ROOT}/post_stack/f3_style_small.sgy",
+        "checks": [
+          "file_exists",
+          "readable",
+          "segy_headers_readable",
+          "post_stack_shape_detectable",
+          "sample_values_finite"
+        ]
+      },
+      "expected_outputs": [
+        {
+          "output_id": "preflight_summary",
+          "output_kind": "json",
+          "spec": {
+            "required_fields": [
+              "trace_count",
+              "sample_count",
+              "sample_interval",
+              "sample_format"
+            ]
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "assertion_id": "preflight_fixture_is_usable",
+          "description": "Configured fixture can be opened and has non-empty post-stack trace/sample dimensions.",
+          "assertion_kind": "engineering_contract",
+          "spec": {
+            "trace_count": {
+              "gt": 0
+            },
+            "sample_count": {
+              "gt": 0
+            },
+            "sample_values": "finite"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": "import_post_stack_fixture",
+      "name": "Import post-stack fixture",
+      "step_kind": "import",
+      "operation": "traceboost.import.segy_post_stack",
+      "depends_on": [
+        "preflight_post_stack_fixture"
+      ],
+      "dataset_refs": [
+        "post_stack_fixture"
+      ],
+      "request": {
+        "placeholder": true,
+        "requires_local_configuration": true,
+        "input_path": "${LOCAL_FIXTURE_ROOT}/post_stack/f3_style_small.sgy",
+        "workspace_path": "${LOCAL_WORKSPACE_ROOT}/traceboost-golden/post_stack_agc",
+        "survey_id": "post_stack_agc_placeholder",
+        "import_mode": "local_fixture"
+      },
+      "expected_outputs": [
+        {
+          "output_id": "imported_survey",
+          "output_kind": "traceboost_survey",
+          "spec": {
+            "survey_id": "post_stack_agc_placeholder",
+            "workspace_path": "${LOCAL_WORKSPACE_ROOT}/traceboost-golden/post_stack_agc"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "assertion_id": "import_preserves_trace_dimensions",
+          "description": "Imported survey has the same trace and sample dimensions reported by preflight.",
+          "assertion_kind": "engineering_contract",
+          "spec": {
+            "trace_count": "matches_preflight",
+            "sample_count": "matches_preflight"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": "open_imported_survey",
+      "name": "Open imported survey",
+      "step_kind": "other",
+      "operation": "traceboost.session.open_survey",
+      "depends_on": [
+        "import_post_stack_fixture"
+      ],
+      "request": {
+        "placeholder": true,
+        "requires_local_configuration": true,
+        "workspace_path": "${LOCAL_WORKSPACE_ROOT}/traceboost-golden/post_stack_agc",
+        "survey_id": "post_stack_agc_placeholder"
+      },
+      "expected_outputs": [
+        {
+          "output_id": "open_session",
+          "output_kind": "traceboost_session",
+          "spec": {
+            "survey_id": "post_stack_agc_placeholder"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "assertion_id": "session_opens_without_blockers",
+          "description": "Imported survey opens without fatal session blockers.",
+          "assertion_kind": "engineering_contract",
+          "spec": {
+            "status": "opened",
+            "blockers": "empty"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": "render_section_view",
+      "name": "Render section view",
+      "step_kind": "analysis",
+      "operation": "traceboost.view.section.render",
+      "depends_on": [
+        "open_imported_survey"
+      ],
+      "request": {
+        "placeholder": true,
+        "requires_local_configuration": true,
+        "session_id": "${TRACEBOOST_SESSION_ID}",
+        "view": {
+          "orientation": "inline",
+          "inline_index": "fixture_midpoint",
+          "sample_range": "full",
+          "trace_range": "full_or_fixture_safe_subset"
+        }
+      },
+      "expected_outputs": [
+        {
+          "output_id": "section_view_snapshot",
+          "output_kind": "view_snapshot",
+          "spec": {
+            "view_kind": "section",
+            "non_empty_pixels": true
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "assertion_id": "section_view_renders",
+          "description": "A section view can be rendered from the opened post-stack survey.",
+          "assertion_kind": "engineering_contract",
+          "spec": {
+            "render_status": "succeeded",
+            "visible_trace_count": {
+              "gt": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "step_id": "preview_agc_rms",
+      "name": "Preview AGC RMS",
+      "step_kind": "processing",
+      "operation": "traceboost.operator.agc_rms.preview",
+      "depends_on": [
+        "render_section_view"
+      ],
+      "request": {
+        "placeholder": true,
+        "requires_local_configuration": true,
+        "session_id": "${TRACEBOOST_SESSION_ID}",
+        "input": {
+          "survey_id": "post_stack_agc_placeholder",
+          "selection": {
+            "orientation": "inline",
+            "inline_index": "fixture_midpoint",
+            "sample_range": "full",
+            "trace_range": "full_or_fixture_safe_subset"
+          }
+        },
+        "operator": {
+          "name": "agc_rms",
+          "parameters": {
+            "window_ms": 500.0,
+            "epsilon": 1e-12,
+            "preserve_zero_traces": true
+          }
+        },
+        "mode": "preview"
+      },
+      "expected_outputs": [
+        {
+          "output_id": "agc_rms_preview",
+          "output_kind": "operator_preview",
+          "spec": {
+            "operator": "agc_rms",
+            "materialized": false
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "assertion_id": "agc_rms_preview_is_finite",
+          "description": "AGC RMS preview returns finite samples and preserves the preview selection shape.",
+          "assertion_kind": "engineering_contract",
+          "spec": {
+            "operator": "agc_rms",
+            "sample_values": "finite",
+            "trace_count": "matches_preview_selection",
+            "sample_count": "matches_preview_selection"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": "materialize_agc_rms",
+      "name": "Materialize AGC RMS output",
+      "step_kind": "export",
+      "operation": "traceboost.operator.agc_rms.materialize",
+      "depends_on": [
+        "preview_agc_rms"
+      ],
+      "request": {
+        "placeholder": true,
+        "requires_local_configuration": true,
+        "session_id": "${TRACEBOOST_SESSION_ID}",
+        "input": {
+          "survey_id": "post_stack_agc_placeholder",
+          "selection": "full_fixture_or_configured_subset"
+        },
+        "operator": {
+          "name": "agc_rms",
+          "parameters": {
+            "window_ms": 500.0,
+            "epsilon": 1e-12,
+            "preserve_zero_traces": true
+          }
+        },
+        "output": {
+          "format": "segy",
+          "path": "${LOCAL_OUTPUT_ROOT}/traceboost-golden/post_stack_agc/agc_rms.sgy",
+          "overwrite": false
+        }
+      },
+      "expected_outputs": [
+        {
+          "output_id": "agc_rms_materialized_segy",
+          "output_kind": "segy",
+          "spec": {
+            "path": "${LOCAL_OUTPUT_ROOT}/traceboost-golden/post_stack_agc/agc_rms.sgy",
+            "operator": "agc_rms"
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "assertion_id": "agc_rms_materialized_output_exists",
+          "description": "Materialized AGC RMS output is written and remains readable as SEG-Y.",
+          "assertion_kind": "engineering_contract",
+          "spec": {
+            "file_exists": true,
+            "readable": true,
+            "sample_values": "finite",
+            "trace_count": "matches_materialized_selection"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": "emit_workflow_report",
+      "name": "Emit workflow report",
+      "step_kind": "other",
+      "operation": "traceboost.workflow.report.write",
+      "depends_on": [
+        "materialize_agc_rms"
+      ],
+      "request": {
+        "placeholder": true,
+        "requires_local_configuration": true,
+        "recipe_id": "traceboost.post_stack_agc.placeholder.v1",
+        "report_path": "${LOCAL_OUTPUT_ROOT}/traceboost-golden/post_stack_agc/workflow_report.json",
+        "include_request_digests": true,
+        "include_artifact_records": true,
+        "include_assertion_results": true
+      },
+      "expected_outputs": [
+        {
+          "output_id": "workflow_report",
+          "output_kind": "workflow_report",
+          "spec": {
+            "path": "${LOCAL_OUTPUT_ROOT}/traceboost-golden/post_stack_agc/workflow_report.json",
+            "schema_version": 1
+          }
+        }
+      ],
+      "assertions": [
+        {
+          "assertion_id": "workflow_report_records_evidence",
+          "description": "Report records configured source, step requests, artifacts, timings, and assertion outcomes.",
+          "assertion_kind": "engineering_contract",
+          "spec": {
+            "status": "succeeded_or_blocked_with_explicit_reason",
+            "steps_recorded": [
+              "preflight_post_stack_fixture",
+              "import_post_stack_fixture",
+              "open_imported_survey",
+              "render_section_view",
+              "preview_agc_rms",
+              "materialize_agc_rms",
+              "emit_workflow_report"
+            ],
+            "artifacts_recorded": [
+              "agc_rms_materialized_segy",
+              "workflow_report"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "expected_outputs": [
+    {
+      "output_id": "configured_traceboost_agc_rms_golden_workflow",
+      "output_kind": "workflow_placeholder",
+      "spec": {
+        "primary_operator": "agc_rms",
+        "requires_local_fixture_configuration": true,
+        "engineering_correctness_only": true
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "assertion_id": "workflow_avoids_interpretation_claims",
+      "description": "Workflow assertions are limited to engineering behavior and do not claim geologic or interpretation correctness.",
+      "assertion_kind": "documentation_contract",
+      "spec": {
+        "interpretation_correctness_claimed": false
+      }
+    }
+  ]
+}

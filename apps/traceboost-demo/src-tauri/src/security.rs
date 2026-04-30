@@ -125,6 +125,21 @@ impl SecurityState {
         self.grant_store_handle(canonical)
     }
 
+    pub fn authorize_runtime_store(
+        &self,
+        path: impl AsRef<Path>,
+    ) -> Result<GrantedPathSelection, String> {
+        let canonical = canonicalize_existing_path(path.as_ref())?;
+        let extension = canonical
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if !extension.eq_ignore_ascii_case("tbvol") {
+            return Err("Open Volume only accepts managed .tbvol runtime stores.".to_string());
+        }
+        self.grant_store_handle(canonical)
+    }
+
     pub fn grant_output_path(
         &self,
         path: impl AsRef<Path>,

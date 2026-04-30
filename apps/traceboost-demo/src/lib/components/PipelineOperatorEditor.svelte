@@ -105,7 +105,7 @@
   }
 
   function parameterDoc(name: string) {
-    return selectedOperatorCatalogItem?.parameterDocs.find((parameter) => parameter.name === name) ?? null;
+    return selectedOperatorCatalogItem?.parameter_docs.find((parameter) => parameter.name === name) ?? null;
   }
 
   function parameterLabel(name: string, fallback: string): string {
@@ -134,32 +134,32 @@
           <p>{selectedOperatorCatalogItem.description}</p>
           <div class="operator-doc-copy">
             <strong>Help</strong>
-            <p>{selectedOperatorCatalogItem.shortHelp}</p>
-            {#each documentationParagraphs(selectedOperatorCatalogItem.helpMarkdown) as paragraph (`${selectedOperatorCatalogItem.canonicalId}:${paragraph}`)}
-              {#if paragraph !== selectedOperatorCatalogItem.shortHelp}
+            <p>{selectedOperatorCatalogItem.short_help}</p>
+            {#each documentationParagraphs(selectedOperatorCatalogItem.help_markdown) as paragraph (`${selectedOperatorCatalogItem.canonical_id}:${paragraph}`)}
+              {#if paragraph !== selectedOperatorCatalogItem.short_help}
                 <p>{paragraph}</p>
               {/if}
             {/each}
-            {#if selectedOperatorCatalogItem.helpUrl}
-              <a href={selectedOperatorCatalogItem.helpUrl} target="_blank" rel="noreferrer">
+            {#if selectedOperatorCatalogItem.help_url}
+              <a href={selectedOperatorCatalogItem.help_url} target="_blank" rel="noreferrer">
                 Open reference
               </a>
             {/if}
           </div>
           <div class="operator-identity-meta">
-            {#if selectedOperatorCatalogItem.aliasLabel && selectedOperatorCatalogItem.canonicalName !== selectedOperatorCatalogItem.aliasLabel}
-              <span>Canonical: {selectedOperatorCatalogItem.canonicalName}</span>
+            {#if selectedOperatorCatalogItem.alias_label && selectedOperatorCatalogItem.canonical_name !== selectedOperatorCatalogItem.alias_label}
+              <span>Canonical: {selectedOperatorCatalogItem.canonical_name}</span>
             {/if}
-            <span>Group Id: {selectedOperatorCatalogItem.groupId}</span>
+            <span>Group Id: {selectedOperatorCatalogItem.group_id}</span>
             <span>Provider: {selectedOperatorCatalogItem.provider}</span>
             {#if selectedOperatorCatalogItem.tags.length}
               <span>Tags: {selectedOperatorCatalogItem.tags.join(", ")}</span>
             {/if}
           </div>
-          {#if selectedOperatorCatalogItem.parameterDocs.length}
+          {#if selectedOperatorCatalogItem.parameter_docs.length}
             <div class="operator-parameter-docs">
               <strong>Parameters</strong>
-              {#each selectedOperatorCatalogItem.parameterDocs as parameter (`${selectedOperatorCatalogItem.canonicalId}:${parameter.name}`)}
+              {#each selectedOperatorCatalogItem.parameter_docs as parameter (`${selectedOperatorCatalogItem.canonical_id}:${parameter.name}`)}
                 <div class="operator-parameter-doc">
                   <div class="operator-parameter-doc-header">
                     <span>{parameter.label}</span>

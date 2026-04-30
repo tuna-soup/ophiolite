@@ -59,16 +59,16 @@
       const haystack = [
         item.label,
         item.description,
-        item.shortHelp,
-        item.helpMarkdown,
-        item.canonicalName,
-        item.aliasLabel,
+        item.short_help,
+        item.help_markdown,
+        item.canonical_name,
+        item.alias_label,
         item.group,
-        item.groupId,
+        item.group_id,
         item.provider,
         ...item.tags,
         ...item.keywords,
-        ...item.parameterDocs.flatMap((parameter) => [
+        ...item.parameter_docs.flatMap((parameter) => [
           parameter.name,
           parameter.label,
           parameter.description,
@@ -133,7 +133,7 @@
       event.preventDefault();
       const target = filteredCatalog[activeResultIndex] ?? filteredCatalog[0];
       if (target) {
-        insertOperator(target.id);
+        insertOperator(target.item_id as OperatorCatalogId);
       }
       return;
     }
@@ -240,12 +240,12 @@
     {#if showCatalog}
       <div class="catalog-list">
         {#if filteredCatalog.length}
-          {#each filteredCatalog as item, index (item.id)}
+          {#each filteredCatalog as item, index (item.item_id)}
             <button
               class:active={index === activeResultIndex}
               class="catalog-row"
               onmousedown={(event) => event.preventDefault()}
-              onclick={() => insertOperator(item.id)}
+              onclick={() => insertOperator(item.item_id as OperatorCatalogId)}
               onmouseenter={() => {
                 activeResultIndex = index;
               }}
@@ -255,8 +255,8 @@
                 <span>{item.description}</span>
                 <span class="catalog-meta-line">
                   {item.group}
-                  {#if item.aliasLabel && item.canonicalName !== item.aliasLabel}
-                    | Canonical: {item.canonicalName}
+                  {#if item.alias_label && item.canonical_name !== item.alias_label}
+                    | Canonical: {item.canonical_name}
                   {/if}
                 </span>
               </span>

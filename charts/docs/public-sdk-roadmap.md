@@ -429,3 +429,27 @@ If starting implementation now, do these first:
 3. Audit every current export in [packages/svelte/src/index.ts](../packages/svelte/src/index.ts) into `launch`, `preview`, or `internal`.
 4. Draft the first `simple` example for `SeismicSectionChart` using only neutral public types.
 5. Add an export-surface test so the public boundary stops drifting.
+
+## Evidence-Backed SDK Implications
+
+The public SDK hardening is part of the broader evidence-backed platform
+direction, not a cosmetic package cleanup.
+
+Adopt these implementation rules:
+
+- split launch-family public types from preview/internal types instead of
+  keeping all chart, preview, Ophiolite, and debug types in one mixed surface
+- keep Ophiolite-specific decoding under `@ophiolite/charts/adapters/ophiolite`
+  and avoid re-exporting raw contract internals from that adapter path
+- keep interaction profiles declarative and chart-family scoped instead of
+  exposing global mutable tool managers as the public model
+- document chart-family layer/node ordering for volume-style surfaces before
+  promoting them from preview
+- extend visual regression to example-level interactions for every launch chart
+  family, not only static docs screenshots
+- make chart benchmarks fixture-driven and record renderer mode, dataset shape,
+  viewport action, browser, machine metadata, and repetition policy before using
+  numbers in public claims
+
+Do not promote more chart families until the launch families have stable public
+types, examples, visual regression, and benchmark evidence.

@@ -55,6 +55,8 @@ Current properties:
 - canonical processing identity, debug, and compatibility semantics are defined in `ADR-0034-canonical-processing-identity-debug-and-compatibility-surface.md`
 - the machine-readable workspace boundary manifest and shared capability-registry direction are defined in `ADR-0035-boundary-manifest-and-capability-registry.md`
 - the `tbvolc` v1 padded-payload storage contract is defined in `ADR-0036-tbvolc-v1-padded-payload-contract.md`
+- evidence-backed workflow/import proof boundaries are defined in `ADR-0037-evidence-backed-workflow-and-import-proof-boundaries.md`
+- TraceBoost's app-owned reference workflow proof harness is sketched in `traceboost-reference-workflow-proof-harness.md`
 - the current-to-target authority breakdown for processing concerns is tracked in `processing-authority-matrix.md`
 - the active implementation plan for canonical processing integration hardening is tracked in `processing-canonical-integration-plan-2026-04.md`
 - the current public-core candidate, blocked, and internal package split is tracked in `public-sdk-package-matrix.md`
@@ -92,9 +94,16 @@ The current stack split is also intentional:
 
 - `ophiolite` owns canonical contracts, runtime semantics, public control surfaces, and shared capability vocabulary
 - Ophiolite Charts owns reusable embedder-facing chart behavior
-- TraceBoost owns first-party workflow composition, desktop shell transport, session UX, and app-local capability activation
+- TraceBoost owns first-party workflow composition, desktop shell transport, session UX, app-local capability activation, and reference workflow proof recipes/reports
 
 That means the TraceBoost desktop/Tauri command boundary is an internal application seam. It may carry canonical contracts, but its command names and transport details are not part of the public Ophiolite API promise.
+
+Workflow proof is now an explicit architectural concern. Platform-owned proof
+artifacts such as reusable preflight/import evidence, processing identity,
+runtime events, lineage, fixture manifests, and benchmark policy live in
+`ophiolite`; app-owned recipes, run orchestration, report rendering, file grants,
+and workflow presets live in TraceBoost; chart-family visual proof lives in
+Ophiolite Charts.
 
 ## Asset And Compute Taxonomy
 

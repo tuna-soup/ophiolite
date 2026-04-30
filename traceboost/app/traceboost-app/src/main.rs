@@ -1,7 +1,19 @@
 mod operation_catalog;
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
+use traceboost_app::workflow_report::WorkflowRunReport;
+use traceboost_app::workflow_report_render::{
+    render_workflow_report_markdown, render_workflow_report_mermaid,
+};
+use traceboost_app::workflow_runner::{
+    RunWorkflowOptions, load_workflow_recipe_from_json_path, run_workflow_recipe,
+    validate_workflow_recipe,
+};
 use traceboost_app::{
     PostStackNeighborhoodBenchmarkOperator, PostStackNeighborhoodPreviewBenchmarkRequest,
     PostStackNeighborhoodProcessingBenchmarkRequest, PrepareSurveyDemoRequest,
@@ -370,6 +382,29 @@ enum Command {
         #[arg(long, default_value_t = false)]
         delete_input_on_success: bool,
     },
+    Workflow {
+        #[command(subcommand)]
+        command: WorkflowCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum WorkflowCommand {
+    Validate {
+        recipe: PathBuf,
+    },
+    Run {
+        recipe: PathBuf,
+        #[arg(long)]
+        report: Option<PathBuf>,
+        #[arg(long)]
+        run_id: Option<String>,
+    },
+    RenderReport {
+        report: PathBuf,
+        #[arg(long, value_enum, default_value_t = WorkflowReportFormatArg::Markdown)]
+        format: WorkflowReportFormatArg,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -416,6 +451,14 @@ enum TraceLocalBenchmarkScenarioArg {
 enum NeighborhoodBenchmarkOperatorArg {
     Similarity,
     LocalVolumeStatsMean,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum WorkflowReportFormatArg {
+    Json,
+    Markdown,
+    Mermaid,
+    Html,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -927,9 +970,92 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })?;
             println!("{}", serde_json::to_string_pretty(&response)?);
         }
+        Command::Workflow { command } => match command {
+            WorkflowCommand::Validate { recipe } => {
+                let recipe = load_workflow_recipe_from_json_path(&recipe)?;
+                validate_workflow_recipe(&recipe)?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "status": "valid",
+                        "schema_version": recipe.schema_version,
+                        "recipe_id": recipe.recipe_id,
+                        "step_count": recipe.steps.len()
+                    }))?
+                );
+            }
+            WorkflowCommand::Run {
+                recipe,
+                report,
+                run_id,
+            } => {
+                let recipe = load_workflow_recipe_from_json_path(&recipe)?;
+                let workflow_report = run_workflow_recipe(
+                    &recipe,
+                    RunWorkflowOptions {
+                        run_id: run_id.unwrap_or_else(default_workflow_run_id),
+                        started_at: default_workflow_timestamp(),
+                        app_version: env!("CARGO_PKG_VERSION").to_string(),
+                        os: Some(std::env::consts::OS.to_string()),
+                        arch: Some(std::env::consts::ARCH.to_string()),
+                        host: None,
+                        environment_variables: Vec::new(),
+                    },
+                )?;
+                if let Some(report_path) = report {
+                    fs::write(
+                        &report_path,
+                        serde_json::to_string_pretty(&workflow_report)?,
+                    )?;
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "status": "written",
+                            "report_path": report_path.to_string_lossy(),
+                            "run_id": workflow_report.run_id,
+                            "recipe_id": workflow_report.recipe_id
+                        }))?
+                    );
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&workflow_report)?);
+                }
+            }
+            WorkflowCommand::RenderReport { report, format } => {
+                let report: WorkflowRunReport = serde_json::from_str(&fs::read_to_string(report)?)?;
+                match format {
+                    WorkflowReportFormatArg::Json => {
+                        println!("{}", serde_json::to_string_pretty(&report)?);
+                    }
+                    WorkflowReportFormatArg::Markdown => {
+                        print!("{}", render_workflow_report_markdown(&report));
+                    }
+                    WorkflowReportFormatArg::Mermaid => {
+                        print!("{}", render_workflow_report_mermaid(&report));
+                    }
+                    WorkflowReportFormatArg::Html => {
+                        return Err("workflow HTML report rendering is not implemented yet".into());
+                    }
+                }
+            }
+        },
     }
 
     Ok(())
+}
+
+fn default_workflow_run_id() -> String {
+    format!(
+        "traceboost-workflow-{}",
+        unix_timestamp_seconds().unwrap_or_default()
+    )
+}
+
+fn default_workflow_timestamp() -> String {
+    format!("unix:{}", unix_timestamp_seconds().unwrap_or_default())
+}
+
+fn unix_timestamp_seconds() -> Result<u64, std::time::SystemTimeError> {
+    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
 impl From<SectionAxisArg> for seis_runtime::SectionAxis {

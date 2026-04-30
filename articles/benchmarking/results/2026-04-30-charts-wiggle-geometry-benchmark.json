@@ -1,0 +1,309 @@
+{
+  "status": "local exploratory baseline",
+  "generatedAt": "2026-04-30T12:48:12.769Z",
+  "benchmark": "charts-wiggle-geometry",
+  "plotRect": {
+    "x": 68,
+    "y": 72,
+    "width": 1400,
+    "height": 840
+  },
+  "canvas": {
+    "width": 1600,
+    "height": 1000
+  },
+  "cases": [
+    {
+      "name": "focus-256x256",
+      "traces": 256,
+      "samples": 256,
+      "viewport": {
+        "traceStart": 0,
+        "traceEnd": 256,
+        "sampleStart": 0,
+        "sampleEnd": 256
+      },
+      "viewportTraces": 256,
+      "viewportSamples": 256,
+      "sourceAmplitudeBytes": 262144,
+      "results": [
+        {
+          "mode": "expanded",
+          "iterations": 60,
+          "cachePrimeMs": null,
+          "prepare": {
+            "medianMs": 2.9984374999999943,
+            "meanMs": 3.1582007166666695,
+            "p95Ms": 4.167375000000021,
+            "minMs": 2.500124999999997,
+            "maxMs": 4.720666999999999
+          },
+          "uploadBytesMedian": 1695488,
+          "drawnTracesMedian": 128,
+          "lineVertexCountMedian": 65842,
+          "fillVertexCountMedian": 146094,
+          "sampleCountMedian": 0
+        },
+        {
+          "mode": "instanced",
+          "iterations": 60,
+          "cachePrimeMs": null,
+          "prepare": {
+            "medianMs": 0.425541999999993,
+            "meanMs": 0.438181200000003,
+            "p95Ms": 0.5979580000000055,
+            "minMs": 0.3987500000000068,
+            "maxMs": 0.607875000000007
+          },
+          "uploadBytesMedian": 1536,
+          "drawnTracesMedian": 128,
+          "lineVertexCountMedian": 0,
+          "fillVertexCountMedian": 0,
+          "sampleCountMedian": 256
+        },
+        {
+          "mode": "instanced-cached",
+          "iterations": 60,
+          "cachePrimeMs": 0.42674999999997,
+          "prepare": {
+            "medianMs": 0.030979500000000826,
+            "meanMs": 0.0316638500000001,
+            "p95Ms": 0.035750000000007276,
+            "minMs": 0.029207999999982803,
+            "maxMs": 0.04841700000002902
+          },
+          "uploadBytesMedian": 1536,
+          "drawnTracesMedian": 128,
+          "lineVertexCountMedian": 0,
+          "fillVertexCountMedian": 0,
+          "sampleCountMedian": 256
+        }
+      ],
+      "ratios": {
+        "prepareMedianInstancedOverExpanded": 0.14192125065137887,
+        "prepareMedianInstancedCachedOverExpanded": 0.010331881188119106,
+        "prepareMedianInstancedCachedOverInstanced": 0.07280009963764172,
+        "uploadBytesInstancedOverExpanded": 0.0009059338668277216
+      }
+    },
+    {
+      "name": "overview-957x500",
+      "traces": 957,
+      "samples": 500,
+      "viewport": {
+        "traceStart": 0,
+        "traceEnd": 957,
+        "sampleStart": 0,
+        "sampleEnd": 500
+      },
+      "viewportTraces": 957,
+      "viewportSamples": 500,
+      "sourceAmplitudeBytes": 1914000,
+      "results": [
+        {
+          "mode": "expanded",
+          "iterations": 30,
+          "cachePrimeMs": null,
+          "prepare": {
+            "medianMs": 11.060062500000015,
+            "meanMs": 11.067065233333324,
+            "p95Ms": 12.02049999999997,
+            "minMs": 9.73599999999999,
+            "maxMs": 12.045125000000041
+          },
+          "uploadBytesMedian": 3784144,
+          "drawnTracesMedian": 192,
+          "lineVertexCountMedian": 193454,
+          "fillVertexCountMedian": 279564,
+          "sampleCountMedian": 0
+        },
+        {
+          "mode": "instanced",
+          "iterations": 30,
+          "cachePrimeMs": null,
+          "prepare": {
+            "medianMs": 2.8958954999999946,
+            "meanMs": 2.8688180666666727,
+            "p95Ms": 2.956457999999998,
+            "minMs": 2.730000000000018,
+            "maxMs": 3.0858329999999796
+          },
+          "uploadBytesMedian": 2304,
+          "drawnTracesMedian": 192,
+          "lineVertexCountMedian": 0,
+          "fillVertexCountMedian": 0,
+          "sampleCountMedian": 500
+        },
+        {
+          "mode": "instanced-cached",
+          "iterations": 30,
+          "cachePrimeMs": 2.774874999999952,
+          "prepare": {
+            "medianMs": 0.05818750000003092,
+            "meanMs": 0.05901529999999487,
+            "p95Ms": 0.06412499999999,
+            "minMs": 0.05525000000000091,
+            "maxMs": 0.06437499999992724
+          },
+          "uploadBytesMedian": 2304,
+          "drawnTracesMedian": 192,
+          "lineVertexCountMedian": 0,
+          "fillVertexCountMedian": 0,
+          "sampleCountMedian": 500
+        }
+      ],
+      "ratios": {
+        "prepareMedianInstancedOverExpanded": 0.2618335565463568,
+        "prepareMedianInstancedCachedOverExpanded": 0.005261046219226234,
+        "prepareMedianInstancedCachedOverInstanced": 0.020093093828845353,
+        "uploadBytesInstancedOverExpanded": 0.000608856322592375
+      }
+    },
+    {
+      "name": "full-f3-small-3826x2000",
+      "traces": 3826,
+      "samples": 2000,
+      "viewport": {
+        "traceStart": 0,
+        "traceEnd": 3826,
+        "sampleStart": 0,
+        "sampleEnd": 2000
+      },
+      "viewportTraces": 3826,
+      "viewportSamples": 2000,
+      "sourceAmplitudeBytes": 30608000,
+      "results": [
+        {
+          "mode": "expanded",
+          "iterations": 8,
+          "cachePrimeMs": null,
+          "prepare": {
+            "medianMs": 86.39012500000001,
+            "meanMs": 88.02284900000006,
+            "p95Ms": 95.46516600000018,
+            "minMs": 84.13141700000006,
+            "maxMs": 95.46516600000018
+          },
+          "uploadBytesMedian": 18214880,
+          "drawnTracesMedian": 226,
+          "lineVertexCountMedian": 911608,
+          "fillVertexCountMedian": 1365252,
+          "sampleCountMedian": 0
+        },
+        {
+          "mode": "instanced",
+          "iterations": 8,
+          "cachePrimeMs": null,
+          "prepare": {
+            "medianMs": 43.62910450000015,
+            "meanMs": 43.83059900000001,
+            "p95Ms": 44.66187499999978,
+            "minMs": 43.54441700000007,
+            "maxMs": 44.66187499999978
+          },
+          "uploadBytesMedian": 2712,
+          "drawnTracesMedian": 226,
+          "lineVertexCountMedian": 0,
+          "fillVertexCountMedian": 0,
+          "sampleCountMedian": 2000
+        },
+        {
+          "mode": "instanced-cached",
+          "iterations": 8,
+          "cachePrimeMs": 44.30241699999988,
+          "prepare": {
+            "medianMs": 0.1295420000001286,
+            "meanMs": 0.12904675000015686,
+            "p95Ms": 0.13312500000029104,
+            "minMs": 0.12508300000035888,
+            "maxMs": 0.13312500000029104
+          },
+          "uploadBytesMedian": 2712,
+          "drawnTracesMedian": 226,
+          "lineVertexCountMedian": 0,
+          "fillVertexCountMedian": 0,
+          "sampleCountMedian": 2000
+        }
+      ],
+      "ratios": {
+        "prepareMedianInstancedOverExpanded": 0.5050242084960538,
+        "prepareMedianInstancedCachedOverExpanded": 0.0014995000875404289,
+        "prepareMedianInstancedCachedOverInstanced": 0.002969164769360053,
+        "uploadBytesInstancedOverExpanded": 0.00014888925977003418
+      }
+    },
+    {
+      "name": "zoomed-f3-512x512",
+      "traces": 3826,
+      "samples": 2000,
+      "viewport": {
+        "traceStart": 1657,
+        "traceEnd": 2169,
+        "sampleStart": 744,
+        "sampleEnd": 1256
+      },
+      "viewportTraces": 512,
+      "viewportSamples": 512,
+      "sourceAmplitudeBytes": 30608000,
+      "results": [
+        {
+          "mode": "expanded",
+          "iterations": 40,
+          "cachePrimeMs": null,
+          "prepare": {
+            "medianMs": 7.801333500000055,
+            "meanMs": 8.105646850000005,
+            "p95Ms": 10.507916999999907,
+            "minMs": 7.290583999999853,
+            "maxMs": 10.628000000000156
+          },
+          "uploadBytesMedian": 3085520,
+          "drawnTracesMedian": 171,
+          "lineVertexCountMedian": 176260,
+          "fillVertexCountMedian": 209430,
+          "sampleCountMedian": 0
+        },
+        {
+          "mode": "instanced",
+          "iterations": 40,
+          "cachePrimeMs": null,
+          "prepare": {
+            "medianMs": 1.5348750000000564,
+            "meanMs": 1.554274925000027,
+            "p95Ms": 1.6616250000001855,
+            "minMs": 1.5069579999999405,
+            "maxMs": 1.766917000000376
+          },
+          "uploadBytesMedian": 2052,
+          "drawnTracesMedian": 171,
+          "lineVertexCountMedian": 0,
+          "fillVertexCountMedian": 0,
+          "sampleCountMedian": 512
+        },
+        {
+          "mode": "instanced-cached",
+          "iterations": 40,
+          "cachePrimeMs": 1.4747089999996206,
+          "prepare": {
+            "medianMs": 0.0416255000000092,
+            "meanMs": 0.04299485000000232,
+            "p95Ms": 0.056709000000410015,
+            "minMs": 0.038457999999991443,
+            "maxMs": 0.05845900000031179
+          },
+          "uploadBytesMedian": 2052,
+          "drawnTracesMedian": 171,
+          "lineVertexCountMedian": 0,
+          "fillVertexCountMedian": 0,
+          "sampleCountMedian": 512
+        }
+      ],
+      "ratios": {
+        "prepareMedianInstancedOverExpanded": 0.19674521029001588,
+        "prepareMedianInstancedCachedOverExpanded": 0.005335690366269933,
+        "prepareMedianInstancedCachedOverInstanced": 0.027119798029160463,
+        "uploadBytesInstancedOverExpanded": 0.000665041873006819
+      }
+    }
+  ]
+}

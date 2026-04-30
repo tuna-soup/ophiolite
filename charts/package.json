@@ -17,6 +17,8 @@
     "validate:manifests": "bun scripts/validate-module-manifests.ts",
     "docs:build": "bun run validate:manifests && bun --filter @ophiolite/charts-docs build",
     "dev:benchmark": "bun --filter @ophiolite/charts-benchmark dev",
+    "bench:texture-upload": "node scripts/capture-texture-upload-benchmark.mjs",
+    "bench:wiggle-geometry": "bun run scripts/capture-wiggle-geometry-benchmark.ts",
     "build": "bun --filter @ophiolite/charts-demo build && bun --filter @ophiolite/charts-playground build && bun --filter @ophiolite/charts-docs build && bun --filter @ophiolite/charts-benchmark build",
     "typecheck": "bun --filter '*' typecheck",
     "test:visual": "playwright test"

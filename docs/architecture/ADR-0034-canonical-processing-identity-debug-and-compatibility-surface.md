@@ -155,6 +155,33 @@ The current desktop-shell implication is:
   bridge stubs
 - those stubs are wrappers over canonical contracts, not replacements for them
 
+## Workflow Proof Harness Consumption
+
+TraceBoost may use canonical processing identity, inspectable plans, runtime
+events, artifact identity, and lineage compatibility as evidence inside
+workflow run reports.
+
+That consumption does not change ownership:
+
+- Ophiolite remains the canonical owner of processing identity and runtime
+  evidence.
+- TraceBoost owns recipe orchestration, app-local workflow state, report
+  collection, and report rendering.
+- TraceBoost reports record canonical evidence emitted by Ophiolite; they do not
+  recompute artifact identity or define a second processing debug model.
+
+The intended report chain is:
+
+```text
+TraceBoost recipe step
+  -> canonical request payload
+  -> Ophiolite job / execution plan
+  -> Ophiolite runtime events
+  -> Ophiolite artifact identity and lineage
+  -> TraceBoost run report
+  -> derived renderers
+```
+
 ## Success Criteria
 
 This decision is working when:

@@ -1,0 +1,115 @@
+{
+  "status": "local exploratory baseline",
+  "generatedAt": "2026-04-30T12:24:21.685Z",
+  "benchmark": "packed-section-adaptation",
+  "cases": [
+    {
+      "name": "focus-256x256",
+      "traces": 256,
+      "samples": 256,
+      "payloadBytes": 267680,
+      "results": [
+        {
+          "mode": "copy",
+          "iterations": 80,
+          "parseMedianMs": 0.002291500000000113,
+          "parseMeanMs": 0.0028322749999999176,
+          "adaptMedianMs": 0.026375499999998553,
+          "adaptMeanMs": 0.028010425000000172,
+          "totalMedianMs": 0.028812500000000796,
+          "totalMeanMs": 0.03084270000000009,
+          "copiedBytesMedian": 267264,
+          "viewedBytesMedian": 0,
+          "copiedBuffersMedian": 4,
+          "viewedBuffersMedian": 0
+        },
+        {
+          "mode": "view",
+          "iterations": 80,
+          "parseMedianMs": 0.00137499999999946,
+          "parseMeanMs": 0.0027301875000000477,
+          "adaptMedianMs": 0.0009794999999979126,
+          "adaptMeanMs": 0.0017094124999998072,
+          "totalMedianMs": 0.0026874999999986215,
+          "totalMeanMs": 0.004439599999999854,
+          "copiedBytesMedian": 0,
+          "viewedBytesMedian": 267264,
+          "copiedBuffersMedian": 0,
+          "viewedBuffersMedian": 4
+        }
+      ]
+    },
+    {
+      "name": "overview-957x500",
+      "traces": 957,
+      "samples": 500,
+      "payloadBytes": 1931728,
+      "results": [
+        {
+          "mode": "copy",
+          "iterations": 40,
+          "parseMedianMs": 0.0014790000000015624,
+          "parseMeanMs": 0.02362599999999997,
+          "adaptMedianMs": 0.10856249999999967,
+          "adaptMeanMs": 0.11456157500000011,
+          "totalMedianMs": 0.11522899999999936,
+          "totalMeanMs": 0.13818757500000006,
+          "copiedBytesMedian": 1931312,
+          "viewedBytesMedian": 0,
+          "copiedBuffersMedian": 4,
+          "viewedBuffersMedian": 0
+        },
+        {
+          "mode": "view",
+          "iterations": 40,
+          "parseMedianMs": 0.001125000000001819,
+          "parseMeanMs": 0.0012021000000002502,
+          "adaptMedianMs": 0.00037499999999823785,
+          "adaptMeanMs": 0.0005083250000003758,
+          "totalMedianMs": 0.0015000000000000568,
+          "totalMeanMs": 0.001710425000000626,
+          "copiedBytesMedian": 0,
+          "viewedBytesMedian": 1931312,
+          "copiedBuffersMedian": 0,
+          "viewedBuffersMedian": 4
+        }
+      ]
+    },
+    {
+      "name": "full-f3-small-3826x2000",
+      "traces": 3826,
+      "samples": 2000,
+      "payloadBytes": 30677640,
+      "results": [
+        {
+          "mode": "copy",
+          "iterations": 8,
+          "parseMedianMs": 0.0072915000000008945,
+          "parseMeanMs": 0.13489049999999558,
+          "adaptMedianMs": 0.8085835000000046,
+          "adaptMeanMs": 1.0550365000000053,
+          "totalMedianMs": 1.285895999999994,
+          "totalMeanMs": 1.1899270000000008,
+          "copiedBytesMedian": 30677216,
+          "viewedBytesMedian": 0,
+          "copiedBuffersMedian": 4,
+          "viewedBuffersMedian": 0
+        },
+        {
+          "mode": "view",
+          "iterations": 8,
+          "parseMedianMs": 0.0012079999999983215,
+          "parseMeanMs": 0.001500124999997965,
+          "adaptMedianMs": 0.00039600000000206137,
+          "adaptMeanMs": 0.0005521250000022349,
+          "totalMedianMs": 0.001728999999997427,
+          "totalMeanMs": 0.0020522500000001997,
+          "copiedBytesMedian": 0,
+          "viewedBytesMedian": 30677216,
+          "copiedBuffersMedian": 0,
+          "viewedBuffersMedian": 4
+        }
+      ]
+    }
+  ]
+}

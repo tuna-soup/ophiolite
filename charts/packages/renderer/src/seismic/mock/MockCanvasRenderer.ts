@@ -41,10 +41,12 @@ import {
   diffRenderStates,
   prepareHeatmapData,
   prepareWiggleData,
+  prepareWiggleInstances,
+  visibleAmplitudeMaxAbs,
   type BaseRenderState,
   type OverlayRenderState,
   type PreparedHeatmapData,
-  type PreparedWiggleData
+  type PreparedWiggleInstances
 } from "./renderModel";
 import {
   canUseOffscreenWorkerRenderer,
@@ -59,16 +61,14 @@ import { createRendererTelemetryEvent, type RendererTelemetryListener } from "..
 
 interface GLResources {
   heatmapProgram: WebGLProgram;
-  geometryProgram: WebGLProgram;
+  wiggleProgram: WebGLProgram;
   heatmapQuadBuffer: WebGLBuffer;
-  wiggleLineBuffer: WebGLBuffer;
-  wiggleFillBuffer: WebGLBuffer;
+  wiggleInstanceBuffer: WebGLBuffer;
   amplitudeTexture: WebGLTexture;
   secondaryAmplitudeTexture: WebGLTexture;
   overlayTexture: WebGLTexture;
   lutTexture: WebGLTexture;
-  lineVertexCount: number;
-  fillVertexCount: number;
+  traceInstanceCount: number;
 }
 
 interface PlotPalette {
@@ -115,7 +115,8 @@ export class MockCanvasRenderer implements RendererAdapter {
   private lastBaseState: BaseRenderState | null = null;
   private lastOverlayState: OverlayRenderState | null = null;
   private preparedHeatmap: PreparedHeatmapData | null = null;
-  private preparedWiggles: PreparedWiggleData | null = null;
+  private preparedWiggles: PreparedWiggleInstances | null = null;
+  private wiggleScaleCache = new WeakMap<SectionPayload, Map<string, number>>();
   private lastUploadedSection: SectionPayload | null = null;
   private lastUploadedSecondarySection: SectionPayload | null = null;
   private lastUploadedOverlay: RenderFrame["state"]["overlay"] = null;
@@ -250,10 +251,9 @@ export class MockCanvasRenderer implements RendererAdapter {
     if (this.gl && this.resources) {
       const { gl, resources } = this;
       gl.deleteProgram(resources.heatmapProgram);
-      gl.deleteProgram(resources.geometryProgram);
+      gl.deleteProgram(resources.wiggleProgram);
       gl.deleteBuffer(resources.heatmapQuadBuffer);
-      gl.deleteBuffer(resources.wiggleLineBuffer);
-      gl.deleteBuffer(resources.wiggleFillBuffer);
+      gl.deleteBuffer(resources.wiggleInstanceBuffer);
       gl.deleteTexture(resources.amplitudeTexture);
       gl.deleteTexture(resources.secondaryAmplitudeTexture);
       gl.deleteTexture(resources.overlayTexture);
@@ -272,6 +272,7 @@ export class MockCanvasRenderer implements RendererAdapter {
     this.lastOverlayState = null;
     this.preparedHeatmap = null;
     this.preparedWiggles = null;
+    this.wiggleScaleCache = new WeakMap<SectionPayload, Map<string, number>>();
     this.lastUploadedSection = null;
     this.lastUploadedSecondarySection = null;
     this.lastUploadedOverlay = null;
@@ -291,6 +292,30 @@ export class MockCanvasRenderer implements RendererAdapter {
     }
 
     return surface;
+  }
+
+  private visibleWiggleAmplitudeMaxAbs(section: SectionPayload, viewport: NonNullable<BaseRenderState["viewport"]>): number {
+    let sectionCache = this.wiggleScaleCache.get(section);
+    if (!sectionCache) {
+      sectionCache = new Map<string, number>();
+      this.wiggleScaleCache.set(section, sectionCache);
+    }
+
+    const key = `${viewport.traceStart}:${viewport.traceEnd}:${viewport.sampleStart}:${viewport.sampleEnd}`;
+    const cached = sectionCache.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const value = visibleAmplitudeMaxAbs(
+      section,
+      viewport.traceStart,
+      viewport.traceEnd,
+      viewport.sampleStart,
+      viewport.sampleEnd
+    );
+    sectionCache.set(key, value);
+    return value;
   }
 
   private startWorkerRenderer(): void {
@@ -629,20 +654,18 @@ export class MockCanvasRenderer implements RendererAdapter {
         );
         uploadLutTexture(gl, resources.lutTexture, this.preparedHeatmap.lut);
       } else {
-        this.preparedWiggles = prepareWiggleData(
+        this.preparedWiggles = prepareWiggleInstances(
           pixelState.section,
           pixelState.viewport,
           pixelState.displayTransform,
           pixelState.plotRect,
           pixelState.width,
-          pixelState.height
+          {
+            visibleAmplitudeMaxAbs: this.visibleWiggleAmplitudeMaxAbs(pixelState.section, pixelState.viewport)
+          }
         );
-        gl.bindBuffer(gl.ARRAY_BUFFER, resources.wiggleLineBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, this.preparedWiggles.lineVertices, gl.DYNAMIC_DRAW);
-        gl.bindBuffer(gl.ARRAY_BUFFER, resources.wiggleFillBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, this.preparedWiggles.fillVertices, gl.DYNAMIC_DRAW);
-        resources.lineVertexCount = this.preparedWiggles.lineVertices.length / 2;
-        resources.fillVertexCount = this.preparedWiggles.fillVertices.length / 2;
+        uploadWiggleInstances(gl, resources.wiggleInstanceBuffer, this.preparedWiggles);
+        resources.traceInstanceCount = this.preparedWiggles.traceIndices.length;
       }
     }
 
@@ -682,7 +705,7 @@ export class MockCanvasRenderer implements RendererAdapter {
     }
 
     if (pixelState.displayTransform.renderMode === "wiggle" && this.preparedWiggles) {
-      drawWigglesGl(gl, resources, palette);
+      drawWigglesGl(gl, resources, pixelState, this.preparedWiggles, palette);
     }
   }
 
@@ -825,10 +848,9 @@ export class MockCanvasRenderer implements RendererAdapter {
 
 function createGlResources(gl: WebGL2RenderingContext): GLResources {
   const heatmapProgram = createProgram(gl, HEATMAP_VERTEX_SHADER, HEATMAP_FRAGMENT_SHADER);
-  const geometryProgram = createProgram(gl, GEOMETRY_VERTEX_SHADER, GEOMETRY_FRAGMENT_SHADER);
+  const wiggleProgram = createProgram(gl, WIGGLE_VERTEX_SHADER, WIGGLE_FRAGMENT_SHADER);
   const heatmapQuadBuffer = createBuffer(gl);
-  const wiggleLineBuffer = createBuffer(gl);
-  const wiggleFillBuffer = createBuffer(gl);
+  const wiggleInstanceBuffer = createBuffer(gl);
   const amplitudeTexture = createTexture(gl);
   const secondaryAmplitudeTexture = createTexture(gl);
   const overlayTexture = createTexture(gl);
@@ -836,16 +858,14 @@ function createGlResources(gl: WebGL2RenderingContext): GLResources {
 
   return {
     heatmapProgram,
-    geometryProgram,
+    wiggleProgram,
     heatmapQuadBuffer,
-    wiggleLineBuffer,
-    wiggleFillBuffer,
+    wiggleInstanceBuffer,
     amplitudeTexture,
     secondaryAmplitudeTexture,
     overlayTexture,
     lutTexture,
-    lineVertexCount: 0,
-    fillVertexCount: 0
+    traceInstanceCount: 0
   };
 }
 
@@ -936,31 +956,86 @@ function setSectionTextureUniforms(
   );
 }
 
-function drawWigglesGl(gl: WebGL2RenderingContext, resources: GLResources, palette: PlotPalette): void {
+function uploadWiggleInstances(
+  gl: WebGL2RenderingContext,
+  buffer: WebGLBuffer,
+  prepared: PreparedWiggleInstances
+): void {
+  const interleaved = new Float32Array(prepared.traceIndices.length * 3);
+  for (let index = 0; index < prepared.traceIndices.length; index += 1) {
+    const offset = index * 3;
+    interleaved[offset] = prepared.traceIndices[index]!;
+    interleaved[offset + 1] = prepared.baselineClipX[index]!;
+    interleaved[offset + 2] = prepared.amplitudeScaleClip[index]!;
+  }
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+  gl.bufferData(gl.ARRAY_BUFFER, interleaved, gl.DYNAMIC_DRAW);
+}
+
+function drawWigglesGl(
+  gl: WebGL2RenderingContext,
+  resources: GLResources,
+  baseState: BaseRenderState,
+  prepared: PreparedWiggleInstances,
+  palette: PlotPalette
+): void {
+  if (!baseState.viewport || !baseState.section || resources.traceInstanceCount === 0) {
+    return;
+  }
+
+  const pixelPlotRect = baseState.plotRect;
+  gl.enable(gl.SCISSOR_TEST);
+  gl.scissor(
+    pixelPlotRect.x,
+    baseState.height - pixelPlotRect.y - pixelPlotRect.height,
+    pixelPlotRect.width,
+    pixelPlotRect.height
+  );
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  gl.useProgram(resources.geometryProgram);
+  gl.useProgram(resources.wiggleProgram);
+  bindTexture(gl, resources.amplitudeTexture, 0);
+  gl.uniform1i(gl.getUniformLocation(resources.wiggleProgram, "uAmplitude"), 0);
+  setSectionTextureUniforms(gl, resources.wiggleProgram, baseState.section, "uTextureSize", "uLoadedWindow");
+  gl.uniform1f(gl.getUniformLocation(resources.wiggleProgram, "uGain"), baseState.displayTransform.gain);
+  gl.uniform1f(
+    gl.getUniformLocation(resources.wiggleProgram, "uPolaritySign"),
+    baseState.displayTransform.polarity === "reversed" ? -1 : 1
+  );
+  gl.uniform1f(gl.getUniformLocation(resources.wiggleProgram, "uPlotY"), pixelPlotRect.y);
+  gl.uniform1f(gl.getUniformLocation(resources.wiggleProgram, "uPlotHeight"), pixelPlotRect.height);
+  gl.uniform1f(gl.getUniformLocation(resources.wiggleProgram, "uCanvasHeight"), baseState.height);
+  gl.uniform1f(gl.getUniformLocation(resources.wiggleProgram, "uSampleStart"), prepared.sampleStart);
+  gl.uniform1f(gl.getUniformLocation(resources.wiggleProgram, "uSampleCount"), prepared.sampleCount);
 
-  const positionLocation = gl.getAttribLocation(resources.geometryProgram, "aPosition");
-  const colorLocation = gl.getUniformLocation(resources.geometryProgram, "uColor");
+  gl.bindBuffer(gl.ARRAY_BUFFER, resources.wiggleInstanceBuffer);
+  const traceIndexLocation = gl.getAttribLocation(resources.wiggleProgram, "aTraceIndex");
+  const baselineLocation = gl.getAttribLocation(resources.wiggleProgram, "aBaselineClipX");
+  const amplitudeScaleLocation = gl.getAttribLocation(resources.wiggleProgram, "aAmplitudeScaleClip");
+  gl.enableVertexAttribArray(traceIndexLocation);
+  gl.vertexAttribPointer(traceIndexLocation, 1, gl.FLOAT, false, 12, 0);
+  gl.vertexAttribDivisor(traceIndexLocation, 1);
+  gl.enableVertexAttribArray(baselineLocation);
+  gl.vertexAttribPointer(baselineLocation, 1, gl.FLOAT, false, 12, 4);
+  gl.vertexAttribDivisor(baselineLocation, 1);
+  gl.enableVertexAttribArray(amplitudeScaleLocation);
+  gl.vertexAttribPointer(amplitudeScaleLocation, 1, gl.FLOAT, false, 12, 8);
+  gl.vertexAttribDivisor(amplitudeScaleLocation, 1);
 
-  if (resources.fillVertexCount > 0) {
-    gl.bindBuffer(gl.ARRAY_BUFFER, resources.wiggleFillBuffer);
-    gl.enableVertexAttribArray(positionLocation);
-    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 8, 0);
-    gl.uniform4fv(colorLocation, hexToRgbaArray(palette.fillColor));
-    gl.drawArrays(gl.TRIANGLES, 0, resources.fillVertexCount);
-  }
+  gl.uniform1f(gl.getUniformLocation(resources.wiggleProgram, "uFillMode"), 1);
+  gl.uniform4fv(gl.getUniformLocation(resources.wiggleProgram, "uColor"), hexToRgbaArray(palette.fillColor));
+  gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, prepared.sampleCount * 2, resources.traceInstanceCount);
 
-  if (resources.lineVertexCount > 0) {
-    gl.bindBuffer(gl.ARRAY_BUFFER, resources.wiggleLineBuffer);
-    gl.enableVertexAttribArray(positionLocation);
-    gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 8, 0);
-    gl.uniform4fv(colorLocation, hexToRgbaArray(palette.traceColor));
-    gl.drawArrays(gl.LINES, 0, resources.lineVertexCount);
-  }
+  gl.uniform1f(gl.getUniformLocation(resources.wiggleProgram, "uFillMode"), 0);
+  gl.uniform4fv(gl.getUniformLocation(resources.wiggleProgram, "uColor"), hexToRgbaArray(palette.traceColor));
+  gl.drawArraysInstanced(gl.LINE_STRIP, 0, prepared.sampleCount, resources.traceInstanceCount);
 
+  gl.vertexAttribDivisor(traceIndexLocation, 0);
+  gl.vertexAttribDivisor(baselineLocation, 0);
+  gl.vertexAttribDivisor(amplitudeScaleLocation, 0);
   gl.disable(gl.BLEND);
+  gl.disable(gl.SCISSOR_TEST);
 }
 
 function drawEmptyState(ctx: CanvasRenderingContext2D, width: number, height: number): void {
@@ -2127,14 +2202,49 @@ void main() {
 }
 `;
 
-const GEOMETRY_VERTEX_SHADER = `#version 300 es
-in vec2 aPosition;
+const WIGGLE_VERTEX_SHADER = `#version 300 es
+precision highp float;
+in float aTraceIndex;
+in float aBaselineClipX;
+in float aAmplitudeScaleClip;
+uniform sampler2D uAmplitude;
+uniform vec2 uTextureSize;
+uniform vec4 uLoadedWindow;
+uniform float uGain;
+uniform float uPolaritySign;
+uniform float uPlotY;
+uniform float uPlotHeight;
+uniform float uCanvasHeight;
+uniform float uSampleStart;
+uniform float uSampleCount;
+uniform float uFillMode;
 void main() {
-  gl_Position = vec4(aPosition, 0.0, 1.0);
+  float logicalVertex = float(gl_VertexID);
+  float sampleOffset = uFillMode > 0.5 ? floor(logicalVertex / 2.0) : logicalVertex;
+  float sampleIndex = uSampleStart + sampleOffset;
+  float localSampleIndex = sampleIndex - uLoadedWindow.z;
+  float localTraceIndex = aTraceIndex - uLoadedWindow.x;
+  float amplitude = 0.0;
+  if (
+    localSampleIndex >= 0.0 &&
+    localSampleIndex < uTextureSize.x &&
+    localTraceIndex >= 0.0 &&
+    localTraceIndex < uTextureSize.y
+  ) {
+    amplitude = texelFetch(uAmplitude, ivec2(int(localSampleIndex), int(localTraceIndex)), 0).r;
+  }
+  float offset = amplitude * uGain * aAmplitudeScaleClip * uPolaritySign;
+  if (uFillMode > 0.5) {
+    float side = mod(logicalVertex, 2.0);
+    offset = max(offset, 0.0) * side;
+  }
+  float yPx = uPlotY + (sampleOffset / max(uSampleCount - 1.0, 1.0)) * uPlotHeight;
+  float yClip = 1.0 - (yPx / uCanvasHeight) * 2.0;
+  gl_Position = vec4(aBaselineClipX + offset, yClip, 0.0, 1.0);
 }
 `;
 
-const GEOMETRY_FRAGMENT_SHADER = `#version 300 es
+const WIGGLE_FRAGMENT_SHADER = `#version 300 es
 precision mediump float;
 uniform vec4 uColor;
 out vec4 outColor;

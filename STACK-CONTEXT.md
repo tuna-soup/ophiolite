@@ -8,7 +8,7 @@ Use this simple model:
 
 - `ophiolite` is the Rust engine and platform boundary
 - `Ophiolite Charts` is the reusable display layer
-- `TraceBoost` is the first workflow app assembled from those lower layers
+- `TraceBoost` is the first workflow app and reference proof harness assembled from those lower layers
 - CLI, Python, and desktop commands are control surfaces over Rust-owned behavior, not separate backend implementations
 
 That is the baseline way to explain how the stack hangs together.
@@ -35,12 +35,14 @@ What it is:
 - the first-party seismic workflow application built on top of Ophiolite
 - the place where ingestion, viewing, processing, demo packaging, and app-local orchestration are assembled into one opinionated workflow
 - the reference implementation that proves the platform can support a commercial-quality desktop product
+- the reference proof harness for typed workflow recipes, reproducible run reports, and curated real-data workflow validation
 
 What it is not:
 
 - not the canonical source of reusable subsurface meaning
 - not the platform brand
 - not the chart SDK
+- not the canonical owner of processing identity, import evidence, runtime events, or lineage semantics
 
 ### `Ophiolite Charts`
 
@@ -103,7 +105,7 @@ That means Ophiolite and Ophiolite Charts should not need to explain TraceBoost 
 ## Automation Ownership
 
 - `ophiolite` should own automation that makes sense without TraceBoost attached:
-  project creation/opening, package inspection and validation, canonical ingest, compute, map/well DTO resolution, and reusable geometry/query functions
+  project creation/opening, package inspection and validation, canonical ingest, reusable preflight/import evidence, compute, map/well DTO resolution, processing identity/runtime evidence, lineage, and reusable geometry/query functions
 - `TraceBoost` should own workflow automation that composes those lower-level capabilities into one seismic product flow:
-  survey preflight/import, export recipes, app-local demo preparation, processing orchestration, and product-facing workflow shortcuts
+  survey preflight/import composition, export recipes, app-local demo preparation, processing orchestration, typed workflow recipes, run-report rendering, and product-facing workflow shortcuts
 - both repos can expose catalogs of declared operations, but they should describe different ownership layers rather than duplicate the same workflow names

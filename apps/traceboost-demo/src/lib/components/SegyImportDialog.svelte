@@ -3,6 +3,7 @@
 <script lang="ts">
   import { emitFrontendDiagnosticsEvent, type CoordinateReferenceSelection } from "../bridge";
   import {
+    defaultImportStorePath,
     deleteSegyImportRecipe,
     listSegyImportRecipes,
     saveSegyImportRecipe,
@@ -96,6 +97,10 @@
       ) ?? false
     );
   });
+
+  function clonePlain<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value)) as T;
+  }
 
   $effect(() => {
     if (!open) {
@@ -194,7 +199,7 @@
       inputPath: path
     });
     try {
-      const response = normalizeScanResponse(await scanSegyImport(path));
+      const response = await scanWithManagedOutputDefault(path);
       const recipeResponse = await listSegyImportRecipes(response.source_fingerprint);
       const availableRecipes = recipeResponse.recipes;
       const rememberedPlan = selectRememberedPlan(availableRecipes, response);
@@ -223,6 +228,50 @@
     } finally {
       scanLoading = false;
     }
+  }
+
+  async function scanWithManagedOutputDefault(path: string): Promise<SegyImportScanResponse> {
+    const response = normalizeScanResponse(await scanSegyImport(path));
+    let outputStorePath = response.default_plan.policy.output_store_path;
+    try {
+      outputStorePath = await defaultImportStorePath(path);
+    } catch (error) {
+      logSegyDiagnostics("warn", "Fell back to scanned SEG-Y output path.", {
+        inputPath: path,
+        error: errorMessage(error)
+      });
+    }
+    return applyOutputStorePath(response, outputStorePath);
+  }
+
+  function applyOutputStorePath(
+    response: SegyImportScanResponse,
+    outputStorePath: string
+  ): SegyImportScanResponse {
+    const normalizedOutputPath = outputStorePath.trim();
+    if (!normalizedOutputPath) {
+      return response;
+    }
+    return {
+      ...response,
+      default_plan: {
+        ...response.default_plan,
+        policy: {
+          ...response.default_plan.policy,
+          output_store_path: normalizedOutputPath
+        }
+      },
+      candidate_plans: response.candidate_plans.map((candidate) => ({
+        ...candidate,
+        plan_patch: {
+          ...candidate.plan_patch,
+          policy: {
+            ...candidate.plan_patch.policy,
+            output_store_path: normalizedOutputPath
+          }
+        }
+      }))
+    };
   }
 
   function selectRememberedPlan(
@@ -708,21 +757,23 @@
       warningCount: warningIssues.length
     });
     try {
-      const activePlan = plan;
+      const activePlan = clonePlain(plan);
+      const validatedPlan = clonePlain(validation.validated_plan);
       const matchingEntry =
         viewerModel.workspaceEntries.find(
           (entry) => (entry.source_path ?? "").trim() === activePlan.input_path
         ) ?? null;
+      const sessionPipelines = matchingEntry?.session_pipelines
+        ? clonePlain(matchingEntry.session_pipelines)
+        : null;
 
       await viewerModel.importSegySurveyPlan(
-        validation.validated_plan,
+        validatedPlan,
         validation.validation_fingerprint,
         {
           entryId: matchingEntry?.entry_id ?? null,
           sourcePath: activePlan.input_path,
-          sessionPipelines: matchingEntry?.session_pipelines
-            ? structuredClone(matchingEntry.session_pipelines)
-            : null,
+          sessionPipelines,
           activeSessionPipelineId: matchingEntry?.active_session_pipeline_id ?? null,
           makeActive: true,
           loadSection: true,

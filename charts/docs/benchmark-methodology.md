@@ -70,6 +70,30 @@ Example:
 /apps/benchmark-app?mode=development
 ```
 
+The texture-upload microbenchmark in [scripts/capture-texture-upload-benchmark.mjs](../scripts/capture-texture-upload-benchmark.mjs) isolates WebGL2 upload costs for seismic display textures. It should be used before changing the heatmap amplitude texture format.
+
+Example:
+
+```bash
+bun run charts:bench:texture-upload
+```
+
+The wiggle-geometry microbenchmark in [scripts/capture-wiggle-geometry-benchmark.ts](../scripts/capture-wiggle-geometry-benchmark.ts) compares CPU-expanded wiggle vertices with the instanced wiggle representation used by the WebGL worker path. It also records a warm-cache instanced mode to separate first-draw visible-scale measurement from repeated redraw cost.
+
+Example:
+
+```bash
+bun run charts:bench:wiggle-geometry
+```
+
+The visual test suite includes a Svelte playground screenshot baseline for seismic wiggle mode on the local WebGL renderer. Use it after renderer changes that affect wiggle parity.
+
+Example:
+
+```bash
+bun run test:visual -- svelte-playground-wiggle.spec.ts
+```
+
 ## Publishing Rule
 
 Do not publish benchmark marketing claims until the result set includes:

@@ -7,4 +7,3 @@ export {
   adaptOphioliteSurveyMapToChart,
   adaptOphioliteWellPanelToChart
 } from "@ophiolite/charts-data-models";
-export * from "../contracts";

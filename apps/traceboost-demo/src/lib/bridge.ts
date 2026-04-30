@@ -1620,6 +1620,15 @@ async function authorizeManagedStore(path: string): Promise<string | null> {
   }
 }
 
+async function authorizeRuntimeStore(path: string): Promise<string> {
+  const { invoke } = await import("@tauri-apps/api/core");
+  const selection = await invoke<GrantedPathSelection>(desktopBridgeCommands.authorizeRuntimeStore, {
+    path
+  });
+  rememberStoreHandle(selection);
+  return selection.path;
+}
+
 async function takeOutputGrant(path: string, purpose: OutputGrantPurpose): Promise<string> {
   const normalizedPath = normalizeAuthorizedPath(path);
   const cacheKey = outputGrantCacheKey(normalizedPath, purpose);
@@ -2100,8 +2109,21 @@ export async function pickDesktopRuntimeStore(): Promise<string | null> {
   if (!isTauriEnvironment()) {
     return null;
   }
-  const selection = await pickGrantedPath(desktopBridgeCommands.pickRuntimeStore);
-  return selection?.path ?? null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const result = await open({
+    title: "Open Volume",
+    filters: [
+      { name: "Runtime Stores", extensions: ["tbvol"] },
+      { name: "All Files", extensions: ["*"] }
+    ],
+    multiple: false,
+    directory: false
+  });
+  const path = typeof result === "string" ? result.trim() : "";
+  if (!path) {
+    return null;
+  }
+  return authorizeRuntimeStore(path);
 }
 
 export async function pickDesktopProjectRoot(title: string): Promise<string | null> {

@@ -1,0 +1,72 @@
+{
+  "schema_version": "public-seismic-fixture-manifest/v0",
+  "id": "example-fixture-id",
+  "status": "example-placeholder",
+  "source": {
+    "kind": "public-s3|public-http|portal|catalog",
+    "uri": "https://example.invalid/path/to/source-or-catalog-entry",
+    "description": "Short human-readable source description.",
+    "access_notes": [
+      "Describe login, click-through, requester-pays, or portal constraints here."
+    ]
+  },
+  "license_note": "Record the upstream license or access note. This is not legal advice.",
+  "adapter_hint": {
+    "format": "segy|mdio|zgy|vds|unknown",
+    "reader": "suggested-adapter-name",
+    "notes": "Optional adapter setup notes."
+  },
+  "fetch_policy": {
+    "default": "offline",
+    "requires_opt_in": true,
+    "env_var": "OPHIOLITE_FETCH_PUBLIC_SEISMIC_FIXTURES",
+    "cache_key": "example-fixture-id",
+    "network_notes": "Fetches must be explicitly enabled and may be skipped in CI."
+  },
+  "subset": {
+    "intent": "small-preview|smoke-test|metadata-only",
+    "spatial": {
+      "inline_range": [1000, 1010],
+      "crossline_range": [2000, 2010]
+    },
+    "samples": {
+      "start": 0,
+      "count": 512
+    },
+    "max_payload_bytes": 104857600,
+    "notes": "Keep the subset small enough for repeatable validation."
+  },
+  "expected": {
+    "canonical_preview": {
+      "kind": "section|cube|metadata-only",
+      "dimensions": {
+        "inline": 11,
+        "crossline": 11,
+        "samples": 512
+      },
+      "coordinate_reference": "source-native",
+      "amplitude": {
+        "unit": "unknown",
+        "normalization": "none"
+      }
+    },
+    "warnings": {
+      "authoritative": false,
+      "items": [
+        "placeholder: replace only after reviewed fixture ingestion"
+      ]
+    },
+    "blockers": {
+      "authoritative": false,
+      "items": []
+    }
+  },
+  "checksums": {
+    "payload_sha256": null,
+    "metadata_snapshot_sha256": null
+  },
+  "snapshots": {
+    "metadata": null,
+    "canonical_preview": null
+  }
+}

@@ -151,7 +151,7 @@ The current exact `.tbvolc` archive path works and is fast to transcode on these
 
 The packed-section benchmark confirms that the data movement after storage is worth optimizing. The storage read can be sub-millisecond, while a full-section app adaptation copy can move about `30.7 MB` before the chart sees the data. The typed-view path removes that copy when the packed response is aligned, which is the normal Tauri response shape.
 
-The TraceBoost demo now records real viewport-tile fetch/adaptation metrics through the same path used by the running app. The Section Tiling overlay and `section_tile` diagnostics include fetch time, adaptation time, copied bytes, viewed bytes, and copied/viewed buffer counts for the most recent viewport tile.
+The TraceBoost demo now records real viewport-tile fetch/adaptation metrics through the same path used by the running app. The Section Tiling overlay and `section_tile` diagnostics include fetch time, adaptation time, copied bytes, viewed bytes, and copied/viewed buffer counts for the most recent viewport tile. A debug-only `Force viewport tiles` control can force the tile path even when the currently loaded full section already covers the viewport.
 
 The first F3-small desktop screenshots/logs captured after adding the overlay still show the full-section path rather than a viewport tile request: `Full section`, `0 viewport`, and `Adapt pending`. The log is still useful as a full-section desktop smoke observation: five inline loads had median `48 ms` frontend await time and median `81 ms` total frontend load-to-second-frame time for `951 x 462` sections.
 
@@ -167,7 +167,7 @@ The strongest next candidates are now:
 
 ## Next Benchmark Gaps
 
-- Capture and archive real desktop viewport timing from the new Section Tiling adaptation counters on a named dataset.
+- Capture and archive real desktop viewport timing from the new Section Tiling adaptation counters on F3 small with `Force viewport tiles` enabled.
 - Add a renderer benchmark that compares `R32F` against display-only `R16` or `R8 + scale/bias` texture modes.
 - Extend the new Svelte playground wiggle visual baseline to worker WebGL, reversed polarity, and gain-change cases.
 - Add direct `.tbvolc` section-read benchmarking before treating compressed stores as interactive inputs.

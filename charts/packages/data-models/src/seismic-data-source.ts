@@ -42,6 +42,7 @@ export interface SeismicSectionDataSourceMetrics {
 export interface SeismicSectionDataSource {
   id?: string;
   debounceMs?: number;
+  forceLoad?: boolean | ((section: SectionPayload, viewport: SectionViewport) => boolean);
   halo?: {
     traces?: number;
     samples?: number;

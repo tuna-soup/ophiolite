@@ -93,7 +93,7 @@ export class SectionViewportLoader {
       });
       return;
     }
-    if (!needsSeismicSectionWindowLoad(section, viewport)) {
+    if (!this.shouldForceLoad(section, viewport) && !needsSeismicSectionWindowLoad(section, viewport)) {
       this.emitState({
         status: "ready",
         request: null,
@@ -142,6 +142,14 @@ export class SectionViewportLoader {
       this.timer = null;
       void this.loadRequest(request, section, cacheKey);
     }, debounceMs);
+  }
+
+  private shouldForceLoad(section: SectionPayload, viewport: SectionViewport): boolean {
+    const forceLoad = this.dataSource?.forceLoad;
+    if (typeof forceLoad === "function") {
+      return forceLoad(section, viewport);
+    }
+    return Boolean(forceLoad);
   }
 
   dispose(): void {

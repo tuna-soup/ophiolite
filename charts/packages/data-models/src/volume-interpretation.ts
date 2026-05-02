@@ -1,6 +1,10 @@
 export type VolumeInterpretationSampleDomain = "time" | "depth";
 export type VolumeInterpretationAxis = "inline" | "xline" | "sample";
 export type VolumeInterpretationColorMap = "grayscale" | "red-white-blue";
+export type VolumeInterpretationScalarAssociation = "point" | "cell" | "volume";
+export type VolumeInterpretationScalarKind = "amplitude" | "velocity" | "impedance" | "attribute";
+export type VolumeInterpretationSampleFormat = "f32" | "f16" | "i16" | "u8-scale-bias";
+export type VolumeInterpretationBufferOwnership = "view" | "copy" | "transfer";
 export type VolumeInterpretationTool =
   | "pointer"
   | "orbit"
@@ -63,6 +67,92 @@ export interface VolumeInterpretationView {
   focusZ: number;
 }
 
+export interface VolumeInterpretationScalarField {
+  id: string;
+  name: string;
+  kind: VolumeInterpretationScalarKind;
+  association: VolumeInterpretationScalarAssociation;
+  sampleFormat: VolumeInterpretationSampleFormat;
+  unit?: string;
+  valueRange?: {
+    min: number;
+    max: number;
+  };
+  colormap?: VolumeInterpretationColorMap;
+}
+
+export interface VolumeInterpretationSliceRequest {
+  volumeId: string;
+  fieldId: string;
+  axis: VolumeInterpretationAxis;
+  position: number;
+  lod?: number;
+}
+
+export interface VolumeInterpretationSlicePayload {
+  volumeId: string;
+  fieldId: string;
+  axis: VolumeInterpretationAxis;
+  position: number;
+  lod: number;
+  bounds: VolumeInterpretationBounds;
+  dimensions: {
+    width: number;
+    height: number;
+  };
+  sampleFormat: VolumeInterpretationSampleFormat;
+  ownership: VolumeInterpretationBufferOwnership;
+  values: Float32Array | Uint16Array | Int16Array | Uint8Array;
+  valueRange?: {
+    min: number;
+    max: number;
+  };
+}
+
+export interface VolumeInterpretationBrickRequest {
+  volumeId: string;
+  fieldId: string;
+  lod: number;
+  brickIndex: {
+    inline: number;
+    xline: number;
+    sample: number;
+  };
+}
+
+export interface VolumeInterpretationBrickPayload {
+  volumeId: string;
+  fieldId: string;
+  lod: number;
+  brickIndex: {
+    inline: number;
+    xline: number;
+    sample: number;
+  };
+  bounds: VolumeInterpretationBounds;
+  dimensions: {
+    inline: number;
+    xline: number;
+    sample: number;
+  };
+  sampleFormat: VolumeInterpretationSampleFormat;
+  ownership: VolumeInterpretationBufferOwnership;
+  values: Float32Array | Uint16Array | Int16Array | Uint8Array;
+  valueRange?: {
+    min: number;
+    max: number;
+  };
+  empty?: boolean;
+}
+
+export interface VolumeInterpretationDataSource {
+  id: string;
+  kind: "slice" | "brick" | "slice-and-brick";
+  preferredOwnership?: VolumeInterpretationBufferOwnership;
+  loadSlice?: (request: VolumeInterpretationSliceRequest) => Promise<VolumeInterpretationSlicePayload>;
+  loadBrick?: (request: VolumeInterpretationBrickRequest) => Promise<VolumeInterpretationBrickPayload>;
+}
+
 export interface VolumeInterpretationVolume {
   id: string;
   name: string;
@@ -73,6 +163,9 @@ export interface VolumeInterpretationVolume {
     xline: number;
     sample: number;
   };
+  fields?: VolumeInterpretationScalarField[];
+  activeFieldId?: string;
+  dataSource?: VolumeInterpretationDataSource;
   displayDefaults?: {
     colormap?: VolumeInterpretationColorMap;
     gain?: number;
@@ -242,6 +335,57 @@ export function createDefaultVolumeInterpretationView(
 
 export function sceneSpan(bounds: VolumeInterpretationBounds): number {
   return Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY, bounds.maxZ - bounds.minZ, 1);
+}
+
+export function cloneVolumeInterpretationModel(model: VolumeInterpretationModel): VolumeInterpretationModel {
+  return {
+    ...model,
+    sceneBounds: { ...model.sceneBounds },
+    cropBox: model.cropBox ? { ...model.cropBox } : undefined,
+    volumes: model.volumes.map(cloneVolumeInterpretationVolume),
+    slicePlanes: model.slicePlanes.map((plane) => ({
+      ...plane,
+      style: { ...plane.style }
+    })),
+    horizons: model.horizons.map((horizon) => ({
+      ...horizon,
+      points: horizon.points,
+      colorValues: horizon.colorValues,
+      style: { ...horizon.style }
+    })),
+    wells: model.wells.map((well) => ({
+      ...well,
+      points: well.points,
+      style: { ...well.style }
+    })),
+    markers: model.markers.map((marker) => ({ ...marker })),
+    annotations: model.annotations?.map((annotation) => ({ ...annotation })),
+    capabilities: { ...model.capabilities }
+  };
+}
+
+export function resolveActiveVolumeScalarField(
+  volume: VolumeInterpretationVolume
+): VolumeInterpretationScalarField | null {
+  const fields = volume.fields ?? [];
+  if (fields.length === 0) {
+    return null;
+  }
+  return fields.find((field) => field.id === volume.activeFieldId) ?? fields[0] ?? null;
+}
+
+function cloneVolumeInterpretationVolume(volume: VolumeInterpretationVolume): VolumeInterpretationVolume {
+  return {
+    ...volume,
+    bounds: { ...volume.bounds },
+    dimensions: { ...volume.dimensions },
+    fields: volume.fields?.map((field) => ({
+      ...field,
+      valueRange: field.valueRange ? { ...field.valueRange } : undefined
+    })),
+    dataSource: volume.dataSource,
+    displayDefaults: volume.displayDefaults ? { ...volume.displayDefaults } : undefined
+  };
 }
 
 export function clampSlicePlanePosition(

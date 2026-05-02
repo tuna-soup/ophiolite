@@ -1,11 +1,22 @@
 import type {
   VolumeInterpretationBounds,
-  VolumeInterpretationHorizonSurface,
-  VolumeInterpretationModel,
-  VolumeInterpretationVolume
+  VolumeInterpretationDataSource,
+  VolumeInterpretationSlicePayload,
+  VolumeInterpretationSliceRequest,
+  VolumeInterpretationModel
 } from "./volume-interpretation";
+import type {
+  OphioliteResolvedVolumeHorizonSurfaceDto,
+  OphioliteResolvedVolumeInterpretationSource,
+  OphioliteResolvedVolumeDto
+} from "./ophiolite-volume-interpretation-adapter";
+import { adaptOphioliteVolumeInterpretationToChart } from "./ophiolite-volume-interpretation-adapter";
 
 export function createMockVolumeInterpretationModel(): VolumeInterpretationModel {
+  return adaptOphioliteVolumeInterpretationToChart(createMockOphioliteVolumeInterpretationSource());
+}
+
+export function createMockOphioliteVolumeInterpretationSource(): OphioliteResolvedVolumeInterpretationSource {
   const bounds: VolumeInterpretationBounds = {
     minX: 0,
     minY: 0,
@@ -15,17 +26,32 @@ export function createMockVolumeInterpretationModel(): VolumeInterpretationModel
     maxZ: 900
   };
 
-  const volume: VolumeInterpretationVolume = {
+  const sourceBounds = toResolvedBounds(bounds);
+  const volume: OphioliteResolvedVolumeDto = {
     id: "mock-volume",
     name: "F3 Synthetic Volume",
-    sampleDomain: "time",
-    bounds,
+    sample_domain: "time" as const,
+    bounds: sourceBounds,
     dimensions: {
       inline: 160,
       xline: 128,
       sample: 256
     },
-    displayDefaults: {
+    fields: [
+      {
+        id: "amplitude",
+        name: "Amplitude",
+        kind: "amplitude",
+        association: "point",
+        sample_format: "f32",
+        min_value: -1.6,
+        max_value: 1.6,
+        colormap: "red-white-blue"
+      }
+    ],
+    active_field_id: "amplitude",
+    data_source: createMockVolumeDataSource(bounds),
+    display_defaults: {
       colormap: "red-white-blue",
       gain: 1.1,
       opacity: 0.9
@@ -35,22 +61,22 @@ export function createMockVolumeInterpretationModel(): VolumeInterpretationModel
   return {
     id: "mock-volume-interpretation",
     name: "Synthetic Volume Interpretation Scene",
-    sampleDomain: "time",
-    sceneBounds: bounds,
-    cropBox: {
-      minX: 80,
-      minY: 60,
-      minZ: 70,
-      maxX: 1120,
-      maxY: 920,
-      maxZ: 860
+    sample_domain: "time",
+    scene_bounds: sourceBounds,
+    crop_box: {
+      min_x: 80,
+      min_y: 60,
+      min_z: 70,
+      max_x: 1120,
+      max_y: 920,
+      max_z: 860
     },
     volumes: [volume],
-    slicePlanes: [
+    slice_planes: [
       {
         id: "slice-inline",
         name: "Inline 742",
-        volumeId: volume.id,
+        volume_id: volume.id,
         axis: "inline",
         position: 430,
         visible: true,
@@ -58,13 +84,13 @@ export function createMockVolumeInterpretationModel(): VolumeInterpretationModel
           colormap: "red-white-blue",
           gain: 1.1,
           opacity: 0.94,
-          showBorder: true
+          show_border: true
         }
       },
       {
         id: "slice-xline",
         name: "Xline 318",
-        volumeId: volume.id,
+        volume_id: volume.id,
         axis: "xline",
         position: 520,
         visible: true,
@@ -72,13 +98,13 @@ export function createMockVolumeInterpretationModel(): VolumeInterpretationModel
           colormap: "red-white-blue",
           gain: 1.05,
           opacity: 0.94,
-          showBorder: true
+          show_border: true
         }
       },
       {
         id: "slice-sample",
         name: "Time Slice 1480 ms",
-        volumeId: volume.id,
+        volume_id: volume.id,
         axis: "sample",
         position: 520,
         visible: true,
@@ -86,7 +112,7 @@ export function createMockVolumeInterpretationModel(): VolumeInterpretationModel
           colormap: "red-white-blue",
           gain: 0.95,
           opacity: 0.92,
-          showBorder: true
+          show_border: true
         }
       }
     ],
@@ -126,8 +152,8 @@ export function createMockVolumeInterpretationModel(): VolumeInterpretationModel
           mode: "line",
           color: "#7bff6a",
           width: 3,
-          showMarkers: true,
-          showLabels: true
+          show_markers: true,
+          show_labels: true
         }
       },
       {
@@ -139,8 +165,8 @@ export function createMockVolumeInterpretationModel(): VolumeInterpretationModel
           mode: "tube",
           color: "#4cc9f0",
           width: 5,
-          showMarkers: true,
-          showLabels: true
+          show_markers: true,
+          show_labels: true
         }
       }
     ],
@@ -148,7 +174,7 @@ export function createMockVolumeInterpretationModel(): VolumeInterpretationModel
       {
         id: "marker-1",
         name: "Top Reservoir Pick",
-        wellId: "well-1",
+        well_id: "well-1",
         visible: true,
         x: 350,
         y: 310,
@@ -189,6 +215,101 @@ export function createMockVolumeInterpretationModel(): VolumeInterpretationModel
   };
 }
 
+function toResolvedBounds(bounds: VolumeInterpretationBounds) {
+  return {
+    min_x: bounds.minX,
+    min_y: bounds.minY,
+    min_z: bounds.minZ,
+    max_x: bounds.maxX,
+    max_y: bounds.maxY,
+    max_z: bounds.maxZ
+  };
+}
+
+function createMockVolumeDataSource(bounds: VolumeInterpretationBounds): VolumeInterpretationDataSource {
+  return {
+    id: "mock-volume-slice-source",
+    kind: "slice",
+    preferredOwnership: "view",
+    loadSlice: async (request) => createMockVolumeSlicePayload(request, bounds)
+  };
+}
+
+function createMockVolumeSlicePayload(
+  request: VolumeInterpretationSliceRequest,
+  volumeBounds: VolumeInterpretationBounds
+): VolumeInterpretationSlicePayload {
+  const width = request.axis === "inline" ? 128 : 160;
+  const height = request.axis === "sample" ? 128 : 256;
+  const values = new Float32Array(width * height);
+  const axisSpan =
+    request.axis === "inline"
+      ? volumeBounds.maxX - volumeBounds.minX
+      : request.axis === "xline"
+        ? volumeBounds.maxY - volumeBounds.minY
+        : volumeBounds.maxZ - volumeBounds.minZ;
+  const normalPosition =
+    axisSpan > 0
+      ? (request.position -
+          (request.axis === "inline"
+            ? volumeBounds.minX
+            : request.axis === "xline"
+              ? volumeBounds.minY
+              : volumeBounds.minZ)) /
+        axisSpan
+      : 0.5;
+
+  for (let row = 0; row < height; row += 1) {
+    const rowNorm = height > 1 ? row / (height - 1) - 0.5 : 0;
+    for (let column = 0; column < width; column += 1) {
+      const columnNorm = width > 1 ? column / (width - 1) - 0.5 : 0;
+      values[row * width + column] = syntheticAmplitude(columnNorm, rowNorm, normalPosition - 0.5);
+    }
+  }
+
+  return {
+    volumeId: request.volumeId,
+    fieldId: request.fieldId,
+    axis: request.axis,
+    position: request.position,
+    lod: request.lod ?? 0,
+    bounds: slicePayloadBounds(request.axis, request.position, volumeBounds),
+    dimensions: {
+      width,
+      height
+    },
+    sampleFormat: "f32",
+    ownership: "view",
+    values,
+    valueRange: {
+      min: -1.6,
+      max: 1.6
+    }
+  };
+}
+
+function slicePayloadBounds(
+  axis: VolumeInterpretationSliceRequest["axis"],
+  position: number,
+  bounds: VolumeInterpretationBounds
+): VolumeInterpretationBounds {
+  if (axis === "inline") {
+    return { ...bounds, minX: position, maxX: position };
+  }
+  if (axis === "xline") {
+    return { ...bounds, minY: position, maxY: position };
+  }
+  return { ...bounds, minZ: position, maxZ: position };
+}
+
+function syntheticAmplitude(columnNorm: number, rowNorm: number, positionNorm: number): number {
+  const folded = Math.sin(rowNorm * 28 + positionNorm * 6 + Math.sin(columnNorm * 7) * 1.8);
+  const stratigraphy = Math.sin(rowNorm * 44 + positionNorm * 9 - columnNorm * 5);
+  const channel = Math.exp(-((positionNorm - columnNorm * 0.18) ** 2 * 22 + (rowNorm + 0.12) ** 2 * 85));
+  const diapir = Math.exp(-((positionNorm + 0.05) ** 2 * 36 + (columnNorm - 0.08) ** 2 * 28)) * Math.cos(rowNorm * 18);
+  return folded * 0.55 + stratigraphy * 0.32 - channel * 0.65 + diapir * 0.42;
+}
+
 function createHorizonSurface(options: {
   id: string;
   name: string;
@@ -200,7 +321,7 @@ function createHorizonSurface(options: {
   wavelength: number;
   fillColor: string;
   contourColor: string;
-}): VolumeInterpretationHorizonSurface {
+}): OphioliteResolvedVolumeHorizonSurfaceDto {
   const { columns, rows, bounds, baseZ, relief, wavelength } = options;
   const points = new Float32Array(columns * rows * 3);
   const colorValues = new Float32Array(columns * rows);
@@ -229,15 +350,15 @@ function createHorizonSurface(options: {
     columns,
     rows,
     points,
-    colorValues,
+    color_values: colorValues,
     style: {
-      fillColor: options.fillColor,
-      fillOpacity: 0.84,
-      showContours: true,
-      contourColor: options.contourColor,
-      contourInterval: 28,
-      edgeColor: "#101e28",
-      edgeWidth: 1
+      fill_color: options.fillColor,
+      fill_opacity: 0.84,
+      show_contours: true,
+      contour_color: options.contourColor,
+      contour_interval: 28,
+      edge_color: "#101e28",
+      edge_width: 1
     }
   };
 }

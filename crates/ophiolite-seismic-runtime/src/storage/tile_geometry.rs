@@ -292,7 +292,10 @@ impl TileGeometry {
         let intersection = self.section_intersection(axis, index, tile)?;
         let section_trace_start = intersection.section_trace_range[0].max(trace_range[0]);
         let section_trace_end = intersection.section_trace_range[1].min(trace_range[1]);
-        (section_trace_start < section_trace_end).then_some(SectionWindowIntersection {
+        if section_trace_start >= section_trace_end {
+            return None;
+        }
+        Some(SectionWindowIntersection {
             section_local_offset: intersection.section_local_offset,
             tile_trace_range: [
                 section_trace_start - intersection.section_trace_range[0],
@@ -356,6 +359,36 @@ mod tests {
         assert_eq!(clipped.tile_trace_range, [1, 2]);
         assert_eq!(clipped.section_trace_range, [5, 6]);
         assert_eq!(clipped.window_trace_range, [0, 1]);
+    }
+
+    #[test]
+    fn section_window_intersection_ignores_non_overlapping_tiles() {
+        let geometry = TileGeometry::new([5, 951, 8], [5, 256, 8]);
+
+        assert_eq!(
+            geometry.section_window_intersection(
+                SectionAxis::Inline,
+                0,
+                TileCoord {
+                    tile_i: 0,
+                    tile_x: 1,
+                },
+                [0, 256],
+            ),
+            None
+        );
+        assert_eq!(
+            geometry.section_window_intersection(
+                SectionAxis::Inline,
+                0,
+                TileCoord {
+                    tile_i: 0,
+                    tile_x: 0,
+                },
+                [256, 512],
+            ),
+            None
+        );
     }
 
     #[test]

@@ -291,7 +291,7 @@ Benchmarks:
 
 ## Priority Recommendation
 
-1. Treat Phase 1 zero-copy packed-section adaptation as implemented for the TraceBoost demo path. Real viewport-tile timing and copy counters now exist in the running app; next capture those counters into a named benchmark artifact from a real desktop dataset.
+1. Treat Phase 1 zero-copy packed-section adaptation as implemented for the TraceBoost demo path. Real viewport-tile timing and copy counters now exist in the running app, and the F3-small path can be forced through viewport tiles with the Section Tiling debug toggle; next capture those counters into a named benchmark artifact.
 2. Treat Phase 3 local WebGL wiggle instancing and visible-scale caching as implemented. A Svelte playground local-WebGL wiggle screenshot baseline now exists; next extend it to worker WebGL, normal/reversed polarity, and gain changes.
 3. Keep Phase 2 display texture packing experimental. `R8 + scale/bias` is promising for overview/LOD caches, but the current JavaScript packing cost does not justify replacing the default `R32F` hot path.
 4. Carry precomputed min/max or max-abs metadata from tile assembly into chart payloads where it can remove first-draw visible-scale scans without changing canonical `f32` amplitudes.

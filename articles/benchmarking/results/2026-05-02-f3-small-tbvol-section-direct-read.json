@@ -1,0 +1,291 @@
+{
+  "dataset": {
+    "store_path": "/Users/sc/Downloads/SubsurfaceData/blocks/F3/seismic/tbvol/DATR12I-021.tbvol",
+    "store_format": "tbvol",
+    "shape": [
+      1,
+      3826,
+      2000
+    ],
+    "tile_shape": [
+      1,
+      547,
+      2000
+    ]
+  },
+  "iterations": 9,
+  "overview_target": [
+    1200,
+    900
+  ],
+  "focus_target": [
+    256,
+    256
+  ],
+  "cases": [
+    {
+      "axis": "inline",
+      "index": 0,
+      "scenario": "full_section",
+      "trace_range": [
+        0,
+        3826
+      ],
+      "sample_range": [
+        0,
+        2000
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 3826,
+      "output_samples": 2000,
+      "payload_bytes": 30646608,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        3.324125,
+        1.415,
+        0.9974999999999999,
+        0.9742919999999999,
+        1.1075,
+        1.1227909999999999,
+        1.1764169999999998,
+        0.9812079999999999,
+        1.039916
+      ],
+      "median_ms": 1.1075,
+      "mean_ms": 1.348749888888889
+    },
+    {
+      "axis": "inline",
+      "index": 0,
+      "scenario": "overview_fit",
+      "trace_range": [
+        0,
+        3826
+      ],
+      "sample_range": [
+        0,
+        2000
+      ],
+      "lod": 2,
+      "trace_step": 4,
+      "sample_step": 4,
+      "output_traces": 957,
+      "output_samples": 500,
+      "payload_bytes": 1923656,
+      "payload_fraction_of_full": 0.06276896940764211,
+      "iteration_ms": [
+        0.844917,
+        0.556208,
+        0.49733299999999997,
+        0.370791,
+        0.355875,
+        0.34775,
+        0.34454199999999996,
+        0.6138330000000001,
+        0.3415
+      ],
+      "median_ms": 0.370791,
+      "mean_ms": 0.4747498888888889
+    },
+    {
+      "axis": "inline",
+      "index": 0,
+      "scenario": "focus_tile_lod_0",
+      "trace_range": [
+        1785,
+        2041
+      ],
+      "sample_range": [
+        872,
+        1128
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 0.008654008300037642,
+      "iteration_ms": [
+        0.073791,
+        0.039708,
+        0.042624999999999996,
+        0.039375,
+        0.039417,
+        0.039333,
+        0.039333,
+        0.039291,
+        0.042125
+      ],
+      "median_ms": 0.039417,
+      "mean_ms": 0.043888666666666666
+    },
+    {
+      "axis": "inline",
+      "index": 0,
+      "scenario": "focus_tile_lod_1",
+      "trace_range": [
+        1785,
+        2041
+      ],
+      "sample_range": [
+        872,
+        1128
+      ],
+      "lod": 1,
+      "trace_step": 2,
+      "sample_step": 2,
+      "output_traces": 128,
+      "output_samples": 128,
+      "payload_bytes": 67072,
+      "payload_fraction_of_full": 0.002188561944604114,
+      "iteration_ms": [
+        0.011916000000000001,
+        0.011792,
+        0.011875,
+        0.011792,
+        0.011875,
+        0.011833,
+        0.013458000000000001,
+        0.017167,
+        0.011792
+      ],
+      "median_ms": 0.011875,
+      "mean_ms": 0.01261111111111111
+    },
+    {
+      "axis": "xline",
+      "index": 1913,
+      "scenario": "full_section",
+      "trace_range": [
+        0,
+        1
+      ],
+      "sample_range": [
+        0,
+        2000
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 1,
+      "output_samples": 2000,
+      "payload_bytes": 16008,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        0.0027080000000000003,
+        0.000625,
+        0.000584,
+        0.0005,
+        0.0005,
+        0.0005,
+        0.0005,
+        0.0005,
+        0.0005
+      ],
+      "median_ms": 0.0005,
+      "mean_ms": 0.0007685555555555559
+    },
+    {
+      "axis": "xline",
+      "index": 1913,
+      "scenario": "overview_fit",
+      "trace_range": [
+        0,
+        1
+      ],
+      "sample_range": [
+        0,
+        2000
+      ],
+      "lod": 2,
+      "trace_step": 1,
+      "sample_step": 4,
+      "output_traces": 1,
+      "output_samples": 500,
+      "payload_bytes": 4008,
+      "payload_fraction_of_full": 0.25037481259370314,
+      "iteration_ms": [
+        0.001291,
+        0.000917,
+        0.000792,
+        0.000791,
+        0.00475,
+        0.000792,
+        0.000792,
+        0.000791,
+        0.000792
+      ],
+      "median_ms": 0.000792,
+      "mean_ms": 0.0013008888888888888
+    },
+    {
+      "axis": "xline",
+      "index": 1913,
+      "scenario": "focus_tile_lod_0",
+      "trace_range": [
+        0,
+        1
+      ],
+      "sample_range": [
+        872,
+        1128
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 1,
+      "output_samples": 256,
+      "payload_bytes": 2056,
+      "payload_fraction_of_full": 0.12843578210894552,
+      "iteration_ms": [
+        0.000792,
+        0.000625,
+        0.000542,
+        0.000584,
+        0.000542,
+        0.000583,
+        0.000583,
+        0.000583,
+        0.002167
+      ],
+      "median_ms": 0.000583,
+      "mean_ms": 0.0007778888888888889
+    },
+    {
+      "axis": "xline",
+      "index": 1913,
+      "scenario": "focus_tile_lod_1",
+      "trace_range": [
+        0,
+        1
+      ],
+      "sample_range": [
+        872,
+        1128
+      ],
+      "lod": 1,
+      "trace_step": 1,
+      "sample_step": 2,
+      "output_traces": 1,
+      "output_samples": 128,
+      "payload_bytes": 1032,
+      "payload_fraction_of_full": 0.06446776611694154,
+      "iteration_ms": [
+        0.0005,
+        0.0047090000000000005,
+        0.000542,
+        0.000458,
+        0.000375,
+        0.000417,
+        0.00041600000000000003,
+        0.000417,
+        0.00175
+      ],
+      "median_ms": 0.000458,
+      "mean_ms": 0.0010648888888888889
+    }
+  ]
+}

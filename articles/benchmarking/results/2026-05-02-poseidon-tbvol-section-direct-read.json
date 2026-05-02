@@ -1,0 +1,291 @@
+{
+  "dataset": {
+    "store_path": "/Users/sc/Downloads/SubsurfaceData/poseidon/far_stack_roi_inline0_xline128_sample128_v3.tbvol",
+    "store_format": "tbvol",
+    "shape": [
+      256,
+      256,
+      256
+    ],
+    "tile_shape": [
+      64,
+      64,
+      256
+    ]
+  },
+  "iterations": 9,
+  "overview_target": [
+    1200,
+    900
+  ],
+  "focus_target": [
+    256,
+    256
+  ],
+  "cases": [
+    {
+      "axis": "inline",
+      "index": 128,
+      "scenario": "full_section",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        0.045833,
+        0.025875,
+        0.014457999999999999,
+        0.018583000000000002,
+        0.018583000000000002,
+        0.014541,
+        0.014875000000000001,
+        0.018375,
+        0.015875
+      ],
+      "median_ms": 0.018375,
+      "mean_ms": 0.020777555555555556
+    },
+    {
+      "axis": "inline",
+      "index": 128,
+      "scenario": "overview_fit",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        0.171875,
+        0.153959,
+        0.098792,
+        0.088959,
+        0.089708,
+        0.090041,
+        0.097792,
+        0.090125,
+        0.094167
+      ],
+      "median_ms": 0.094167,
+      "mean_ms": 0.10837977777777778
+    },
+    {
+      "axis": "inline",
+      "index": 128,
+      "scenario": "focus_tile_lod_0",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        0.091625,
+        0.089125,
+        0.089083,
+        0.088542,
+        0.08841700000000001,
+        0.089,
+        0.089083,
+        0.088959,
+        0.08925
+      ],
+      "median_ms": 0.089083,
+      "mean_ms": 0.08923155555555556
+    },
+    {
+      "axis": "inline",
+      "index": 128,
+      "scenario": "focus_tile_lod_1",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 1,
+      "trace_step": 2,
+      "sample_step": 2,
+      "output_traces": 128,
+      "output_samples": 128,
+      "payload_bytes": 67072,
+      "payload_fraction_of_full": 0.2528957528957529,
+      "iteration_ms": [
+        0.0275,
+        0.026958,
+        0.026709,
+        0.02675,
+        0.027416999999999997,
+        0.027334,
+        0.027125,
+        0.029292,
+        0.02675
+      ],
+      "median_ms": 0.027125,
+      "mean_ms": 0.027315000000000002
+    },
+    {
+      "axis": "xline",
+      "index": 128,
+      "scenario": "full_section",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        0.083917,
+        0.057708999999999996,
+        0.058499999999999996,
+        0.055708,
+        0.056708,
+        0.056459,
+        0.056332999999999994,
+        0.05775,
+        0.057292
+      ],
+      "median_ms": 0.057292,
+      "mean_ms": 0.06004177777777778
+    },
+    {
+      "axis": "xline",
+      "index": 128,
+      "scenario": "overview_fit",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        0.126292,
+        0.090625,
+        0.094,
+        0.09175,
+        0.090125,
+        0.09000000000000001,
+        0.08954200000000001,
+        0.089708,
+        0.090041
+      ],
+      "median_ms": 0.090125,
+      "mean_ms": 0.09467588888888889
+    },
+    {
+      "axis": "xline",
+      "index": 128,
+      "scenario": "focus_tile_lod_0",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        0.09112500000000001,
+        0.090042,
+        0.090792,
+        0.089875,
+        0.090041,
+        0.090417,
+        0.090042,
+        0.090917,
+        0.09025
+      ],
+      "median_ms": 0.09025,
+      "mean_ms": 0.090389
+    },
+    {
+      "axis": "xline",
+      "index": 128,
+      "scenario": "focus_tile_lod_1",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 1,
+      "trace_step": 2,
+      "sample_step": 2,
+      "output_traces": 128,
+      "output_samples": 128,
+      "payload_bytes": 67072,
+      "payload_fraction_of_full": 0.2528957528957529,
+      "iteration_ms": [
+        0.026334,
+        0.027583,
+        0.027416,
+        0.027041000000000003,
+        0.026833,
+        0.026959,
+        0.026625,
+        0.029959,
+        0.026917
+      ],
+      "median_ms": 0.026959,
+      "mean_ms": 0.027296333333333332
+    }
+  ]
+}

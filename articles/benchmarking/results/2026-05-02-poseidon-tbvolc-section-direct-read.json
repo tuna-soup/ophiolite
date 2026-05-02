@@ -1,0 +1,291 @@
+{
+  "dataset": {
+    "store_path": "/tmp/ophiolite-tbvolc-direct-read-20260502094004/poseidon.tbvolc",
+    "store_format": "tbvolc",
+    "shape": [
+      256,
+      256,
+      256
+    ],
+    "tile_shape": [
+      64,
+      64,
+      256
+    ]
+  },
+  "iterations": 9,
+  "overview_target": [
+    1200,
+    900
+  ],
+  "focus_target": [
+    256,
+    256
+  ],
+  "cases": [
+    {
+      "axis": "inline",
+      "index": 128,
+      "scenario": "full_section",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        44.649,
+        44.290875,
+        44.27575,
+        44.41025,
+        44.344750000000005,
+        44.419209,
+        43.90279099999999,
+        44.858542,
+        44.2245
+      ],
+      "median_ms": 44.344750000000005,
+      "mean_ms": 44.375074111111104
+    },
+    {
+      "axis": "inline",
+      "index": 128,
+      "scenario": "overview_fit",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        44.059875,
+        44.325416,
+        44.81675,
+        44.340667,
+        44.227083,
+        47.638291,
+        47.02375,
+        46.229708,
+        45.055625
+      ],
+      "median_ms": 44.81675,
+      "mean_ms": 45.301907222222226
+    },
+    {
+      "axis": "inline",
+      "index": 128,
+      "scenario": "focus_tile_lod_0",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        45.433082999999996,
+        56.242833,
+        45.095833,
+        44.893083,
+        46.104958,
+        44.495833,
+        44.903791,
+        44.37,
+        44.325666999999996
+      ],
+      "median_ms": 44.903791,
+      "mean_ms": 46.20723122222223
+    },
+    {
+      "axis": "inline",
+      "index": 128,
+      "scenario": "focus_tile_lod_1",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 1,
+      "trace_step": 2,
+      "sample_step": 2,
+      "output_traces": 128,
+      "output_samples": 128,
+      "payload_bytes": 67072,
+      "payload_fraction_of_full": 0.2528957528957529,
+      "iteration_ms": [
+        43.931417,
+        44.372125,
+        44.465083,
+        44.138625,
+        43.934582999999996,
+        43.986208999999995,
+        44.192541,
+        45.169542,
+        45.742458
+      ],
+      "median_ms": 44.192541,
+      "mean_ms": 44.43695366666666
+    },
+    {
+      "axis": "xline",
+      "index": 128,
+      "scenario": "full_section",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        44.965834,
+        44.625499999999995,
+        44.735083,
+        44.319667,
+        44.34625,
+        44.405125,
+        44.426667,
+        44.600709,
+        44.076291
+      ],
+      "median_ms": 44.426667,
+      "mean_ms": 44.50012511111111
+    },
+    {
+      "axis": "xline",
+      "index": 128,
+      "scenario": "overview_fit",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        44.188083000000006,
+        44.20325,
+        44.17775,
+        44.255375,
+        44.236542,
+        44.376917,
+        44.972,
+        44.161041999999995,
+        43.940458
+      ],
+      "median_ms": 44.20325,
+      "mean_ms": 44.279046333333326
+    },
+    {
+      "axis": "xline",
+      "index": 128,
+      "scenario": "focus_tile_lod_0",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 0,
+      "trace_step": 1,
+      "sample_step": 1,
+      "output_traces": 256,
+      "output_samples": 256,
+      "payload_bytes": 265216,
+      "payload_fraction_of_full": 1.0,
+      "iteration_ms": [
+        44.161041999999995,
+        44.409167,
+        44.20775,
+        44.143833,
+        44.198791,
+        44.166375,
+        44.174833,
+        44.031915999999995,
+        62.451417
+      ],
+      "median_ms": 44.174833,
+      "mean_ms": 46.216124888888885
+    },
+    {
+      "axis": "xline",
+      "index": 128,
+      "scenario": "focus_tile_lod_1",
+      "trace_range": [
+        0,
+        256
+      ],
+      "sample_range": [
+        0,
+        256
+      ],
+      "lod": 1,
+      "trace_step": 2,
+      "sample_step": 2,
+      "output_traces": 128,
+      "output_samples": 128,
+      "payload_bytes": 67072,
+      "payload_fraction_of_full": 0.2528957528957529,
+      "iteration_ms": [
+        50.277125,
+        45.484041000000005,
+        63.523999999999994,
+        65.782917,
+        48.512458,
+        46.913541,
+        45.310916999999996,
+        46.1105,
+        48.654792
+      ],
+      "median_ms": 48.512458,
+      "mean_ms": 51.17447677777778
+    }
+  ]
+}

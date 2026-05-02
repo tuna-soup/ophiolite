@@ -2,6 +2,7 @@
 
 <script lang="ts">
   import { onMount } from "svelte";
+  import type { SeismicSectionChartHandle } from "@ophiolite/charts";
   import ImportManagerDialog from "./lib/components/ImportManagerDialog.svelte";
   import MissingNativeCoordinateReferencePrompt from "./lib/components/MissingNativeCoordinateReferencePrompt.svelte";
   import ProjectSettingsDialog from "./lib/components/ProjectSettingsDialog.svelte";
@@ -21,7 +22,7 @@
   import { setViewerModelContext, ViewerModel } from "./lib/viewer-model.svelte";
 
   let showSidebar = $state(true);
-  let viewerChart = $state.raw<{ fitToData?: () => void } | null>(null);
+  let viewerChart = $state.raw<SeismicSectionChartHandle | null>(null);
   let lastStartupSetupDiagnosticsSignature = "";
 
   const viewerModel = setViewerModelContext(new ViewerModel({ tauriRuntime: isTauriEnvironment() }));

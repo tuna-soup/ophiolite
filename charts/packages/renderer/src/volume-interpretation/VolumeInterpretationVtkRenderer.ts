@@ -19,6 +19,7 @@ import vtkVolumeMapper from "@kitware/vtk.js/Rendering/Core/VolumeMapper";
 import vtkImageSlice from "@kitware/vtk.js/Rendering/Core/ImageSlice";
 import vtkGenericRenderWindow from "@kitware/vtk.js/Rendering/Misc/GenericRenderWindow";
 import type vtkRenderer from "@kitware/vtk.js/Rendering/Core/Renderer";
+import { resolveActiveVolumeScalarField } from "@ophiolite/charts-data-models";
 import type {
   VolumeInterpretationAnnotation,
   VolumeInterpretationBounds,
@@ -27,6 +28,7 @@ import type {
   VolumeInterpretationMarker,
   VolumeInterpretationModel,
   VolumeInterpretationSelection,
+  VolumeInterpretationSlicePayload,
   VolumeInterpretationSlicePlane,
   VolumeInterpretationView,
   VolumeInterpretationVolume,
@@ -79,9 +81,12 @@ interface HighlightableEntry {
   apply(selected: boolean): void;
 }
 
-interface SyntheticVolumeResource {
+interface VolumeImageResource {
   imageData: vtkImageData;
+  fieldId: string;
+  fieldName: string;
   range: [number, number];
+  singleSliceAxis?: VolumeInterpretationSlicePlane["axis"];
 }
 
 interface PickableEntry {
@@ -121,10 +126,14 @@ export class VolumeInterpretationVtkRenderer
   private highlightables: HighlightableEntry[] = [];
   private pickableEntries: PickableEntry[] = [];
   private lastModel: VolumeInterpretationModel | null = null;
+  private lastFrame: VolumeInterpretationRenderFrame | null = null;
   private readonly cellPicker = vtkCellPicker.newInstance({
     opacityThreshold: 0.0015,
   });
-  private readonly volumeResources = new Map<string, SyntheticVolumeResource>();
+  private readonly volumeResources = new Map<string, VolumeImageResource>();
+  private readonly sliceResources = new Map<string, VolumeImageResource>();
+  private readonly sliceRequests = new Map<string, Promise<void>>();
+  private readonly sliceFailures = new Set<string>();
 
   mount(container: HTMLElement): void {
     this.container = container;
@@ -152,6 +161,7 @@ export class VolumeInterpretationVtkRenderer
       return;
     }
 
+    this.lastFrame = frame;
     const { model, selection, view } = frame.state;
     this.genericRenderWindow.resize();
 
@@ -237,7 +247,11 @@ export class VolumeInterpretationVtkRenderer
     this.projectedTargets = [];
     this.highlightables = [];
     this.lastModel = null;
+    this.lastFrame = null;
     this.volumeResources.clear();
+    this.sliceResources.clear();
+    this.sliceRequests.clear();
+    this.sliceFailures.clear();
     this.renderer?.removeAllViewProps();
     this.genericRenderWindow?.delete();
     this.genericRenderWindow = null;
@@ -266,53 +280,63 @@ export class VolumeInterpretationVtkRenderer
 
     const primaryVolume = model.volumes[0] ?? null;
     if (primaryVolume) {
-      const resource = this.getOrCreateVolumeResource(primaryVolume);
+      let fullResource: VolumeImageResource | null = null;
       if (model.capabilities.canRenderVolume) {
-        this.renderer.addVolume(createVolumeActor(primaryVolume, resource));
+        fullResource = this.getOrCreateVolumeResource(primaryVolume);
+        this.renderer.addVolume(createVolumeActor(primaryVolume, fullResource));
       }
 
       for (const plane of model.slicePlanes) {
         if (!plane.visible || plane.volumeId !== primaryVolume.id) {
           continue;
         }
-        const slice = createSliceActor(plane, primaryVolume, resource);
-        this.renderer.addActor(slice.actor);
-        this.renderer.addActor(slice.borderActor);
-        this.registerPickable(
-          slice.actor,
-          slice.actor.getMapper(),
-          (context) => {
-            const worldPosition = resolveSlicePickWorldPosition(
-              plane,
-              primaryVolume,
-              context,
-            );
-            return {
-            kind: "slice-plane",
-            itemId: plane.id,
-            itemName: plane.name,
-            worldX: worldPosition[0],
-            worldY: worldPosition[1],
-            worldZ: worldPosition[2],
-            screenX: context.screenX,
-            screenY: context.screenY,
-          };
-          },
-        );
+        const loadedSliceResource = this.getOrRequestSliceResource(plane, primaryVolume);
+        const sliceResource =
+          loadedSliceResource ??
+          (!primaryVolume.dataSource?.loadSlice
+            ? (fullResource ??= this.getOrCreateVolumeResource(primaryVolume))
+            : null);
+        const slice = sliceResource ? createSliceActor(plane, primaryVolume, sliceResource) : null;
+        const borderActor = slice?.borderActor ?? createPlaneBorderActor(plane, primaryVolume);
+        if (slice) {
+          this.renderer.addActor(slice.actor);
+          this.registerPickable(
+            slice.actor,
+            slice.actor.getMapper(),
+            (context) => {
+              const worldPosition = resolveSlicePickWorldPosition(
+                plane,
+                primaryVolume,
+                context,
+              );
+              return {
+                kind: "slice-plane",
+                itemId: plane.id,
+                itemName: plane.name,
+                worldX: worldPosition[0],
+                worldY: worldPosition[1],
+                worldZ: worldPosition[2],
+                screenX: context.screenX,
+                screenY: context.screenY,
+              };
+            },
+          );
+        }
+        this.renderer.addActor(borderActor);
         this.highlightables.push({
           itemId: plane.id,
           apply: (selected) => {
-            slice.actor
+            slice?.actor
               .getProperty()
               .setOpacity(
                 selected
                   ? Math.min(1, plane.style.opacity + 0.08)
                   : plane.style.opacity,
               );
-            slice.borderActor
+            borderActor
               .getProperty()
               .setColor(selected ? SELECTED_OUTLINE_COLOR : [0.95, 0.97, 0.99]);
-            slice.borderActor.getProperty().setLineWidth(selected ? 5.2 : 1.4);
+            borderActor.getProperty().setLineWidth(selected ? 5.2 : 1.4);
           },
         });
       }
@@ -503,8 +527,10 @@ export class VolumeInterpretationVtkRenderer
 
   private getOrCreateVolumeResource(
     volume: VolumeInterpretationVolume,
-  ): SyntheticVolumeResource {
-    const signature = `${volume.id}:${volume.dimensions.inline}:${volume.dimensions.xline}:${volume.dimensions.sample}`;
+  ): VolumeImageResource {
+    const field = resolveActiveVolumeScalarField(volume);
+    const fieldId = field?.id ?? "synthetic-amplitude";
+    const signature = `${volume.id}:${fieldId}:${volume.dimensions.inline}:${volume.dimensions.xline}:${volume.dimensions.sample}`;
     const cached = this.volumeResources.get(signature);
     if (cached) {
       return cached;
@@ -529,18 +555,67 @@ export class VolumeInterpretationVtkRenderer
     ]);
     imageData.getPointData().setScalars(
       vtkDataArray.newInstance({
-        name: `${volume.id}-amplitude`,
+        name: field?.name ?? `${volume.id}-amplitude`,
         values,
         numberOfComponents: 1,
       }),
     );
 
-    const resource: SyntheticVolumeResource = {
+    const resource: VolumeImageResource = {
       imageData,
-      range: minMax(values),
+      fieldId,
+      fieldName: field?.name ?? "Amplitude",
+      range: field?.valueRange ? [field.valueRange.min, field.valueRange.max] : minMax(values),
     };
     this.volumeResources.set(signature, resource);
     return resource;
+  }
+
+  private getOrRequestSliceResource(
+    plane: VolumeInterpretationSlicePlane,
+    volume: VolumeInterpretationVolume,
+  ): VolumeImageResource | null {
+    const dataSource = volume.dataSource;
+    const field = resolveActiveVolumeScalarField(volume);
+    const fieldId = field?.id ?? "amplitude";
+    const key = sliceResourceKey(plane, volume, fieldId);
+    const cached = this.sliceResources.get(key);
+    if (cached) {
+      return cached;
+    }
+    if (!dataSource?.loadSlice || this.sliceRequests.has(key) || this.sliceFailures.has(key)) {
+      return null;
+    }
+
+    const request = dataSource
+      .loadSlice({
+        volumeId: volume.id,
+        fieldId,
+        axis: plane.axis,
+        position: plane.position,
+        lod: 0,
+      })
+      .then((payload) => {
+        this.sliceResources.set(key, createSliceImageResource(payload, field?.name ?? "Amplitude"));
+        this.sliceFailures.delete(key);
+        this.renderLoadedSlice();
+      })
+      .catch(() => {
+        this.sliceFailures.add(key);
+      })
+      .finally(() => {
+        this.sliceRequests.delete(key);
+      });
+    this.sliceRequests.set(key, request);
+    return null;
+  }
+
+  private renderLoadedSlice(): void {
+    if (!this.lastFrame || !this.genericRenderWindow) {
+      return;
+    }
+    this.lastModel = null;
+    this.render(this.lastFrame);
   }
 
   private buildProjectedTargets(
@@ -873,9 +948,77 @@ function clamp(value: number, minValue: number, maxValue: number): number {
   return Math.max(minValue, Math.min(maxValue, value));
 }
 
+function sliceResourceKey(
+  plane: VolumeInterpretationSlicePlane,
+  volume: VolumeInterpretationVolume,
+  fieldId: string,
+): string {
+  return `${volume.id}:${fieldId}:${plane.axis}:${plane.position.toFixed(6)}:0`;
+}
+
+function createSliceImageResource(
+  payload: VolumeInterpretationSlicePayload,
+  fieldName: string,
+): VolumeImageResource {
+  const imageData = vtkImageData.newInstance();
+  const { width, height } = payload.dimensions;
+  const dimensions: [number, number, number] =
+    payload.axis === "inline"
+      ? [1, width, height]
+      : payload.axis === "xline"
+        ? [width, 1, height]
+        : [width, height, 1];
+
+  imageData.setDimensions(...dimensions);
+  imageData.setOrigin([
+    payload.bounds.minX,
+    payload.bounds.minY,
+    payload.bounds.minZ,
+  ]);
+  imageData.setSpacing(slicePayloadSpacing(payload));
+  imageData.getPointData().setScalars(
+    vtkDataArray.newInstance({
+      name: fieldName,
+      values: payload.values,
+      numberOfComponents: 1,
+    }),
+  );
+
+  return {
+    imageData,
+    fieldId: payload.fieldId,
+    fieldName,
+    range: payload.valueRange ? [payload.valueRange.min, payload.valueRange.max] : minMax(payload.values),
+    singleSliceAxis: payload.axis,
+  };
+}
+
+function slicePayloadSpacing(payload: VolumeInterpretationSlicePayload): [number, number, number] {
+  const { width, height } = payload.dimensions;
+  if (payload.axis === "inline") {
+    return [
+      1,
+      span(payload.bounds.minY, payload.bounds.maxY, width),
+      span(payload.bounds.minZ, payload.bounds.maxZ, height),
+    ];
+  }
+  if (payload.axis === "xline") {
+    return [
+      span(payload.bounds.minX, payload.bounds.maxX, width),
+      1,
+      span(payload.bounds.minZ, payload.bounds.maxZ, height),
+    ];
+  }
+  return [
+    span(payload.bounds.minX, payload.bounds.maxX, width),
+    span(payload.bounds.minY, payload.bounds.maxY, height),
+    1,
+  ];
+}
+
 function createVolumeActor(
   volume: VolumeInterpretationVolume,
-  resource: SyntheticVolumeResource,
+  resource: VolumeImageResource,
 ): vtkVolume {
   const mapper = vtkVolumeMapper.newInstance();
   mapper.setInputData(resource.imageData);
@@ -922,11 +1065,11 @@ function createVolumeActor(
 function createSliceActor(
   plane: VolumeInterpretationSlicePlane,
   volume: VolumeInterpretationVolume,
-  resource: SyntheticVolumeResource,
+  resource: VolumeImageResource,
 ): { actor: vtkImageSlice; borderActor: vtkActor } {
   const mapper = vtkImageMapper.newInstance();
   mapper.setInputData(resource.imageData);
-  const sliceIndex = worldToIndex(plane.axis, plane.position, volume);
+  const sliceIndex = resource.singleSliceAxis === plane.axis ? 0 : worldToIndex(plane.axis, plane.position, volume);
   if (plane.axis === "inline") {
     mapper.setISlice(sliceIndex);
   } else if (plane.axis === "xline") {
@@ -1371,7 +1514,7 @@ function polygonCenter(points: Point2D[]): Point2D {
   };
 }
 
-function minMax(values: Float32Array): [number, number] {
+function minMax(values: Float32Array | Uint16Array | Int16Array | Uint8Array): [number, number] {
   let min = Number.POSITIVE_INFINITY;
   let max = Number.NEGATIVE_INFINITY;
   for (const value of values) {

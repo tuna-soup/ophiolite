@@ -51,6 +51,57 @@ test("viewport loader stays ready when the loaded section already covers the vie
   ]);
 });
 
+test("viewport loader can force a window request even when the loaded section covers the viewport", async () => {
+  const section = createSectionPayload({
+    traces: 64,
+    samples: 128,
+    window: {
+      traceStart: 0,
+      traceEnd: 64,
+      sampleStart: 0,
+      sampleEnd: 128,
+      lod: 0
+    }
+  });
+  const states: SeismicSectionDataSourceState[] = [];
+  const requests: SeismicSectionWindowRequest[] = [];
+  const nextSection = createSectionPayload({
+    traces: 64,
+    samples: 128,
+    window: {
+      traceStart: 0,
+      traceEnd: 64,
+      sampleStart: 0,
+      sampleEnd: 128,
+      lod: 0
+    }
+  });
+  const loader = new SectionViewportLoader(
+    {
+      debounceMs: 0,
+      forceLoad: true,
+      async loadWindow(request) {
+        requests.push(request);
+        return nextSection;
+      }
+    },
+    { chartId: "chart-a", viewId: "view-a" },
+    {
+      onStateChange: (state) => states.push(state)
+    }
+  );
+
+  loader.sync(section, createSectionViewport());
+  await waitForSettled();
+  loader.dispose();
+
+  assert.equal(requests.length, 1);
+  assert.equal(states[0]?.status, "scheduled");
+  assert.equal(states[1]?.status, "loading");
+  assert.equal(states[2]?.status, "ready");
+  assert.equal(states[2]?.source, "network");
+});
+
 test("viewport loader debounces requests, forwards context, and reuses cache hits", async () => {
   const viewport = createSectionViewport();
   const section = createSectionPayload({

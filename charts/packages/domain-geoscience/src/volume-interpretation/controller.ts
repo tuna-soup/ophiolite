@@ -1,6 +1,7 @@
 import { InteractionManager } from "@ophiolite/charts-core";
 import {
   clampSlicePlanePosition,
+  cloneVolumeInterpretationModel,
   createDefaultVolumeInterpretationView,
   sceneSpan
 } from "@ophiolite/charts-data-models";
@@ -78,7 +79,7 @@ export class VolumeInterpretationController {
   }
 
   setModel(model: VolumeInterpretationModel | null): void {
-    const nextModel = model ? structuredClone(model) : null;
+    const nextModel = model ? cloneVolumeInterpretationModel(model) : null;
     const previousModel = this.state.model;
     const previousView = this.state.view;
     const previousSelection = this.state.selection;
@@ -446,7 +447,7 @@ export class VolumeInterpretationController {
 
   getState(): VolumeInterpretationViewState {
     return {
-      model: this.state.model ? structuredClone(this.state.model) : null,
+      model: this.state.model ? cloneVolumeInterpretationModel(this.state.model) : null,
       view: this.state.view ? { ...this.state.view } : null,
       tool: this.state.tool,
       probe: this.state.probe ? { ...this.state.probe, target: { ...this.state.probe.target } } : null,

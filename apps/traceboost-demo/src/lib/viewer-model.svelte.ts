@@ -1,5 +1,5 @@
 import { createContext, tick } from "svelte";
-import { SvelteSet } from "svelte/reactivity";
+import { SvelteMap, SvelteSet } from "svelte/reactivity";
 import type {
   SectionHorizonOverlay as ChartSectionHorizonOverlay,
   SectionScalarOverlay as ChartSectionScalarOverlay,
@@ -193,10 +193,11 @@ const PROJECT_SURVEY_SELECTION_GROUPS = [
 ] as const;
 const SECTION_TILE_CACHE_BUDGET_BYTES = 96 * 1024 * 1024;
 const SECTION_TILE_BUCKET_TRACES = 256;
-const SECTION_TILE_BUCKET_SAMPLES = 512;
+const SECTION_TILE_BUCKET_SAMPLES = 128;
 const SECTION_TILE_HALO_FACTOR = 0.35;
 const SECTION_TILE_VIEWPORT_DEBOUNCE_MS = 90;
 const SECTION_TILE_PREFETCH_WINDOWS = 1;
+const SECTION_TILE_FIRST_MAX_AREA_RATIO = 0.45;
 
 interface SectionTileWindowRequest {
   traceRange: [number, number];
@@ -545,7 +546,13 @@ function buildSectionTileRequest(
   section: SectionTileSource,
   viewport: ViewerSectionViewport
 ): SectionTileWindowRequest {
-  const logical = sectionLogicalDimensions(section);
+  return buildSectionTileRequestForLogical(sectionLogicalDimensions(section), viewport);
+}
+
+function buildSectionTileRequestForLogical(
+  logical: { traces: number; samples: number },
+  viewport: ViewerSectionViewport
+): SectionTileWindowRequest {
   return {
     traceRange: expandAndSnapRange(
       viewport.traceStart,
@@ -563,6 +570,17 @@ function buildSectionTileRequest(
     ),
     lod: chooseSectionTileLod(viewport)
   };
+}
+
+function sectionTileAreaRatioForLogical(
+  logical: { traces: number; samples: number },
+  request: SectionTileWindowRequest
+): number {
+  const totalArea = Math.max(1, logical.traces * logical.samples);
+  const requestArea =
+    Math.max(1, request.traceRange[1] - request.traceRange[0]) *
+    Math.max(1, request.sampleRange[1] - request.sampleRange[0]);
+  return requestArea / totalArea;
 }
 
 function tileCacheKey(
@@ -1124,6 +1142,7 @@ export class ViewerModel {
   depthVelocityKind = $state<VelocityQuantityKind>("average");
   availableVelocityModels = $state.raw<SurveyTimeDepthTransform3D[]>([]);
   section = $state.raw<DisplaySectionView | null>(null);
+  viewportDisplaySection = $state.raw<DisplaySectionView | null>(null);
   timeDepthDiagnostics = $state.raw<SectionTimeDepthDiagnostics | null>(null);
   sectionScalarOverlays = $state.raw<ChartSectionScalarOverlay[]>([]);
   sectionHorizons = $state.raw<ChartSectionHorizonOverlay[]>([]);
@@ -1239,6 +1258,7 @@ export class ViewerModel {
   });
   lastSectionTileDataSourceState = $state.raw<SeismicSectionDataSourceStatePayload["state"] | null>(null);
   lastSectionTileAdaptationMetrics = $state.raw<SectionTileAdaptationMetrics | null>(null);
+  forceSectionViewportTiles = $state(false);
   lastChartRendererStatus = $state.raw<SeismicSectionRendererStatusPayload["status"] | null>(null);
   lastChartRendererTelemetry = $state.raw<SeismicSectionRendererTelemetryPayload["event"] | null>(null);
 
@@ -1256,8 +1276,9 @@ export class ViewerModel {
     prefetchPolicy: {
       adjacentViewportWindows: SECTION_TILE_PREFETCH_WINDOWS
     },
+    forceLoad: () => this.forceSectionViewportTiles,
     getRequestKey: (request) => {
-      const section = this.section;
+      const section = this.viewportDisplaySection ?? this.section;
       if (!section) {
         return [
           trimPath(this.activeStorePath) || "no-store",
@@ -1278,7 +1299,7 @@ export class ViewerModel {
     },
     estimateBytes: (section) => estimateChartSectionPayloadBytes(section),
     loadWindow: async (request, context) => {
-      const section = context.currentSection ?? this.section;
+      const section = context.currentSection ?? this.viewportDisplaySection ?? this.section;
       if (!section) {
         throw new Error("No active section is available for viewport-driven tile loading.");
       }
@@ -1286,7 +1307,7 @@ export class ViewerModel {
       return this.loadSectionTileRequest(normalizedRequest, section);
     }
   };
-  #viewportMemory = new Map<string, ViewerSectionViewport>();
+  #viewportMemory = new SvelteMap<string, ViewerSectionViewport>();
   #surveyMapRequestId = 0;
   #projectWellOverlayInventoryRequestId = 0;
   #projectWellTimeDepthModelsRequestId = 0;
@@ -1491,6 +1512,25 @@ export class ViewerModel {
     this.viewportMemoryRevision += 1;
   }
 
+  rememberViewportForSection = (
+    axis: SectionAxis,
+    viewport: ViewerSectionViewport,
+    storePathOverride?: string
+  ): void => {
+    const storePath = trimPath(storePathOverride ?? this.displayStorePath) || trimPath(this.activeStorePath);
+    if (!storePath) {
+      return;
+    }
+    const key = buildViewportMemoryKey({
+      storePath,
+      geometryFingerprint: this.displayGeometryFingerprint ?? datasetGeometryFingerprint(this.dataset),
+      axis,
+      domain: this.displayDomain
+    });
+    this.#viewportMemory.set(key, cloneViewport(viewport));
+    this.viewportMemoryRevision += 1;
+  };
+
   #applyDisplayedSectionContext(
     storePath: string,
     section: DisplaySectionView,
@@ -1567,6 +1607,10 @@ export class ViewerModel {
 
   get sectionChartDataSource(): SeismicSectionDataSource | null {
     return this.canUseSectionTiles() ? this.#sectionChartDataSource : null;
+  }
+
+  get chartDisplaySection(): DisplaySectionView | null {
+    return this.viewportDisplaySection ?? this.section;
   }
 
   get displayedViewport(): ViewerSectionViewport | null {
@@ -4012,6 +4056,7 @@ export class ViewerModel {
     this.surveyMapError = null;
     this.surveyMapLoading = false;
     this.section = null;
+    this.viewportDisplaySection = null;
     this.timeDepthDiagnostics = null;
     this.sectionScalarOverlays = [];
     this.sectionHorizons = [];
@@ -4819,6 +4864,205 @@ export class ViewerModel {
     this.chartTool = state.tool;
   };
 
+  setForceSectionViewportTiles = (enabled: boolean): void => {
+    if (this.forceSectionViewportTiles === enabled) {
+      return;
+    }
+    this.forceSectionViewportTiles = enabled;
+    this.lastSectionTileAdaptationMetrics = null;
+    this.lastSectionTileDataSourceState = null;
+    this.note(
+      enabled ? "Viewport tile debug forcing enabled." : "Viewport tile debug forcing disabled.",
+      "viewer",
+      "info",
+      enabled
+        ? "The chart will request viewport tiles even when the current full section covers the viewport."
+        : "The chart will skip viewport tile requests when the current section already covers the viewport."
+    );
+  };
+
+  loadViewportSection = async (
+    axis: SectionAxis,
+    index: number,
+    viewport: ViewerSectionViewport,
+    storePathOverride?: string
+  ): Promise<boolean> => {
+    const activeStorePath = trimPath(storePathOverride ?? this.activeStorePath);
+    const sourceSection = this.chartDisplaySection;
+    if (
+      !this.tauriRuntime ||
+      this.sectionDomain !== "time" ||
+      this.compareSplitEnabled ||
+      this.showVelocityOverlay ||
+      this.sectionScalarOverlays.length > 0 ||
+      !activeStorePath ||
+      !sourceSection
+    ) {
+      return false;
+    }
+
+    const targetLogical = this.dataset
+      ? {
+          traces: axis === "inline"
+            ? this.dataset.descriptor.shape[1]
+            : this.dataset.descriptor.shape[0],
+          samples: this.dataset.descriptor.shape[2]
+        }
+      : sectionLogicalDimensions(sourceSection);
+    const request = buildSectionTileRequestForLogical(targetLogical, viewport);
+    const areaRatio = sectionTileAreaRatioForLogical(targetLogical, request);
+    if (areaRatio > SECTION_TILE_FIRST_MAX_AREA_RATIO) {
+      return false;
+    }
+
+    this.activeStorePath = storePathOverride ?? this.activeStorePath;
+    this.axis = axis;
+    this.index = index;
+    this.loading = true;
+    this.busyLabel = "Loading viewport tile";
+    this.error = null;
+    this.note(
+      "Requested viewport-first section load.",
+      "ui",
+      "info",
+      `${axis}:${index} T[${request.traceRange[0]}, ${request.traceRange[1]}) S[${request.sampleRange[0]}, ${request.sampleRange[1]})`
+    );
+
+    const loadStartedMs = nowMs();
+    try {
+      const tile = await fetchSectionTileView(
+        activeStorePath,
+        axis,
+        index,
+        request.traceRange,
+        request.sampleRange,
+        request.lod
+      );
+      const fetchEndedMs = nowMs();
+      const windowed = tileViewToWindowedSection(tile, targetLogical);
+      const transportPayloadBytes = estimateSectionPayloadBytes(windowed);
+      const decodeStats = createDecodeStats();
+      const adaptStartedMs = nowMs();
+      const chartSection = adaptTransportWindowedSectionToChartData(windowed, { stats: decodeStats });
+      const adaptEndedMs = nowMs();
+      const chartPayloadBytes = estimateChartSectionPayloadBytes(chartSection);
+      const metrics: SectionTileAdaptationMetrics = {
+        source: "viewport_fetch",
+        fetchMs: fetchEndedMs - loadStartedMs,
+        adaptMs: adaptEndedMs - adaptStartedMs,
+        totalMs: adaptEndedMs - loadStartedMs,
+        transportPayloadBytes,
+        chartPayloadBytes,
+        decode: { ...decodeStats },
+        traceStep: tile.trace_step,
+        sampleStep: tile.sample_step
+      };
+      this.lastSectionTileAdaptationMetrics = metrics;
+      this.viewportDisplaySection = windowed;
+      const viewerResetReason = this.#applyDisplayedSectionContext(
+        activeStorePath,
+        windowed,
+        this.sectionDomain
+      );
+      this.timeDepthDiagnostics = null;
+      this.sectionScalarOverlays = [];
+      this.sectionHorizons = [];
+      this.sectionWellOverlays = [];
+      this.loading = false;
+      this.busyLabel = null;
+      this.error = null;
+      this.resetToken = this.#displayResetToken();
+      await this.persistWorkspaceSession();
+      const afterPersistMs = nowMs();
+      await tick();
+      const afterTickMs = nowMs();
+      await nextAnimationFrame();
+      const afterFirstFrameMs = nowMs();
+      await nextAnimationFrame();
+      const afterSecondFrameMs = nowMs();
+      this.#emitSectionTileDiagnostics(
+        "info",
+        "Loaded viewport tile as the displayed section.",
+        request,
+        {
+          source: "viewport_first",
+          elapsedMs: metrics.totalMs,
+          fetchMs: metrics.fetchMs,
+          adaptMs: metrics.adaptMs,
+          areaRatio,
+          transportPayloadBytes: metrics.transportPayloadBytes,
+          chartPayloadBytes: metrics.chartPayloadBytes,
+          copiedBytes: metrics.decode.copiedBytes,
+          viewedBytes: metrics.decode.viewedBytes,
+          copiedBuffers: metrics.decode.copiedBuffers,
+          viewedBuffers: metrics.decode.viewedBuffers,
+          traceStep: metrics.traceStep,
+          sampleStep: metrics.sampleStep
+        },
+        {
+          sectionIndex: index,
+          mirrorToActivity: true
+        }
+      );
+      void emitFrontendDiagnosticsEvent({
+        stage: "load_section",
+        level: "info",
+        message: "Frontend viewport-first section load timings recorded",
+        fields: {
+          storePath: activeStorePath,
+          datasetId: windowed.dataset_id,
+          axis,
+          index,
+          traces: windowed.traces,
+          samples: windowed.samples,
+          logicalTraces: targetLogical.traces,
+          logicalSamples: targetLogical.samples,
+          payloadBytes: transportPayloadBytes,
+          fullSectionSkipped: true,
+          areaRatio,
+          traceRange: request.traceRange,
+          sampleRange: request.sampleRange,
+          lod: request.lod,
+          frontendAwaitMs: fetchEndedMs - loadStartedMs,
+          frontendStateAssignMs: afterPersistMs - adaptEndedMs,
+          frontendTickMs: afterTickMs - afterPersistMs,
+          frontendFirstFrameMs: afterFirstFrameMs - afterTickMs,
+          frontendSecondFrameMs: afterSecondFrameMs - afterFirstFrameMs,
+          frontendCommitToSecondFrameMs: afterSecondFrameMs - adaptEndedMs,
+          frontendTotalMs: afterSecondFrameMs - loadStartedMs,
+          viewerResetReason,
+          viewerSessionKey: this.displayedViewerSessionKey,
+          frontendStage: "viewer_load_section_viewport_first"
+        }
+      }).catch((error) => {
+        this.note(
+          "Failed to record viewport-first frontend timings.",
+          "backend",
+          "warn",
+          error instanceof Error ? error.message : String(error)
+        );
+      });
+      this.note(
+        "Viewport tile displayed.",
+        "backend",
+        "info",
+        `${axis}:${index} | traces=${windowed.traces}/${targetLogical.traces} samples=${windowed.samples}/${targetLogical.samples} | payload=${transportPayloadBytes} bytes`
+      );
+      return true;
+    } catch (error) {
+      this.loading = false;
+      this.busyLabel = null;
+      this.error = null;
+      this.note(
+        "Viewport-first section load fell back to full-section loading.",
+        "backend",
+        "warn",
+        error instanceof Error ? error.message : String(error)
+      );
+      return false;
+    }
+  };
+
   private canUseSectionTiles(): boolean {
     return (
       this.tauriRuntime &&
@@ -4826,7 +5070,7 @@ export class ViewerModel {
       !this.compareSplitEnabled &&
       !this.showVelocityOverlay &&
       this.sectionScalarOverlays.length === 0 &&
-      this.section !== null &&
+      this.chartDisplaySection !== null &&
       trimPath(this.activeStorePath).length > 0
     );
   }
@@ -4965,6 +5209,35 @@ export class ViewerModel {
           );
         } finally {
           this.restoringWorkspace = false;
+        }
+      } else {
+        const fallbackEntry =
+          this.activeDatasetEntry ??
+          this.workspaceEntries.find((entry) => trimPath(entryStorePath(entry))) ??
+          null;
+        const fallbackStorePath = trimPath(entryStorePath(fallbackEntry));
+        if (fallbackEntry && fallbackStorePath) {
+          this.restoringWorkspace = true;
+          this.note("Opening workspace dataset.", "viewer", "info", fallbackStorePath);
+          try {
+            await this.openDatasetAt(fallbackStorePath, this.axis, this.index, {
+              entryId: fallbackEntry.entry_id,
+              displayName: fallbackEntry.display_name,
+              sourcePath: fallbackEntry.source_path ?? "",
+              sessionPipelines: fallbackEntry.session_pipelines,
+              activeSessionPipelineId: fallbackEntry.active_session_pipeline_id ?? null,
+              promptForMissingNativeCoordinateReference: false
+            });
+          } catch (error) {
+            this.note(
+              "Failed to open a workspace dataset automatically.",
+              "backend",
+              "warn",
+              errorMessage(error, "Unknown workspace open error")
+            );
+          } finally {
+            this.restoringWorkspace = false;
+          }
         }
       }
 
@@ -5776,6 +6049,7 @@ export class ViewerModel {
     await this.refreshHorizonAssets(storePath);
     const display = await this.loadResolvedSectionDisplay(storePath, this.axis, this.index);
     this.section = display.section;
+    this.viewportDisplaySection = null;
     this.timeDepthDiagnostics = display.time_depth_diagnostics;
     this.sectionScalarOverlays = adaptSectionScalarOverlays(
       display.scalar_overlays,
@@ -6080,6 +6354,7 @@ export class ViewerModel {
       this.axis = axis;
       this.index = index;
       this.section = display.section;
+      this.viewportDisplaySection = null;
       const viewerResetReason = this.#applyDisplayedSectionContext(
         activeStorePath,
         display.section,

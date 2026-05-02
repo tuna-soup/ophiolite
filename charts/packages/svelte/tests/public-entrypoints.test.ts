@@ -86,6 +86,7 @@ test("ophiolite adapter entrypoint exposes launch-family adapter helpers", () =>
   assert.match(adapterEntry, /adaptOphioliteSurveyMapToChart/);
   assert.match(adapterEntry, /adaptOphioliteRockPhysicsCrossplotToChart/);
   assert.match(adapterEntry, /adaptOphioliteWellPanelToChart/);
+  assert.match(adapterEntry, /adaptOphioliteVolumeInterpretationToChart/);
 });
 
 test("ophiolite adapter entrypoint does not leak raw contract internals", () => {

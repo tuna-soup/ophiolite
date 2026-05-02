@@ -1,0 +1,4 @@
+65616	/Users/sc/Downloads/SubsurfaceData/poseidon/far_stack_roi_inline0_xline128_sample128_v3.tbvol
+60576	/tmp/ophiolite-tbvolc-direct-read-20260502094004/poseidon.tbvolc
+30948	/Users/sc/Downloads/SubsurfaceData/blocks/F3/seismic/tbvol/DATR12I-021.tbvol
+27796	/tmp/ophiolite-tbvolc-direct-read-20260502094004/f3-small.tbvolc

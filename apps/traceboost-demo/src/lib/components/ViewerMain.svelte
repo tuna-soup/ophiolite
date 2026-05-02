@@ -1,16 +1,19 @@
 <svelte:options runes={true} />
 
 <script lang="ts">
+  import { tick } from "svelte";
   import type { ChartToolbarActionItem, ChartToolbarToolItem } from "@ophiolite/charts-toolbar";
   import { ChartInteractionToolbar } from "@ophiolite/charts-toolbar";
   import { SeismicSectionChart } from "@ophiolite/charts";
   import { AmplitudeDistributionInspector, SpectrumInspector } from "@ophiolite/charts/extras";
   import type {
+    SeismicSectionChartHandle,
     SeismicSectionAnalysisConfig,
     SeismicSectionAnalysisRequest,
     SeismicSectionAnalysisSelectionMode,
     SeismicSectionBrowseConfig,
     SeismicSectionBrowseRequest,
+    SeismicViewport,
     SpectrumResponseLike
   } from "@ophiolite/charts";
   import type { SegyGeometryCandidate, SegyHeaderField } from "@traceboost/seis-contracts";
@@ -41,14 +44,14 @@
     openSettings,
     requestHorizonImport,
     requestPetrelImport,
-    chartRef = $bindable<{ fitToData?: () => void } | null>(null)
+    chartRef = $bindable<SeismicSectionChartHandle | null>(null)
   }: {
     showSidebar: boolean;
     showSidebarPanel: () => void;
     openSettings: () => void;
     requestHorizonImport: () => Promise<void>;
     requestPetrelImport: () => Promise<void>;
-    chartRef?: { fitToData?: () => void } | null;
+    chartRef?: SeismicSectionChartHandle | null;
   } = $props();
 
   const viewerModel = getViewerModelContext();
@@ -69,8 +72,14 @@
   let distributionResultKey = $state<string | null>(null);
 
   const compareViewport = $derived(viewerModel.displayedViewport);
-  const chartSessionKey = $derived(`${viewerModel.displayedViewerSessionKey}:${processingModel.displaySectionMode}`);
-  const displayedSection = $derived(processingModel.displaySection);
+  const chartSessionKey = $derived(
+    `${viewerModel.displayedViewerSessionKey}:${processingModel.displaySectionMode}:${viewerModel.forceSectionViewportTiles ? "force-tiles" : "normal-tiles"}`
+  );
+  const displayedSection = $derived(
+    processingModel.previewState === "preview"
+      ? processingModel.displaySection
+      : viewerModel.chartDisplaySection
+  );
   const displayedSectionAnalysisKey = $derived(
     displayedSection && viewerModel.activeStorePath
       ? `${viewerModel.activeStorePath}:${displayedSection.axis}:${displayedSection.coordinate.index}:${processingModel.displaySectionMode}:${processingModel.displayResetToken}`
@@ -83,7 +92,7 @@
   const tileAdaptationMetrics = $derived(viewerModel.sectionTileAdaptationMetricsSnapshot);
   const splitReady = $derived(
     viewerModel.compareSplitEnabled &&
-      !!processingModel.displaySection &&
+      !!displayedSection &&
       !!viewerModel.backgroundSection &&
       viewerModel.displayTransform.renderMode === "heatmap"
   );
@@ -169,6 +178,13 @@
   const tileHitRate = $derived(
     tileStats.cacheHits + tileStats.fetches > 0 ? tileStats.cacheHits / (tileStats.cacheHits + tileStats.fetches) : null
   );
+  const selectedNodeTitle = $derived(processingModel.selectedStepLabel ?? "Select an operator");
+  const selectedNodeSubtitle = $derived(
+    processingModel.selectedOperation
+      ? "Operator node"
+      : "Choose a recipe step or add an operator from the library."
+  );
+  const activeSectionLabel = $derived(displayedSection ? `${viewerModel.axis}:${viewerModel.index}` : "No section loaded");
   const tileDiagnosticsStatus = $derived.by(() => {
     if (!viewerModel.activeStorePath.trim()) {
       return "No store";
@@ -176,7 +192,7 @@
     if (!viewerModel.tauriRuntime) {
       return "Browser fallback";
     }
-    if (!processingModel.displaySection || !viewerModel.section) {
+    if (!displayedSection) {
       return "Waiting";
     }
     if (viewerModel.sectionDomain !== "time") {
@@ -190,6 +206,9 @@
     }
     if (viewerModel.sectionScalarOverlays.length > 0) {
       return "Scalar overlays";
+    }
+    if (viewerModel.forceSectionViewportTiles && !tileWindow) {
+      return "Forced";
     }
     if (viewerModel.lastSectionTileDataSourceState?.status === "scheduled") {
       return "Queued";
@@ -217,6 +236,8 @@
         return "Velocity overlays currently force full-section loads.";
       case "Scalar overlays":
         return "Scalar overlays currently force full-section loads.";
+      case "Forced":
+        return "Debug forcing is on; the chart will request viewport tiles even when the full section covers the viewport.";
       case "Queued":
         return "The chart scheduled a viewport tile request and is waiting for the debounce window.";
       case "Loading":
@@ -239,21 +260,21 @@
       label: "Pointer",
       icon: "pointer",
       active: viewerModel.chartTool === "pointer",
-      disabled: !processingModel.displaySection
+      disabled: !displayedSection
     },
     {
       id: "crosshair",
       label: "Crosshair",
       icon: "crosshair",
       active: viewerModel.chartTool === "crosshair",
-      disabled: !processingModel.displaySection
+      disabled: !displayedSection
     },
     {
       id: "pan",
       label: "Pan",
       icon: "pan",
       active: viewerModel.chartTool === "pan",
-      disabled: !processingModel.displaySection
+      disabled: !displayedSection
     }
   ]);
   const toolbarActions = $derived<ChartToolbarActionItem[]>([
@@ -261,7 +282,7 @@
       id: "fitToData",
       label: "Fit To Data",
       icon: "fitToData",
-      disabled: !processingModel.displaySection
+      disabled: !displayedSection
     }
   ]);
 
@@ -294,13 +315,93 @@
       : Math.max(0, (viewerModel.dataset?.descriptor.shape[1] ?? 1) - 1);
   }
 
-  function handleAxisChange(nextAxis: "inline" | "xline"): void {
+  function axisTraceCount(axis: "inline" | "xline"): number {
+    return axisLimitFor(axis) + 1;
+  }
+
+  function sectionSampleCount(): number {
+    return Math.max(1, viewerModel.dataset?.descriptor.shape[2] ?? displayedSection?.samples ?? 1);
+  }
+
+  function clampViewportRange(start: number, end: number, total: number): [number, number] {
+    const span = Math.max(1, Math.min(total, Math.round(end - start)));
+    const clampedStart = Math.max(0, Math.min(Math.round(start), Math.max(0, total - span)));
+    return [clampedStart, clampedStart + span];
+  }
+
+  function clampViewportToAxis(viewport: SeismicViewport, axis: "inline" | "xline"): SeismicViewport {
+    const [traceStart, traceEnd] = clampViewportRange(
+      viewport.traceStart,
+      viewport.traceEnd,
+      axisTraceCount(axis)
+    );
+    const [sampleStart, sampleEnd] = clampViewportRange(
+      viewport.sampleStart,
+      viewport.sampleEnd,
+      sectionSampleCount()
+    );
+    return { traceStart, traceEnd, sampleStart, sampleEnd };
+  }
+
+  function mapViewportToAxis(
+    viewport: SeismicViewport,
+    fromAxis: "inline" | "xline",
+    toAxis: "inline" | "xline"
+  ): SeismicViewport {
+    if (fromAxis === toAxis) {
+      return clampViewportToAxis(viewport, toAxis);
+    }
+
+    const sourceTraceCount = axisTraceCount(fromAxis);
+    const targetTraceCount = axisTraceCount(toAxis);
+    const sourceSpan = Math.max(1, viewport.traceEnd - viewport.traceStart);
+    const sourceCenter = viewport.traceStart + sourceSpan / 2;
+    const normalizedCenter = sourceTraceCount > 1 ? sourceCenter / sourceTraceCount : 0;
+    const normalizedSpan = sourceTraceCount > 0 ? sourceSpan / sourceTraceCount : 1;
+    const targetSpan = Math.max(1, Math.round(normalizedSpan * targetTraceCount));
+    const targetStart = Math.round(normalizedCenter * targetTraceCount - targetSpan / 2);
+    return clampViewportToAxis(
+      {
+        traceStart: targetStart,
+        traceEnd: targetStart + targetSpan,
+        sampleStart: viewport.sampleStart,
+        sampleEnd: viewport.sampleEnd
+      },
+      toAxis
+    );
+  }
+
+  async function loadSectionWithViewport(
+    axis: "inline" | "xline",
+    index: number,
+    viewport: SeismicViewport | null,
+    fromAxis = axis
+  ): Promise<void> {
+    const nextViewport = viewport ? mapViewportToAxis(viewport, fromAxis, axis) : null;
+    if (nextViewport) {
+      viewerModel.rememberViewportForSection(axis, nextViewport);
+      const loadedViewportSection = await viewerModel.loadViewportSection(axis, index, nextViewport);
+      if (loadedViewportSection) {
+        await tick();
+        chartRef?.setViewport(nextViewport);
+        return;
+      }
+    }
+    await viewerModel.load(axis, index);
+    if (nextViewport) {
+      viewerModel.rememberViewportForSection(axis, nextViewport);
+      await tick();
+      chartRef?.setViewport(nextViewport);
+    }
+  }
+
+  function handleAxisChange(nextAxis: "inline" | "xline", viewport: SeismicViewport | null = compareViewport): void {
     if (!viewerModel.activeStorePath || viewerModel.loading) {
       return;
     }
 
     const clampedIndex = Math.min(viewerModel.index, axisLimitFor(nextAxis));
-    void viewerModel.load(nextAxis, clampedIndex);
+    void loadSectionWithViewport(nextAxis, clampedIndex, viewport, viewerModel.axis);
   }
 
   function handleSectionBrowseRequest(request: SeismicSectionBrowseRequest): void {
@@ -309,7 +410,7 @@
     }
 
     if (request.kind === "switch-axis") {
-      handleAxisChange(request.axis);
+      handleAxisChange(request.axis, request.preserveViewport ? request.viewport : null);
       return;
     }
 
@@ -318,7 +419,12 @@
       axisLimitFor(request.current.axis)
     );
     if (nextIndex !== viewerModel.index) {
-      void viewerModel.load(request.current.axis, nextIndex);
+      void loadSectionWithViewport(
+        request.current.axis,
+        nextIndex,
+        request.preserveViewport ? request.viewport : null,
+        request.current.axis
+      );
     }
   }
 
@@ -647,7 +753,7 @@
         class:active={viewerModel.displayTransform.renderMode === "heatmap"}
         class="display-chip action"
         onclick={() => toggleRenderMode("heatmap")}
-        disabled={!processingModel.displaySection}
+        disabled={!displayedSection}
       >
         Heatmap
       </button>
@@ -655,14 +761,14 @@
         class:active={viewerModel.displayTransform.renderMode === "wiggle"}
         class="display-chip action"
         onclick={() => toggleRenderMode("wiggle")}
-        disabled={!processingModel.displaySection}
+        disabled={!displayedSection}
       >
         Wiggle
       </button>
       <button
         class="display-chip action"
         onclick={toggleColormap}
-        disabled={!processingModel.displaySection}
+        disabled={!displayedSection}
       >
         {viewerModel.displayTransform.colormap === "grayscale" ? "R/W/B" : "Gray"}
       </button>
@@ -670,7 +776,7 @@
         class="display-chip icon"
         onclick={openDisplaySettings}
         aria-label="Open display settings"
-        disabled={!processingModel.displaySection}
+        disabled={!displayedSection}
       >
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8">
           <path d="M10.3 2.5h3.4l.5 2.2a7.9 7.9 0 012 .8l1.9-1.2 2.4 2.4-1.2 1.9c.35.63.61 1.3.78 2l2.23.52v3.4l-2.23.52a7.9 7.9 0 01-.78 2l1.2 1.9-2.4 2.4-1.9-1.2a7.9 7.9 0 01-2 .78l-.52 2.23h-3.4l-.52-2.23a7.9 7.9 0 01-2-.78l-1.9 1.2-2.4-2.4 1.2-1.9a7.9 7.9 0 01-.78-2L2.5 13.7v-3.4l2.23-.52a7.9 7.9 0 01.78-2L4.26 5.9l2.4-2.4 1.9 1.2a7.9 7.9 0 012-.78z" />
@@ -750,6 +856,17 @@
       <strong class:active={tileDiagnosticsStatus === "Active"}>{tileDiagnosticsStatus}</strong>
     </div>
     <p>{tileDiagnosticsDetail}</p>
+    {#if viewerModel.tauriRuntime && displayedSection && viewerModel.sectionDomain === "time"}
+      <label class="tile-diagnostics-toggle">
+        <input
+          type="checkbox"
+          checked={viewerModel.forceSectionViewportTiles}
+          onchange={(event) => viewerModel.setForceSectionViewportTiles(event.currentTarget.checked)}
+          disabled={viewerModel.compareSplitEnabled || viewerModel.showVelocityOverlay || viewerModel.sectionScalarOverlays.length > 0}
+        />
+        <span>Force viewport tiles</span>
+      </label>
+    {/if}
     {#if compareViewport}
       <dl class="tile-diagnostics-grid">
         <div>
@@ -849,16 +966,17 @@
   {/if}
 
   <div class="workspace-columns">
-    <aside class="session-column">
-      <div class="session-column-header">
-        <span class="eyebrow">Processing Workspace</span>
-        <h2>{processingModel.pipelineTitle}</h2>
-        <p>
-          {viewerModel.dataset
-            ? `Working on ${viewerModel.activeDatasetDisplayName} at ${viewerModel.axis}:${viewerModel.index}`
-            : "Open a runtime store to preview processing on the current section."}
-        </p>
-        <p class="workflow-origin">{processingModel.operatorCatalogSourceLabel}</p>
+    <aside class="recipe-column">
+      <div class="recipe-header">
+        <div>
+          <span class="eyebrow">Recipe Flow</span>
+          <h2>{processingModel.pipelineTitle}</h2>
+          <p>
+            {viewerModel.dataset
+              ? `${viewerModel.activeDatasetDisplayName} is the active input volume.`
+              : "Open a runtime store before running a recipe."}
+          </p>
+        </div>
         <div class="family-switch" role="tablist" aria-label="Processing family">
           <button
             class:active={processingModel.pipelineFamily === "trace_local"}
@@ -877,92 +995,113 @@
         </div>
       </div>
 
-        <PipelineSessionList
-          pipelines={processingModel.sessionPipelineItems}
-          activePipelineId={processingModel.activeSessionPipelineId}
-          onSelect={processingModel.activateSessionPipeline}
-          onCreate={processingModel.createSessionPipeline}
-          onDuplicate={processingModel.duplicateActiveSessionPipeline}
-          onCopy={processingModel.copyActiveSessionPipeline}
-          onPaste={processingModel.pasteCopiedSessionPipeline}
-          onRemove={processingModel.removeActiveSessionPipeline}
-          onRemoveItem={processingModel.removeSessionPipeline}
-          getLabel={processingModel.sessionPipelineLabel}
-          getSummary={processingModel.sessionPipelineSummary}
-          canRemove={processingModel.canRemoveSessionPipeline}
+      <PipelineSessionList
+        pipelines={processingModel.sessionPipelineItems}
+        activePipelineId={processingModel.activeSessionPipelineId}
+        onSelect={processingModel.activateSessionPipeline}
+        onCreate={processingModel.createSessionPipeline}
+        onDuplicate={processingModel.duplicateActiveSessionPipeline}
+        onCopy={processingModel.copyActiveSessionPipeline}
+        onPaste={processingModel.pasteCopiedSessionPipeline}
+        onRemove={processingModel.removeActiveSessionPipeline}
+        onRemoveItem={processingModel.removeSessionPipeline}
+        getLabel={processingModel.sessionPipelineLabel}
+        getSummary={processingModel.sessionPipelineSummary}
+        canRemove={processingModel.canRemoveSessionPipeline}
+      />
+
+      {#if processingModel.pipelineFamily === "post_stack_neighborhood"}
+        <NeighborhoodSequenceList
+          operations={processingModel.neighborhoodOperations}
+          selectedIndex={processingModel.selectedStepIndex}
+          onSelect={processingModel.selectStep}
         />
+      {:else}
+        <PipelineSequenceList
+          operations={processingModel.workspaceOperations}
+          operatorCatalogItems={processingModel.availableOperatorCatalogItems}
+          catalogSourceLabel={processingModel.operatorCatalogSourceLabel}
+          catalogSourceDetail={processingModel.operatorCatalogSourceDetail}
+          catalogEmptyMessage={processingModel.operatorCatalogEmptyMessage}
+          traceLocalOperationCount={processingModel.pipeline.steps.length}
+          hasSubvolumeCrop={processingModel.hasSubvolumeCrop}
+          selectedIndex={processingModel.selectedStepIndex}
+          checkpointAfterOperationIndexes={processingModel.checkpointAfterOperationIndexes}
+          checkpointWarning={processingModel.checkpointWarning}
+          onSelect={processingModel.selectStep}
+          onInsertOperator={processingModel.insertOperatorById}
+          onCopy={processingModel.copySelectedOperation}
+          onPaste={processingModel.pasteCopiedOperation}
+          onRemove={processingModel.removeOperationAt}
+          onToggleCheckpoint={processingModel.toggleCheckpointAfterOperation}
+        />
+      {/if}
     </aside>
 
     <div class="main-column">
-      <div class="definition-pane">
-        <PipelineControlBar
-          processingFamily={processingModel.pipelineFamily}
-          pipeline={
-            processingModel.pipelineFamily === "post_stack_neighborhood"
-              ? processingModel.postStackNeighborhoodPipeline
-              : processingModel.pipeline
-          }
-          previewState={processingModel.previewState}
-          previewLabel={processingModel.previewLabel}
-          presets={processingModel.visiblePresets}
-          loadingPresets={processingModel.loadingPresets}
-          canPreview={processingModel.canPreview}
-          canRun={processingModel.canRun}
-          previewBusy={processingModel.previewBusy}
-          runBusy={processingModel.runBusy}
-          batchBusy={processingModel.batchBusy}
-          activeBatch={processingModel.activeBatch}
-          batchCandidates={processingModel.batchCandidates}
-          selectedBatchStorePaths={processingModel.selectedBatchStorePaths}
-          batchExecutionMode={processingModel.batchExecutionMode}
-          batchMaxActiveJobs={processingModel.batchMaxActiveJobs}
-          runOutputSettingsOpen={processingModel.runOutputSettingsOpen}
-          runOutputPathMode={processingModel.runOutputPathMode}
-          runOutputPath={processingModel.resolvedRunOutputPath}
-          resolvingRunOutputPath={processingModel.resolvingRunOutputPath}
-          overwriteExistingRunOutput={processingModel.overwriteExistingRunOutput}
-          onSetPipelineName={processingModel.setPipelineName}
-          onPreview={() => processingModel.previewCurrentSection()}
-          onShowRaw={processingModel.showRawSection}
-          onRun={() => processingModel.runOnVolume()}
-          onRunBatch={() => processingModel.runBatchOnVolumes()}
-          onCancelBatch={() => processingModel.cancelActiveBatch()}
-          onToggleRunOutputSettings={() =>
-            processingModel.setRunOutputSettingsOpen(!processingModel.runOutputSettingsOpen)}
-          onSetRunOutputPathMode={processingModel.setRunOutputPathMode}
-          onSetCustomRunOutputPath={processingModel.setCustomRunOutputPath}
-          onBrowseRunOutputPath={() => processingModel.browseRunOutputPath()}
-          onResetRunOutputPath={processingModel.resetRunOutputPath}
-          onSetOverwriteExistingRunOutput={processingModel.setOverwriteExistingRunOutput}
-          onToggleBatchStorePath={processingModel.toggleBatchStorePath}
-          onSelectAllBatchCandidates={processingModel.selectAllBatchCandidates}
-          onClearBatchSelection={processingModel.clearBatchSelection}
-          onSetBatchExecutionMode={processingModel.setBatchExecutionMode}
-          onSetBatchMaxActiveJobs={processingModel.setBatchMaxActiveJobs}
-          onLoadPreset={processingModel.loadPreset}
-          onSavePreset={() => processingModel.savePreset()}
-          onDeletePreset={(presetId) => processingModel.deletePreset(presetId)}
-        />
+      <PipelineControlBar
+        processingFamily={processingModel.pipelineFamily}
+        pipeline={
+          processingModel.pipelineFamily === "post_stack_neighborhood"
+            ? processingModel.postStackNeighborhoodPipeline
+            : processingModel.pipeline
+        }
+        previewState={processingModel.previewState}
+        previewLabel={processingModel.previewLabel}
+        presets={processingModel.visiblePresets}
+        loadingPresets={processingModel.loadingPresets}
+        canPreview={processingModel.canPreview}
+        canRun={processingModel.canRun}
+        previewBusy={processingModel.previewBusy}
+        runBusy={processingModel.runBusy}
+        batchBusy={processingModel.batchBusy}
+        activeBatch={processingModel.activeBatch}
+        batchCandidates={processingModel.batchCandidates}
+        selectedBatchStorePaths={processingModel.selectedBatchStorePaths}
+        batchExecutionMode={processingModel.batchExecutionMode}
+        batchMaxActiveJobs={processingModel.batchMaxActiveJobs}
+        runOutputSettingsOpen={processingModel.runOutputSettingsOpen}
+        runOutputPathMode={processingModel.runOutputPathMode}
+        runOutputPath={processingModel.resolvedRunOutputPath}
+        resolvingRunOutputPath={processingModel.resolvingRunOutputPath}
+        overwriteExistingRunOutput={processingModel.overwriteExistingRunOutput}
+        onSetPipelineName={processingModel.setPipelineName}
+        onPreview={() => processingModel.previewCurrentSection()}
+        onShowRaw={processingModel.showRawSection}
+        onRun={() => processingModel.runOnVolume()}
+        onRunBatch={() => processingModel.runBatchOnVolumes()}
+        onCancelBatch={() => processingModel.cancelActiveBatch()}
+        onToggleRunOutputSettings={() =>
+          processingModel.setRunOutputSettingsOpen(!processingModel.runOutputSettingsOpen)}
+        onSetRunOutputPathMode={processingModel.setRunOutputPathMode}
+        onSetCustomRunOutputPath={processingModel.setCustomRunOutputPath}
+        onBrowseRunOutputPath={() => processingModel.browseRunOutputPath()}
+        onResetRunOutputPath={processingModel.resetRunOutputPath}
+        onSetOverwriteExistingRunOutput={processingModel.setOverwriteExistingRunOutput}
+        onToggleBatchStorePath={processingModel.toggleBatchStorePath}
+        onSelectAllBatchCandidates={processingModel.selectAllBatchCandidates}
+        onClearBatchSelection={processingModel.clearBatchSelection}
+        onSetBatchExecutionMode={processingModel.setBatchExecutionMode}
+        onSetBatchMaxActiveJobs={processingModel.setBatchMaxActiveJobs}
+        onLoadPreset={processingModel.loadPreset}
+        onSavePreset={() => processingModel.savePreset()}
+        onDeletePreset={(presetId) => processingModel.deletePreset(presetId)}
+      />
 
-        <ProcessingActivityStrip
-          entries={processingModel.recentActivityEntries}
-          activeJobId={processingModel.activeJob?.job_id ?? null}
-          activeBatchId={processingModel.activeBatch?.batch_id ?? null}
-          onSelectJob={processingModel.focusRecentJob}
-          onSelectBatch={processingModel.focusRecentBatch}
-          onOpenArtifact={processingModel.openProcessingArtifact}
-          canClearFinished={processingModel.hasClearableRecentActivity}
-          onClearFinished={processingModel.clearFinishedRecentActivity}
-        />
+      <ProcessingActivityStrip
+        entries={processingModel.recentActivityEntries}
+        activeJobId={processingModel.activeJob?.job_id ?? null}
+        activeBatchId={processingModel.activeBatch?.batch_id ?? null}
+        onSelectJob={processingModel.focusRecentJob}
+        onSelectBatch={processingModel.focusRecentBatch}
+        onOpenArtifact={processingModel.openProcessingArtifact}
+        canClearFinished={processingModel.hasClearableRecentActivity}
+        onClearFinished={processingModel.clearFinishedRecentActivity}
+      />
 
-        <div class="definition-grid">
+      <div class="operator-workbench">
+        <aside class="node-editor-panel">
           {#if processingModel.pipelineFamily === "post_stack_neighborhood"}
-            <NeighborhoodSequenceList
-              operations={processingModel.neighborhoodOperations}
-              selectedIndex={processingModel.selectedStepIndex}
-              onSelect={processingModel.selectStep}
-            />
-
             <NeighborhoodOperatorEditor
               selectedOperation={processingModel.selectedNeighborhoodOperation}
               activeJob={processingModel.activeJob}
@@ -978,33 +1117,14 @@
               onOpenArtifact={(storePath) => processingModel.openProcessingArtifact(storePath)}
             />
           {:else}
-            <PipelineSequenceList
-              operations={processingModel.workspaceOperations}
-              operatorCatalogItems={processingModel.availableOperatorCatalogItems}
-              catalogSourceLabel={processingModel.operatorCatalogSourceLabel}
-              catalogSourceDetail={processingModel.operatorCatalogSourceDetail}
-              catalogEmptyMessage={processingModel.operatorCatalogEmptyMessage}
-              traceLocalOperationCount={processingModel.pipeline.steps.length}
-              hasSubvolumeCrop={processingModel.hasSubvolumeCrop}
-              selectedIndex={processingModel.selectedStepIndex}
-              checkpointAfterOperationIndexes={processingModel.checkpointAfterOperationIndexes}
-              checkpointWarning={processingModel.checkpointWarning}
-              onSelect={processingModel.selectStep}
-              onInsertOperator={processingModel.insertOperatorById}
-              onCopy={processingModel.copySelectedOperation}
-              onPaste={processingModel.pasteCopiedOperation}
-              onRemove={processingModel.removeOperationAt}
-              onToggleCheckpoint={processingModel.toggleCheckpointAfterOperation}
-            />
-
             <PipelineOperatorEditor
               selectedOperation={processingModel.selectedOperation}
-            selectedOperatorCatalogItem={processingModel.selectedOperatorCatalogItem}
-            activeJob={processingModel.activeJob}
-            activeDebugPlan={processingModel.activeDebugPlan}
-            activeRuntimeState={processingModel.activeRuntimeState}
-            activeRuntimeEvents={processingModel.activeRuntimeEvents}
-            processingError={processingModel.error}
+              selectedOperatorCatalogItem={processingModel.selectedOperatorCatalogItem}
+              activeJob={processingModel.activeJob}
+              activeDebugPlan={processingModel.activeDebugPlan}
+              activeRuntimeState={processingModel.activeRuntimeState}
+              activeRuntimeEvents={processingModel.activeRuntimeEvents}
+              processingError={processingModel.error}
               primaryVolumeLabel={processingModel.activePrimaryVolumeLabel}
               sourceSubvolumeBounds={processingModel.sourceSubvolumeBounds}
               secondaryVolumeOptions={processingModel.volumeArithmeticSecondaryOptions}
@@ -1029,11 +1149,46 @@
               onOpenArtifact={(storePath) => processingModel.openProcessingArtifact(storePath)}
             />
           {/if}
-        </div>
-      </div>
+        </aside>
 
-      <div class="viewer-pane">
-      {#if processingModel.displaySection}
+        <div class="node-visual-workbench">
+          <section class="node-io-panel" aria-label="Selected node inputs and outputs">
+            <div>
+              <span class="eyebrow">Selected Node</span>
+              <h2>{selectedNodeTitle}</h2>
+              <p>{selectedNodeSubtitle}</p>
+            </div>
+            <div class="node-port-grid">
+              <div class="node-port-card">
+                <span>Inputs</span>
+                <strong>Volume</strong>
+                <small>{viewerModel.activeStorePath ? viewerModel.activeDatasetDisplayName : "No active volume"}</small>
+              </div>
+              <div class="node-port-card">
+                <span>View</span>
+                <strong>Section</strong>
+                <small>{activeSectionLabel}</small>
+              </div>
+              <div class="node-port-card">
+                <span>Outputs</span>
+                <strong>Preview section</strong>
+                <small>{processingModel.previewState === "preview" ? processingModel.previewLabel ?? "active" : "pending"}</small>
+              </div>
+              <div class="node-port-card">
+                <span>Artifact</span>
+                <strong>{processingModel.selectedStepCheckpoint ? "Checkpoint volume" : "Final volume"}</strong>
+                <small>{processingModel.activeJob?.output_store_path ?? "configured on run"}</small>
+              </div>
+            </div>
+
+            <div class="node-output-hints">
+              <span>QC ports: amplitude spectrum, amplitude distribution, min/max stats</span>
+              <span>Future ports: branch output volume, report evidence, compare view</span>
+            </div>
+          </section>
+
+          <div class="viewer-pane">
+      {#if displayedSection}
         <div class="chart-frame">
           {#key chartSessionKey}
           <SeismicSectionChart
@@ -1053,7 +1208,7 @@
             --ophiolite-toolbar-active-text="#274b61"
             chartId={`traceboost-main:${chartSessionKey}`}
             viewId={displayedViewId}
-            section={processingModel.displaySection}
+            section={displayedSection}
             dataSource={viewerModel.sectionChartDataSource}
             sectionScalarOverlays={viewerModel.sectionScalarOverlays}
             sectionHorizons={viewerModel.sectionHorizons}
@@ -1149,6 +1304,8 @@
           <span class="welcome-version">TraceBoost v0.1.0</span>
         </div>
       {/if}
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -1659,22 +1816,40 @@
   .workspace-columns {
     min-height: 100vh;
     display: grid;
-    grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+    grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+    gap: var(--ui-panel-gap);
+    padding: var(--ui-panel-padding);
   }
 
-  .session-column {
+  .recipe-column {
     min-height: 0;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(120px, auto) minmax(0, 1fr);
     gap: var(--ui-panel-gap);
-    padding: var(--ui-panel-padding) var(--ui-panel-padding) var(--ui-space-5);
-    border-right: 1px solid var(--app-border);
+  }
+
+  .recipe-header {
+    display: grid;
+    gap: var(--ui-space-3);
+    padding: var(--ui-space-5);
+    border: 1px solid var(--app-border);
+    border-radius: var(--ui-radius-lg);
     background: var(--panel-bg);
   }
 
-  .session-column-header {
-    display: grid;
-    gap: 2px;
+  .recipe-header h2,
+  .recipe-header p {
+    margin: 0;
+  }
+
+  .recipe-header h2 {
+    font-size: 15px;
+    line-height: 1.2;
+    color: var(--text-primary);
+  }
+
+  .recipe-header p {
+    color: var(--text-muted);
   }
 
   .eyebrow {
@@ -1683,25 +1858,6 @@
     letter-spacing: 0.1em;
     text-transform: uppercase;
     color: var(--text-dim);
-  }
-
-  .session-column-header h2 {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .session-column-header p {
-    margin: 0;
-    font-size: 11px;
-    color: var(--text-muted);
-    line-height: 1.45;
-  }
-
-  .workflow-origin {
-    color: var(--text-primary);
-    font-weight: 600;
   }
 
   .family-switch {
@@ -1730,26 +1886,110 @@
 
   .main-column {
     min-height: 0;
-    padding: var(--ui-panel-padding) var(--ui-space-6) var(--ui-space-6);
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: var(--ui-panel-gap);
+  }
+
+  .operator-workbench {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    gap: var(--ui-panel-gap);
+  }
+
+  .node-editor-panel,
+  .node-visual-workbench {
+    min-height: 0;
+  }
+
+  .node-visual-workbench {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     gap: var(--ui-panel-gap);
   }
 
-  .definition-pane {
-    min-height: 0;
+  .node-io-panel {
     display: grid;
-    gap: var(--ui-panel-gap);
-    position: relative;
-    z-index: 8;
+    grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr);
+    gap: var(--ui-space-5);
+    padding: var(--ui-space-5);
+    border: 1px solid var(--app-border);
+    border-radius: var(--ui-radius-lg);
+    background: var(--panel-bg);
   }
 
-  .definition-grid {
-    min-height: 0;
+  .node-io-panel h2,
+  .node-io-panel p {
+    margin: 0;
+  }
+
+  .node-io-panel h2 {
+    margin-top: 2px;
+    font-size: 15px;
+    color: var(--text-primary);
+  }
+
+  .node-io-panel p {
+    margin-top: 2px;
+    color: var(--text-muted);
+  }
+
+  .node-port-grid {
     display: grid;
-    grid-template-columns: minmax(320px, 0.95fr) minmax(420px, 1.25fr);
-    gap: var(--ui-panel-gap);
-    align-items: stretch;
+    grid-template-columns: repeat(4, minmax(120px, 1fr));
+    gap: var(--ui-space-3);
+  }
+
+  .node-port-card {
+    min-width: 0;
+    display: grid;
+    gap: 2px;
+    padding: var(--ui-space-3);
+    border: 1px solid var(--app-border);
+    border-radius: var(--ui-radius-md);
+    background: var(--surface-bg);
+  }
+
+  .node-port-card span {
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+
+  .node-port-card strong,
+  .node-port-card small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .node-port-card strong {
+    color: var(--text-primary);
+  }
+
+  .node-port-card small {
+    color: var(--text-muted);
+  }
+
+  .node-output-hints {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ui-space-2);
+  }
+
+  .node-output-hints span {
+    min-height: 24px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 var(--ui-space-3);
+    border: 1px solid var(--info-border);
+    border-radius: var(--ui-radius-md);
+    background: var(--info-bg);
+    color: var(--info-text);
   }
 
   .viewer-pane {
@@ -2036,6 +2276,22 @@
     font-size: 11px;
     line-height: 1.4;
     color: var(--text-muted);
+  }
+
+  .tile-diagnostics-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--ui-space-2);
+    margin: 0;
+    font-size: 11px;
+    font-weight: 650;
+    color: #445c6c;
+  }
+
+  .tile-diagnostics-toggle input {
+    width: 14px;
+    height: 14px;
+    accent-color: #8fc6e8;
   }
 
   .tile-diagnostics-grid {
@@ -2425,19 +2681,11 @@
       grid-template-columns: 1fr;
     }
 
-    .session-column {
-      grid-template-rows: auto minmax(220px, auto);
-      border-right: none;
-      border-bottom: 1px solid var(--app-border);
-      padding-bottom: 10px;
-    }
-
-    .main-column {
-      padding-inline: 10px;
-      padding-bottom: 10px;
-    }
-
-    .definition-grid {
+    .recipe-column,
+    .main-column,
+    .operator-workbench,
+    .node-io-panel,
+    .node-port-grid {
       grid-template-columns: 1fr;
     }
 

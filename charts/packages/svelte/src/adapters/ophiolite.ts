@@ -5,5 +5,6 @@ export {
 export {
   adaptOphioliteRockPhysicsCrossplotToChart,
   adaptOphioliteSurveyMapToChart,
+  adaptOphioliteVolumeInterpretationToChart,
   adaptOphioliteWellPanelToChart
 } from "@ophiolite/charts-data-models";

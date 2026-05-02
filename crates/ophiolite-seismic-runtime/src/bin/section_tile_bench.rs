@@ -1,6 +1,9 @@
 use clap::{Parser, ValueEnum};
-use ophiolite_seismic::{SectionAxis, SectionView};
-use ophiolite_seismic_runtime::{SectionTileView, open_store};
+use ophiolite_seismic::SectionAxis;
+use ophiolite_seismic_runtime::{
+    SectionPlane, TbvolReader, TbvolcReader, TileGeometry, VolumeStoreReader,
+    assemble_section_plane, read_section_window_artifact,
+};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -64,6 +67,7 @@ struct BenchmarkReport {
 #[derive(Debug, Clone, Serialize)]
 struct DatasetSummary {
     store_path: String,
+    store_format: String,
     shape: [usize; 3],
     tile_shape: [usize; 3],
 }
@@ -110,17 +114,12 @@ enum Scenario {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let handle = open_store(&cli.store)?;
-    let axes = planned_axes(
-        handle.manifest.volume.shape,
-        cli.axis,
-        cli.inline_index,
-        cli.xline_index,
-    );
+    let store = BenchStore::open(cli.store.clone())?;
+    let axes = planned_axes(store.shape(), cli.axis, cli.inline_index, cli.xline_index);
     let mut cases = Vec::new();
 
     for plan in axes {
-        let full_section = handle.section_view(plan.axis, plan.index)?;
+        let full_section = store.read_section_plane(plan.axis, plan.index)?;
         let full_payload_bytes = payload_bytes(&full_section);
         let scenarios = planned_scenarios(
             &full_section,
@@ -133,7 +132,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for scenario in scenarios {
             cases.push(run_case(
-                &handle,
+                &store,
                 plan,
                 &scenario,
                 cli.iterations,
@@ -145,8 +144,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let report = BenchmarkReport {
         dataset: DatasetSummary {
             store_path: cli.store.display().to_string(),
-            shape: handle.manifest.volume.shape,
-            tile_shape: handle.manifest.tile_shape,
+            store_format: store.format().to_string(),
+            shape: store.shape(),
+            tile_shape: store.tile_shape(),
         },
         iterations: cli.iterations,
         overview_target: [cli.screen_traces, cli.screen_samples],
@@ -193,7 +193,7 @@ fn planned_axes(
 }
 
 fn planned_scenarios(
-    section: &SectionView,
+    section: &SectionPlane,
     screen_traces: usize,
     screen_samples: usize,
     focus_traces: usize,
@@ -255,7 +255,7 @@ fn choose_axis_lod(total: usize, target: usize) -> u8 {
 }
 
 fn run_case(
-    handle: &ophiolite_seismic_runtime::StoreHandle,
+    store: &BenchStore,
     plan: AxisPlan,
     scenario: &Scenario,
     iterations: usize,
@@ -278,7 +278,7 @@ fn run_case(
         let started = Instant::now();
         measured = match scenario {
             Scenario::FullSection => {
-                let section = handle.section_view(plan.axis, plan.index)?;
+                let section = store.read_section_plane(plan.axis, plan.index)?;
                 MeasuredPayload {
                     scenario: "full_section".to_string(),
                     trace_range: [0, section.traces],
@@ -297,7 +297,7 @@ fn run_case(
                 lod,
             } => measured_tile(
                 "overview_fit".to_string(),
-                handle.section_tile_view(
+                store.read_section_tile_plane(
                     plan.axis,
                     plan.index,
                     *trace_range,
@@ -311,7 +311,7 @@ fn run_case(
                 lod,
             } => measured_tile(
                 format!("focus_tile_lod_{lod}"),
-                handle.section_tile_view(
+                store.read_section_tile_plane(
                     plan.axis,
                     plan.index,
                     *trace_range,
@@ -362,6 +362,101 @@ fn run_case(
     })
 }
 
+enum BenchStore {
+    Tbvol { reader: TbvolReader },
+    Tbvolc { reader: TbvolcReader },
+}
+
+impl BenchStore {
+    fn open(root: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+        let manifest_path = root.join("manifest.json");
+        let manifest =
+            serde_json::from_slice::<serde_json::Value>(&std::fs::read(&manifest_path)?)?;
+        let format = manifest
+            .get("format")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| format!("missing store format in {}", manifest_path.display()))?;
+        match format {
+            "tbvol" => Ok(Self::Tbvol {
+                reader: TbvolReader::open(&root)?,
+            }),
+            "tbvolc" => Ok(Self::Tbvolc {
+                reader: TbvolcReader::open(&root)?,
+            }),
+            other => {
+                Err(format!("unsupported store format for section_tile_bench: {other}").into())
+            }
+        }
+    }
+
+    fn format(&self) -> &'static str {
+        match self {
+            Self::Tbvol { .. } => "tbvol",
+            Self::Tbvolc { .. } => "tbvolc",
+        }
+    }
+
+    fn shape(&self) -> [usize; 3] {
+        match self {
+            Self::Tbvol { reader, .. } => reader.volume().shape,
+            Self::Tbvolc { reader, .. } => reader.volume().shape,
+        }
+    }
+
+    fn tile_shape(&self) -> [usize; 3] {
+        self.tile_geometry().tile_shape()
+    }
+
+    fn tile_geometry(&self) -> &TileGeometry {
+        match self {
+            Self::Tbvol { reader, .. } => reader.tile_geometry(),
+            Self::Tbvolc { reader, .. } => reader.tile_geometry(),
+        }
+    }
+
+    fn read_section_plane(
+        &self,
+        axis: SectionAxis,
+        index: usize,
+    ) -> Result<SectionPlane, Box<dyn std::error::Error>> {
+        match self {
+            Self::Tbvol { reader, .. } => Ok(assemble_section_plane(reader, axis, index)?),
+            Self::Tbvolc { reader, .. } => Ok(assemble_section_plane(reader, axis, index)?),
+        }
+    }
+
+    fn read_section_tile_plane(
+        &self,
+        axis: SectionAxis,
+        index: usize,
+        trace_range: [usize; 2],
+        sample_range: [usize; 2],
+        lod: u8,
+    ) -> Result<MeasuredPayload, Box<dyn std::error::Error>> {
+        let artifact = match self {
+            Self::Tbvol { reader, .. } => {
+                read_section_window_artifact(reader, axis, index, trace_range, sample_range, lod)?
+            }
+            Self::Tbvolc { reader, .. } => {
+                read_section_window_artifact(reader, axis, index, trace_range, sample_range, lod)?
+            }
+        };
+        let trace_step = artifact.assembly_plan.output_shape[0].max(1);
+        let sample_step = artifact.assembly_plan.output_shape[1].max(1);
+        Ok(MeasuredPayload {
+            scenario: String::new(),
+            trace_range,
+            sample_range,
+            lod,
+            trace_step: (trace_range[1] - trace_range[0]).div_ceil(trace_step),
+            sample_step: (sample_range[1] - sample_range[0]).div_ceil(sample_step),
+            output_traces: artifact.plane.traces,
+            output_samples: artifact.plane.samples,
+            payload_bytes: payload_bytes(&artifact.plane),
+        })
+    }
+}
+
 #[derive(Debug, Clone)]
 struct MeasuredPayload {
     scenario: String,
@@ -375,26 +470,15 @@ struct MeasuredPayload {
     payload_bytes: u64,
 }
 
-fn measured_tile(scenario: String, tile: SectionTileView) -> MeasuredPayload {
-    MeasuredPayload {
-        scenario,
-        trace_range: tile.trace_range,
-        sample_range: tile.sample_range,
-        lod: tile.lod,
-        trace_step: tile.trace_step,
-        sample_step: tile.sample_step,
-        output_traces: tile.section.traces,
-        output_samples: tile.section.samples,
-        payload_bytes: payload_bytes(&tile.section),
-    }
+fn measured_tile(scenario: String, mut measured: MeasuredPayload) -> MeasuredPayload {
+    measured.scenario = scenario;
+    measured
 }
 
-fn payload_bytes(section: &SectionView) -> u64 {
-    (section.horizontal_axis_f64le.len()
-        + section.inline_axis_f64le.as_ref().map_or(0, Vec::len)
-        + section.xline_axis_f64le.as_ref().map_or(0, Vec::len)
-        + section.sample_axis_f32le.len()
-        + section.amplitudes_f32le.len()) as u64
+fn payload_bytes(section: &SectionPlane) -> u64 {
+    ((section.horizontal_axis.len() * std::mem::size_of::<f64>())
+        + (section.sample_axis_ms.len() * std::mem::size_of::<f32>())
+        + (section.amplitudes.len() * std::mem::size_of::<f32>())) as u64
 }
 
 fn axis_name(axis: SectionAxis) -> &'static str {
@@ -407,8 +491,8 @@ fn axis_name(axis: SectionAxis) -> &'static str {
 fn print_report(report: &BenchmarkReport) {
     println!("store: {}", report.dataset.store_path);
     println!(
-        "shape: {:?} | tile_shape: {:?}",
-        report.dataset.shape, report.dataset.tile_shape
+        "format: {} | shape: {:?} | tile_shape: {:?}",
+        report.dataset.store_format, report.dataset.shape, report.dataset.tile_shape
     );
     println!(
         "iterations: {} | overview target: {}x{} | focus target: {}x{}",
